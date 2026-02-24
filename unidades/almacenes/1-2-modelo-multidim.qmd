@@ -1,11 +1,514 @@
 ---
 title: "Modelado Multidimensional"
 ---
+
+El modelado multidimensional constituye la base conceptual de los almacenes de datos (Data Warehouses, DW). A diferencia del modelo relacional tradicional altamente normalizado (diseñado para sistemas transaccionales (OLTP) donde predominan inserciones y actualizaciones frecuentes) el modelo multidimensional está optimizado para el análisis (OLAP), es decir, para responder preguntas complejas de negocio de manera rápida, clara y comprensible para los usuarios finales.
+
+Como se enfatiza en el material del curso, el diseño de un DW no comienza por la base de datos ni por la tecnología, sino por las decisiones que el negocio desea tomar y la información necesaria para sustentarlas :contentReference[oaicite:0]{index=0}. El modelo se construye entonces alrededor de preguntas analíticas, no alrededor de procesos operativos.
+
 A diferencia del modelo relacional normalizado, aquí se utilizan estructuras optimizadas para consultas complejas:
 
 * **Tabla de Hechos (Fact Table):** Contiene las métricas cuantitativas o medidas del negocio.
-* **Tablas de Dimensiones:** Contienen los atributos descriptivos que contextualizan los hechos (Tiempo, Geografía, Producto).
+* **Tablas de Dimensiones:** Contienen los atributos descriptivos que contextualizan los hechos (Tiempo, Geografía, Producto, Estudiante, etc.).
 
-### Esquemas comunes:
-* **Esquema de Estrella:** Una tabla de hechos central conectada directamente a tablas de dimensiones.
-* **Esquema de Copo de Nieve (Snowflake):** Una variante donde las tablas de dimensiones están normalizadas.
+## Hechos y Dimensiones
+
+Un hecho representa un evento medible del negocio. Debe cumplir tres
+características fundamentales: ocurre en un momento específico, se puede
+medir y sucede repetidamente. En lugar de describirlo solo de forma
+conceptual, puede entenderse mejor mediante una representación
+estructural.
+
+A continuación se muestra un ejemplo de una **tabla de hechos
+académica**, donde cada fila representa la evaluación de un estudiante
+en una asignatura durante un periodo determinado.
+
+```{mermaid}
+erDiagram
+
+    HECHO_EVALUACION_ACADEMICA {
+        int id_estudiante
+        int id_asignatura
+        int id_tiempo
+        decimal calificacion
+        int creditos
+        int indicador_reprobado
+    }
+```
+
+En esta tabla:
+
+-   Cada registro corresponde a un evento académico concreto.
+-   Las columnas `calificacion`, `creditos` e `indicador_reprobado` son
+    medidas.
+-   Las claves (`id_estudiante`, `id_asignatura`, `id_tiempo`) conectan
+    el hecho con su contexto.
+
+Las **dimensiones** proporcionan precisamente ese contexto. Permiten
+responder preguntas como: ¿quién?, ¿cuándo?, ¿dónde? y ¿qué? ocurrió el
+evento.
+
+A continuación se muestra una representación simplificada de algunas
+dimensiones académicas:
+
+```{mermaid}
+erDiagram
+
+    DIMENSION_ESTUDIANTE {
+        int id_estudiante
+        string nombre
+        string sexo
+        int generacion
+        string carrera
+        string facultad
+    }
+
+    DIMENSION_TIEMPO {
+        int id_tiempo
+        int semestre
+        int anio
+        string periodo
+    }
+
+    DIMENSION_ASIGNATURA {
+        int id_asignatura
+        string nombre_asignatura
+        string tipo
+    }
+```
+
+El hecho adquiere significado únicamente cuando se conecta con estas
+dimensiones. Conceptualmente, la relación puede representarse así:
+
+```{mermaid}
+erDiagram
+
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_ESTUDIANTE : pertenece_a
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_TIEMPO : ocurre_en
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_ASIGNATURA : corresponde_a
+```
+
+De esta forma, una fila del hecho puede interpretarse como:
+
+> "El estudiante X cursó la asignatura Y en el periodo Z y obtuvo
+> determinada calificación".
+
+Un hecho aislado es poco informativo; adquiere significado al conectarse
+con dimensiones. Esta relación también guía el diseño del modelo: si una
+medida no puede explicarse adecuadamente con las dimensiones
+disponibles, suele indicar que falta una dimensión relevante, como
+campus, plan de estudios, modalidad o grupo.
+
+## Granularidad: la decisión de diseño más importante
+
+La granularidad define qué representa exactamente una fila en la tabla
+de hechos.\
+Impacta directamente el volumen de datos, el costo de infraestructura,
+la complejidad del ETL y el tipo de análisis que puede realizarse.
+
+### Comparación de niveles de granularidad
+```{mermaid}
+erDiagram
+    HECHO_TRAYECTORIA_SEMESTRAL {
+        int id_estudiante
+        int id_tiempo
+        int total_materias
+        int total_creditos
+        decimal promedio_semestre
+    }
+    HECHO_EVALUACION_ACADEMICA {
+        int id_estudiante
+        int id_asignatura
+        int id_tiempo
+        decimal calificacion
+        int creditos
+        int indicador_reprobado
+    }
+```
+**Izquierda: Granularidad baja --- una fila por alumno por semestre.**\
+Cada registro resume el desempeño global del estudiante en un periodo.\
+No se almacenan materias individuales, sino resultados agregados del
+semestre.
+
+Con 200 alumnos y 2 semestres por año se generan aproximadamente 400
+filas por año (2,000 en cinco años).\
+Este enfoque reduce volumen y complejidad, pero limita el análisis
+detallado por asignatura o profesor.
+
+**Derecha: Granularidad alta --- una fila por alumno por materia por
+semestre.**\
+Cada registro representa una inscripción específica en una asignatura.\
+Permite analizar reprobación por materia, desempeño por docente y
+evolución por plan de estudios.
+
+Con 200 alumnos, 6 materias promedio y 2 semestres por año se generan
+aproximadamente 4,800 filas por año (24,000 en cinco años).\
+Este enfoque aumenta capacidad analítica, pero también volumen, costo y
+complejidad operativa.
+
+### Hecho aditivo
+
+Un hecho es aditivo cuando puede sumarse correctamente a través de todas las dimensiones del modelo (incluida la dimensión tiempo). En el material del curso se menciona como ejemplos típicos: número de inscritos, créditos inscritos y número de reprobados :contentReference[oaicite:8]{index=8}.
+
+Ejemplos claros:
+
+- Ventas: sumar “monto vendido” por día, por tienda, por producto, por ciudad. La suma conserva sentido en cualquier nivel de agregación.
+- Académico: sumar “créditos inscritos” por estudiante, por carrera, por semestre o por año; y sumar “indicador_reprobado” (0/1) para obtener el total de reprobados en un conjunto dado (por asignatura, periodo, generación, etc.) :contentReference[oaicite:9]{index=9}.
+
+Implicación de diseño: si una medida es aditiva, suele ser una buena candidata para almacenarse directamente en la tabla de hechos, porque habilita muchas consultas rápidas y robustas.
+
+### Hecho semi-aditivo
+
+Un hecho es semi-aditivo cuando puede sumarse en algunas dimensiones, pero no en todas; típicamente no se suma válidamente a través del tiempo. En el material se ejemplifica con “estudiantes activos al finalizar semestre” o “créditos acumulados” :contentReference[oaicite:10]{index=10}.
+
+Ejemplo:
+
+- “Estudiantes activos” por carrera en un mismo semestre: sumar por carrera para obtener el total de activos en ese semestre puede tener sentido (si las carreras son particiones disjuntas).
+- “Estudiantes activos” entre semestres: sumar activos del semestre 1 más activos del semestre 2 suele perder interpretación porque muchas personas se repiten; el resultado puede inflarse y no representa una entidad real :contentReference[oaicite:11]{index=11}.
+
+Implicación de diseño: medidas semi-aditivas a menudo se consultan con funciones como `MAX`, `MIN` o “valor al cierre del periodo”, o bien se modelan como “snapshots” (cortes periódicos), dependiendo del caso.
+
+### Hecho no aditivo
+
+Un hecho es no aditivo cuando no puede sumarse en ninguna dimensión; requiere cálculo (promedio, razón, porcentaje). En el curso se mencionan: promedio de calificaciones, tasa de reprobación y porcentaje de deserción :contentReference[oaicite:12]{index=12}.
+
+Ejemplo:
+
+- La tasa de reprobación se calcula como (reprobados / inscritos) bajo un filtro o un grupo; no se almacena como tal en la tabla de hechos porque debe recomponerse según el contexto de la consulta :contentReference[oaicite:13]{index=13}.
+- El promedio de calificaciones depende de la población (y a veces de ponderaciones). “Sumar promedios” rara vez es significativo.
+
+Implicación de diseño: en general se almacenan los componentes base (numeradores/denominadores, conteos, sumas) y se calculan métricas derivadas en la capa semántica o en vistas/consultas.
+
+## Esquemas comunes
+
+### Esquema de Estrella
+
+El esquema estrella consiste en una tabla de hechos central conectada
+directamente a varias dimensiones. Sus dimensiones suelen estar
+desnormalizadas (redundancia controlada) para reducir joins y optimizar
+consultas analíticas.
+
+En el ejemplo académico, la dimensión estudiante incluye atributos como
+carrera y facultad en la misma tabla, lo que simplifica consultas
+típicas del estilo "promedio por carrera y por semestre". El costo es
+aceptar repetición (por ejemplo, repetir "ciencias" como facultad en
+muchos registros).
+
+Desde el punto de vista estructural, el modelo puede representarse así:
+
+```{mermaid}
+erDiagram
+
+    HECHO_EVALUACION_ACADEMICA {
+        int id_estudiante
+        int id_asignatura
+        int id_tiempo
+        decimal calificacion
+        int creditos
+        int indicador_reprobado
+    }
+
+    DIMENSION_ESTUDIANTE {
+        int id_estudiante
+        varchar nombre
+        varchar sexo
+        varchar generacion
+        varchar carrera
+        varchar facultad
+    }
+
+    DIMENSION_ASIGNATURA {
+        int id_asignatura
+        varchar nombre_asignatura
+        varchar tipo_asignatura
+    }
+
+    DIMENSION_TIEMPO {
+        int id_tiempo
+        varchar semestre
+        int anio
+        varchar periodo
+    }
+
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_ESTUDIANTE : pertenece_a
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_ASIGNATURA : corresponde_a
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_TIEMPO : ocurre_en
+```
+
+En este esquema:
+
+-   La tabla de hechos está al centro.
+-   Todas las dimensiones se conectan directamente a ella.
+-   No existen relaciones entre dimensiones.
+-   La información jerárquica (por ejemplo, carrera → facultad) se
+    almacena dentro de la misma dimensión.
+
+
+
+### Esquema de Copo de Nieve (Snowflake)
+
+El esquema de copo de nieve normaliza las dimensiones en subdimensiones.
+Por ejemplo, separar "carrera" y "facultad" en tablas propias
+relacionadas jerárquicamente, evitando redundancia, pero aumentando
+joins y complejidad de consulta.
+
+```{mermaid}
+erDiagram
+
+    HECHO_EVALUACION_ACADEMICA {
+        int id_estudiante
+        int id_asignatura
+        int id_tiempo
+        decimal calificacion
+        int creditos
+        int indicador_reprobado
+    }
+
+    DIMENSION_ESTUDIANTE {
+        int id_estudiante
+        varchar nombre
+        varchar sexo
+        varchar generacion
+        int id_carrera
+    }
+
+    DIMENSION_CARRERA {
+        int id_carrera
+        varchar nombre_carrera
+        int id_facultad
+    }
+
+    DIMENSION_FACULTAD {
+        int id_facultad
+        varchar nombre_facultad
+    }
+
+    DIMENSION_ASIGNATURA {
+        int id_asignatura
+        varchar nombre_asignatura
+        varchar tipo_asignatura
+    }
+
+    DIMENSION_TIEMPO {
+        int id_tiempo
+        varchar semestre
+        int anio
+        varchar periodo
+    }
+
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_ESTUDIANTE : pertenece_a
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_ASIGNATURA : corresponde_a
+    HECHO_EVALUACION_ACADEMICA }o--|| DIMENSION_TIEMPO : ocurre_en
+
+    DIMENSION_ESTUDIANTE }o--|| DIMENSION_CARRERA : estudia
+    DIMENSION_CARRERA }o--|| DIMENSION_FACULTAD : pertenece
+```
+
+En este esquema:
+
+-   La dimensión estudiante ya no almacena directamente la facultad.
+-   Carrera y facultad se modelan como entidades independientes.
+-   Se elimina redundancia.
+-   Se incrementa el número de joins necesarios para consultas que
+    involucren facultad.
+
+
+
+### Comparación conceptual
+
+  Aspecto                  Estrella                Copo de nieve
+  ------------------------ ----------------------- ------------------
+  Normalización            Baja (desnormalizada)   Alta
+  Redundancia              Controlada              Reducida
+  Número de joins          Menor                   Mayor
+  Complejidad conceptual   Más simple              Más estructurada
+  Rendimiento OLAP         Generalmente mejor      Puede disminuir
+  Gobierno de datos        Más flexible            Más controlado
+## Jerarquías en dimensiones y navegación analítica
+
+Las jerarquías permiten analizar de lo general a lo particular (roll-up y drill-down) :contentReference[oaicite:18]{index=18}. Ejemplos típicos:
+
+- Tiempo: Año → Semestre → Periodo.
+- Geografía: País → Estado → Ciudad.
+- Académico: Facultad → Carrera → Estudiante.
+
+Este diseño es clave para reportes: permite cambiar el “nivel” de agregación sin rediseñar la consulta, solo cambiando el `GROUP BY` o el nivel de la dimensión utilizado.
+
+# Ejemplo: Data Mart de Cancelación de Citas
+
+## Implementación en Esquema Estrella y Copo de Nieve
+
+Basado en el caso Hospitales Armonía.
+
+
+## Esquema Estrella (Star Schema)
+
+**Proceso de negocio:** Gestión de citas médicas\
+**Granularidad:** Una fila por cita programada\
+**Hecho medido:** Estado de la cita (cancelada / no show / atendida)
+
+```{mermaid}
+erDiagram
+
+    FACT_CANCELACION_CITA {
+        int appointment_key
+        int fecha_key
+        int hospital_key
+        int servicio_key
+        int medico_key
+        int paciente_key
+        int aseguradora_key
+        int motivo_key
+        int appointment_count
+        int cancelled_flag
+        int no_show_flag
+        int days_before_cancellation
+    }
+
+    DIM_FECHA {
+        int fecha_key
+        date fecha
+        int mes
+        int anio
+    }
+
+    DIM_HOSPITAL {
+        int hospital_key
+        string hospital_nombre
+        string estado
+    }
+
+    DIM_SERVICIO {
+        int servicio_key
+        string servicio_nombre
+        string especialidad
+    }
+
+    DIM_MEDICO {
+        int medico_key
+        string medico_nombre
+        string especialidad
+    }
+
+    DIM_PACIENTE {
+        int paciente_key
+        int edad
+        string genero
+    }
+
+    DIM_ASEGURADORA {
+        int aseguradora_key
+        string aseguradora_nombre
+        string tipo
+    }
+
+    DIM_MOTIVO {
+        int motivo_key
+        string motivo_nombre
+    }
+
+    FACT_CANCELACION_CITA }o--|| DIM_FECHA : fecha
+    FACT_CANCELACION_CITA }o--|| DIM_HOSPITAL : hospital
+    FACT_CANCELACION_CITA }o--|| DIM_SERVICIO : servicio
+    FACT_CANCELACION_CITA }o--|| DIM_MEDICO : medico
+    FACT_CANCELACION_CITA }o--|| DIM_PACIENTE : paciente
+    FACT_CANCELACION_CITA }o--|| DIM_ASEGURADORA : aseguradora
+    FACT_CANCELACION_CITA }o--|| DIM_MOTIVO : motivo
+```
+
+### Características
+
+-   Dimensiones desnormalizadas.
+-   Consultas simples.
+-   Óptimo para herramientas BI.
+-   Menor número de joins.
+
+
+## Esquema Copo de Nieve (Snowflake)
+
+En este esquema, algunas dimensiones se normalizan para reducir
+redundancia.
+
+```{mermaid}
+erDiagram
+
+    FACT_CANCELACION_CITA {
+        int appointment_key
+        int fecha_key
+        int hospital_key
+        int servicio_key
+        int medico_key
+        int paciente_key
+        int aseguradora_key
+        int motivo_key
+        int appointment_count
+        int cancelled_flag
+        int no_show_flag
+    }
+
+    DIM_HOSPITAL {
+        int hospital_key
+        string hospital_nombre
+        int estado_key
+    }
+
+    DIM_ESTADO {
+        int estado_key
+        string estado_nombre
+        int region_key
+    }
+
+    DIM_REGION {
+        int region_key
+        string region_nombre
+    }
+
+    DIM_SERVICIO {
+        int servicio_key
+        string servicio_nombre
+        int especialidad_key
+    }
+
+    DIM_ESPECIALIDAD {
+        int especialidad_key
+        string especialidad_nombre
+    }
+
+    DIM_ASEGURADORA {
+        int aseguradora_key
+        string aseguradora_nombre
+        int tipo_key
+    }
+
+    DIM_TIPO_ASEGURADORA {
+        int tipo_key
+        string tipo_nombre
+    }
+
+    FACT_CANCELACION_CITA }o--|| DIM_HOSPITAL : hospital
+    DIM_HOSPITAL }o--|| DIM_ESTADO : pertenece_a
+    DIM_ESTADO }o--|| DIM_REGION : pertenece_a
+
+    FACT_CANCELACION_CITA }o--|| DIM_SERVICIO : servicio
+    DIM_SERVICIO }o--|| DIM_ESPECIALIDAD : pertenece_a
+
+    FACT_CANCELACION_CITA }o--|| DIM_ASEGURADORA : aseguradora
+    DIM_ASEGURADORA }o--|| DIM_TIPO_ASEGURADORA : pertenece_a
+```
+
+
+## Comparación
+
+  Característica   Estrella          Copo de Nieve
+  ---------------- ----------------- ---------------
+  Dimensiones      Desnormalizadas   Normalizadas
+  Joins            Menos             Más
+  Rendimiento BI   Alto              Medio
+  Redundancia      Mayor             Menor
+  Complejidad      Baja              Media
+
+
+# Conclusión
+
+El modelado multidimensional organiza los datos alrededor de hechos medibles y dimensiones descriptivas, priorizando claridad y desempeño para análisis. Para que el diseño sea correcto, debe fijarse adecuadamente la granularidad :contentReference[oaicite:21]{index=21} y entender la aditividad de las medidas :contentReference[oaicite:22]{index=22}, ya que esto determina qué agregaciones son válidas y qué métricas deben calcularse.
+
