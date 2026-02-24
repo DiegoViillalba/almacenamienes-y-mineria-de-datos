@@ -1,0 +1,535 @@
+---
+title: "Ejemplo Completo: Café Norte (Cadena de Cafeterías)"
+format: html
+---
+---
+title: "Ejemplo Completo: Café Norte — Análisis y Construcción de Data Marts (Kimball)"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Propósito y supuestos
+
+Este ejemplo documenta, con un enfoque **Kimball**, la construcción de dimensiones conformadas y una tabla de hechos a granularidad **línea de pedido** para evaluar el impacto del lanzamiento de la app (enero de 2023) y del programa de lealtad.
+
+**Hito de intervención (cutoff):** `2023-01-01`.  
+Se define:
+
+- Periodo **pre**: fechas menores a `2023-01-01`.
+- Periodo **post**: fechas mayores o iguales a `2023-01-01`.
+
+Se asume que el lector **ya cuenta con CSVs** provenientes de sistemas operacionales (POS y App) y catálogos maestros.
+
+---
+
+## 1. Estructura esperada de archivos CSV
+
+Coloque los archivos en un directorio `data/` al mismo nivel que este `.qmd`.
+
+### 1.1 Catálogos maestros (dimensiones)
+
+- `data/clientes.csv`  
+  Campos mínimos: `cliente_id`, `fecha_alta`, `tipo_cliente`, `nivel_lealtad` (u otros atributos).
+
+- `data/productos.csv`  
+  Campos mínimos: `sku`, `nombre`, `categoria`, `subcategoria`, `tamano`, `activo`.
+
+- `data/sucursales.csv`  
+  Campos mínimos: `sucursal_id`, `nombre`, `zona`, `formato`.
+
+- (Opcional) `data/promociones.csv`  
+  Campos mínimos: `promo_codigo`, `campania`, `descripcion`.
+
+### 1.2 Transacciones (hechos)
+
+Se recomienda conservar el encabezado del pedido y las líneas separadas.
+
+- `data/pedidos_pos.csv` y `data/pedidos_app.csv`  
+  Campos mínimos: `order_id`, `fecha`, `cliente_id`, `sucursal_id`, `canal` (`POS` o `APP`).
+
+- `data/lineas_pos.csv` y `data/lineas_app.csv`  
+  Campos mínimos: `order_id`, `line_num`, `sku`, `cantidad`, `precio_unitario`, `promo_codigo`, `metodo_pago`, `cancelado_flag`.
+
+> Nota: si en origen el descuento ya viene desglosado, incluya también `descuento_importe`.  
+> Si no, puede derivarse en el proceso (ver más adelante).
+
+---
+
+## 2. Carga de datos y validación de esquema
+
+En un pipeline reproducible, **la primera etapa** consiste en cargar datos y aplicar validaciones: tipos, llaves no nulas, dominios controlados y rangos.
+
+```{python}
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+DATA_DIR = Path("../../data")
+
+def read_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"No se encontró el archivo: {path.resolve()}")
+    return pd.read_csv(path)
+
+clientes   = read_csv(DATA_DIR / "clientes.csv")
+productos  = read_csv(DATA_DIR / "productos.csv")
+sucursales = read_csv(DATA_DIR / "sucursales.csv")
+
+ped_pos = read_csv(DATA_DIR / "pedidos_pos.csv")
+ped_app = read_csv(DATA_DIR / "pedidos_app.csv")
+lin_pos = read_csv(DATA_DIR / "lineas_pos.csv")
+lin_app = read_csv(DATA_DIR / "lineas_app.csv")
+
+# Promociones es opcional
+prom_path = DATA_DIR / "promociones.csv"
+promociones = read_csv(prom_path) if prom_path.exists() else None
+
+# Visualización rápida
+clientes.head(), productos.head(), sucursales.head()
+```
+
+### 2.1 Chequeos mínimos de calidad
+
+A continuación se implementan reglas mínimas. En un DW real, estas reglas alimentan un sistema de monitoreo (por ejemplo, Great Expectations) y generan reportes de calidad.
+
+```{python}
+def assert_columns(df: pd.DataFrame, required: list[str], name: str):
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"[{name}] Faltan columnas requeridas: {missing}")
+
+# Esquema mínimo
+assert_columns(clientes,  ["cliente_id", "fecha_alta"], "clientes")
+assert_columns(productos, ["sku", "nombre", "categoria"], "productos")
+assert_columns(sucursales,["sucursal_id", "nombre", "zona"], "sucursales")
+
+assert_columns(ped_pos, ["order_id","fecha","cliente_id","sucursal_id","canal"], "pedidos_pos")
+assert_columns(ped_app, ["order_id","fecha","cliente_id","sucursal_id","canal"], "pedidos_app")
+
+assert_columns(lin_pos, ["order_id","line_num","sku","cantidad","precio_unitario"], "lineas_pos")
+assert_columns(lin_app, ["order_id","line_num","sku","cantidad","precio_unitario"], "lineas_app")
+
+# Tipos: fechas
+for df, col, name in [
+    (clientes, "fecha_alta", "clientes"),
+    (ped_pos, "fecha", "pedidos_pos"),
+    (ped_app, "fecha", "pedidos_app"),
+]:
+    df[col] = pd.to_datetime(df[col], errors="coerce")
+    if df[col].isna().any():
+        bad = df[df[col].isna()].head(5)
+        raise ValueError(f"[{name}] Fechas inválidas en '{col}'. Ejemplos:\n{bad}")
+
+# No nulos en llaves operacionales
+def assert_not_null(df: pd.DataFrame, cols: list[str], name: str):
+    for c in cols:
+        if df[c].isna().any():
+            raise ValueError(f"[{name}] Hay nulos en la columna clave: {c}")
+
+assert_not_null(ped_pos, ["order_id","cliente_id","sucursal_id"], "pedidos_pos")
+assert_not_null(ped_app, ["order_id","cliente_id","sucursal_id"], "pedidos_app")
+assert_not_null(lin_pos, ["order_id","sku"], "lineas_pos")
+assert_not_null(lin_app, ["order_id","sku"], "lineas_app")
+
+# Dominios controlados
+canales_validos = {"POS","APP"}
+if not set(ped_pos["canal"].unique()).issubset(canales_validos):
+    raise ValueError(f"[pedidos_pos] Canal fuera de dominio: {set(ped_pos['canal'].unique()) - canales_validos}")
+if not set(ped_app["canal"].unique()).issubset(canales_validos):
+    raise ValueError(f"[pedidos_app] Canal fuera de dominio: {set(ped_app['canal'].unique()) - canales_validos}")
+
+# Rangos numéricos
+for df, name in [(lin_pos,"lineas_pos"), (lin_app,"lineas_app")]:
+    if (df["cantidad"] <= 0).any():
+        raise ValueError(f"[{name}] Se encontraron cantidades <= 0")
+    if (df["precio_unitario"] < 0).any():
+        raise ValueError(f"[{name}] Se encontraron precios negativos")
+
+print("Validaciones mínimas: OK")
+```
+
+---
+
+## 3. Homologación e integración de fuentes (Staging Integrado)
+
+En Kimball, la integración lógica se garantiza mediante **dimensiones conformadas** y una **bus matrix**. Antes de construir dimensiones y hechos, se unifican las fuentes POS y App.
+
+### 3.1 Integración de encabezados y líneas
+
+<!-- ```{python}
+# Unificar encabezados y líneas
+pedidos = pd.concat([ped_pos, ped_app], ignore_index=True)
+lineas  = pd.concat([lin_pos, lin_app], ignore_index=True)
+
+# Normalizaciones
+pedidos["canal"] = pedidos["canal"].str.upper()
+
+# --- CLAVE ÚNICA GLOBAL (DW) ---
+# Si order_id puede repetirse entre POS y APP, usamos (canal, order_id).
+# Creamos un identificador único: order_uid
+pedidos["order_uid"] = pedidos["canal"].astype(str) + "-" + pedidos["order_id"].astype(str)
+
+# Las líneas no traen canal; se lo pegamos desde el header con un join previo (por order_id y canal si aplica)
+# Si tus líneas sí traen canal, úsalo; si no, asumimos que lineas_pos -> POS y lineas_app -> APP
+lin_pos_ = lin_pos.copy()
+lin_pos_["canal"] = "POS"
+lin_app_ = lin_app.copy()
+lin_app_["canal"] = "APP"
+
+lineas = pd.concat([lin_pos_, lin_app_], ignore_index=True)
+lineas["canal"] = lineas["canal"].str.upper()
+lineas["order_uid"] = lineas["canal"].astype(str) + "-" + lineas["order_id"].astype(str)
+
+# Flags
+lineas["promo_codigo"] = lineas.get("promo_codigo", pd.Series(["NA"]*len(lineas))).fillna("NA")
+lineas["cancelado_flag"] = lineas.get("cancelado_flag", 0)
+lineas["cancelado_flag"] = lineas["cancelado_flag"].fillna(0).astype(int)
+
+# Integración header + lines a granularidad línea usando order_uid
+stg = lineas.merge(pedidos, on=["order_uid"], how="left", validate="m:1")
+
+# Chequeo de integridad
+if stg["fecha"].isna().any():
+    bad = stg[stg["fecha"].isna()][["order_id","order_uid","line_num","canal"]].head(10)
+    raise ValueError(f"Existen líneas sin encabezado de pedido asociado. Ejemplos:\n{bad}")
+``` -->
+
+### 3.2 Derivación de métricas transaccionales
+
+Se recomienda almacenar importes en el hecho para evitar dependencia histórica de catálogos (p. ej., cambios de precio de lista).
+
+<!-- ```{python}
+# Medidas base
+stg["importe_bruto"] = (stg["cantidad"] * stg["precio_unitario"]).astype(float)
+
+# Descuento: si no viene explícito, se asume 0 (ajuste si aplica)
+if "descuento_importe" not in stg.columns:
+    stg["descuento_importe"] = 0.0
+else:
+    stg["descuento_importe"] = stg["descuento_importe"].fillna(0.0).astype(float)
+
+stg["importe_neto"] = stg["importe_bruto"] - stg["descuento_importe"]
+
+# Convención simple para cancelaciones:
+# - Importe neto se fuerza a 0 para líneas canceladas.
+stg.loc[stg["cancelado_flag"].eq(1), "importe_neto"] = 0.0
+
+# Cupón aplicado (bandera)
+stg["cupon_aplicado_flag"] = (stg["promo_codigo"].fillna("NA") != "NA").astype(int)
+
+stg[["order_id","line_num","cantidad","precio_unitario","importe_bruto","descuento_importe","importe_neto",
+     "cancelado_flag","promo_codigo","cupon_aplicado_flag"]].head()
+``` -->
+
+---
+
+## 4. Construcción de dimensiones conformadas
+
+En un DW tipo estrella, todas las dimensiones deben tener:
+
+- **llave sustituta** (`*_key`, entero),
+- **llave natural** (clave operacional como `cliente_id`, `sku`, etc.),
+- atributos descriptivos.
+
+Para un libro y un ejemplo didáctico, se implementa SCD Tipo 1 (sobrescritura). En producción, `dim_cliente` y `dim_producto` suelen requerir SCD Tipo 2.
+
+### 4.1 `dim_tiempo`
+
+<!-- ```{python}
+# Rango de fechas basado en staging
+min_date = stg["fecha"].min().normalize()
+max_date = stg["fecha"].max().normalize()
+
+dim_tiempo = pd.DataFrame({"fecha": pd.date_range(min_date, max_date, freq="D")})
+dim_tiempo["anio"] = dim_tiempo["fecha"].dt.year
+dim_tiempo["mes"] = dim_tiempo["fecha"].dt.month
+dim_tiempo["trimestre"] = dim_tiempo["fecha"].dt.quarter
+dim_tiempo["semana_iso"] = dim_tiempo["fecha"].dt.isocalendar().week.astype(int)
+dim_tiempo["dia_semana"] = dim_tiempo["fecha"].dt.dayofweek + 1
+dim_tiempo["es_fin_semana"] = dim_tiempo["dia_semana"].isin([6,7]).astype(int)
+
+dim_tiempo.insert(0, "tiempo_key", np.arange(1, len(dim_tiempo)+1, dtype=int))
+dim_tiempo.head()
+``` -->
+
+### 4.2 Función auxiliar para dimensiones (Tipo 1)
+
+<!-- ```{python}
+def build_dim_type1(df: pd.DataFrame, natural_key: str, attrs: list[str], sk_name: str) -> pd.DataFrame:
+    out = df[[natural_key] + attrs].drop_duplicates().reset_index(drop=True)
+    out.insert(0, sk_name, np.arange(1, len(out)+1, dtype=int))
+    return out
+
+# Dimensiones básicas
+dim_canal = pd.DataFrame({"canal": ["POS","APP"]})
+dim_canal.insert(0, "canal_key", [1,2])
+
+# Metodo de pago: si no existe en staging, se crea "NA"
+if "metodo_pago" not in stg.columns:
+    stg["metodo_pago"] = "NA"
+dim_metodo_pago = pd.DataFrame({"metodo_pago": sorted(stg["metodo_pago"].fillna("NA").unique())})
+dim_metodo_pago.insert(0, "metodo_pago_key", np.arange(1, len(dim_metodo_pago)+1, dtype=int))
+
+# Promoción
+if promociones is None:
+    # Mínimo viable: solo códigos observados
+    dim_promocion = pd.DataFrame({"promo_codigo": sorted(stg["promo_codigo"].fillna("NA").unique())})
+else:
+    # Con catálogo maestro: se prioriza catálogo, pero garantizamos NA
+    dim_promocion = promociones.copy()
+    if "promo_codigo" not in dim_promocion.columns:
+        raise ValueError("promociones.csv debe incluir 'promo_codigo'")
+    if "NA" not in set(dim_promocion["promo_codigo"].astype(str).unique()):
+        dim_promocion = pd.concat([pd.DataFrame({"promo_codigo":["NA"]}), dim_promocion], ignore_index=True)
+
+dim_promocion["promo_codigo"] = dim_promocion["promo_codigo"].astype(str).fillna("NA")
+dim_promocion = dim_promocion.drop_duplicates(subset=["promo_codigo"]).reset_index(drop=True)
+dim_promocion.insert(0, "promocion_key", np.arange(1, len(dim_promocion)+1, dtype=int))
+dim_promocion.head()
+``` -->
+
+### 4.3 `dim_cliente`, `dim_producto`, `dim_sucursal`
+<!-- 
+```{python}
+# Ajustes básicos de tipos
+if "nivel_lealtad" not in clientes.columns:
+    clientes["nivel_lealtad"] = "NA"
+if "tipo_cliente" not in clientes.columns:
+    clientes["tipo_cliente"] = "NA"
+
+dim_cliente = build_dim_type1(
+    clientes,
+    natural_key="cliente_id",
+    attrs=["tipo_cliente","nivel_lealtad","fecha_alta"],
+    sk_name="cliente_key"
+)
+
+# Productos
+for col in ["subcategoria","tamano","activo"]:
+    if col not in productos.columns:
+        productos[col] = "NA" if col != "activo" else 1
+
+dim_producto = build_dim_type1(
+    productos,
+    natural_key="sku",
+    attrs=["nombre","categoria","subcategoria","tamano","activo"],
+    sk_name="producto_key"
+)
+
+# Sucursales
+for col in ["formato"]:
+    if col not in sucursales.columns:
+        sucursales[col] = "NA"
+
+dim_sucursal = build_dim_type1(
+    sucursales,
+    natural_key="sucursal_id",
+    attrs=["nombre","zona","formato"],
+    sk_name="sucursal_key"
+)
+
+dim_cliente.head(), dim_producto.head(), dim_sucursal.head()
+``` -->
+
+---
+
+## 5. Construcción de la tabla de hechos (fact_linea_pedido)
+
+El hecho se define a granularidad **línea de pedido**, con:
+
+- Llaves sustitutas hacia dimensiones conformadas.
+- Medidas aditivas (`cantidad`, `importe_*`) y banderas (`cancelado_flag`, `cupon_aplicado_flag`).
+- Llave degenerada `order_id` para trazabilidad.
+<!-- 
+```{python}
+fact = stg.merge(dim_tiempo[["tiempo_key","fecha"]], on="fecha", how="left")           .merge(dim_cliente[["cliente_key","cliente_id"]], on="cliente_id", how="left")           .merge(dim_sucursal[["sucursal_key","sucursal_id"]], on="sucursal_id", how="left")           .merge(dim_producto[["producto_key","sku"]], on="sku", how="left")           .merge(dim_canal[["canal_key","canal"]], on="canal", how="left")           .merge(dim_metodo_pago[["metodo_pago_key","metodo_pago"]], on="metodo_pago", how="left")           .merge(dim_promocion[["promocion_key","promo_codigo"]], on="promo_codigo", how="left")
+
+# Integridad dimensional (unknown members)
+for col in ["tiempo_key","cliente_key","sucursal_key","producto_key","canal_key","metodo_pago_key","promocion_key"]:
+    if fact[col].isna().any():
+        # En DW real: asignar key=0 a Unknown y registrar warning.
+        bad = fact[fact[col].isna()][["order_id","line_num"]].head(10)
+        raise ValueError(f"Hay filas sin mapeo dimensional para '{col}'. Ejemplos:
+{bad}")
+
+fact_linea_pedido = fact[[
+    "order_id","line_num",
+    "tiempo_key","cliente_key","sucursal_key","producto_key",
+    "canal_key","metodo_pago_key","promocion_key",
+    "cantidad","precio_unitario","importe_bruto","descuento_importe","importe_neto",
+    "cancelado_flag","cupon_aplicado_flag"
+]].copy()
+
+fact_linea_pedido.head()
+``` -->
+
+---
+
+## 6. Data Marts y respuestas a preguntas estratégicas
+
+### 6.1 Pregunta 1: Pedidos mensuales desde enero 2023, segmentado por canal
+
+Se define como **número de pedidos únicos** (`COUNT DISTINCT order_id`) por mes.
+<!-- 
+```{python}
+APP_LAUNCH = pd.Timestamp("2023-01-01")
+
+fact_time = fact_linea_pedido.merge(
+    dim_tiempo[["tiempo_key","fecha","anio","mes"]],
+    on="tiempo_key", how="left"
+)
+fact_time["yyyymm"] = fact_time["fecha"].dt.to_period("M").astype(str)
+
+# Desde enero 2023
+mask_2023 = fact_time["fecha"] >= APP_LAUNCH
+
+q1 = (fact_time.loc[mask_2023]
+      .groupby("yyyymm")
+      .agg(pedidos=("order_id","nunique"),
+           lineas=("order_id","size"),
+           ingreso_neto=("importe_neto","sum"))
+      .reset_index()
+      .sort_values("yyyymm"))
+
+# Segmentación por canal
+fact_time_canal = fact_time.merge(dim_canal, on="canal_key", how="left")
+q1_canal = (fact_time_canal.loc[mask_2023]
+            .groupby(["yyyymm","canal"])
+            .agg(pedidos=("order_id","nunique"),
+                 ingreso_neto=("importe_neto","sum"))
+            .reset_index()
+            .sort_values(["yyyymm","canal"]))
+
+q1.head(), q1_canal.head()
+``` -->
+
+### 6.2 Pregunta 2: Categorías con mayor demanda en el periodo post
+
+Se recomienda reportar tanto unidades (volumen) como ingreso neto.
+<!-- 
+```{python}
+fact_prod = fact_time.merge(dim_producto[["producto_key","categoria","subcategoria"]], on="producto_key", how="left")
+q2 = (fact_prod.loc[fact_prod["fecha"] >= APP_LAUNCH]
+      .groupby("categoria")
+      .agg(unidades=("cantidad","sum"),
+           ingreso_neto=("importe_neto","sum"),
+           pedidos=("order_id","nunique"))
+      .reset_index()
+      .sort_values(["ingreso_neto","unidades"], ascending=False))
+
+q2.head(10)
+``` -->
+
+### 6.3 Pregunta 3: Variaciones por zona y tipo de cliente (pre vs post)
+
+Se propone comparar **delta (post - pre)** en pedidos e ingreso neto.
+<!-- 
+```{python}
+fact_zona = fact_prod.merge(dim_sucursal[["sucursal_key","zona"]], on="sucursal_key", how="left")
+fact_zona = fact_zona.merge(dim_cliente[["cliente_key","tipo_cliente"]], on="cliente_key", how="left")
+
+fact_zona["periodo"] = np.where(fact_zona["fecha"] >= APP_LAUNCH, "post", "pre")
+
+q3 = (fact_zona
+      .groupby(["periodo","zona","tipo_cliente"])
+      .agg(pedidos=("order_id","nunique"),
+           ingreso_neto=("importe_neto","sum"))
+      .reset_index())
+
+# Pivot para deltas
+q3_pivot = (q3.pivot_table(index=["zona","tipo_cliente"], columns="periodo",
+                           values=["pedidos","ingreso_neto"], aggfunc="sum")
+              .fillna(0))
+
+q3_pivot[("pedidos","delta")] = q3_pivot[("pedidos","post")] - q3_pivot[("pedidos","pre")]
+q3_pivot[("ingreso_neto","delta")] = q3_pivot[("ingreso_neto","post")] - q3_pivot[("ingreso_neto","pre")]
+
+q3_delta = q3_pivot.reset_index()
+q3_delta.columns = ["_".join([c for c in col if c]) if isinstance(col, tuple) else col for col in q3_delta.columns]
+
+q3_delta.sort_values("ingreso_neto_delta", ascending=False).head(15)
+``` -->
+
+### 6.4 Pregunta 4: Cancelación y cupones (tasas) por mes
+
+Las tasas son **no aditivas**, por lo que deben calcularse como promedios o cocientes.
+<!-- 
+```{python}
+q4 = (fact_time
+      .groupby("yyyymm")
+      .agg(
+          tasa_cancelacion=("cancelado_flag","mean"),
+          tasa_cupon=("cupon_aplicado_flag","mean"),
+          pedidos=("order_id","nunique"),
+          lineas=("order_id","size"),
+          ingreso_neto=("importe_neto","sum"),
+      )
+      .reset_index()
+      .sort_values("yyyymm"))
+
+q4.tail(12)
+``` -->
+
+---
+
+## 7. Exportación de tablas: Dimensiones y Hechos (Data Mart físico)
+
+En una implementación típica, estas tablas se materializan como CSV/Parquet en un *lakehouse* o como tablas físicas en un motor analítico (PostgreSQL, BigQuery, Snowflake, DuckDB, etc.). Aquí se exportan a `out/`.
+<!-- 
+```{python}
+OUT_DIR = Path("out")
+OUT_DIR.mkdir(exist_ok=True)
+
+dim_tiempo.to_csv(OUT_DIR / "dim_tiempo.csv", index=False)
+dim_cliente.to_csv(OUT_DIR / "dim_cliente.csv", index=False)
+dim_producto.to_csv(OUT_DIR / "dim_producto.csv", index=False)
+dim_sucursal.to_csv(OUT_DIR / "dim_sucursal.csv", index=False)
+dim_canal.to_csv(OUT_DIR / "dim_canal.csv", index=False)
+dim_metodo_pago.to_csv(OUT_DIR / "dim_metodo_pago.csv", index=False)
+dim_promocion.to_csv(OUT_DIR / "dim_promocion.csv", index=False)
+
+fact_linea_pedido.to_csv(OUT_DIR / "fact_linea_pedido.csv", index=False)
+
+# Data marts de salida (consultas)
+q1.to_csv(OUT_DIR / "mart_pedidos_mensuales.csv", index=False)
+q1_canal.to_csv(OUT_DIR / "mart_pedidos_mensuales_canal.csv", index=False)
+q2.to_csv(OUT_DIR / "mart_demanda_categorias_post.csv", index=False)
+q3_delta.to_csv(OUT_DIR / "mart_variacion_zona_cliente_pre_post.csv", index=False)
+q4.to_csv(OUT_DIR / "mart_tasas_cancelacion_cupon_mes.csv", index=False)
+
+sorted([p.name for p in OUT_DIR.glob("*.csv")])
+``` -->
+
+---
+
+## 8. Discusión técnica: decisiones de diseño y extensiones
+
+1. **Dimensiones conformadas**: `dim_tiempo`, `dim_cliente`, `dim_producto`, `dim_sucursal`, `dim_canal` permiten integrar *Ventas POS* y *Pedidos App* en una misma semántica de consulta (bus architecture).
+
+2. **Granularidad**: al modelar a nivel de línea, se preserva el análisis de mezcla de productos y el efecto de promociones en el importe.
+
+3. **SCD Tipo 2 (extensión recomendada)**: si se desea preservar historia de cambios en `categoria` o en `nivel_lealtad`, se debe:
+   - añadir `vigencia_inicio`, `vigencia_fin`, `vigente_flag`,
+   - resolver la clave dimensional “as-of” en la fecha del hecho.
+
+4. **Late Arriving Dimensions**: en escenarios reales, pueden llegar transacciones cuyo cliente aún no existe en el catálogo. La práctica estándar es asignar **Unknown Member** (`*_key = 0`) y corregir al cierre del ciclo de carga.
+
+5. **Prueba estadística pre/post (opcional)**: para un tratamiento académico, se sugiere formalizar el cambio con pruebas no paramétricas o bootstrap sobre series mensuales (p. ej., pedidos o tasa de cancelación).
+
+---
+
+## 9. Reproducibilidad y control de versiones
+
+Para un libro académico, se recomienda:
+
+- fijar versiones de dependencias (p. ej., `pandas==2.x`, `numpy==2.x`),
+- mantener `data/` como directorio externo (no versionar datos sensibles),
+- versionar el pipeline y el `.qmd` (Git),
+- documentar el diccionario de datos final (metadatos de cada dimensión y hecho).
