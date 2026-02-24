@@ -1,0 +1,117 @@
+
+
+## Escenario
+
+Café Norte opera 35 cafeterías en CDMX y área metropolitana. En enero de 2023 lanzó su app de pedidos y su programa de lealtad. La dirección desea analizar el impacto **antes y después** de esa fecha, tanto en volumen de pedidos como en mezcla de productos, variaciones por zona y cambios en cancelaciones y uso de cupones.
+
+Preguntas estratégicas:
+
+1. ¿Cómo cambió el número de pedidos mensuales desde enero de 2023?
+2. ¿Qué categorías registran mayor demanda después de 2023?
+3. ¿Qué zonas y tipos de cliente presentan variaciones significativas?
+4. ¿Cambió la tasa de cancelación y el uso de cupones?
+
+## Arquitectura de 3 capas
+
+```{mermaid}
+flowchart LR
+
+  subgraph ETL
+    E1[Extracción]
+    E2[Staging]
+    E3[Limpieza y Homologación]
+    E4[Integración Claves]
+    E5[Data Warehouse Integrado]
+  end
+
+  subgraph Consumo
+    M1[Data Mart Ventas]
+    M2[Data Mart App]
+    M3[Dashboards BI]
+  end
+
+  S1[S1: POS] --> E1
+  S2[S2: App] --> E1
+  S3[S3: Catálogo productos] --> E1
+  S4[S4: Clientes] --> E1
+  S5[S5: Sucursales] --> E1
+
+  E1 --> E2 --> E3 --> E4 --> E5
+  E5 --> M1
+  E5 --> M2
+  M1 --> M3
+  M2 --> M3
+```
+
+## Estrategia de implementación: Kimball
+
+En este escenario se elige un enfoque **Kimball** (bottom-up) porque se requiere valor analítico rápido, el análisis está organizado por procesos de negocio (ventas y pedidos), y es viable definir dimensiones conformadas desde el inicio (tiempo, cliente, producto y sucursal) para mantener coherencia entre data marts.
+
+## Data Mart de pedidos y ventas (esquema estrella)
+
+### Granularidad
+
+Se define la granularidad como **una fila por línea de pedido**. Esta decisión permite analizar el *mix* de productos, la participación del canal (tienda vs app), el uso de cupones y las cancelaciones con suficiente detalle, sin depender de agregados precomputados.
+
+```{mermaid}
+flowchart LR
+  F[(fact_linea_pedido)]
+
+  T[dim_tiempo]
+  S[dim_sucursal]
+  P[dim_producto]
+  C[dim_cliente]
+  K[dim_canal]
+  M[dim_metodo_pago]
+  R[dim_promocion]
+
+  F --- T
+  F --- S
+  F --- P
+  F --- C
+  F --- K
+  F --- M
+  F --- R
+```
+
+### Medidas de la tabla de hechos
+
+En `fact_linea_pedido` se almacenan medidas típicas como:
+
+- `cantidad`
+- `importe_bruto`
+- `descuento_importe`
+- `importe_neto`
+- `cancelado_flag`
+- `cupon_aplicado_flag`
+
+## Medidas aditivas y no aditivas
+
+### Medida aditiva
+
+`cantidad` (unidades vendidas) es **aditiva**: puede sumarse a través de tiempo, sucursal, producto, canal o tipo de cliente.
+
+### Medida no aditiva / semi-aditiva
+
+`clientes_unicos` no debe sumarse por filas; se calcula como:
+
+- `COUNT(DISTINCT cliente_key)` por periodo o por el conjunto dimensional de interés.
+
+## Respuesta a las 4 preguntas
+
+1. **Pedidos mensuales desde enero 2023**:  
+   `COUNT(DISTINCT order_id)` agrupado por mes y segmentado por `dim_canal`, comparando periodos pre/post.
+
+2. **Categorías con mayor demanda después de 2023**:  
+   `SUM(cantidad)` o `SUM(importe_neto)` por `dim_producto.categoria`, filtrando el periodo post.
+
+3. **Zonas y tipos de cliente con variaciones significativas**:  
+   Comparar `SUM(importe_neto)` o `COUNT(DISTINCT order_id)` por `dim_sucursal.zona` y `dim_cliente.tipo_cliente` en pre vs post.
+
+4. **Cambio en tasa de cancelación y uso de cupones**:  
+   - Tasa de cancelación: `SUM(cancelado_flag) / COUNT(*)` por mes.  
+   - Uso de cupón: `SUM(cupon_aplicado_flag) / COUNT(*)` por mes o por campaña en `dim_promocion`.
+
+---
+
+Este ejemplo integra fuentes, ETL, arquitectura y modelado dimensional, y muestra cómo el Data Warehouse habilita comparaciones temporales y análisis segmentado para apoyar decisiones operativas y estratégicas.
