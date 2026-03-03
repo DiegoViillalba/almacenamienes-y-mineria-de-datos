@@ -1,89 +1,161 @@
-
 ---
-title: "Minería de Datos: Fundamentos Teóricos, Técnicas y Aplicaciones"
-author: "Facultad de Ciencias, UNAM"
-format:
-  html:
-    toc: true
-    number-sections: true
-  pdf:
-    documentclass: report
-    toc: true
-    number-sections: true
+title: "Introducción a Minería de Datos y Frameworks de Proceso"
+format: html
 ---
 
 # Introducción
 
-La minería de datos constituye una disciplina formal dentro del proceso de descubrimiento de conocimiento en bases de datos (KDD). Su propósito no es simplemente consultar información almacenada, sino identificar patrones, regularidades, estructuras latentes y relaciones estadísticamente significativas dentro de grandes volúmenes de datos.
+La minería de datos es una disciplina formal dentro del proceso de *Descubrimiento de Conocimiento en Bases de Datos* (KDD). Su propósito no se reduce a consultar información almacenada, sino a **inferir estructura**: patrones, regularidades, relaciones estadísticamente significativas y modelos predictivos que capturen comportamientos latentes en datos observacionales. En términos técnicos, esto implica articular una cadena coherente que va desde la definición del problema hasta el despliegue y monitoreo del resultado, con etapas explícitas de validación y retroalimentación.
 
-Desde un punto de vista metodológico, la minería de datos combina fundamentos de estadística inferencial, aprendizaje automático, optimización matemática y modelado computacional. Su desarrollo moderno se vincula con el crecimiento exponencial de datos digitales y con la necesidad de convertir información cruda en conocimiento accionable para la toma de decisiones.
+En el desarrollo moderno del campo, el crecimiento en volumen, variedad y velocidad de los datos hizo necesaria la estandarización de prácticas; de ahí emergen *frameworks* de proceso que funcionan como guías end-to-end para conducir proyectos de analítica y minería de datos de manera consistente.
 
 # Recuperación de datos versus minería de datos
 
-Es fundamental distinguir entre recuperación de datos y minería de datos. La recuperación de datos implica ejecutar consultas donde el criterio de búsqueda está previamente definido. Por ejemplo, obtener todas las ventas realizadas en enero o listar pacientes diagnosticados con una enfermedad específica durante cierto año. En estos casos, la estructura de la pregunta está completamente determinada antes de interactuar con la base de datos.
+La recuperación de datos responde preguntas totalmente definidas por el usuario antes de acceder al sistema. En un lenguaje operativo, es una transformación de la forma: “dame los registros que satisfacen condición C”, donde C es conocida y el resultado es un subconjunto del repositorio.
 
-En contraste, la minería de datos tiene como objetivo descubrir relaciones que no fueron explícitamente formuladas. Por ejemplo, determinar qué variables predicen la cancelación de citas médicas o identificar segmentos de clientes con mayor probabilidad de abandono. Aquí el sistema no solo responde a una condición predefinida, sino que infiere estructura a partir de los datos.
+La minería de datos, por contraste, busca responder preguntas donde la forma de la relación es desconocida. El objetivo no es filtrar, sino **aprender**: estimar funciones, reglas o estructuras que expliquen o anticipen un fenómeno. Por ejemplo, en lugar de “listar cancelaciones”, la pregunta se vuelve “¿qué variables anticipan una cancelación y con qué confiabilidad?”, lo que obliga a definir variables, construir un conjunto de entrenamiento, controlar sesgos, seleccionar un criterio de evaluación y cuantificar incertidumbre.
+
+```{mermaid}
+flowchart LR
+  A[(Base de datos)] --> B["Recuperación de datos<br/>(SQL/consultas)"]
+  B --> C["Resultado:<br/>registros que cumplen C"]
+
+  A --> D["Minería de datos<br/>(modelado)"]
+  D --> E["Resultado:<br/>modelo/patrones"]
+  E --> F["Acción:<br/>decisión, intervención,<br/>monitorización"]
+```
 
 # Correlación y causalidad
 
-Uno de los principios epistemológicos más importantes en minería de datos es que la correlación no implica causalidad. Una asociación estadística entre dos variables no demuestra que una sea causa de la otra. 
+En minería de datos, un hallazgo frecuente es la presencia de asociaciones fuertes entre variables. Sin embargo, una asociación estadística (correlación) no garantiza un vínculo causal. La razón técnica es que los datos observacionales pueden estar dominados por variables omitidas, selección no aleatoria, confusores o retroalimentaciones entre variables.
 
-Por ejemplo, si se observa que estudiantes con mayor promedio académico tienden a tener mayores ingresos, esto únicamente indica una asociación. No puede concluirse que el promedio cause directamente el ingreso, pues podrían intervenir variables no observadas como contexto socioeconómico, red de contactos o tipo de institución.
+Para hablar de causalidad, típicamente se requiere un diseño experimental (idealmente aleatorizado). Un ejemplo clásico en sistemas digitales es un experimento A/B: se asigna aleatoriamente una intervención a un grupo tratamiento y se compara contra un grupo control bajo una métrica previamente definida (cancelación, conversión, retención). En la práctica, incluso con A/B, sigue siendo necesario vigilar violaciones: interferencia entre unidades (spillover), cambios temporales (estacionalidad) y sesgos de medición.
 
-Para establecer causalidad es necesario recurrir a diseños experimentales controlados. Una metodología clásica es la prueba A/B, donde los individuos son asignados aleatoriamente a un grupo control y a un grupo tratamiento, introduciendo una única diferencia y comparando resultados bajo una métrica previamente definida.
+```{mermaid}
+flowchart TB
+  U["Confusores no observados<br/>(ej. contexto socioeconómico)"] --> X["Variable X<br/>(promedio académico)"]
+  U --> Y["Variable Y<br/>(ingreso)"]
+  X --> Y
+  note1["Si observas X↔Y,<br/>no concluyas X→Y<br/>sin controlar U."]
+  Y --> note1
+```
 
-# Clasificación (Aprendizaje Supervisado)
+# Tareas centrales de minería de datos
 
-La clasificación es una técnica supervisada en la que existe una variable objetivo categórica. Formalmente, se busca aprender una función que asigne cada vector de características a una categoría discreta.
+## Clasificación (aprendizaje supervisado)
 
-Matemáticamente, dado un conjunto de entrenamiento:
+La clasificación modela una variable objetivo categórica. Dado un vector de atributos \(\mathbf{x}\in\mathbb{R}^p\), se aprende una función \(f(\mathbf{x})\in\{1,\dots,K\}\) que minimiza una pérdida esperada (por ejemplo, entropía cruzada o error 0-1 aproximado). Desde el punto de vista técnico, el desempeño se valida con esquemas como *train/validation/test* o *k-fold cross-validation*, y se analiza sensibilidad a desbalance de clases, umbrales de decisión y costos asimétricos.
 
-f: R^p → {1, ..., K}
+**Ejemplo**: predecir si un estudiante aprobará con asistencia, tareas entregadas y horas de estudio. Un modelo base es regresión logística; un modelo más complejo podría ser un *gradient boosting* si existen no linealidades fuertes.
 
-El modelo intenta minimizar el error de clasificación esperado.
+## Regresión (aprendizaje supervisado)
 
-Un ejemplo práctico consiste en predecir si un estudiante aprobará una materia utilizando variables como porcentaje de asistencia, número de tareas entregadas y horas de estudio semanal. En este caso, la variable objetivo es binaria (aprueba / no aprueba). Un modelo típico para este problema es la regresión logística.
+La regresión se usa cuando la variable objetivo es numérica. El problema consiste en aproximar una función \(y \approx g(\mathbf{x})\) bajo un criterio como MSE o MAE. Técnicamente, la selección del modelo depende de la estructura esperada: linealidad, heterocedasticidad, colinealidad y presencia de *outliers*. Métricas típicas incluyen RMSE, MAE y \(R^2\), pero en entornos de decisión suelen añadirse métricas de negocio (por ejemplo, error tolerable por segmento).
 
-Otro ejemplo corresponde a la clasificación de imágenes, donde a partir de características numéricas extraídas de píxeles se predice si una imagen corresponde a un gato o a un perro. En escenarios modernos, esta tarea se resuelve mediante redes neuronales profundas.
+**Ejemplo**: predecir precio de vivienda con atributos físicos y geográficos; si hay interacciones complejas, se prefiere un modelo no lineal (árboles, ensambles, redes).
 
-# Regresión (Aprendizaje Supervisado)
+## Clustering (aprendizaje no supervisado)
 
-La regresión se utiliza cuando la variable objetivo es numérica. El objetivo es modelar la relación entre variables independientes y una variable continua.
+El clustering busca particiones naturales sin etiquetas. El caso prototípico es \(k\)-means, que minimiza la suma de distancias cuadráticas a centroides. Su uso exige decisiones técnicas: estandarización de variables, selección de \(k\), sensibilidad a inicialización y validez del supuesto de clusters aproximadamente esféricos. En datos con geometrías complejas, DBSCAN o modelos de mezcla pueden ser preferibles.
 
-Un ejemplo clásico es la predicción del precio de una vivienda en función de sus características físicas y geográficas. El modelo lineal establece una relación aditiva entre variables explicativas y la variable objetivo, aunque también pueden emplearse modelos no lineales.
+**Ejemplo**: segmentar usuarios por sesiones/semana, duración promedio y gasto mensual. La interpretación del cluster no está “en los datos”; se construye al vincular perfiles con acciones (campañas, producto, soporte).
 
-La evaluación de modelos de regresión se realiza mediante métricas como el error cuadrático medio (RMSE), el error absoluto medio (MAE) y el coeficiente de determinación R^2.
+## Reglas de asociación
 
-# Clustering (Aprendizaje No Supervisado)
+Las reglas tipo “si A entonces B” formalizan co-ocurrencias (análisis de canasta de mercado). Las métricas clave son soporte, confianza y *lift*; el *lift* es crucial porque evita confundir alta confianza con un consecuente muy frecuente.
 
-El clustering busca identificar grupos naturales dentro de los datos sin contar con etiquetas previas. El algoritmo más conocido es k-means, que minimiza la suma de distancias cuadráticas entre observaciones y los centroides de los grupos.
+**Ejemplo**: identificar que quienes compran jarabe para la tos tienden a comprar pastillas para la garganta; esto habilita *cross-sell* o colocación conjunta.
 
-Un ejemplo aplicado consiste en segmentar usuarios de una plataforma digital según su comportamiento: número de sesiones por semana, tiempo promedio por sesión y gasto mensual. El resultado puede revelar perfiles como usuarios ocasionales, moderados o intensivos.
+## Detección de anomalías
 
-Es importante subrayar que los grupos no tienen significado intrínseco; su interpretación depende del contexto del problema.
+Detecta observaciones raras respecto a un patrón normal. Técnicamente se puede abordar como distancia a vecindarios (LOF), separación por particiones (Isolation Forest), reconstrucción (autoencoders) o modelos probabilísticos. Un punto crítico es que “raro” no siempre significa “fraude”: requiere validación operacional y un proceso para manejo de falsos positivos.
 
-# Reglas de Asociación
+**Ejemplo**: transacciones de monto atípico en horario inusual desde ubicación distante; se asigna un puntaje de anomalía y se define un umbral de revisión.
 
-Las reglas de asociación identifican patrones del tipo “si ocurre A, suele ocurrir B”. Se utilizan principalmente en análisis de canasta de mercado.
+# Proceso integral y frameworks de minería de datos
 
-Las métricas fundamentales son soporte, confianza y lift. El soporte mide la frecuencia conjunta de A y B; la confianza estima la probabilidad condicional de B dado A; el lift compara dicha probabilidad con la frecuencia marginal de B.
+A medida que la disciplina creció, surgieron marcos de trabajo para organizar proyectos de forma repetible. Aquí se integran tres frameworks tradicionales: **KDD**, **CRISP-DM** y **SEMMA**, y se menciona además **TDSP** como alternativa moderna orientada a ingeniería.
 
-Un ejemplo típico es identificar que quienes compran jarabe para la tos también compran pastillas para la garganta. Este tipo de conocimiento permite optimizar estrategias de venta cruzada.
+## KDD como modelo de descubrimiento
 
-# Detección de Anomalías
+KDD describe el flujo completo desde datos crudos hacia conocimiento: selección, preprocesamiento, transformación, minería y evaluación/interpretación, culminando en conocimiento accionable. Es especialmente útil cuando el objetivo es **entender** y **extraer patrones explicables**, además de modelar.
 
-La detección de anomalías identifica observaciones que se desvían significativamente del comportamiento normal. Es común en sistemas financieros para detectar fraude.
+```{mermaid}
+flowchart LR
+  A[(Datos)] --> B["Selección<br/>(dataset objetivo)"]
+  B --> C["Preprocesamiento<br/>(ruido, faltantes)"]
+  C --> D["Transformación<br/>(escala, PCA, features)"]
+  D --> E["Data Mining<br/>(modelos/patrones)"]
+  E --> F["Interpretación<br/>& Evaluación"]
+  F --> G["Conocimiento<br/>(acción/reportes)"]
+```
 
-Por ejemplo, una transacción con monto inusualmente alto, realizada en horario atípico y desde una ubicación distante podría recibir una puntuación elevada de anomalía. Métodos como Isolation Forest o Local Outlier Factor son frecuentemente utilizados.
+## CRISP-DM como marco de proyecto end-to-end
 
-# Proceso Integral
+CRISP-DM organiza el proyecto en seis fases iterativas: comprensión del negocio, comprensión de los datos, preparación, modelado, evaluación y despliegue. Su fortaleza es gestionar el ciclo completo con énfasis explícito en llevar resultados a operación (producción, monitoreo, impacto).
 
-La minería de datos debe entenderse como un proceso estructurado que incluye definición del problema, preparación de datos, modelado, evaluación e implementación. Los algoritmos no sustituyen el conocimiento humano; requieren interpretación experta y validación rigurosa.
+```{mermaid}
+flowchart TB
+  A[Business Understanding] --> B[Data Understanding]
+  B --> C[Data Preparation]
+  C --> D[Modeling]
+  D --> E[Evaluation]
+  E --> F[Deployment]
+  E --> B
+  D --> C
+  note(["Iterativo: si falla evaluación,<br/>se regresa a datos/modelo."])
+  E --> note
+```
 
-# Consideraciones Éticas
+**Ejemplo (hospital, ausencias a citas)**: se fija un objetivo de negocio (“bajar cancelación”), se auditan variables disponibles (historial, horarios), se limpian y unifican datos (teléfonos, duplicados), se construye un modelo o experimento (por ejemplo, predicción de probabilidad de no-asistencia o A/B de recordatorios SMS), se evalúa impacto y se despliega con monitoreo continuo.
 
-El uso de modelos predictivos puede amplificar sesgos presentes en datos históricos. Es fundamental garantizar transparencia, explicabilidad y respeto a la privacidad. La implementación responsable es una obligación profesional.
+## SEMMA como pipeline práctico para iterar modelado
+
+SEMMA (Sample, Explore, Modify, Model, Assess) enfatiza el ciclo de modelado: muestrear, explorar, modificar (feature engineering/transformaciones), modelar y evaluar. Es particularmente útil cuando ya tienes un dataset razonablemente definido y quieres optimizar desempeño comparando alternativas rápidamente.
+
+```{mermaid}
+flowchart LR
+  S[Sample] --> E[Explore]
+  E --> M[Modify]
+  M --> Mo[Model]
+  Mo --> A[Assess]
+  A --> E
+  A --> M
+```
+
+## TDSP como alternativa moderna orientada a ingeniería
+
+TDSP (Team Data Science Process) se presenta como un proceso de equipo que combina gestión, reproducibilidad e implementación con prácticas de ingeniería (versionado, artefactos, despliegue). En comparación con CRISP-DM, suele enfatizar más explícitamente el “cómo se construye” en ambientes productivos (pipelines, repositorios, CI/CD, trazabilidad), aunque su esencia sigue siendo end-to-end.
+
+# Comparativa de frameworks (con ejemplos)
+
+| Framework | Enfoque principal | ¿Cuándo usarlo? | Lo que menos enfatiza | Entregable típico | Ejemplo claro |
+|---|---|---|---|---|---|
+| **CRISP-DM** | Proceso end-to-end orientado a negocio y despliegue | Alinear problema, datos, modelo y operación con métricas de impacto | Técnicas específicas (no dicta algoritmos) | Modelo + plan de despliegue + monitoreo | Reducir cancelación de citas: objetivo → datos → modelo/experimento → despliegue de recordatorios |
+| **SEMMA** | Pipeline de modelado iterativo (centrado en desempeño) | Ya tienes datos y quieres iterar rápido para mejorar métricas | Contexto de negocio y despliegue operacional | Comparativo de modelos y reporte de evaluación | Probar 3 modelos para predecir calificación final, elegir el mejor por RMSE/MAE |
+| **KDD** | Descubrimiento de conocimiento y patrones interpretables | Extraer patrones/insights con interpretación validada | Gestión del proyecto y despliegue | Patrones/reglas + interpretación | Market basket: reglas “si compra A, suele comprar B” para cross-sell |
+| **TDSP** | End-to-end con énfasis en ingeniería y trabajo en equipo | El resultado debe vivir como sistema (pipelines, CI/CD, reproducibilidad) | Marco teórico de descubrimiento; es más prescriptivo en implementación | Pipelines + artefactos + despliegue versionado | Score de riesgo con pipeline reproducible: ingesta → features → entrenamiento → registro → servicio |
+
+# Cómo se combinan (una estrategia práctica)
+
+En proyectos reales, no es necesario elegir un único marco. Una estrategia común es usar **CRISP-DM** para gobernar el proyecto completo, aplicar **SEMMA** dentro de la fase de modelado para iterar eficientemente, y apoyarse en la lógica de **KDD** si el objetivo incluye extraer patrones explicables o reglas interpretables.
+
+```{mermaid}
+flowchart TB
+  A["CRISP-DM: gobierno del proyecto"] --> B["Modeling"]
+  B --> C["SEMMA: iteración rápida<br/>(de features/modelos)"]
+  B --> D["KDD: patrones/insights<br/>interpretables"]
+  C --> E["Evaluación & selección"]
+  D --> E
+  E --> F["Despliegue & monitoreo"]
+```
+
+# Consideraciones éticas y de implementación
+
+En minería de datos, el modelo aprende patrones del pasado; si el pasado está sesgado, el modelo puede amplificar sesgos. Por eso, además de métricas predictivas, se requiere evaluación de equidad (por grupo o segmento), explicación razonable (según el caso) y gobernanza de privacidad. En implementación, también importa la estabilidad operacional: *data drift*, cambios en el proceso de captura, variación estacional y degradación del desempeño por condiciones nuevas.
+
+Un punto técnico clave es que un modelo “bueno” en validación puede fallar en producción si la distribución cambia. Por ello, el despliegue debe incluir monitoreo: estadísticos de entrada, tasas de error, calibración y alertas; además de un protocolo para reentrenamiento y auditoría.
 
 # Conclusiones
 
-La minería de datos combina teoría estadística y técnicas computacionales para transformar datos en conocimiento. Sus principales técnicas incluyen clasificación, regresión, clustering, reglas de asociación y detección de anomalías. Sin embargo, su aplicación adecuada exige rigor metodológico, interpretación crítica y responsabilidad ética.
+La minería de datos transforma datos en conocimiento mediante tareas supervisadas (clasificación, regresión), no supervisadas (clustering), y métodos de descubrimiento (reglas, anomalías). Para hacer proyectos robustos, los frameworks aportan estructura: **CRISP-DM** organiza el ciclo completo hasta despliegue, **SEMMA** acelera la iteración de modelado y **KDD** fortalece el descubrimiento e interpretación de patrones, con alternativas como **TDSP** orientadas a reproducibilidad e ingeniería.
