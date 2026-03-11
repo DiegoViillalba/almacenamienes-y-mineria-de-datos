@@ -1,0 +1,448 @@
+---
+title: "Dashboard global"
+format:
+  html:
+    toc: true
+    number-sections: true
+    page-layout: full
+  pdf:
+    toc: true
+    number-sections: true
+jupyter: python3
+---
+
+# Introducción
+
+A lo largo de los capítulos anteriores se desarrolló una ruta progresiva para el análisis exploratorio del conjunto de datos **Big Mart Sales**. La lógica seguida no fue arbitraria: se construyó una descripción estadística de las ventas a partir de cinco dimensiones complementarias.
+
+Primero se estudió la **localización**, para responder dónde se sitúan los valores típicos. Después se introdujo la **variabilidad**, para cuantificar la dispersión alrededor de esos centros. Más adelante se abordó la **forma**, con el fin de entender la asimetría, la curtosis y la estructura general de las distribuciones. Luego se examinó la **heterogeneidad**, es decir, las diferencias entre categorías, tipos de outlet y otros subgrupos. Finalmente, se incorporó la **concentración**, que permite analizar cómo se reparte el total de ventas entre las unidades que componen el sistema.
+
+El propósito de este capítulo es integrar todas esas perspectivas en un **dashboard global**, útil tanto para la enseñanza del EDA como para la comunicación de hallazgos en un entorno de análisis aplicado. Este dashboard no sustituye el análisis detallado de los capítulos previos; más bien, actúa como una síntesis estructurada que permite recorrer, de manera compacta, la construcción progresiva de la medida.
+
+# Objetivos del capítulo
+
+Este capítulo busca que el lector sea capaz de:
+
+1. integrar múltiples dimensiones del EDA en una misma narrativa analítica;
+2. construir indicadores resumidos y visualizaciones consistentes entre sí;
+3. diseñar un dashboard reproducible en Quarto compatible con un libro;
+4. interpretar de forma conjunta las dimensiones de localización, variabilidad, forma, heterogeneidad y concentración.
+
+# Carga y preparación de datos
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+DATA_PATH = "../../data/bigmart_sales.csv" # Ajustar según tu proyecto
+df = pd.read_csv(DATA_PATH)
+
+if "Item_Fat_Content" in df.columns:
+    df["Item_Fat_Content"] = (
+        df["Item_Fat_Content"]
+        .replace({
+            "LF": "Low Fat",
+            "low fat": "Low Fat",
+            "reg": "Regular"
+        })
+    )
+
+df.head()
+```
+
+# Arquitectura conceptual del dashboard
+
+El dashboard global puede entenderse como una composición de cinco capas analíticas:
+
+## Capa 1. Localización
+Resume el centro de la distribución mediante indicadores como media, mediana, moda y cuantiles.
+
+## Capa 2. Variabilidad
+Introduce la amplitud y dispersión mediante rango, desviación estándar, IQR y coeficiente de variación.
+
+## Capa 3. Forma
+Permite describir asimetría, curtosis y presencia de colas pesadas o valores atípicos.
+
+## Capa 4. Heterogeneidad
+Compara la estructura de ventas entre subgrupos relevantes, como tipos de producto o tipos de outlet.
+
+## Capa 5. Concentración
+Evalúa qué tan equilibrada o dominada está la estructura total de ventas.
+
+En un dashboard pedagógico, estas cinco capas deben coexistir de forma coherente, de manera que el lector pueda pasar del nivel global al comparativo sin perder el hilo interpretativo.
+
+# Selección de variable principal
+
+Para articular el dashboard usaremos como variable principal:
+
+\[
+\texttt{Item\_Outlet\_Sales},
+\]
+
+ya que representa el fenómeno central del conjunto de datos: las ventas observadas por producto y outlet.
+
+```{python}
+sales = df["Item_Outlet_Sales"].dropna()
+sales.describe()
+```
+
+# Panel de indicadores globales
+
+El primer componente del dashboard debe consistir en un bloque de KPIs generales que resuman el estado del conjunto de datos.
+
+```{python}
+def safe_mode(series):
+    m = series.mode(dropna=True)
+    if len(m) == 0:
+        return np.nan
+    return m.iloc[0]
+
+mean_sales = sales.mean()
+median_sales = sales.median()
+mode_sales = safe_mode(sales)
+std_sales = sales.std(ddof=1)
+iqr_sales = sales.quantile(0.75) - sales.quantile(0.25)
+cv_sales = std_sales / mean_sales if mean_sales != 0 else np.nan
+skew_sales = sales.skew()
+kurt_sales = sales.kurt()
+
+global_kpis = pd.DataFrame({
+    "Indicador": [
+        "Número de registros",
+        "Ventas totales",
+        "Media",
+        "Mediana",
+        "Moda",
+        "Desviación estándar",
+        "IQR",
+        "Coeficiente de variación",
+        "Asimetría",
+        "Curtosis"
+    ],
+    "Valor": [
+        len(df),
+        round(sales.sum(), 2),
+        round(mean_sales, 2),
+        round(median_sales, 2),
+        round(mode_sales, 2) if pd.notnull(mode_sales) else np.nan,
+        round(std_sales, 2),
+        round(iqr_sales, 2),
+        round(cv_sales, 4),
+        round(skew_sales, 4),
+        round(kurt_sales, 4)
+    ]
+})
+
+global_kpis
+```
+
+Este bloque de KPIs cumple una función importante: reúne en una sola tabla las medidas fundamentales de centro, dispersión y forma que fueron desarrolladas por separado en capítulos previos.
+
+# Panel de localización y forma
+
+Una forma natural de combinar localización y forma es mediante un histograma enriquecido con líneas de referencia para la media y la mediana.
+
+```{python}
+fig = px.histogram(
+    df,
+    x="Item_Outlet_Sales",
+    nbins=50,
+    marginal="box",
+    title="Distribución global de Item_Outlet_Sales"
+)
+
+fig.add_vline(x=mean_sales, line_dash="dash", annotation_text="Media")
+fig.add_vline(x=median_sales, line_dash="dot", annotation_text="Mediana")
+
+fig.update_layout(
+    xaxis_title="Ventas",
+    yaxis_title="Frecuencia"
+)
+fig.show()
+```
+
+## Interpretación
+
+Este panel sintetiza dos preguntas esenciales:
+
+- ¿Dónde se localizan los valores típicos?
+- ¿La distribución es aproximadamente simétrica o presenta sesgo?
+
+Cuando la media y la mediana difieren de manera visible, y cuando la cola derecha es más larga, suele haber evidencia de asimetría positiva. En un entorno como Big Mart Sales, esto es compatible con la existencia de observaciones con ventas muy elevadas respecto del grueso de la distribución.
+
+# Panel de variabilidad
+
+La variabilidad puede representarse con un boxplot acompañado de una tabla resumida.
+
+```{python}
+variability_kpis = pd.DataFrame({
+    "Medida": ["Mínimo", "Q1", "Mediana", "Q3", "Máximo", "Rango", "IQR", "Desv. estándar", "CV"],
+    "Valor": [
+        round(sales.min(), 2),
+        round(sales.quantile(0.25), 2),
+        round(sales.median(), 2),
+        round(sales.quantile(0.75), 2),
+        round(sales.max(), 2),
+        round(sales.max() - sales.min(), 2),
+        round(iqr_sales, 2),
+        round(std_sales, 2),
+        round(cv_sales, 4)
+    ]
+})
+variability_kpis
+```
+
+```{python}
+fig = px.box(
+    df,
+    y="Item_Outlet_Sales",
+    points="suspectedoutliers",
+    title="Variabilidad global de Item_Outlet_Sales"
+)
+fig.update_layout(yaxis_title="Ventas")
+fig.show()
+```
+
+Este panel muestra de forma visual la amplitud de la distribución, la caja intercuartílica y la presencia de observaciones extremas.
+
+# Panel de heterogeneidad
+
+La heterogeneidad requiere comparar subgrupos. Una opción muy expresiva es contrastar las ventas por tipo de outlet y por tipo de producto.
+
+## Ventas por tipo de outlet
+
+```{python}
+fig = px.box(
+    df,
+    x="Outlet_Type",
+    y="Item_Outlet_Sales",
+    color="Outlet_Type",
+    title="Heterogeneidad de ventas por tipo de outlet"
+)
+fig.update_layout(
+    xaxis_title="Tipo de outlet",
+    yaxis_title="Ventas",
+    xaxis_tickangle=-20,
+    showlegend=False
+)
+fig.show()
+```
+
+## Ventas por tipo de producto
+
+Para evitar saturación visual, puede ser útil mostrar solo las categorías con mayor venta total.
+
+```{python}
+top_item_types = (
+    df.groupby("Item_Type")["Item_Outlet_Sales"]
+      .sum()
+      .sort_values(ascending=False)
+      .head(8)
+      .index
+)
+
+df_top_items = df[df["Item_Type"].isin(top_item_types)].copy()
+
+fig = px.box(
+    df_top_items,
+    x="Item_Type",
+    y="Item_Outlet_Sales",
+    color="Item_Type",
+    title="Heterogeneidad de ventas en las principales categorías de producto"
+)
+fig.update_layout(
+    xaxis_title="Tipo de producto",
+    yaxis_title="Ventas",
+    xaxis_tickangle=-45,
+    showlegend=False
+)
+fig.show()
+```
+
+## Tabla comparativa por grupo
+
+```{python}
+heterogeneity_summary = (
+    df.groupby("Outlet_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .reset_index()
+      .rename(columns={
+          "count": "n",
+          "mean": "media",
+          "median": "mediana",
+          "std": "desv_std"
+      })
+)
+
+heterogeneity_summary
+```
+
+Este bloque permite observar que la heterogeneidad no se limita a diferencias de media: también pueden cambiar la mediana, la dispersión y la presencia de valores extremos.
+
+# Panel de concentración
+
+Para el dashboard global conviene incorporar una visualización compacta de concentración. El análisis por tipo de producto suele ser especialmente ilustrativo.
+
+```{python}
+sales_by_item_type = (
+    df.groupby("Item_Type")["Item_Outlet_Sales"]
+      .sum()
+      .sort_values(ascending=False)
+      .reset_index()
+)
+
+sales_by_item_type["share"] = (
+    sales_by_item_type["Item_Outlet_Sales"] /
+    sales_by_item_type["Item_Outlet_Sales"].sum()
+)
+sales_by_item_type["cum_share"] = sales_by_item_type["share"].cumsum()
+sales_by_item_type["share_pct"] = 100 * sales_by_item_type["share"]
+sales_by_item_type["cum_share_pct"] = 100 * sales_by_item_type["cum_share"]
+
+sales_by_item_type.head()
+```
+
+```{python}
+fig = go.Figure()
+fig.add_bar(
+    x=sales_by_item_type["Item_Type"],
+    y=sales_by_item_type["share_pct"],
+    name="Participación (%)"
+)
+fig.add_scatter(
+    x=sales_by_item_type["Item_Type"],
+    y=sales_by_item_type["cum_share_pct"],
+    mode="lines+markers",
+    name="Acumulado (%)",
+    yaxis="y2"
+)
+fig.update_layout(
+    title="Concentración de ventas por tipo de producto",
+    yaxis=dict(title="Participación (%)"),
+    yaxis2=dict(
+        title="Acumulado (%)",
+        overlaying="y",
+        side="right",
+        range=[0, 105]
+    ),
+    xaxis=dict(title="Tipo de producto", tickangle=-45)
+)
+fig.show()
+```
+
+## Indicadores breves de concentración
+
+```{python}
+def categories_to_reach_threshold(table, threshold=0.8):
+    idx = np.argmax(table["cum_share"].to_numpy() >= threshold)
+    return idx + 1
+
+n80 = categories_to_reach_threshold(sales_by_item_type, 0.80)
+top3_item_share = sales_by_item_type["share"].head(3).sum() * 100
+
+concentration_kpis = pd.DataFrame({
+    "Indicador": [
+        "Top 3 categorías (%)",
+        "Categorías para 80% de ventas"
+    ],
+    "Valor": [
+        round(top3_item_share, 2),
+        n80
+    ]
+})
+
+concentration_kpis
+```
+
+# Ensamblaje del dashboard global
+
+En un libro de Quarto, el dashboard puede presentarse como una secuencia ordenada de paneles. Una estructura práctica es la siguiente:
+
+1. **Bloque inicial de KPIs**: resumen numérico de alto nivel.
+2. **Distribución global**: histograma y boxplot para localización, forma y variabilidad.
+3. **Comparación entre grupos**: heterogeneidad por outlet y por producto.
+4. **Concentración**: Pareto y tabla de acumulación.
+5. **Texto interpretativo**: síntesis narrativa de hallazgos.
+
+## Ejemplo de lectura integrada
+
+Desde una perspectiva estadística, el dashboard global permite articular una lectura de este tipo:
+
+- La distribución global de ventas presenta un centro identificable, pero también una dispersión importante.
+- La separación entre media y mediana, junto con la cola derecha, sugiere asimetría positiva.
+- Los boxplots muestran variabilidad considerable y presencia de valores atípicos.
+- Las comparaciones por tipo de outlet y tipo de producto revelan heterogeneidad entre subgrupos.
+- El análisis de concentración muestra que una fracción limitada de categorías contribuye de forma desproporcionada al total.
+
+Esta lectura resume precisamente la lógica del EDA progresivo: la medida no se agota en un único número, sino que se construye mediante varias capas complementarias.
+
+# Propuesta de cierre visual para el book
+
+En un proyecto de Quarto Book, este capítulo puede funcionar como capítulo de cierre analítico. Una buena práctica consiste en terminar con una tabla compacta de hallazgos.
+
+```{python}
+final_findings = pd.DataFrame({
+    "Dimensión": [
+        "Localización",
+        "Variabilidad",
+        "Forma",
+        "Heterogeneidad",
+        "Concentración"
+    ],
+    "Pregunta guía": [
+        "¿Dónde se ubican los valores típicos?",
+        "¿Qué tan dispersas son las ventas?",
+        "¿La distribución es simétrica o sesgada?",
+        "¿Cambian las ventas entre grupos?",
+        "¿Se reparte el total de manera equilibrada?"
+    ],
+    "Indicador / Visual principal": [
+        "Media, mediana, histograma",
+        "IQR, desviación estándar, boxplot",
+        "Asimetría, curtosis, histograma",
+        "Boxplots por grupo, tablas comparativas",
+        "Pareto, shares acumulados"
+    ]
+})
+
+final_findings
+```
+
+# Conclusiones
+
+El dashboard global no debe entenderse como una simple colección de gráficas, sino como una **síntesis argumentada del EDA**. Su valor reside en que integra distintos niveles de descripción en una sola narrativa:
+
+- el centro de la distribución,
+- su amplitud,
+- su geometría,
+- sus diferencias entre subgrupos,
+- y su estructura de reparto.
+
+En el caso de **Big Mart Sales**, esta integración permite comunicar de forma compacta cómo se comportan las ventas desde varios ángulos complementarios. Para fines docentes, el dashboard muestra que la estadística descriptiva es una construcción progresiva de la medida; para fines aplicados, ofrece un instrumento claro de exploración y comunicación.
+
+# Sugerencias de extensión
+
+1. Añadir filtros interactivos por `Outlet_Type`, `Outlet_Size` o `Item_Fat_Content`.
+2. Integrar una sección de correlación entre variables numéricas.
+3. Incorporar mapas si se dispone de georreferenciación de outlets.
+4. Conectar el dashboard con la fase posterior de modelado predictivo.
+
+# Integración al libro de Quarto
+
+Si tu libro ya incluye los capítulos anteriores, puedes agregar este cierre junto con el capítulo de concentración en el archivo `_quarto.yml` con una estructura como la siguiente:
+
+```yaml
+book:
+  chapters:
+    - index.qmd
+    - 01_localizacion_bigmart.qmd
+    - 02_variabilidad_bigmart.qmd
+    - 03_forma_bigmart.qmd
+    - 04_heterogeneidad_bigmart.qmd
+    - 05_concentracion_bigmart.qmd
+    - 06_dashboard_global_bigmart.qmd
+```
+
+Con ello quedará completa la secuencia del EDA progresivo en formato de book.

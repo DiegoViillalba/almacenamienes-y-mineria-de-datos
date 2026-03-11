@@ -1,0 +1,315 @@
+# Medidas de forma en el análisis exploratorio de datos del dataset BigMart
+
+## Introducción
+
+En una etapa inicial del análisis exploratorio de datos se estudian las **medidas de localización** y las **medidas de variabilidad** con el fin de identificar, respectivamente, el comportamiento central de una variable y el grado en que sus observaciones se dispersan alrededor de un valor representativo. Sin embargo, una descripción estadística rigurosa no se agota en estas dos dimensiones. Dos distribuciones pueden compartir una media y una desviación estándar semejantes, y aun así diferir de manera importante en su estructura global. Por ello es necesario incorporar el estudio de la **forma** de la distribución.
+
+Las medidas de forma permiten caracterizar aspectos tales como la **asimetría** y el grado de **concentración de masa alrededor del centro o en las colas**, usualmente descrito mediante la **curtosis**. En términos aplicados, estas medidas ayudan a responder preguntas como las siguientes: ¿la mayor parte de los productos tiene ventas moderadas con unos cuantos casos excepcionalmente altos?, ¿las observaciones se reparten de forma aproximadamente simétrica?, ¿aparecen colas pesadas o valores extremos frecuentes?, ¿una transformación puede facilitar la interpretación visual y estadística del fenómeno?
+
+En este capítulo se estudian las medidas de forma en el dataset de BigMart, usando como variable principal \(\texttt{Item\_Outlet\_Sales}\), aunque varias de las herramientas presentadas pueden extenderse a otras variables numéricas como \(\texttt{Item\_MRP}\), \(\texttt{Item\_Visibility}\) y \(\texttt{Item\_Weight}\).
+
+## Objetivos del capítulo
+
+Al finalizar este capítulo se espera que el lector sea capaz de:
+
+- interpretar la forma de una distribución a partir de histogramas, densidades y diagramas de caja;
+- calcular e interpretar coeficientes de asimetría y curtosis;
+- distinguir entre distribuciones aproximadamente simétricas y distribuciones con colas pronunciadas;
+- valorar el efecto de transformaciones monotónicas, como el logaritmo, sobre la forma de una variable;
+- integrar estas observaciones en una lectura más completa del EDA.
+
+## Preparación del entorno y carga de datos
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+from scipy import stats
+
+plt.rcParams["figure.figsize"] = (8, 5)
+plt.rcParams["axes.grid"] = True
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+
+df = pd.read_csv(DATA_PATH)
+df.head()
+```
+
+Antes de proceder conviene verificar el tipo de las variables y concentrarnos en aquellas que sean cuantitativas.
+
+```{python}
+df.info()
+```
+
+```{python}
+num_cols = df.select_dtypes(include=np.number).columns.tolist()
+num_cols
+```
+
+## Fundamentos teóricos
+
+### Asimetría
+
+La asimetría describe el grado en que una distribución se desvía de la simetría respecto de su centro. Intuitivamente:
+
+- una distribución **simétrica** presenta masas comparables a la izquierda y derecha del centro;
+- una distribución con **asimetría positiva** presenta una cola más larga hacia valores altos;
+- una distribución con **asimetría negativa** presenta una cola más larga hacia valores bajos.
+
+Una medida común de asimetría es el coeficiente:
+
+$$
+g_1 = \frac{\frac{1}{n}\sum_{i=1}^{n}(x_i-\bar{x})^3}{\left(\frac{1}{n}\sum_{i=1}^{n}(x_i-\bar{x})^2\right)^{3/2}}.
+$$
+
+Cuando \(g_1 > 0\), la cola derecha tiende a ser más extensa; cuando \(g_1 < 0\), domina la cola izquierda; y cuando \(g_1 \approx 0\), la distribución puede considerarse aproximadamente simétrica, aunque esta interpretación siempre debe acompañarse de inspección gráfica.
+
+### Curtosis
+
+La curtosis resume el peso relativo de las colas y la concentración de observaciones alrededor del centro. Una expresión frecuente es:
+
+$$
+g_2 = \frac{\frac{1}{n}\sum_{i=1}^{n}(x_i-\bar{x})^4}{\left(\frac{1}{n}\sum_{i=1}^{n}(x_i-\bar{x})^2\right)^2} - 3.
+$$
+
+La resta de 3 permite comparar la distribución con la normal estándar:
+
+- si \(g_2 \approx 0\), la curtosis es similar a la de una normal;
+- si \(g_2 > 0\), la distribución exhibe colas relativamente pesadas y mayor propensión a valores extremos;
+- si \(g_2 < 0\), las colas son relativamente ligeras y la distribución resulta más plana.
+
+La curtosis no debe leerse únicamente como “pico” central: en la práctica, suele ser más útil interpretarla en términos de **presencia de colas pesadas y extremos**.
+
+## Exploración gráfica inicial de la variable de ventas
+
+Comenzamos con la variable de mayor interés económico: \(\texttt{Item\_Outlet\_Sales}\).
+
+```{python}
+sales = df["Item_Outlet_Sales"].dropna()
+
+sales.describe()
+```
+
+```{python}
+fig = px.histogram(
+    df,
+    x="Item_Outlet_Sales",
+    nbins=50,
+    marginal="box",
+    title="Distribución de Item_Outlet_Sales"
+)
+fig.update_layout(bargap=0.05)
+fig.show()
+```
+
+La lectura del histograma debe responder varias preguntas: ¿existe simetría visual?, ¿aparecen colas largas?, ¿se observan posibles valores extremos?, ¿la masa principal se concentra en una zona relativamente acotada mientras unos cuantos registros alcanzan ventas mucho mayores?
+
+Para reforzar la interpretación puede añadirse una curva de densidad aproximada.
+
+```{python}
+xs = np.linspace(sales.min(), sales.max(), 400)
+kde = stats.gaussian_kde(sales)
+
+plt.figure()
+plt.hist(sales, bins=40, density=True, alpha=0.6)
+plt.plot(xs, kde(xs), linewidth=2)
+plt.title("Histograma y densidad estimada de Item_Outlet_Sales")
+plt.xlabel("Item_Outlet_Sales")
+plt.ylabel("Densidad")
+plt.tight_layout()
+plt.show()
+```
+
+## Cálculo de asimetría y curtosis
+
+```{python}
+skew_sales = sales.skew()
+kurt_sales = sales.kurt()
+
+pd.DataFrame({
+    "medida": ["asimetría", "curtosis_exceso"],
+    "valor": [skew_sales, kurt_sales]
+})
+```
+
+Una interpretación orientativa puede apoyarse en criterios simples:
+
+- \(|\text{asimetría}| < 0.5\): asimetría baja;
+- \(0.5 \le |\text{asimetría}| < 1\): asimetría moderada;
+- \(|\text{asimetría}| \ge 1\): asimetría marcada.
+
+Estos umbrales no son absolutos, pero ayudan a construir una primera lectura del fenómeno. En datasets comerciales es frecuente observar asimetría positiva: muchos productos exhiben ventas moderadas, mientras un grupo reducido alcanza ventas muy elevadas.
+
+## Comparación de forma en varias variables numéricas
+
+La forma no tiene por qué ser igual en todas las variables del conjunto de datos. Conviene comparar la asimetría y curtosis de todas las columnas numéricas disponibles.
+
+```{python}
+shape_table = pd.DataFrame({
+    "variable": num_cols,
+    "asimetria": [df[c].dropna().skew() for c in num_cols],
+    "curtosis_exceso": [df[c].dropna().kurt() for c in num_cols]
+}).sort_values("asimetria", key=np.abs, ascending=False)
+
+shape_table
+```
+
+```{python}
+fig = px.bar(
+    shape_table,
+    x="variable",
+    y="asimetria",
+    title="Asimetría por variable numérica",
+    text_auto=True
+)
+fig.show()
+```
+
+```{python}
+fig = px.bar(
+    shape_table,
+    x="variable",
+    y="curtosis_exceso",
+    title="Curtosis (exceso) por variable numérica",
+    text_auto=True
+)
+fig.show()
+```
+
+Esta comparación resulta pedagógicamente valiosa porque permite mostrar que la forma es una propiedad específica de cada variable. Algunas pueden ser bastante regulares, mientras que otras presentan sesgo fuerte o colas especialmente pronunciadas.
+
+## Transformaciones y su efecto sobre la forma
+
+Cuando una variable presenta fuerte asimetría positiva, una transformación logarítmica puede facilitar tanto la visualización como el modelado posterior. En el caso de las ventas, una opción práctica es usar:
+
+$$
+y^{\ast} = \log(1+y),
+$$
+
+que evita problemas cuando existen observaciones cercanas a cero.
+
+```{python}
+df["log_Item_Outlet_Sales"] = np.log1p(df["Item_Outlet_Sales"])
+log_sales = df["log_Item_Outlet_Sales"].dropna()
+
+pd.DataFrame({
+    "variable": ["Item_Outlet_Sales", "log_Item_Outlet_Sales"],
+    "asimetria": [sales.skew(), log_sales.skew()],
+    "curtosis_exceso": [sales.kurt(), log_sales.kurt()]
+})
+```
+
+```{python}
+fig = px.histogram(
+    df,
+    x="log_Item_Outlet_Sales",
+    nbins=50,
+    marginal="box",
+    title="Distribución de log(1 + Item_Outlet_Sales)"
+)
+fig.show()
+```
+
+```{python}
+plt.figure()
+plt.hist(log_sales, bins=40, density=True, alpha=0.6)
+xs_log = np.linspace(log_sales.min(), log_sales.max(), 400)
+kde_log = stats.gaussian_kde(log_sales)
+plt.plot(xs_log, kde_log(xs_log), linewidth=2)
+plt.title("Histograma y densidad de log(1 + Item_Outlet_Sales)")
+plt.xlabel("log(1 + Item_Outlet_Sales)")
+plt.ylabel("Densidad")
+plt.tight_layout()
+plt.show()
+```
+
+La comparación entre la variable original y su versión transformada permite mostrar un punto importante del EDA: las medidas de forma no son meramente descriptivas, también orientan decisiones analíticas posteriores. Si la asimetría disminuye sustancialmente bajo la transformación, esto sugiere una representación más equilibrada del fenómeno.
+
+## Gráfico cuantil-cuantil como apoyo visual
+
+Otra herramienta útil para estudiar la forma es el gráfico Q-Q frente a la distribución normal. No debe interpretarse como una prueba definitiva, pero sí como un recurso visual para detectar desviaciones sistemáticas respecto a simetría y colas gaussianas.
+
+```{python}
+plt.figure()
+stats.probplot(sales, dist="norm", plot=plt)
+plt.title("Gráfico Q-Q de Item_Outlet_Sales")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+plt.figure()
+stats.probplot(log_sales, dist="norm", plot=plt)
+plt.title("Gráfico Q-Q de log(1 + Item_Outlet_Sales)")
+plt.tight_layout()
+plt.show()
+```
+
+Si la versión transformada se alinea mejor con la recta de referencia que la variable original, ello aporta evidencia visual de una mejora en la regularidad de la forma, aunque no implica normalidad perfecta.
+
+## Mini-dashboard de forma
+
+La siguiente sección integra un dashboard simple para resumir la forma de la variable de ventas y su transformación.
+
+```{python}
+from plotly.subplots import make_subplots
+
+fig = make_subplots(
+    rows=2,
+    cols=2,
+    subplot_titles=(
+        "Ventas originales",
+        "Ventas transformadas con log(1+y)",
+        "Asimetría comparada",
+        "Curtosis comparada"
+    )
+)
+
+fig.add_trace(
+    go.Histogram(x=sales, nbinsx=40, name="Ventas originales"),
+    row=1, col=1
+)
+fig.add_trace(
+    go.Histogram(x=log_sales, nbinsx=40, name="Ventas log"),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Bar(
+        x=["Original", "Log"],
+        y=[sales.skew(), log_sales.skew()],
+        name="Asimetría"
+    ),
+    row=2, col=1
+)
+fig.add_trace(
+    go.Bar(
+        x=["Original", "Log"],
+        y=[sales.kurt(), log_sales.kurt()],
+        name="Curtosis"
+    ),
+    row=2, col=2
+)
+
+fig.update_layout(
+    title="Dashboard básico de medidas de forma",
+    height=700,
+    showlegend=False
+)
+fig.show()
+```
+
+## Discusión e interpretación
+
+A partir del análisis anterior pueden derivarse varias conclusiones generales.
+
+Primero, la forma de una distribución complementa y matiza la información proporcionada por la media y la desviación estándar. Una media de ventas razonable no implica que la variable sea simétrica ni que carezca de observaciones extremas. Segundo, la asimetría positiva en ventas suele reflejar una estructura comercial común: muchos productos venden montos modestos y una fracción pequeña concentra niveles considerablemente superiores. Tercero, una curtosis elevada alerta sobre la importancia de las colas y sugiere precaución al interpretar promedios, especialmente cuando se comparan grupos o se planea modelado posterior.
+
+Además, la comparación entre la variable original y su transformación logarítmica ilustra una idea fundamental del EDA aplicado: la descripción estadística no es un fin aislado, sino una base para decidir cómo representar mejor la información.
+
+## Conclusiones del capítulo
+
+En este capítulo se mostró que el análisis de la forma permite ampliar de manera sustantiva la comprensión de una variable cuantitativa. Las medidas de asimetría y curtosis, combinadas con histogramas, densidades y gráficos Q-Q, ayudan a detectar colas largas, valores extremos y desviaciones respecto a distribuciones más regulares.
+
+En el contexto de BigMart, estas herramientas permiten comprender que la variable de ventas no solo posee un cierto nivel central y un cierto grado de dispersión, sino también una estructura posiblemente sesgada y con concentración desigual en sus extremos. Esta lectura será especialmente importante en el siguiente capítulo, donde se estudiará la **heterogeneidad**, es decir, el modo en que la distribución cambia al segmentar por tipo de tienda, categoría de producto u otros grupos relevantes.
