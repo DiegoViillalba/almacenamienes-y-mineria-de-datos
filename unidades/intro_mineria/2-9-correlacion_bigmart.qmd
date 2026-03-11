@@ -1,0 +1,457 @@
+---
+title: "Correlación"
+format:
+  html:
+    toc: true
+    number-sections: true
+    page-layout: full
+  pdf:
+    toc: true
+    number-sections: true
+jupyter: python3
+---
+
+# Introducción
+
+Después de estudiar la localización, la variabilidad, la forma, la heterogeneidad y la concentración, resulta natural incorporar una dimensión adicional del análisis exploratorio: la **correlación**. Mientras los capítulos anteriores se enfocaron principalmente en la descripción univariada o en comparaciones entre grupos, el análisis de correlación permite explorar **relaciones entre variables numéricas**.
+
+En términos generales, la correlación busca responder preguntas como las siguientes:
+
+- ¿Las ventas aumentan cuando aumenta el precio de lista del producto?
+- ¿Existe asociación entre la visibilidad del producto y sus ventas?
+- ¿El peso del producto se relaciona con otras variables cuantitativas?
+- ¿Las asociaciones observadas son lineales, monotónicas o prácticamente inexistentes?
+
+Este capítulo se centra en el estudio de las relaciones entre variables numéricas del conjunto de datos **Big Mart Sales**, con énfasis en la variable objetivo de interés:
+
+\[
+\texttt{Item\_Outlet\_Sales}.
+\]
+
+Además de calcular coeficientes de correlación, construiremos representaciones gráficas que ayuden a interpretar dichas asociaciones dentro de un contexto de EDA. La meta no es inferir causalidad, sino **detectar patrones de dependencia, redundancia o independencia aproximada** que puedan enriquecer la comprensión del conjunto de datos.
+
+# Objetivos del capítulo
+
+Al finalizar este capítulo, el lector debería ser capaz de:
+
+1. distinguir entre correlación positiva, negativa y cercana a cero;
+2. interpretar la magnitud y el signo de un coeficiente de correlación;
+3. comparar correlaciones de Pearson y Spearman;
+4. construir una matriz de correlación para variables numéricas;
+5. integrar los hallazgos de correlación al dashboard global del libro.
+
+# Carga y preparación de datos
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+
+DATA_PATH = "../../data/bigmart_sales.csv" # Ajustar según tu proyecto
+df = pd.read_csv(DATA_PATH)
+
+if "Item_Fat_Content" in df.columns:
+    df["Item_Fat_Content"] = (
+        df["Item_Fat_Content"]
+        .replace({
+            "LF": "Low Fat",
+            "low fat": "Low Fat",
+            "reg": "Regular"
+        })
+    )
+
+df.head()
+```
+
+Para estudiar correlación nos concentraremos primero en las variables numéricas.
+
+```{python}
+num_df = df.select_dtypes(include=[np.number]).copy()
+num_df.columns.tolist()
+```
+
+En muchos conjuntos de datos de tipo comercial, la cantidad de variables numéricas es moderada. En **Big Mart Sales**, típicamente aparecen variables como:
+
+- `Item_Weight`
+- `Item_Visibility`
+- `Item_MRP`
+- `Outlet_Establishment_Year`
+- `Item_Outlet_Sales`
+
+Dependiendo de la versión del dataset, puede haber más o menos variables numéricas. El análisis se adaptará automáticamente a las columnas detectadas.
+
+# Fundamento conceptual
+
+## Correlación de Pearson
+
+La correlación de Pearson entre dos variables aleatorias \(X\) e \(Y\) se define como
+
+\[
+\rho_{X,Y} = \frac{\operatorname{Cov}(X,Y)}{\sigma_X \sigma_Y}.
+\]
+
+En la práctica, con datos muestrales, se utiliza su estimador muestral. Este coeficiente mide la intensidad y dirección de una **asociación lineal**.
+
+Sus valores están acotados por
+
+\[
+-1 \leq r \leq 1.
+\]
+
+- Si \(r \approx 1\), la asociación lineal es positiva fuerte.
+- Si \(r \approx -1\), la asociación lineal es negativa fuerte.
+- Si \(r \approx 0\), no hay evidencia de asociación lineal fuerte.
+
+## Correlación de Spearman
+
+La correlación de Spearman se basa en los rangos de los datos. Es especialmente útil cuando la relación entre dos variables no es estrictamente lineal, pero sí **monotónica**.
+
+En el EDA, Pearson y Spearman son complementarias:
+
+- **Pearson**: sensible a relaciones lineales y a valores extremos.
+- **Spearman**: más robusta frente a no linealidad monotónica y menos sensible a outliers severos.
+
+## Advertencia importante
+
+La correlación **no implica causalidad**. Dos variables pueden estar correlacionadas por múltiples razones: dependencia directa, mediación por otra variable, estructura del proceso de muestreo o simple coincidencia en muestras pequeñas.
+
+# Revisión de valores faltantes en variables numéricas
+
+Antes de calcular correlaciones, conviene revisar valores faltantes.
+
+```{python}
+missing_num = num_df.isna().sum().sort_values(ascending=False).reset_index()
+missing_num.columns = ["Variable", "Faltantes"]
+missing_num
+```
+
+Si existen valores faltantes, `pandas` calculará correlaciones utilizando observaciones disponibles por pares. Para EDA esto suele ser suficiente, aunque conviene documentarlo.
+
+# Matriz de correlación de Pearson
+
+Comenzamos con la matriz de correlación de Pearson para todas las variables numéricas.
+
+```{python}
+corr_pearson = num_df.corr(method="pearson")
+corr_pearson
+```
+
+## Mapa de calor
+
+```{python}
+fig = px.imshow(
+    corr_pearson,
+    text_auto=True,
+    aspect="auto",
+    title="Matriz de correlación de Pearson",
+    color_continuous_scale="RdBu",
+    zmin=-1,
+    zmax=1
+)
+fig.update_layout(coloraxis_colorbar_title="r")
+fig.show()
+```
+
+## Interpretación inicial
+
+Esta matriz permite una lectura rápida de las asociaciones lineales entre variables numéricas. En particular, interesa observar:
+
+- qué variables están más asociadas con `Item_Outlet_Sales`;
+- si existen pares de variables numéricas altamente correlacionados entre sí;
+- si la mayoría de relaciones son débiles, moderadas o fuertes.
+
+En datasets como **Big Mart Sales**, suele ser común encontrar que `Item_MRP` tiene una asociación positiva visible con las ventas, mientras que otras variables presentan correlaciones más débiles.
+
+# Correlación de Spearman
+
+Para contrastar con Pearson, calculamos ahora la matriz de Spearman.
+
+```{python}
+corr_spearman = num_df.corr(method="spearman")
+corr_spearman
+```
+
+```{python}
+fig = px.imshow(
+    corr_spearman,
+    text_auto=True,
+    aspect="auto",
+    title="Matriz de correlación de Spearman",
+    color_continuous_scale="RdBu",
+    zmin=-1,
+    zmax=1
+)
+fig.update_layout(coloraxis_colorbar_title="ρ")
+fig.show()
+```
+
+## Comparación entre Pearson y Spearman
+
+Cuando Pearson y Spearman tienen valores similares, suele haber evidencia de una asociación aproximadamente lineal o, al menos, de una estructura monotónica estable. Cuando Spearman es claramente mayor que Pearson, puede ser una señal de relación monotónica no lineal o de sensibilidad de Pearson a valores extremos.
+
+Una forma compacta de comparar ambas matrices es centrarse en la variable de interés.
+
+```{python}
+target = "Item_Outlet_Sales"
+
+if target in num_df.columns:
+    corr_compare = pd.DataFrame({
+        "Pearson": corr_pearson[target],
+        "Spearman": corr_spearman[target]
+    }).sort_values(by="Pearson", ascending=False)
+
+    corr_compare
+else:
+    print(f"La variable {target} no está presente en las columnas numéricas.")
+```
+
+# Correlación con la variable objetivo
+
+Dado que el fenómeno central del conjunto de datos son las ventas, es útil ordenar las correlaciones con `Item_Outlet_Sales`.
+
+```{python}
+if target in num_df.columns:
+    sales_corr = (
+        corr_pearson[target]
+        .drop(labels=[target], errors="ignore")
+        .sort_values(ascending=False)
+        .reset_index()
+    )
+    sales_corr.columns = ["Variable", "Correlacion_Pearson"]
+    sales_corr
+```
+
+```{python}
+if target in num_df.columns:
+    fig = px.bar(
+        sales_corr,
+        x="Variable",
+        y="Correlacion_Pearson",
+        title="Correlación de Pearson con Item_Outlet_Sales",
+        labels={"Correlacion_Pearson": "Correlación", "Variable": "Variable"}
+    )
+    fig.update_layout(xaxis_tickangle=-30)
+    fig.show()
+```
+
+## Comentario analítico
+
+Esta visualización resume qué variables numéricas muestran una asociación lineal más fuerte con las ventas. Una correlación positiva moderada entre `Item_MRP` y `Item_Outlet_Sales`, por ejemplo, puede interpretarse como evidencia de que los productos con mayor precio de lista tienden también a registrar mayores ventas monetarias, aunque esto no implica necesariamente que “vender más caro” cause mayores ventas en sentido causal.
+
+# Diagramas de dispersión
+
+Las matrices de correlación son útiles, pero pueden ocultar detalles estructurales. Por ello, es indispensable acompañarlas con gráficos de dispersión.
+
+## Ventas vs precio de lista
+
+```{python}
+if {"Item_MRP", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.scatter(
+        df,
+        x="Item_MRP",
+        y="Item_Outlet_Sales",
+        opacity=0.5,
+        title="Relación entre Item_MRP e Item_Outlet_Sales",
+        trendline="ols"
+    )
+    fig.show()
+```
+
+## Ventas vs visibilidad
+
+```{python}
+if {"Item_Visibility", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.scatter(
+        df,
+        x="Item_Visibility",
+        y="Item_Outlet_Sales",
+        opacity=0.5,
+        title="Relación entre Item_Visibility e Item_Outlet_Sales",
+        trendline="ols"
+    )
+    fig.show()
+```
+
+## Ventas vs peso
+
+```{python}
+if {"Item_Weight", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.scatter(
+        df,
+        x="Item_Weight",
+        y="Item_Outlet_Sales",
+        opacity=0.5,
+        title="Relación entre Item_Weight e Item_Outlet_Sales",
+        trendline="ols"
+    )
+    fig.show()
+```
+
+## Qué observar en los diagramas
+
+Los scatter plots permiten responder preguntas que una matriz de correlación no resuelve por sí sola:
+
+- ¿La relación parece lineal?
+- ¿Hay subgrupos o clústeres?
+- ¿Existen outliers que afecten la correlación?
+- ¿La nube de puntos sugiere heterocedasticidad?
+- ¿Hay curvatura o estructura por segmentos?
+
+En EDA, esta lectura visual es esencial, porque una correlación numérica puede ser engañosa si la relación no es homogénea.
+
+# Correlación por subgrupos
+
+Una extensión particularmente rica consiste en estudiar si la correlación cambia según el tipo de outlet o el tipo de producto. Esto conecta el análisis de correlación con la heterogeneidad.
+
+## Ejemplo: correlación entre Item_MRP y ventas por tipo de outlet
+
+```{python}
+if {"Outlet_Type", "Item_MRP", "Item_Outlet_Sales"}.issubset(df.columns):
+    corr_by_outlet = (
+        df.groupby("Outlet_Type")[["Item_MRP", "Item_Outlet_Sales"]]
+          .corr(method="pearson")
+          .reset_index()
+    )
+
+    corr_by_outlet = corr_by_outlet[
+        (corr_by_outlet["level_1"] == "Item_MRP")
+    ][["Outlet_Type", "Item_Outlet_Sales"]]
+
+    corr_by_outlet.columns = ["Outlet_Type", "Corr_Pearson_MRP_Sales"]
+    corr_by_outlet
+```
+
+```{python}
+if {"Outlet_Type", "Item_MRP", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.bar(
+        corr_by_outlet,
+        x="Outlet_Type",
+        y="Corr_Pearson_MRP_Sales",
+        title="Correlación MRP vs ventas por tipo de outlet",
+        labels={
+            "Outlet_Type": "Tipo de outlet",
+            "Corr_Pearson_MRP_Sales": "Correlación de Pearson"
+        }
+    )
+    fig.update_layout(xaxis_tickangle=-20)
+    fig.show()
+```
+
+## Lectura
+
+Si la intensidad de la correlación cambia notablemente entre subgrupos, eso sugiere que la relación entre variables no es uniforme en todo el dataset. Este hallazgo es importante porque un coeficiente global puede ocultar comportamientos diferenciados por segmento.
+
+# Tabla resumen de asociaciones
+
+Para cerrar el análisis, conviene construir una tabla corta con las correlaciones más relevantes respecto de la variable objetivo.
+
+```{python}
+if target in num_df.columns:
+    corr_summary = pd.DataFrame({
+        "Variable": [c for c in num_df.columns if c != target],
+        "Pearson": [corr_pearson.loc[c, target] for c in num_df.columns if c != target],
+        "Spearman": [corr_spearman.loc[c, target] for c in num_df.columns if c != target]
+    }).sort_values(by="Pearson", ascending=False)
+
+    corr_summary
+```
+
+Podemos incluso añadir una etiqueta cualitativa de intensidad para facilitar la lectura didáctica.
+
+```{python}
+def strength_label(r):
+    a = abs(r)
+    if a < 0.10:
+        return "Muy débil"
+    elif a < 0.30:
+        return "Débil"
+    elif a < 0.50:
+        return "Moderada"
+    elif a < 0.70:
+        return "Fuerte"
+    else:
+        return "Muy fuerte"
+
+if target in num_df.columns:
+    corr_summary_labeled = corr_summary.copy()
+    corr_summary_labeled["Intensidad_Pearson"] = corr_summary_labeled["Pearson"].apply(strength_label)
+    corr_summary_labeled["Intensidad_Spearman"] = corr_summary_labeled["Spearman"].apply(strength_label)
+    corr_summary_labeled
+```
+
+# Mini-dashboard de correlación
+
+Para integrarlo al libro, este capítulo puede cerrarse con un panel compacto compuesto por:
+
+1. tabla de correlaciones con la variable objetivo;
+2. mapa de calor de Pearson;
+3. scatter plot de la relación más relevante;
+4. comparación por subgrupos si procede.
+
+## KPIs de correlación
+
+```{python}
+if target in num_df.columns:
+    strongest_var = corr_summary.iloc[0]["Variable"] if len(corr_summary) > 0 else np.nan
+    strongest_corr = corr_summary.iloc[0]["Pearson"] if len(corr_summary) > 0 else np.nan
+
+    corr_kpis = pd.DataFrame({
+        "Indicador": [
+            "Número de variables numéricas",
+            "Variable más correlacionada con ventas",
+            "Correlación de Pearson asociada",
+            "Correlación de Spearman asociada"
+        ],
+        "Valor": [
+            num_df.shape[1],
+            strongest_var,
+            round(strongest_corr, 4) if pd.notnull(strongest_corr) else np.nan,
+            round(
+                corr_summary.loc[corr_summary["Variable"] == strongest_var, "Spearman"].iloc[0], 4
+            ) if pd.notnull(strongest_var) and len(corr_summary) > 0 else np.nan
+        ]
+    })
+
+    corr_kpis
+```
+
+# Discusión final
+
+El análisis de correlación amplía la mirada del EDA al introducir relaciones entre variables. En **Big Mart Sales**, esta dimensión permite identificar qué atributos numéricos están más asociados con las ventas y si dicha asociación es débil, moderada o fuerte.
+
+Sin embargo, el uso de correlaciones debe acompañarse siempre de lectura visual y criterio analítico. Una matriz numérica puede sugerir asociación, pero solo los diagramas de dispersión permiten ver si la relación es lineal, si hay segmentos diferenciados o si algunos valores extremos dominan el comportamiento.
+
+Además, comparar correlaciones globales con correlaciones por subgrupos conecta este capítulo con la idea de heterogeneidad: no todas las relaciones son homogéneas en toda la población.
+
+# Ejercicios sugeridos
+
+1. Repite el análisis usando solo outlets de un tipo específico y compara los resultados con la correlación global.
+2. Calcula la matriz de correlación para un subconjunto de categorías de producto y comenta las diferencias.
+3. Investiga si la transformación logarítmica de `Item_Outlet_Sales` cambia de forma importante las correlaciones.
+4. Identifica un par de variables con baja correlación lineal pero cuya nube de puntos sugiera alguna estructura no trivial.
+
+# Integración al dashboard global
+
+Este capítulo puede incorporarse al dashboard global de dos maneras:
+
+- como una **sección adicional** dedicada a relaciones entre variables;
+- o como un **apéndice analítico** que complemente las cinco dimensiones principales del EDA.
+
+Si decides integrarlo al libro principal, la secuencia podría quedar así:
+
+```yaml
+book:
+  chapters:
+    - index.qmd
+    - 01_localizacion_bigmart.qmd
+    - 02_variabilidad_bigmart.qmd
+    - 03_forma_bigmart.qmd
+    - 04_heterogeneidad_bigmart.qmd
+    - 05_concentracion_bigmart.qmd
+    - 06_dashboard_global_bigmart.qmd
+    - 07_correlacion_bigmart.qmd
+```
+
+Así, el lector contará con una visión todavía más completa del análisis exploratorio del conjunto de datos.

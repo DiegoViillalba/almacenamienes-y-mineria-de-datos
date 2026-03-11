@@ -1,0 +1,353 @@
+# Heterogeneidad en el análisis exploratorio de datos del dataset BigMart
+
+## Introducción
+
+Después de estudiar la localización, la variabilidad y la forma de las distribuciones, el análisis exploratorio de datos debe avanzar hacia una pregunta más estructural: **¿el comportamiento observado es homogéneo en toda la población o cambia de manera importante entre grupos?**. Esta cuestión introduce el concepto de **heterogeneidad**, una dimensión central del EDA cuando el dataset contiene segmentaciones naturales, como categorías de producto, tipos de tienda, tamaños de outlet o ubicaciones geográficas.
+
+En términos estadísticos, la heterogeneidad alude a la existencia de diferencias sistemáticas entre subpoblaciones. Tales diferencias pueden expresarse en el centro de la distribución, en su dispersión, en su forma o incluso en la presencia diferencial de valores extremos. En un problema de negocio como BigMart, detectar heterogeneidad es indispensable, pues permite identificar si ciertos tipos de tiendas venden consistentemente más, si algunas categorías presentan patrones de ventas más variables, o si la estructura comercial cambia según el entorno del outlet.
+
+En este capítulo se trabaja la heterogeneidad como una extensión natural del análisis univariado. La idea principal es que una variable numérica no debe interpretarse de manera aislada, sino también en relación con variables categóricas relevantes.
+
+## Objetivos del capítulo
+
+Al finalizar este capítulo se espera que el lector sea capaz de:
+
+- comprender el papel de la heterogeneidad en el EDA;
+- comparar medidas de localización y variabilidad entre grupos;
+- interpretar visualizaciones segmentadas como boxplots, violin plots, facetas y gráficos de barras agregadas;
+- identificar patrones diferenciales en las ventas por tipo de outlet, tamaño del outlet, localización y categoría de producto;
+- integrar la segmentación en un dashboard analítico coherente.
+
+## Preparación del entorno y carga de datos
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+
+plt.rcParams["figure.figsize"] = (8, 5)
+plt.rcParams["axes.grid"] = True
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+df = pd.read_csv(DATA_PATH)
+df.head()
+```
+
+Conviene verificar las variables categóricas y numéricas del conjunto de datos.
+
+```{python}
+df.info()
+```
+
+```{python}
+num_cols = df.select_dtypes(include=np.number).columns.tolist()
+cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
+
+num_cols, cat_cols
+```
+
+## Fundamentos teóricos
+
+La heterogeneidad puede analizarse desde varias perspectivas. Si \(Y\) es una variable numérica de interés y \(G\) una variable categórica que define grupos, pueden estudiarse diferencias en:
+
+### Centro por grupo
+
+Se comparan medidas como:
+
+$$
+\bar{y}_g = \frac{1}{n_g}\sum_{i \in g} y_i,
+$$
+
+así como la mediana y otros cuantiles dentro de cada grupo \(g\).
+
+### Dispersión por grupo
+
+La variabilidad interna de cada subpoblación puede resumirse mediante la desviación estándar, el rango intercuartílico o el coeficiente de variación. Dos grupos pueden tener medias semejantes y, sin embargo, diferir de forma sustancial en estabilidad o consistencia.
+
+### Forma por grupo
+
+La heterogeneidad también puede aparecer en la asimetría o en la presencia de colas pesadas. Algunos grupos pueden concentrarse en rangos estrechos y otros exhibir ventas con distribución muy extendida.
+
+### Participación relativa de cada grupo
+
+Finalmente, también es útil estudiar cuánto contribuye cada grupo al total de observaciones o al total de ventas. Esta dimensión conecta la heterogeneidad con el estudio posterior de la concentración.
+
+## Variable objetivo y grupos de interés
+
+En este capítulo tomaremos nuevamente como variable principal a \(\texttt{Item\_Outlet\_Sales}\). Como ejes de segmentación se consideran, al menos, las siguientes variables categóricas:
+
+- \(\texttt{Outlet\_Type}\),
+- \(\texttt{Outlet\_Size}\),
+- \(\texttt{Outlet\_Location\_Type}\),
+- \(\texttt{Item\_Type}\).
+
+Antes de comparar grupos, es útil revisar su tamaño.
+
+```{python}
+for col in ["Outlet_Type", "Outlet_Size", "Outlet_Location_Type", "Item_Type"]:
+    print(f"\n{col}")
+    print(df[col].value_counts(dropna=False))
+```
+
+Este paso es importante porque la interpretación de diferencias entre grupos debe considerar el tamaño muestral. Un grupo muy pequeño puede mostrar estadísticas inestables o aparentes extremos debidos a pocos casos.
+
+## Heterogeneidad por tipo de outlet
+
+Comenzamos con una variable de alto interés de negocio: \(\texttt{Outlet\_Type}\).
+
+```{python}
+outlet_type_summary = (
+    df.groupby("Outlet_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std", "min", "max"])
+      .sort_values("mean", ascending=False)
+)
+outlet_type_summary
+```
+
+```{python}
+fig = px.box(
+    df,
+    x="Outlet_Type",
+    y="Item_Outlet_Sales",
+    color="Outlet_Type",
+    title="Distribución de ventas por tipo de outlet"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+```{python}
+fig = px.bar(
+    outlet_type_summary.reset_index(),
+    x="Outlet_Type",
+    y="mean",
+    error_y="std",
+    title="Media y desviación estándar de ventas por tipo de outlet",
+    text_auto=True
+)
+fig.show()
+```
+
+Este análisis permite responder preguntas como: ¿qué tipo de outlet presenta ventas típicas más altas?, ¿en qué grupos la variabilidad es mayor?, ¿la diferencia entre media y mediana sugiere asimetrías distintas entre tipos de tienda?
+
+## Heterogeneidad por tamaño del outlet
+
+El tamaño del outlet puede influir tanto en el volumen típico de ventas como en la dispersión observada.
+
+```{python}
+outlet_size_summary = (
+    df.groupby("Outlet_Size")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .sort_values("mean", ascending=False)
+)
+outlet_size_summary
+```
+
+```{python}
+fig = px.violin(
+    df,
+    x="Outlet_Size",
+    y="Item_Outlet_Sales",
+    color="Outlet_Size",
+    box=True,
+    points=False,
+    title="Ventas por tamaño de outlet"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+Los violin plots son especialmente útiles aquí porque combinan información sobre dispersión y forma dentro de cada grupo. Si dos grupos tienen medianas parecidas pero densidades internas distintas, la heterogeneidad va más allá del simple promedio.
+
+## Heterogeneidad por ubicación del outlet
+
+Otra dimensión natural del análisis es \(\texttt{Outlet\_Location\_Type}\), que puede reflejar diferencias territoriales o de mercado.
+
+```{python}
+location_summary = (
+    df.groupby("Outlet_Location_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .sort_values("mean", ascending=False)
+)
+location_summary
+```
+
+```{python}
+fig = px.box(
+    df,
+    x="Outlet_Location_Type",
+    y="Item_Outlet_Sales",
+    color="Outlet_Location_Type",
+    title="Ventas por tipo de localización del outlet"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+Si aparecen diferencias marcadas entre localizaciones, esto sugiere que el comportamiento de las ventas no es uniforme a través del entorno comercial, lo que puede tener implicaciones para estrategias de inventario, segmentación de mercado o diseño de promociones.
+
+## Heterogeneidad por tipo de producto
+
+La variable \(\texttt{Item\_Type}\) suele contener más niveles que las anteriores, por lo que conviene resumir y ordenar cuidadosamente la información.
+
+```{python}
+item_type_summary = (
+    df.groupby("Item_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .sort_values("mean", ascending=False)
+)
+item_type_summary.head(10)
+```
+
+```{python}
+fig = px.bar(
+    item_type_summary.reset_index(),
+    x="mean",
+    y=item_type_summary.reset_index()["Item_Type"],
+    orientation="h",
+    title="Media de ventas por tipo de producto",
+    labels={"mean": "Media de ventas", "y": "Tipo de producto"}
+)
+fig.show()
+```
+
+```{python}
+top_item_types = item_type_summary.head(8).index.tolist()
+fig = px.box(
+    df[df["Item_Type"].isin(top_item_types)],
+    x="Item_Type",
+    y="Item_Outlet_Sales",
+    color="Item_Type",
+    title="Distribución de ventas en los tipos de producto con mayor media"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+Aquí la heterogeneidad permite ver si ciertos tipos de producto no solo venden más en promedio, sino si además lo hacen de forma más consistente o más dispersa.
+
+## Tablas comparativas con múltiples indicadores
+
+Una forma útil de sistematizar la heterogeneidad es construir tablas resumen que integren varias medidas por grupo.
+
+```{python}
+def group_profile(df, group_col, target="Item_Outlet_Sales"):
+    out = (
+        df.groupby(group_col)[target]
+          .agg(
+              n="count",
+              media="mean",
+              mediana="median",
+              desviacion="std",
+              q1=lambda x: x.quantile(0.25),
+              q3=lambda x: x.quantile(0.75)
+          )
+          .reset_index()
+    )
+    out["iqr"] = out["q3"] - out["q1"]
+    out["cv"] = out["desviacion"] / out["media"]
+    return out.sort_values("media", ascending=False)
+
+profile_outlet_type = group_profile(df, "Outlet_Type")
+profile_outlet_type
+```
+
+```{python}
+profile_location = group_profile(df, "Outlet_Location_Type")
+profile_location
+```
+
+Estas tablas permiten pasar de una observación visual a una descripción más precisa: no solo se identifican grupos “más altos” o “más bajos”, sino también grupos más o menos variables y con distinta estabilidad relativa.
+
+## Heterogeneidad cruzada
+
+En muchos problemas reales, la segmentación relevante no depende de una sola variable categórica. Una comparación cruzada, por ejemplo entre tipo de outlet y localización, ayuda a identificar patrones más finos.
+
+```{python}
+pivot_mean = pd.pivot_table(
+    df,
+    values="Item_Outlet_Sales",
+    index="Outlet_Type",
+    columns="Outlet_Location_Type",
+    aggfunc="mean"
+)
+pivot_mean
+```
+
+```{python}
+fig = px.imshow(
+    pivot_mean,
+    text_auto=True,
+    aspect="auto",
+    title="Media de ventas: tipo de outlet vs localización"
+)
+fig.show()
+```
+
+Este tipo de visualización muestra que la heterogeneidad puede ser **multidimensional**. No basta con decir que un tipo de outlet vende más: tal comportamiento puede depender también de la localización.
+
+## Mini-dashboard de heterogeneidad
+
+A continuación se construye un dashboard compacto que integra varias vistas segmentadas.
+
+```{python}
+from plotly.subplots import make_subplots
+
+fig = make_subplots(
+    rows=2,
+    cols=2,
+    subplot_titles=(
+        "Media por tipo de outlet",
+        "Media por tamaño de outlet",
+        "Media por localización",
+        "Top 8 tipos de producto"
+    )
+)
+
+summary1 = group_profile(df, "Outlet_Type")
+summary2 = group_profile(df.dropna(subset=["Outlet_Size"]), "Outlet_Size")
+summary3 = group_profile(df, "Outlet_Location_Type")
+summary4 = group_profile(df, "Item_Type").head(8)
+
+fig.add_trace(
+    go.Bar(x=summary1["Outlet_Type"], y=summary1["media"], name="Outlet Type"),
+    row=1, col=1
+)
+fig.add_trace(
+    go.Bar(x=summary2["Outlet_Size"], y=summary2["media"], name="Outlet Size"),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Bar(x=summary3["Outlet_Location_Type"], y=summary3["media"], name="Location"),
+    row=2, col=1
+)
+fig.add_trace(
+    go.Bar(x=summary4["Item_Type"], y=summary4["media"], name="Item Type"),
+    row=2, col=2
+)
+
+fig.update_layout(
+    title="Dashboard básico de heterogeneidad en BigMart",
+    height=750,
+    showlegend=False
+)
+fig.show()
+```
+
+## Discusión e interpretación
+
+El análisis de heterogeneidad aporta una lectura más realista del dataset. La distribución global de ventas puede ocultar diferencias importantes entre tipos de outlet, tamaños de tienda, ubicaciones y categorías de producto. Estas diferencias no solo afectan el nivel promedio de ventas, sino también su dispersión y estabilidad.
+
+Desde una perspectiva pedagógica, este resultado es fundamental: una medida global puede ser útil como síntesis, pero rara vez basta para describir adecuadamente una población heterogénea. La segmentación revela que las observaciones no provienen necesariamente de un contexto uniforme, sino de subpoblaciones con lógicas propias.
+
+En el caso de BigMart, esto significa que el comportamiento comercial no debe interpretarse como si todos los productos y tiendas funcionaran del mismo modo. Un outlet de cierto tipo puede exhibir ventas medias superiores, pero también mayor variabilidad; una categoría de producto puede parecer dominante en promedio, aunque con fuerte dispersión interna; una localización puede mostrar patrones distintivos respecto de otras.
+
+## Conclusiones del capítulo
+
+En este capítulo se mostró que la heterogeneidad constituye una dimensión esencial del análisis exploratorio de datos. Comparar grupos permite ampliar la descripción estadística de una variable y pasar de una lectura global a una interpretación segmentada y contextual.
+
+En el dataset de BigMart, la heterogeneidad se manifiesta en diferencias entre tipos de outlet, tamaños, localizaciones y categorías de producto. Estas comparaciones enriquecen el EDA porque permiten distinguir subestructuras internas del fenómeno, identificar patrones consistentes y detectar segmentos con comportamientos contrastantes.
+
+Este capítulo prepara de manera natural el siguiente paso del proyecto: el estudio de la **concentración**, donde se analizará si una fracción reducida de grupos, productos o outlets explica una proporción sustancial del total de ventas.

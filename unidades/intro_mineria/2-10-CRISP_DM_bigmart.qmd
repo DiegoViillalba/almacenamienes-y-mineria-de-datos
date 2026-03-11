@@ -1,0 +1,193 @@
+---
+title: "Business Understanding - Caso BigMart Sales"
+number-sections: false
+format:
+  html:
+    toc: true
+    page-layout: full
+  pdf:
+    toc: true
+jupyter: python3
+---
+
+Un error común en proyectos de analítica y minería de datos es iniciar el análisis directamente sobre la estructura del dataset, sin detenerse antes en el contexto que da sentido a la información disponible. En entornos reales, los datos forman parte de procesos operativos, comerciales o estratégicos, por lo que su exploración debe estar guiada por una comprensión inicial del problema de negocio. En este sentido, el análisis exploratorio de datos (EDA) no solo permite describir variables y detectar patrones, sino también traducir necesidades del negocio en preguntas analíticas investigables.
+
+Por ello, en este ejercicio se utilizará una breve narrativa de negocio como punto de partida para orientar el EDA y establecer:
+
+- quién genera los datos;
+
+- con qué propósito se recolectan;
+
+- qué representa cada observación del conjunto de datos;
+
+- qué relaciones o comportamientos conviene explorar;
+
+- y qué preguntas del negocio pueden examinarse a través del análisis exploratorio.
+
+
+## Escenario ficticio de negocio {.unnumbered}
+
+
+<img src="https://thumbs.dreamstime.com/b/fruits-supermarket-fruit-vegetable-section-93999516.jpg?w=992"
+     style="float:right; width:35%; margin-left:1em; margin-bottom:0.5em;" />
+
+Supongamos que **BigMart** es una cadena nacional de tiendas minoristas con presencia en varias ciudades y con distintos formatos de establecimiento. Algunos outlets son supermercados grandes, otros son tiendas de conveniencia y otros funcionan como puntos comerciales de escala intermedia. La empresa comercializa múltiples categorías de productos de consumo frecuente: alimentos, bebidas, productos de hogar, artículos perecederos y no perecederos, entre otros.
+
+Durante 2013, la dirección comercial de BigMart detectó que el desempeño en ventas no era homogéneo entre productos ni entre tiendas. Algunos artículos tenían una rotación muy alta en ciertos outlets, pero un comportamiento mediocre en otros. Del mismo modo, tiendas con características aparentemente similares mostraban resultados muy distintos en ingresos por producto.
+
+La empresa contaba con sistemas operativos que registraban transacciones, atributos del catálogo de productos y características básicas de los establecimientos. Sin embargo, esa información se utilizaba sobre todo para fines administrativos y no se había integrado de forma sistemática para apoyar decisiones analíticas.
+
+Ante ello, la dirección regional decidió solicitar al área de analítica un estudio con dos propósitos iniciales:
+
+1. **entender mejor la estructura de las ventas** a nivel producto-tienda;
+2. **identificar factores asociados con un mayor desempeño comercial**.
+
+Este encargo es el origen del dataset con el que trabajaremos.
+
+## Situación problemática {.unnumbered}
+
+La preocupación de la empresa no surge de manera abstracta. En este escenario ficticio, BigMart enfrenta cuatro tensiones operativas:
+
+- **Planeación de inventario** 
+No siempre resulta claro cuánto surtido asignar a cada tipo de producto en cada outlet. Una mala estimación puede producir sobreinventario o desabasto.
+
+- **Diferencias entre tiendas**
+Outlets de distinto tamaño, ubicación o formato comercial parecen comportarse de manera desigual. La empresa necesita saber si esas diferencias son consistentes y medibles.
+
+- **Diseño de promociones y surtido**
+La gerencia comercial quiere distinguir qué tipos de producto tienen mejor desempeño y si ciertas características, como categoría o precio de lista, parecen asociarse con mayores ventas.
+
+-  **Falta de evidencia integrada**
+Los datos existen, pero todavía no se han convertido en evidencia útil para la toma de decisiones. Se requiere transformar registros operativos en conocimiento analítico.
+
+En consecuencia, el problema inicial de negocio puede formularse así:
+
+> BigMart necesita comprender cómo se distribuyen y de qué dependen las ventas por producto y por outlet, para mejorar decisiones de surtido, operación comercial y planeación.
+
+## Diccionario de Variables {.unnumbered}
+
+En la siguiente tabla se detalla la naturaleza y la interpretación de negocio de cada una de las variables presentes en el conjunto de datos.
+
+| Categoría | Variable | Descripción e Interpretación de Negocio |
+|:---|:---|:---|
+| **Producto** | `Item_Identifier` | Identificador único del producto. Permite el rastreo y vinculación con otras fuentes de información. |
+| **Producto** | `Item_Weight` | Peso del producto. Relevante para la logística, el empaque y la presentación comercial. |
+| **Producto** | `Item_Fat_Content` | Clasificación del contenido graso. Útil para segmentar subgrupos de alimentos y bebidas. |
+| **Producto** | `Item_Visibility` | Porcentaje de exposición en anaquel. Indica la prominencia comercial del artículo en la tienda. |
+| **Producto** | `Item_Type` | Categoría general del producto. Clave para analizar diferencias estructurales entre líneas de negocio. |
+| **Producto** | `Item_MRP` | Precio máximo de venta (precio de lista). Variable principal para explicar variaciones en ventas monetarias. |
+| **Outlet** | `Outlet_Identifier` | Identificador único del establecimiento. Permite estudiar el desempeño comparativo entre tiendas. |
+| **Outlet** | `Outlet_Establishment_Year` | Año de apertura. Funciona como indicador de antigüedad y madurez operativa de la tienda. |
+| **Outlet** | `Outlet_Size` | Tamaño del local. Se asocia con la capacidad de surtido, tráfico de clientes y volumen de exhibición. |
+| **Outlet** | `Outlet_Location_Type` | Tipo de ubicación geográfica. Resume el entorno socioeconómico y el perfil de la demanda. |
+| **Outlet** | `Outlet_Type` | Formato comercial (ej. Supermercado, Tienda de conveniencia). Define la lógica operativa del punto de venta. |
+| **Resultado** | `Item_Outlet_Sales` | **Variable Objetivo.** Ventas totales del producto en la tienda. Es el eje central del análisis de desempeño comercial. |
+
+: Diccionario de variables del dataset de ventas {#tbl-diccionario}
+
+## Necesidades del negocio que motivan el análisis {.unnumbered}
+
+En la práctica, las preguntas analíticas actúan como una guía para seleccionar las herramientas del EDA. Para esto es necesario traducir las preguntas no técnicas de nuestro cliente en preguntas que, como equipo de análisis sabemos que os permitirán realizar un mejro tabajo, en este ejemplo tras una conversación con BigMart se plantean varias necesidades.
+
+#### Necesidad 1: entender el comportamiento global de las ventas {.unnumbered}
+
+> “Antes de entrar en detalles, queremos entender cómo se están comportando las ventas en general. ¿Normalmente se mantienen en un rango parecido o hay mucha variación? ¿Existen casos excepcionalmente altos o bajos que debamos revisar?”
+
+Esta es una forma típica en la que un cliente o la dirección expresa una inquietud de negocio. Aunque no utiliza lenguaje estadístico, como equipo de analítica podemos traducirla en preguntas exploratorias más concretas:
+
+- ¿cuál es el nivel típico de ventas por combinación producto-outlet?
+- ¿la distribución de ventas es homogénea o presenta alta dispersión?
+- ¿hay valores extremos particularmente altos o bajos?
+
+Desde la perspectiva del EDA, estas preguntas orientan el estudio de la variable de ventas mediante **medidas de localización, variabilidad y forma**, así como la identificación de posibles valores atípicos.
+
+#### Necesidad 2: comparar desempeño entre segmentos {.unnumbered}
+
+> “Queremos saber si algunos tipos de productos o algunas tiendas están funcionando mejor que otros. En particular, nos interesa ver si el desempeño cambia según la categoría del producto, el tipo de outlet, el tamaño de la tienda o su ubicación.”
+
+Esta es una inquietud típica del cliente cuando busca identificar diferencias relevantes entre grupos. Desde la perspectiva del equipo de data analytics, esta necesidad se traduce en preguntas de análisis exploratorio como:
+
+- ¿hay categorías de producto que venden sistemáticamente más?
+- ¿ciertos tipos de outlet concentran mejores resultados?
+- ¿las ventas cambian según tamaño o localización de la tienda?
+
+Estas preguntas orientan un análisis de **heterogeneidad entre subgrupos**, mediante comparaciones entre categorías y segmentos relevantes del negocio.
+
+#### Necesidad 3: identificar concentración comercial {.unnumbered}
+
+> “Nos interesa entender si el negocio está bien diversificado o si una parte importante de las ventas depende de muy pocas categorías o de muy pocos outlets.”
+
+Esta es una preocupación estratégica habitual en contextos comerciales, ya que permite evaluar qué tan diversificada o dependiente es la estructura de ingresos. Desde la perspectiva del equipo de data analytics, esta necesidad se traduce en preguntas exploratorias como:
+
+- ¿unas pocas categorías explican gran parte del ingreso?
+- ¿hay outlets particularmente dominantes?
+- ¿la estructura comercial está diversificada o concentrada?
+
+Estas preguntas orientan un análisis de **concentración**, enfocado en identificar si las ventas se distribuyen de manera equilibrada o si están fuertemente concentradas en un conjunto reducido de categorías o establecimientos.
+
+#### Necesidad 4: explorar asociaciones entre atributos y ventas {.unnumbered}
+
+> “Queremos una primera idea de qué variables podrían estar más relacionadas con las ventas, para entender mejor el negocio antes de avanzar hacia análisis predictivos.”
+
+Esta es una inquietud frecuente en etapas tempranas del análisis, cuando el cliente busca una primera comprensión de los factores que podrían estar vinculados con las ventas. Desde la perspectiva del equipo de data analytics, esta necesidad se traduce en preguntas exploratorias como:
+
+- ¿el precio de lista está asociado con mayores ventas?
+- ¿la visibilidad parece relacionarse con el desempeño?
+- ¿algunas variables del outlet muestran asociación con mejores resultados?
+
+Estas preguntas orientan el estudio de **correlación** y de **relaciones bivariadas**, con el fin de detectar patrones iniciales entre atributos y ventas que luego puedan examinarse con mayor profundidad.
+
+## Del problema de negocio al Data Understanding {.unnumbered}
+
+La transición entre Business Understanding y Data Understanding ocurre cuando las preguntas del negocio se convierten en preguntas sobre los datos disponibles. A partir del escenario anterior, como equipo analítico debemos formular preguntas como las siguientes:
+
+### Sobre estructura general del dataset {.unnumbered}
+- ¿cuántos registros hay?
+- ¿cuántas variables numéricas y categóricas existen?
+- ¿hay faltantes, inconsistencias o codificaciones problemáticas?
+
+### Sobre la variable de ventas {.unnumbered}
+- ¿cómo se distribuye `Item_Outlet_Sales`?
+- ¿qué tan sesgada está?
+- ¿qué tan dispersa es respecto a su centro?
+
+### Sobre variables categóricas {.unnumbered}
+- ¿cuántas categorías de producto existen?
+- ¿cómo se distribuyen los registros entre tipos de outlet?
+- ¿hay clases raras o escasamente representadas?
+
+### Sobre calidad de datos {.unnumbered}
+- ¿existen valores faltantes en peso o tamaño del outlet?
+- ¿hay categorías inconsistentes, como variantes textuales de una misma clase?
+- ¿hay variables que realmente son identificadores y no rasgos analíticos?
+
+Estas preguntas ya no pertenecen solo al negocio: son preguntas de **Data Understanding** y abren el camino al EDA.
+
+
+Una vez que se ha establecido el escenario de negocio, la unidad de análisis, el diccionario de variables y las necesidades comerciales, es posible formular preguntas concretas que el EDA deberá responder. Estas preguntas constituyen el puente natural entre la fase de Business Understanding y la fase de Data Understanding.
+
+### Preguntas sobre ventas {.unnumbered}
+
+- ¿Cuál es el nivel típico de `Item_Outlet_Sales`?
+- ¿Qué tan alejadas están las ventas de ese nivel típico?
+- ¿La distribución es simétrica o presenta cola derecha?
+
+### Preguntas sobre productos {.unnumbered}
+
+- ¿Qué categorías de producto aparecen con mayor frecuencia?
+- ¿Qué categorías concentran mayores ventas?
+- ¿El precio del producto parece jugar un papel importante?
+
+### Preguntas sobre outlets {.unnumbered}
+
+- ¿Existen diferencias notables entre tipos de outlet?
+- ¿El tamaño del outlet parece importar?
+- ¿La antigüedad del outlet podría estar asociada con su desempeño?
+
+### Preguntas sobre calidad y preparación de datos {.unnumbered}
+
+- ¿Qué variables presentan faltantes?
+- ¿Qué categorías deben homogenizarse?
+- ¿Qué transformaciones podrían ser necesarias antes de modelar?
+
+Estas preguntas constituyen el puente natural hacia el Data Understanding y el EDA.

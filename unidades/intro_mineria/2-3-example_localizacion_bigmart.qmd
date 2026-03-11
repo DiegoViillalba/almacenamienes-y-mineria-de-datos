@@ -1,0 +1,543 @@
+---
+title: "Medidas de localización en Big Mart Sales"
+number-sections: false
+format:
+  html:
+    toc: true
+    page-layout: full
+  pdf:
+    toc: true
+jupyter: python3
+---
+
+Desde la perspectiva del análisis exploratorio de datos, las medidas de localización responden a una pregunta fundamental: **¿en qué región de valores tiende a concentrarse el fenómeno observado?**. En términos prácticos, esto permite identificar valores típicos, comparar distribuciones y comenzar a interpretar el comportamiento general del sistema antes de pasar a medidas de dispersión, forma o segmentación.
+
+El dataset incluye variables numéricas como `Item_Weight`, `Item_Visibility`, `Item_MRP` y `Item_Outlet_Sales`, junto con variables categóricas asociadas a tipo de producto, establecimiento y ubicación del outlet. Para este primer analisis nos enfocaremos en el comportamiento univariado de las variables numéricas, usando medidas como la **media**, la **mediana**, la **moda** y algunos **cuantiles**.
+
+## Preparación del entorno
+
+Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), para esta sección usaremos Python y las bibliotecas pandas, numpy, plotly y matplotlib.
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.rcParams["figure.figsize"] = (8, 4.5)
+plt.rcParams["axes.grid"] = True
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+
+df = pd.read_csv(DATA_PATH)
+df.head()
+```
+
+## Inspección inicial
+
+Antes de calcular medidas de localización conviene identificar el tipo de variables disponibles y confirmar qué columnas numéricas serán analizadas.
+
+```{python}
+df.info()
+```
+
+```{python}
+num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+
+num_cols, cat_cols[:10]
+```
+
+En este punto es útil destacar que no todas las variables numéricas tienen el mismo significado. Por ejemplo, `Item_MRP` representa el precio máximo sugerido del producto, mientras que `Item_Outlet_Sales` corresponde a las ventas del producto en un outlet particular. La interpretación del “centro” de cada variable, por tanto, depende del contexto económico de la medición.
+
+## Selección de variables para el análisis de localización
+
+Para esta etapa trabajaremos con un subconjunto de variables numéricas especialmente interpretables:
+
+- `Item_Weight`
+- `Item_Visibility`
+- `Item_MRP`
+- `Item_Outlet_Sales`
+
+Crearemos un nuevo dataframe con estas columnas para facilitar el análisis, identificando además el número de datos faltantes en las mismas.
+
+```{python}
+vars_localizacion = [
+    "Item_Weight",
+    "Item_Visibility",
+    "Item_MRP",
+    "Item_Outlet_Sales",
+]
+
+missing_report = df[vars_localizacion].isna().sum().to_frame("missing")
+missing_report["missing_pct"] = 100 * missing_report["missing"] / len(df)
+missing_report
+```
+
+### Datos faltantes y su impacto en el análisis de localización
+
+La presencia de valores faltantes en la variable `Item_Weight` no impide comenzar el análisis descriptivo de localización, **sin embargo, eliminarlos sin analizar su origen puede introducir sesgos en los resultados**. Por ello, antes de calcular medidas descriptivas es necesario examinar la magnitud y el posible patrón de los datos ausentes. Extrayendo un dataframe con los casos faltantes en `Item_Weight` tenemos:
+
+```{python}
+missing_weight = df[df["Item_Weight"].isna()]
+missing_weight.head()
+```
+
+Si bien no es el objetivo de esta sección resolver el problema de los datos faltantes, es importante tener una noción clara de su impacto. Para esto existen tres preguntas clave que podemos hacernos en estos casos:
+
+1. **¿Qué porcentaje de datos faltantes hay en la variable?**
+
+Este paso permite dimensionar la magnitud del problema. Calcular la proporción de valores ausentes respecto al total de observaciones ayuda a evaluar si los faltantes representan una fracción pequeña del dataset o si son lo suficientemente numerosos como para afectar la representatividad del análisis.
+
+```{python}
+print(f"Porcentaje de datos faltantes en Item_Weight: {missing_report.loc['Item_Weight', 'missing_pct']:.2f}%")
+```
+En nuestro caso la variable presenta aproximadamente un 17 % de valores faltantes, lo que implica que cerca de una sexta parte de las observaciones no contiene información para este atributo. Esta proporción no es despreciable, por lo que antes de excluir estos registros conviene examinar si los datos faltantes siguen algún patrón sistemático y evaluar el posible impacto de su eliminación en el análisis exploratorio.
+
+2. **¿Existen patrones de ausencia relacionados con otras variables?**
+
+Aquí se busca identificar si los datos faltantes aparecen de manera aleatoria o si se concentran en ciertos grupos (por ejemplo, en determinadas categorías de producto, tipos de outlet o rangos de precio). Detectar patrones de ausencia es importante porque podría indicar un posible sesgo en los datos.
+
+Analicemos el promedio de valores faltantes en `Item_Weight` por tipo de producto y tipo de outlet:
+```{python}
+df['Item_Weight'].isna().groupby(df['Item_Type']).mean()
+```
+
+```{python}
+df['Item_Weight'].isna().groupby(df['Outlet_Type']).mean()
+```
+
+Podemos observar como la falta de datos en `Item_Weight` se concentra principalmete en 2 tipos de outlets : `Grocery Store` y `Supermarket Type1`. Esto sugiere que la ausencia de información no es aleatoria en estos casos, mientras que tenemos una distribución más equilibrada en `Item_Type`. 
+
+Este patrón de ausencia podría estar relacionado con la naturaleza de los productos comercializados en esos outlets o con prácticas de registro de datos específicas, lo que implica que eliminar estos casos sin un análisis previo podría sesgar el análisis descriptivo.
+
+```{python}
+import pandas as pd
+import plotly.express as px
+
+# Proporción de missing de Item_Weight por Outlet_Type
+missing_outlet = (
+    df['Item_Weight']
+    .isna()
+    .groupby(df['Outlet_Type'])
+    .mean()
+    .mul(100)
+    .reset_index(name='pct_missing')
+    .sort_values('pct_missing', ascending=False)
+)
+
+fig = px.bar(
+    missing_outlet,
+    x='Outlet_Type',
+    y='pct_missing',
+    color='pct_missing',
+    color_continuous_scale='Reds',
+    text='pct_missing',
+    labels={
+        'Outlet_Type': 'Tipo de outlet',
+        'pct_missing': '% de faltantes en Item_Weight'
+    },
+    title='Porcentaje de valores faltantes de Item_Weight por Outlet_Type'
+)
+
+fig.update_traces(
+    texttemplate='%{text:.1f}%',
+    textposition='outside'
+)
+
+fig.update_layout(
+    yaxis_title='% de faltantes',
+    xaxis_title='Tipo de outlet',
+    coloraxis_colorbar_title='% faltante'
+)
+
+fig.show()
+```
+
+3. **¿Cuál es el impacto potencial de eliminar casos con datos faltantes en el análisis?**
+
+En este punto, la pregunta clave ya no es solo si existen datos faltantes, sino si su eliminación cambia nuestra lectura general de los datos. Por ello, una forma natural de continuar el EDA es comparar medidas de localización antes y después de excluir los casos incompletos. Si estas medidas permanecen estables, la omisión de dichos registros tendría un impacto limitado; si cambian de manera apreciable, entonces la ausencia de datos sí afecta la interpretación. 
+
+Con lo cual procederemos en las siguientes secciones a evaluar estas medidas de localizacion asociadas.
+
+
+
+
+## Medidas de localización básicas
+
+Como vimos en el capitulo pasado las medidas más usadas en esta etapa son:
+
+- **Media**: 
+  $$
+  \bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i
+  $$
+- **Mediana**: valor que deja 50\% de observaciones a cada lado.
+- **Moda**: valor más frecuente. En variables continuas muchas veces es más útil hablar de la región modal observada en un histograma.
+- **Cuantiles**: percentiles como $Q_{0.25}$, $Q_{0.50}$ y $Q_{0.75}$.
+
+Estas se pueden conocer de manera rápida en pandas mediante los métodos `mean()`, `median()`, `mode()` y `quantile()`. Para facilitar la lectura comparativa, conviene construir una tabla resumen con estas medidas para cada variable numérica clave.
+```{python}
+def mode_series(s):
+    m = s.mode(dropna=True)
+    if len(m) == 0:
+        return np.nan
+    if len(m) == 1:
+        return m.iloc[0]
+    return m.iloc[:5].tolist()
+
+summary_loc = pd.DataFrame({
+    "media": df[vars_localizacion].mean(numeric_only=True),
+    "mediana": df[vars_localizacion].median(numeric_only=True),
+    "moda": [mode_series(df[c]) for c in vars_localizacion],
+    "q25": df[vars_localizacion].quantile(0.25),
+    "q75": df[vars_localizacion].quantile(0.75),
+    "min": df[vars_localizacion].min(numeric_only=True),
+    "max": df[vars_localizacion].max(numeric_only=True),
+})
+summary_loc
+```
+
+Esta tabla permite una primera lectura comparativa. La relación entre media y mediana es particularmente informativa. Si ambas están muy próximas, la distribución podría ser relativamente simétrica o al menos no estar muy afectada por colas extremas. Si difieren de forma notable, conviene anticipar que más adelante aparecerán señales de asimetría.
+
+## Interpretación estadística de la media y la mediana
+
+En datos de ventas es común encontrar distribuciones con sesgo a la derecha. Esto significa que la mayor parte de las observaciones se agrupan en niveles bajos o medios, pero existe una cola de valores altos que empuja la media hacia arriba. En ese caso, la media deja de representar un valor “típico” tan bien como la mediana.
+
+Podemos ilustrarlo directamente con histogramas sobre los que se tracen ambas medidas.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_localizacion
+)
+
+for i, col in enumerate(vars_localizacion):
+    s = df[col].dropna()
+    row = i // 2 + 1
+    col_pos = i % 2 + 1
+
+    media = s.mean()
+    mediana = s.median()
+
+    # Histograma
+    fig.add_trace(
+        go.Histogram(
+            x=s,
+            nbinsx=30,
+            name=col,
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+
+    # Línea de la media
+    fig.add_vline(
+        x=media,
+        line_dash="dash",
+        line_width=2,
+        annotation_text=f"Media = {media:.2f}",
+        annotation_position="top right",
+        row=row, col=col_pos
+    )
+
+    # Línea de la mediana
+    fig.add_vline(
+        x=mediana,
+        line_dash="dot",
+        line_width=2,
+        annotation_text=f"Mediana = {mediana:.2f}",
+        annotation_position="top left",
+        row=row, col=col_pos
+    )
+
+    fig.update_xaxes(title_text=col, row=row, col=col_pos)
+    fig.update_yaxes(title_text="Frecuencia", row=row, col=col_pos)
+
+fig.update_layout(
+    # title="Distribuciones con media y mediana",
+    height=700,
+    width=1000,
+    bargap=0.05
+)
+
+fig.show()
+```
+
+La superposición de estas líneas verticales ofrece una interpretación inmediata. En particular, si en `Item_Outlet_Sales` la media aparece sensiblemente a la derecha de la mediana, puede concluirse que las ventas no se distribuyen de forma simétrica y que existen casos de ventas altas elevan el promedio. En cambio, si en `Item_MRP` ambas medidas son relativamente cercanas, la estructura de precios podría ser más estable o menos sesgada.
+
+## Cuantiles y lectura ampliada del centro
+
+Cuando hablamos de **localización**, no siempre basta con resumir una variable mediante un único valor, como la media o la mediana. En muchos casos, resulta más útil describir la **zona central** donde se concentra la mayor parte de las observaciones. Para ello, los **cuantiles** son especialmente importantes.
+
+En particular, los percentiles 25, 50 y 75 permiten identificar el tramo donde se encuentra el **50 % central de los datos**. Esta información ayuda a responder preguntas más ricas que un simple “¿cuál es el promedio?”, por ejemplo:
+
+- ¿entre qué valores se concentra la mitad central de los casos?
+- ¿qué tan alejados están los valores altos respecto del centro?
+- ¿la mediana representa bien a la distribución o existen asimetrías importantes?
+
+```{python}
+quantiles = df[vars_localizacion].quantile([0.10, 0.25, 0.50, 0.75, 0.90])
+quantiles
+```
+
+La tabla de cuantiles permite ampliar la lectura del centro. Mientras la media resume la localización en un solo número, los cuantiles muestran cómo se distribuyen los datos alrededor de esa zona central. Así, el percentil 25 marca el punto por debajo del cual se encuentra el 25 % de las observaciones, la mediana divide la distribución en dos partes iguales, y el percentil 75 indica el límite superior del 50 % central.
+
+Para complementar esta lectura, es útil recurrir a los boxplots, ya que representan visualmente la mediana, los cuartiles, la dispersión central y la posible presencia de valores atípicos.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_localizacion
+)
+
+for i, var in enumerate(vars_localizacion):
+    row = i // 2 + 1
+    col = i % 2 + 1
+    
+    fig.add_trace(
+        go.Box(
+            y=df[var].dropna(),
+            name=var,
+            boxpoints="outliers",
+            showlegend=False
+        ),
+        row=row, col=col
+    )
+
+fig.update_layout(
+    title="Boxplots de variables seleccionadas",
+    height=700,
+    width=900
+)
+
+fig.show()
+```
+
+A partir de estos gráficos, la interpretación ya no se limita a un valor “promedio”, sino que puede centrarse en la estructura de la distribución. En particular, los boxplots permiten observar:
+
+- dónde se ubica la mediana;
+
+- qué tan amplio es el rango intercuartílico;
+
+- si la distribución parece simétrica o sesgada;
+
+- y si existen valores atípicos que puedan influir en la media.
+
+De esta forma, los cuantiles y los boxplots enriquecen el análisis de localización, porque muestran no solo un centro numérico, sino también la región en la que efectivamente se concentra la mayor parte de los datos.
+
+## Impacto de eliminar faltantes en `Item_Weight`
+
+Para evaluar si eliminar las observaciones con valores faltantes en `Item_Weight` introduce sesgos en el análisis, compararemos el comportamiento del dataset antes y después de excluir dichos casos. La idea es verificar si esta reducción de la muestra modifica de forma importante la localización de otras variables relevantes y la composición general de los datos.
+
+Primero construimos dos subconjuntos:
+
+- el dataset original;
+- el dataset filtrado, conservando solo las observaciones con `Item_Weight` disponible.
+
+```{python}
+df_complete_weight = df[df["Item_Weight"].notna()].copy()
+
+n_total = len(df)
+n_complete = len(df_complete_weight)
+n_removed = n_total - n_complete
+
+print(f"Observaciones totales: {n_total}")
+print(f"Observaciones con Item_Weight disponible: {n_complete}")
+print(f"Observaciones eliminadas: {n_removed}")
+print(f"Porcentaje eliminado: {100 * n_removed / n_total:.2f}%")
+```
+
+Una primera forma de evaluar el posible sesgo consiste en comparar medidas de localización de variables relevantes antes y después del filtrado.
+
+```{python}
+vars_compare = ["Item_MRP", "Item_Outlet_Sales", "Item_Visibility"]
+
+summary_compare = pd.DataFrame({
+    "media_original": df[vars_compare].mean(),
+    "media_filtrado": df_complete_weight[vars_compare].mean(),
+    "mediana_original": df[vars_compare].median(),
+    "mediana_filtrado": df_complete_weight[vars_compare].median()
+})
+
+summary_compare["dif_media_abs"] = summary_compare["media_filtrado"] - summary_compare["media_original"]
+summary_compare["dif_media_pct"] = 100 * summary_compare["dif_media_abs"] / summary_compare["media_original"]
+
+summary_compare["dif_mediana_abs"] = summary_compare["mediana_filtrado"] - summary_compare["mediana_original"]
+summary_compare["dif_mediana_pct"] = 100 * summary_compare["dif_mediana_abs"] / summary_compare["mediana_original"]
+
+summary_compare.round(3)
+```
+Además de la comparación numérica, es útil observar gráficamente si las distribuciones cambian al eliminar los registros con Item_Weight faltante.
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+vars_compare = ["Item_MRP", "Item_Outlet_Sales", "Item_Visibility"]
+
+fig = make_subplots(
+    rows=1, cols=3,
+    subplot_titles=vars_compare
+)
+
+for i, var in enumerate(vars_compare, start=1):
+    fig.add_trace(
+        go.Histogram(
+            x=df[var].dropna(),
+            name="Original",
+            opacity=0.55,
+            nbinsx=30,
+            histnorm="probability density",
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+    
+    fig.add_trace(
+        go.Histogram(
+            x=df_complete_weight[var].dropna(),
+            name="Sin faltantes en Item_Weight",
+            opacity=0.55,
+            nbinsx=30,
+            histnorm="probability density",
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+
+fig.update_layout(
+    title="Distribuciones antes y después de eliminar faltantes en Item_Weight",
+    barmode="overlay",
+    height=450,
+    width=1100
+)
+
+fig.show()
+```
+
+Para reforzar la lectura de localización, también podemos comparar boxplots en ambos escenarios.
+
+```{python}
+fig = make_subplots(
+    rows=1, cols=3,
+    subplot_titles=vars_compare
+)
+
+for i, var in enumerate(vars_compare, start=1):
+    fig.add_trace(
+        go.Box(
+            y=df[var].dropna(),
+            name="Original",
+            boxpoints=False,
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+    
+    fig.add_trace(
+        go.Box(
+            y=df_complete_weight[var].dropna(),
+            name="Sin faltantes en Item_Weight",
+            boxpoints=False,
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+
+fig.update_layout(
+    title="Comparación de boxplots antes y después del filtrado",
+    height=450,
+    width=1100
+)
+
+fig.show()
+```
+
+Finalmente, también conviene revisar si la eliminación afecta la composición de algunos grupos del negocio.
+
+```{python}
+comp_outlet = pd.concat([
+    df["Outlet_Type"].value_counts(normalize=True).rename("original"),
+    df_complete_weight["Outlet_Type"].value_counts(normalize=True).rename("filtrado")
+], axis=1)
+
+comp_outlet["dif_pct_points"] = 100 * (comp_outlet["filtrado"] - comp_outlet["original"])
+comp_outlet.round(4)
+```
+
+
+Los resultados muestran que la eliminación de observaciones con `Item_Weight` faltante produce cambios pequeños en las medidas de localización de las variables analizadas. Si bien en algunos casos las diferencias porcentuales superan ligeramente el 2 %, especialmente en `Item_Outlet_Sales` e `Item_Visibility`, la magnitud de estas variaciones no parece suficiente para modificar de manera sustantiva la interpretación general del centro de las distribuciones. Por ello, dentro del contexto de este EDA, trabajar con los casos completos puede considerarse una decisión razonable y con bajo riesgo de sesgo en términos de localización.
+
+<!-- 
+## Una tabla compacta de indicadores clave
+
+Como antesala a un dashboard, conviene construir una tabla ejecutiva resumida para cada variable numérica.
+
+```{python}
+dashboard_loc = pd.DataFrame({
+    "Variable": vars_localizacion,
+    "N válidos": [df[c].notna().sum() for c in vars_localizacion],
+    "Media": [df[c].mean() for c in vars_localizacion],
+    "Mediana": [df[c].median() for c in vars_localizacion],
+    "Q1": [df[c].quantile(0.25) for c in vars_localizacion],
+    "Q3": [df[c].quantile(0.75) for c in vars_localizacion],
+})
+
+dashboard_loc
+```
+
+Esta tabla es adecuada para incrustarse en un panel inicial del libro o del dashboard porque sintetiza el centro y la región intercuartílica sin introducir todavía medidas formales de dispersión.
+
+## Comparación del centro por grupos
+
+Aunque este primer documento está centrado en la localización univariada, es útil incorporar una primera comparación por grupo. Esto permite enlazar con el tema posterior de heterogeneidad. Una opción natural es comparar la mediana de ventas por tipo de outlet.
+
+```{python}
+outlet_median = (
+    df.groupby("Outlet_Type", dropna=False)["Item_Outlet_Sales"]
+      .median()
+      .sort_values(ascending=False)
+)
+
+outlet_median
+```
+
+```{python}
+outlet_median.plot(kind="bar")
+plt.title("Mediana de Item_Outlet_Sales por Outlet_Type")
+plt.xlabel("Outlet_Type")
+plt.ylabel("Mediana de ventas")
+plt.xticks(rotation=45, ha="right")
+plt.tight_layout()
+plt.show()
+```
+
+La diferencia entre medias o medianas de grupo no debe todavía interpretarse como evidencia causal, pero sí como una señal descriptiva fuerte: los centros de distribución pueden desplazarse según el contexto del outlet. Esta idea será fundamental cuando se discuta heterogeneidad entre subpoblaciones.
+
+## Propuesta de dashboard de localización
+
+La primera versión del dashboard puede organizarse en cuatro componentes:
+
+1. **KPIs principales**: media y mediana de `Item_Outlet_Sales`, `Item_MRP` e `Item_Weight`.
+2. **Histogramas con líneas de centro**: uno por variable numérica clave.
+3. **Tabla de cuantiles**: percentiles 10, 25, 50, 75 y 90.
+4. **Comparación por grupos**: mediana de ventas por `Outlet_Type` o `Item_Type`.
+
+En Quarto esto puede presentarse como una narrativa progresiva: primero el tablero muestra el centro global de la distribución y después introduce una comparación segmentada.
+
+## Conclusiones
+
+Las medidas de localización constituyen el primer nivel de descripción cuantitativa de un dataset. En Big Mart Sales permiten responder dónde se sitúan, en términos generales, los precios, pesos, niveles de visibilidad y ventas. Sin embargo, el centro por sí solo no agota la estructura de los datos. Dos variables pueden compartir una media similar y, aun así, diferir mucho en dispersión o forma. Por ello, la siguiente etapa natural del análisis consiste en estudiar la **variabilidad**, es decir, qué tan extendida o concentrada se encuentra la distribución alrededor de sus valores centrales. -->
+
+## Ejercicio sugerido
+
+Construya una versión inicial de dashboard en Quarto que incluya:
+
+- una tabla resumen con media, mediana y cuantiles de las variables numéricas seleccionadas;
+- un histograma con líneas para media y mediana de `Item_Outlet_Sales`;
+- un gráfico de barras con la mediana de ventas por `Outlet_Type`;
+- un breve comentario interpretativo donde se compare el uso de la media frente a la mediana.

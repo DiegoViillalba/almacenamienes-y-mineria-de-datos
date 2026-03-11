@@ -1,0 +1,497 @@
+---
+title: "Concentración"
+format:
+  html:
+    toc: true
+    number-sections: true
+  pdf:
+    toc: true
+    number-sections: true
+jupyter: python3
+---
+
+# Introducción
+
+Hasta este punto del análisis exploratorio ya hemos estudiado la localización, la variabilidad, la forma y la heterogeneidad de las variables principales del conjunto de datos **Big Mart Sales**. Falta ahora una dimensión especialmente útil cuando se trabaja con datos económicos, comerciales y administrativos: la **concentración**.
+
+La idea central es simple. No basta con saber cuánto venden, en promedio, los productos o los outlets; también interesa conocer **cómo se reparte** el total de ventas entre categorías, tipos de tienda o establecimientos concretos. Dos escenarios pueden tener la misma venta total y la misma media, pero diferir radicalmente en su estructura interna: en uno las ventas pueden estar distribuidas de manera relativamente equilibrada, mientras que en otro una pequeña fracción de categorías o sucursales puede concentrar una porción muy grande del ingreso total.
+
+Desde una perspectiva de EDA, las medidas y visualizaciones de concentración ayudan a responder preguntas como las siguientes:
+
+- ¿Qué proporción del ingreso total proviene de unas cuantas categorías?
+- ¿Los outlets contribuyen de forma equilibrada al volumen de ventas o existe dominancia de unos pocos?
+- ¿Se observa una estructura tipo **Pareto**, donde una fracción pequeña de elementos explica gran parte del fenómeno?
+
+En este capítulo se desarrollan medidas descriptivas y representaciones gráficas para estudiar la concentración de las ventas en **Big Mart Sales**, concluyendo con un mini-dashboard de concentración que después se integrará al dashboard global del libro.
+
+# Objetivos del capítulo
+
+Al finalizar este capítulo se espera que el lector sea capaz de:
+
+1. distinguir entre una distribución “equilibrada” y una distribución “concentrada”;
+2. calcular participaciones relativas y acumuladas sobre ventas agregadas;
+3. interpretar tablas de ranking y gráficos de Pareto;
+4. construir curvas de concentración sencillas;
+5. integrar estos hallazgos en una narrativa de negocio y EDA.
+
+# Carga y preparación de datos
+
+En este capítulo se trabaja sobre el mismo conjunto de datos utilizado en capítulos previos. Ajusta la ruta según la estructura de tu proyecto.
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+DATA_PATH = "../../data/bigmart_sales.csv"  
+df = pd.read_csv(DATA_PATH)
+
+df.head()
+```
+
+Como en capítulos anteriores, conviene revisar que las variables categóricas relevantes estén limpias y listas para agruparse.
+
+```{python}
+# Estandarización mínima de una variable categórica clásica en Big Mart
+if "Item_Fat_Content" in df.columns:
+    df["Item_Fat_Content"] = (
+        df["Item_Fat_Content"]
+        .replace({
+            "LF": "Low Fat",
+            "low fat": "Low Fat",
+            "reg": "Regular"
+        })
+    )
+
+# Vista rápida de columnas útiles para concentración
+candidate_cols = [
+    "Item_Identifier",
+    "Item_Type",
+    "Outlet_Identifier",
+    "Outlet_Type",
+    "Outlet_Location_Type",
+    "Outlet_Size",
+    "Item_Outlet_Sales",
+]
+
+existing = [c for c in candidate_cols if c in df.columns]
+df[existing].head()
+```
+
+# Fundamento conceptual
+
+## Participación relativa
+
+Sea \(x_i\) el total de ventas asociado a la categoría o unidad \(i\). La participación relativa de esa unidad respecto del total se define por
+
+\[
+p_i = \frac{x_i}{\sum_{j=1}^{n} x_j}.
+\]
+
+Esta cantidad permite medir el peso de cada categoría en el total agregado. En términos porcentuales:
+
+\[
+p_i^{(\%)} = 100 \cdot p_i.
+\]
+
+## Participación acumulada
+
+Si ordenamos las unidades de mayor a menor según su contribución, la participación acumulada hasta la posición \(k\) está dada por
+
+\[
+P_k = \sum_{i=1}^{k} p_{(i)},
+\]
+
+donde \(p_{(i)}\) representa la participación de la \(i\)-ésima unidad en el orden descendente.
+
+Esta medida es la base del análisis de **Pareto**, que permite estudiar cuántas categorías explican cierto porcentaje del total.
+
+## Curva de concentración
+
+Otra idea útil consiste en comparar la acumulación observada con una situación ideal de reparto uniforme. Si unas pocas unidades concentran gran parte del total, la curva acumulada crecerá rápidamente al inicio y se separará de la diagonal de reparto uniforme.
+
+Aunque en cursos introductorios puede evitarse una formalización excesiva, esta representación es la antesala conceptual de herramientas más avanzadas como la **curva de Lorenz** y el **índice de Gini**.
+
+# Concentración de ventas por categoría de producto
+
+Comenzamos agregando la venta total por tipo de producto.
+
+```{python}
+sales_by_item_type = (
+    df.groupby("Item_Type", dropna=False)["Item_Outlet_Sales"]
+      .sum()
+      .sort_values(ascending=False)
+      .reset_index()
+)
+
+sales_by_item_type["share"] = (
+    sales_by_item_type["Item_Outlet_Sales"] /
+    sales_by_item_type["Item_Outlet_Sales"].sum()
+)
+
+sales_by_item_type["cum_share"] = sales_by_item_type["share"].cumsum()
+sales_by_item_type["share_pct"] = 100 * sales_by_item_type["share"]
+sales_by_item_type["cum_share_pct"] = 100 * sales_by_item_type["cum_share"]
+
+sales_by_item_type.head(10)
+```
+
+## Ranking de contribución
+
+Una primera lectura descriptiva consiste en ordenar las categorías por ventas y observar su peso relativo.
+
+```{python}
+fig = px.bar(
+    sales_by_item_type,
+    x="Item_Type",
+    y="share_pct",
+    title="Participación porcentual de ventas por tipo de producto",
+    labels={"share_pct": "Participación (%)", "Item_Type": "Tipo de producto"}
+)
+fig.update_layout(xaxis_tickangle=-45)
+fig.show()
+```
+
+Este gráfico responde a una pregunta básica: **qué categorías pesan más en la estructura total de ventas**. En un contexto de negocio, esto ayuda a distinguir líneas estratégicas, categorías troncales y segmentos con menor incidencia.
+
+## Gráfico de Pareto
+
+El gráfico de Pareto combina barras de contribución individual con una curva acumulada. Es una de las formas más didácticas de introducir la idea de concentración.
+
+```{python}
+pareto_df = sales_by_item_type.copy()
+
+fig = go.Figure()
+fig.add_bar(
+    x=pareto_df["Item_Type"],
+    y=pareto_df["share_pct"],
+    name="Participación individual (%)"
+)
+fig.add_scatter(
+    x=pareto_df["Item_Type"],
+    y=pareto_df["cum_share_pct"],
+    mode="lines+markers",
+    name="Participación acumulada (%)",
+    yaxis="y2"
+)
+
+fig.update_layout(
+    title="Gráfico de Pareto de ventas por tipo de producto",
+    xaxis=dict(title="Tipo de producto"),
+    yaxis=dict(title="Participación individual (%)"),
+    yaxis2=dict(
+        title="Participación acumulada (%)",
+        overlaying="y",
+        side="right",
+        range=[0, 105]
+    ),
+    legend=dict(orientation="h"),
+)
+fig.update_xaxes(tickangle=-45)
+fig.show()
+```
+
+## Interpretación
+
+Cuando la curva acumulada crece muy rápido al inicio, ello indica que unas pocas categorías concentran una gran parte de las ventas. Si, en cambio, la acumulación es más gradual, la estructura es relativamente más equilibrada.
+
+Una buena práctica pedagógica consiste en cuantificar preguntas como:
+
+- ¿Cuántas categorías explican el 50\% de las ventas?
+- ¿Cuántas categorías explican el 80\%?
+- ¿Qué fracción del total se concentra en las tres categorías principales?
+
+```{python}
+def categories_to_reach_threshold(table, threshold=0.8):
+    idx = np.argmax(table["cum_share"].to_numpy() >= threshold)
+    return idx + 1
+
+n50 = categories_to_reach_threshold(sales_by_item_type, 0.50)
+n80 = categories_to_reach_threshold(sales_by_item_type, 0.80)
+
+top3_share = sales_by_item_type["share"].head(3).sum() * 100
+
+summary_concentration_item = pd.DataFrame({
+    "Indicador": [
+        "Categorías para alcanzar 50% de ventas",
+        "Categorías para alcanzar 80% de ventas",
+        "Participación acumulada de las 3 principales (%)"
+    ],
+    "Valor": [n50, n80, round(top3_share, 2)]
+})
+
+summary_concentration_item
+```
+
+# Concentración de ventas por outlet
+
+La concentración también puede analizarse desde el punto de vista de las tiendas o outlets. Esta mirada es importante porque distingue entre un portafolio equilibrado de establecimientos y una estructura dominada por unas pocas unidades.
+
+```{python}
+sales_by_outlet = (
+    df.groupby("Outlet_Identifier", dropna=False)["Item_Outlet_Sales"]
+      .sum()
+      .sort_values(ascending=False)
+      .reset_index()
+)
+
+sales_by_outlet["share"] = (
+    sales_by_outlet["Item_Outlet_Sales"] /
+    sales_by_outlet["Item_Outlet_Sales"].sum()
+)
+sales_by_outlet["cum_share"] = sales_by_outlet["share"].cumsum()
+sales_by_outlet["share_pct"] = 100 * sales_by_outlet["share"]
+sales_by_outlet["cum_share_pct"] = 100 * sales_by_outlet["cum_share"]
+
+sales_by_outlet
+```
+
+```{python}
+fig = go.Figure()
+fig.add_bar(
+    x=sales_by_outlet["Outlet_Identifier"],
+    y=sales_by_outlet["share_pct"],
+    name="Participación individual (%)"
+)
+fig.add_scatter(
+    x=sales_by_outlet["Outlet_Identifier"],
+    y=sales_by_outlet["cum_share_pct"],
+    mode="lines+markers",
+    name="Participación acumulada (%)",
+    yaxis="y2"
+)
+fig.update_layout(
+    title="Concentración de ventas por outlet",
+    xaxis=dict(title="Outlet"),
+    yaxis=dict(title="Participación individual (%)"),
+    yaxis2=dict(
+        title="Participación acumulada (%)",
+        overlaying="y",
+        side="right",
+        range=[0, 105]
+    ),
+    legend=dict(orientation="h")
+)
+fig.show()
+```
+
+## Comentario analítico
+
+A diferencia del análisis por tipo de producto, aquí suele haber menos unidades agregadas, de modo que la concentración puede hacerse visible con mayor claridad. Si pocas tiendas explican una fracción grande de las ventas, ello puede tener implicaciones operativas, logísticas o estratégicas.
+
+# Concentración por tipo de outlet
+
+Además de estudiar outlets individuales, conviene analizar el reparto de ventas según tipo de tienda.
+
+```{python}
+sales_by_outlet_type = (
+    df.groupby("Outlet_Type", dropna=False)["Item_Outlet_Sales"]
+      .sum()
+      .sort_values(ascending=False)
+      .reset_index()
+)
+
+sales_by_outlet_type["share"] = (
+    sales_by_outlet_type["Item_Outlet_Sales"] /
+    sales_by_outlet_type["Item_Outlet_Sales"].sum()
+)
+sales_by_outlet_type["cum_share"] = sales_by_outlet_type["share"].cumsum()
+sales_by_outlet_type["share_pct"] = 100 * sales_by_outlet_type["share"]
+sales_by_outlet_type["cum_share_pct"] = 100 * sales_by_outlet_type["cum_share"]
+
+sales_by_outlet_type
+```
+
+```{python}
+fig = px.bar(
+    sales_by_outlet_type,
+    x="Outlet_Type",
+    y="share_pct",
+    title="Participación de ventas por tipo de outlet",
+    labels={"share_pct": "Participación (%)", "Outlet_Type": "Tipo de outlet"}
+)
+fig.update_layout(xaxis_tickangle=-20)
+fig.show()
+```
+
+# Curva de concentración simplificada
+
+Para construir una curva de concentración simple, ordenamos las unidades por contribución creciente o decreciente y comparamos la acumulación observada contra una referencia uniforme.
+
+Aquí haremos una versión descriptiva, suficiente para fines pedagógicos.
+
+```{python}
+def concentration_curve(values):
+    values = np.asarray(values, dtype=float)
+    values = np.sort(values)  # ascendente
+    cum_values = np.cumsum(values)
+    cum_values = cum_values / cum_values[-1]
+    cum_units = np.arange(1, len(values) + 1) / len(values)
+    return cum_units, cum_values
+
+x_units, y_conc = concentration_curve(sales_by_item_type["Item_Outlet_Sales"])
+
+curve_df = pd.DataFrame({
+    "Fraccion_unidades": x_units,
+    "Fraccion_ventas": y_conc
+})
+
+fig = go.Figure()
+fig.add_scatter(
+    x=curve_df["Fraccion_unidades"],
+    y=curve_df["Fraccion_ventas"],
+    mode="lines",
+    name="Curva de concentración"
+)
+fig.add_scatter(
+    x=[0, 1],
+    y=[0, 1],
+    mode="lines",
+    name="Reparto uniforme"
+)
+fig.update_layout(
+    title="Curva de concentración de ventas por tipo de producto",
+    xaxis_title="Fracción acumulada de categorías",
+    yaxis_title="Fracción acumulada de ventas"
+)
+fig.show()
+```
+
+## Lectura de la curva
+
+Cuanto más separada esté la curva respecto de la diagonal de reparto uniforme, mayor será la concentración. En un reparto perfectamente equilibrado, ambas coincidirían. En cambio, una curva muy hundida al inicio y muy empinada al final refleja que pocas categorías explican gran parte del volumen total.
+
+# Indicadores resumidos de concentración
+
+A modo de síntesis, conviene construir una tabla con indicadores descriptivos que resuman la estructura observada.
+
+```{python}
+top1_item = sales_by_item_type["share"].iloc[0] * 100
+top5_item = sales_by_item_type["share"].head(5).sum() * 100
+
+top1_outlet = sales_by_outlet["share"].iloc[0] * 100
+top3_outlet = sales_by_outlet["share"].head(3).sum() * 100
+
+concentration_summary = pd.DataFrame({
+    "Ámbito": [
+        "Productos",
+        "Productos",
+        "Productos",
+        "Outlets",
+        "Outlets"
+    ],
+    "Indicador": [
+        "Participación de la categoría líder (%)",
+        "Participación acumulada del top 5 (%)",
+        "Categorías necesarias para 80% de ventas",
+        "Participación del outlet líder (%)",
+        "Participación acumulada de los 3 principales outlets (%)"
+    ],
+    "Valor": [
+        round(top1_item, 2),
+        round(top5_item, 2),
+        n80,
+        round(top1_outlet, 2),
+        round(top3_outlet, 2)
+    ]
+})
+
+concentration_summary
+```
+
+# Mini-dashboard de concentración
+
+El objetivo final del capítulo es reunir varias perspectivas en un panel compacto. En un book de Quarto, una estrategia práctica consiste en combinar tablas de KPIs con gráficos interactivos.
+
+## KPIs principales
+
+```{python}
+total_sales = df["Item_Outlet_Sales"].sum()
+n_item_types = df["Item_Type"].nunique() if "Item_Type" in df.columns else np.nan
+n_outlets = df["Outlet_Identifier"].nunique() if "Outlet_Identifier" in df.columns else np.nan
+
+dashboard_kpis = pd.DataFrame({
+    "Métrica": [
+        "Ventas totales",
+        "Tipos de producto",
+        "Outlets",
+        "Top 3 categorías (%)",
+        "Top 3 outlets (%)"
+    ],
+    "Valor": [
+        round(total_sales, 2),
+        n_item_types,
+        n_outlets,
+        round(sales_by_item_type["share"].head(3).sum() * 100, 2),
+        round(sales_by_outlet["share"].head(3).sum() * 100, 2)
+    ]
+})
+
+dashboard_kpis
+```
+
+## Panel gráfico sugerido
+
+```{python}
+# Panel 1: Pareto por tipo de producto
+fig1 = go.Figure()
+fig1.add_bar(x=sales_by_item_type["Item_Type"], y=sales_by_item_type["share_pct"], name="Share (%)")
+fig1.add_scatter(x=sales_by_item_type["Item_Type"], y=sales_by_item_type["cum_share_pct"],
+                 mode="lines+markers", name="Acum (%)", yaxis="y2")
+fig1.update_layout(
+    title="Pareto por tipo de producto",
+    yaxis=dict(title="Share (%)"),
+    yaxis2=dict(title="Acumulado (%)", overlaying="y", side="right", range=[0, 105]),
+)
+fig1.update_xaxes(tickangle=-45)
+fig1.show()
+
+# Panel 2: Share por tipo de outlet
+fig2 = px.bar(
+    sales_by_outlet_type,
+    x="Outlet_Type",
+    y="share_pct",
+    title="Participación por tipo de outlet",
+    labels={"share_pct": "Share (%)", "Outlet_Type": "Tipo de outlet"}
+)
+fig2.update_layout(xaxis_tickangle=-20)
+fig2.show()
+
+# Panel 3: Curva de concentración
+fig3 = go.Figure()
+fig3.add_scatter(x=curve_df["Fraccion_unidades"], y=curve_df["Fraccion_ventas"], mode="lines",
+                 name="Curva de concentración")
+fig3.add_scatter(x=[0, 1], y=[0, 1], mode="lines", name="Reparto uniforme")
+fig3.update_layout(
+    title="Curva de concentración",
+    xaxis_title="Fracción acumulada de unidades",
+    yaxis_title="Fracción acumulada de ventas"
+)
+fig3.show()
+```
+
+# Discusión final
+
+La concentración es un componente esencial del EDA porque complementa lo aprendido en capítulos previos. Mientras la localización resume el centro, la variabilidad describe la dispersión, la forma estudia la geometría de la distribución y la heterogeneidad compara subgrupos, la concentración revela **cómo se reparte el total entre las unidades que componen el sistema**.
+
+En **Big Mart Sales**, esta dimensión permite identificar si el negocio depende fuertemente de unas pocas categorías o unos pocos outlets, o si el ingreso se distribuye de manera más equilibrada. Esta información es valiosa tanto para fines descriptivos como para una primera interpretación operativa.
+
+# Ejercicios sugeridos
+
+1. Construye el gráfico de Pareto para `Outlet_Location_Type` y compara su concentración con la observada en `Outlet_Type`.
+2. Calcula qué porcentaje de ventas acumula el 20\% de las categorías con mayores ventas.
+3. Repite el análisis utilizando el número de registros por categoría en lugar del total de ventas, y compara ambos resultados.
+4. Describe, con lenguaje de negocio, si la estructura de ventas parece diversificada o concentrada.
+
+# Puente hacia el dashboard global
+
+Con este capítulo se completa la dimensión de concentración. El siguiente paso consiste en integrar en un solo panel las cinco perspectivas desarrolladas a lo largo del análisis:
+
+- localización,
+- variabilidad,
+- forma,
+- heterogeneidad,
+- concentración.
+
+Ese dashboard global permitirá presentar una narrativa progresiva y coherente de la medida en el contexto de **Big Mart Sales**.
