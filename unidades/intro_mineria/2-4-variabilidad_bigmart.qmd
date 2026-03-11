@@ -68,6 +68,7 @@ Si en el capítulo anterior se observó que la media y la mediana resumen el cen
 Estas medidas no son intercambiables. El rango depende exclusivamente de los valores extremos, la desviación estándar resume el alejamiento promedio respecto a la media y el IQR se concentra en el 50\% central de la distribución, por lo que resulta más robusto ante observaciones atípicas.
 
 ## Cálculo de medidas de variabilidad
+Para el calculo de las mediads de interes podemos utilizar los metodos de pandas `.mean()`, `.var()`, `.std()`, `.min()`, `.quantile()`, `.median()` y `.max()`.
 
 ```{python}
 summary_var = pd.DataFrame({
@@ -99,19 +100,51 @@ En conjunto, estas medidas muestran que `Item_Outlet_Sales` y `Item_Visibility` 
 
 ## Visualización de dispersión con boxplots
 
-Los diagramas de caja son especialmente útiles porque combinan localización y variabilidad en una sola figura. La caja representa el intervalo entre $Q_1$ y $Q_3$, la línea interna señala la mediana y los bigotes muestran la extensión típica de los datos fuera del rango intercuartílico.
+Los **boxplots** o diagramas de caja son una herramienta muy útil en EDA porque permiten resumir, en una sola figura, varios aspectos importantes de una variable: su centro, su dispersión y la posible presencia de valores atípicos.
+
+En cada boxplot:
+
+- la **línea dentro de la caja** representa la **mediana**;
+- la **base inferior** de la caja corresponde al **primer cuartil** ($Q_1$);
+- la **base superior** corresponde al **tercer cuartil** ($Q_3$);
+- la **altura de la caja** representa el **rango intercuartílico** ($IQR = Q_3 - Q_1$), es decir, la amplitud del 50 % central de los datos;
+- los **bigotes** muestran hasta dónde se extienden los valores que todavía pueden considerarse dentro del comportamiento general de la variable;
+- los puntos que quedan fuera suelen interpretarse como **posibles valores atípicos**.
+
+Esto hace que el boxplot sea especialmente valioso, porque no solo muestra dónde está el centro de la distribución, sino también qué tan concentrados o dispersos están los datos alrededor de ese centro.
 
 ```{python}
-fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-axes = axes.ravel()
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
-for ax, col in zip(axes, vars_variabilidad):
-    ax.boxplot(df[col].dropna(), vert=True)
-    ax.set_title(col)
-    ax.set_ylabel(col)
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_variabilidad
+)
 
-plt.tight_layout()
-plt.show()
+for i, col in enumerate(vars_variabilidad):
+    row = i // 2 + 1
+    col_pos = i % 2 + 1
+
+    fig.add_trace(
+        go.Box(
+            y=df[col].dropna(),
+            name=col,
+            boxpoints="outliers",
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+
+    fig.update_yaxes(title_text=col, row=row, col=col_pos)
+
+fig.update_layout(
+    title="Boxplots de variables seleccionadas",
+    height=700,
+    width=950
+)
+
+fig.show()
 ```
 
 Esta visualización permite notar rápidamente qué variables presentan mayor amplitud central, qué tan alejados aparecen los extremos y si existen observaciones fuera del patrón principal. En contextos de EDA, el boxplot es una transición natural entre el estudio de localización y el análisis de forma, porque revela tanto la posición de la mediana como la anchura del bloque central.
@@ -127,7 +160,15 @@ robustez = summary_var[["rango", "iqr", "desv_std", "cv"]].sort_values("cv", asc
 robustez
 ```
 
-Desde un punto de vista pedagógico, esta tabla ayuda a distinguir entre dos nociones de amplitud: la amplitud total observada y la amplitud de la región donde efectivamente se concentra la mitad de los datos.
+A partir de los resultados observados, se nota que en todas las variables el **rango es considerablemente mayor que el IQR**, lo cual indica que los valores más extremos amplían mucho la dispersión total respecto de la dispersión que presenta la zona central de los datos.
+
+Por ejemplo, en `Item_Outlet_Sales` el rango es de **13053.67**, mientras que el IQR es de **2267.05**. Esto significa que, aunque el total de valores cubre un intervalo muy amplio, la mitad central de las observaciones se concentra en una región mucho más reducida. En otras palabras, la dispersión total de las ventas está fuertemente influida por valores extremos o muy alejados del centro.
+
+Algo similar ocurre con `Item_Visibility`, donde el rango (**0.3284**) es casi cinco veces el IQR (**0.0676**). Esto sugiere que, aunque la mayor parte de los productos tiene niveles de visibilidad concentrados en una zona relativamente estrecha, existen algunos casos con valores bastante más alejados que expanden notablemente el rango.
+
+En `Item_MRP`, el rango (**235.60**) también supera claramente al IQR (**91.82**), lo que indica que el precio de lista presenta variación importante, aunque la dispersión del bloque central es más moderada que la sugerida por los extremos. Por último, en `Item_Weight`, el rango (**16.80**) es aproximadamente el doble del IQR (**8.08**), lo que refleja una distribución relativamente más estable en comparación con las demás variables.
+
+En conjunto, los resultados sugieren que `Item_Outlet_Sales` y `Item_Visibility` son variables donde la diferencia entre dispersión total y dispersión central es más marcada, mientras que `Item_Weight` presenta una estructura comparativamente más compacta. Por ello, en el EDA resulta recomendable usar el IQR junto con otras medidas robustas cuando se quiere describir la variabilidad sin que los extremos dominen la interpretación.
 
 ## Comparación de dispersión entre grupos
 
@@ -145,13 +186,27 @@ by_outlet
 ```
 
 ```{python}
-df.boxplot(column="Item_Outlet_Sales", by="Outlet_Type", rot=45, figsize=(10, 5))
-plt.title("Dispersión de Item_Outlet_Sales por Outlet_Type")
-plt.suptitle("")
-plt.xlabel("Outlet_Type")
-plt.ylabel("Item_Outlet_Sales")
-plt.tight_layout()
-plt.show()
+import plotly.express as px
+
+fig = px.box(
+    df,
+    x="Outlet_Type",
+    y="Item_Outlet_Sales",
+    points="outliers",
+    title="Dispersión de Item_Outlet_Sales por Outlet_Type",
+    labels={
+        "Outlet_Type": "Tipo de Outlet",
+        "Item_Outlet_Sales": "Ventas por producto"
+    }
+)
+
+fig.update_layout(
+    xaxis_tickangle=45,
+    height=500,
+    width=900
+)
+
+fig.show()
 ```
 
 Esta figura permite observar que no solo cambia el centro de las ventas según tipo de outlet, sino también su grado de dispersión. Algunos grupos pueden presentar ventas más consistentes, mientras otros muestran una distribución más extendida. Esta observación será clave cuando más adelante se discuta heterogeneidad.
@@ -172,42 +227,78 @@ Si una variable exhibe un coeficiente de variación alto, ello sugiere que su di
 Otra visualización útil consiste en representar la media junto con bandas de una desviación estándar. No debe interpretarse como intervalo de confianza ni como regla universal de cobertura, pero sí como una guía visual de la amplitud típica alrededor del promedio.
 
 ```{python}
-fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-axes = axes.ravel()
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
-for ax, col in zip(axes, vars_variabilidad):
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_variabilidad
+)
+
+for i, col in enumerate(vars_variabilidad):
     s = df[col].dropna()
     mu = s.mean()
     sigma = s.std()
-    ax.hist(s, bins=30)
-    ax.axvline(mu, linestyle="--", linewidth=2, label=f"Media = {mu:.2f}")
-    ax.axvline(mu - sigma, linestyle=":", linewidth=2, label=f"Media - s")
-    ax.axvline(mu + sigma, linestyle=":", linewidth=2, label=f"Media + s")
-    ax.set_title(col)
-    ax.set_xlabel(col)
-    ax.set_ylabel("Frecuencia")
-    ax.legend()
 
-plt.tight_layout()
-plt.show()
+    row = i // 2 + 1
+    col_pos = i % 2 + 1
+
+    # Histograma
+    fig.add_trace(
+        go.Histogram(
+            x=s,
+            nbinsx=30,
+            name=col,
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+
+    # Línea de la media
+    fig.add_vline(
+        x=mu,
+        line_dash="dash",
+        line_width=2,
+        annotation_text=f"Media = {mu:.2f}",
+        annotation_position="top right",
+        row=row, col=col_pos
+    )
+
+    # Línea media - s
+    fig.add_vline(
+        x=mu - sigma,
+        line_dash="dot",
+        line_width=2,
+        annotation_text="Media - s",
+        annotation_position="top left",
+        row=row, col=col_pos
+    )
+
+    # Línea media + s
+    fig.add_vline(
+        x=mu + sigma,
+        line_dash="dot",
+        line_width=2,
+        annotation_text="Media + s",
+        annotation_position="top right",
+        row=row, col=col_pos
+    )
+
+    fig.update_xaxes(title_text=col, row=row, col=col_pos)
+    fig.update_yaxes(title_text="Frecuencia", row=row, col=col_pos)
+
+fig.update_layout(
+    title="Histogramas con media y desviación estándar",
+    height=700,
+    width=1000,
+    bargap=0.05
+)
+
+fig.show()
 ```
 
 Esta visualización resulta especialmente útil para introducir una idea intuitiva: distribuciones con la misma media pueden diferir porque sus observaciones se encuentran más o menos alejadas de ese centro.
 
-## Propuesta de dashboard de variabilidad
-
-La segunda versión del dashboard del libro puede integrar los siguientes elementos:
-
-1. **Tabla resumen de dispersión** con rango, desviación estándar, IQR y coeficiente de variación.
-2. **Boxplots** para las principales variables numéricas.
-3. **Comparación de dispersión por grupo**, por ejemplo ventas por `Outlet_Type`.
-4. **Histograma con bandas de una desviación estándar** para reforzar la lectura visual del alejamiento respecto al centro.
-
-En términos narrativos, este dashboard complementa al primero: ya no solo se muestra dónde está el centro, sino también qué tan compacta o extendida es la distribución alrededor de él.
-
-## Conclusiones
-
-Las medidas de variabilidad son indispensables para cualquier análisis exploratorio serio. En Big Mart Sales permiten distinguir entre variables estables y variables altamente dispersas, evaluar la amplitud del bloque central de datos y comparar qué grupos presentan mayor o menor consistencia. Esta etapa también deja ver que algunas medidas son más sensibles a extremos que otras, lo cual anticipa la necesidad de estudiar con mayor detalle la **forma** de las distribuciones en el siguiente capítulo, en particular la asimetría, la curtosis y la posible presencia de valores atípicos.
 
 ## Ejercicio sugerido
 
