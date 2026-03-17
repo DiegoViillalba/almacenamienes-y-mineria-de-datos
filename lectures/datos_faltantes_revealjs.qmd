@@ -1,0 +1,1646 @@
+---
+title: "Datos faltantes: teoría y práctica"
+subtitle: "MCAR, MAR, MNAR con ejemplos sintéticos y BigMart"
+author: "Diego Villalba"
+format:
+  revealjs:
+    theme: [default, unam-theme.scss]
+    slide-number: true
+    incremental: true
+    controls: true
+    toc: false
+    code-overflow: wrap
+    embed-resources: true
+    html-math-method: katex
+    logo: "../images/Logo_FC_Color.png"
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: auto
+jupyter: python3
+---
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+#| output: false
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.impute import SimpleImputer, KNNImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+import plotly.io as pio
+
+pio.templates.default = "plotly_white"
+
+pio.templates["plotly_white"].layout.autosize = True
+pio.templates["plotly_white"].layout.xaxis.autorange = True
+pio.templates["plotly_white"].layout.yaxis.autorange = True
+np.random.seed(42)
+```
+
+## Objetivos de la clase
+
+- Entender por qué los datos faltantes importan.
+- Diferenciar **MCAR**, **MAR** y **MNAR**.
+- Ver cómo cambian sesgo, varianza y distribución.
+- Comparar estrategias:
+  - `dropna`
+  - imputación por media
+  - KNN / imputación basada en modelo
+- Revisar aplicaciones en BigMart.
+
+
+# Introducción {.title-section}
+
+## Idea central
+
+> No basta con saber **cuántos** datos faltan.  
+> Hay que pensar **por qué** faltan.
+
+Porque el mecanismo de ausencia determina:
+
+- si nuestras **estimaciones son sesgadas**
+- si la **imputación es válida**
+- si el modelo aprende de una **muestra representativa**
+
+---
+
+## Motivación
+
+Los datos faltantes pueden producir:
+
+- pérdida de potencia estadística
+- sesgo en los estimadores
+- errores estándar incorrectos
+- intervalos de confianza engañosos
+- peor desempeño predictivo
+
+## Ejemplo visual: 
+
+Pérdida más probable en valores altos 
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+n = 4000
+
+x_true = np.random.normal(loc=12, scale=2.2, size=n)
+
+# Missing más probable en valores altos -> patrón tipo MNAR
+p_missing = 1 / (1 + np.exp(-(x_true - 13.5) * 1.4))
+mask_missing = np.random.rand(n) < p_missing
+
+x_obs = x_true.copy()
+x_obs[mask_missing] = np.nan
+
+plot_df = pd.concat([
+    pd.DataFrame({"Item_Weight": x_true, "Grupo": "Distribución completa"}),
+    pd.DataFrame({"Item_Weight": x_obs[~np.isnan(x_obs)], "Grupo": "Datos observados"})
+], ignore_index=True)
+
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Grupo",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="Los valores faltantes pueden distorsionar la distribución observada"
+)
+
+fig.update_layout(
+    height=450,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frecuencia",
+    legend_title=""
+)
+
+fig.show()
+
+print(f"Media verdadera: {x_true.mean():.3f}, promedio verdadero: {np.nanmean(x_true):.3f}")
+print(f"Media observada: {np.nanmean(x_obs):.3f}, promedio observado: {np.nanmean(x_obs):.3f}")
+print(f"Proporción missing: {mask_missing.mean():.3%}")
+```
+
+## Preguntas guía
+
+Antes de emplear cualquier técnica, conviene preguntar:
+
+1. ¿Cuál es el **porcentaje** de faltantes?
+2. ¿Cuál es el **patrón** de ausencia?
+3. ¿Cual es el **mecanismo** de ausencia?
+4. ¿Modelamos una **variable objetivo** o un **predictor**?[^modelo]
+
+[^modelo]: Un modelo puede aprender con predictores imperfectos, pero no puede aprender sin conocer la respuesta correcta.
+
+---
+
+## Tipos estructurales de datos faltantes
+
+:::: {.columns}
+
+::: {.column width="50%"}
+#### Unit nonresponse
+
+**Falta toda la observación**
+
+| X1 | X2 | Y |
+|---|---|---|
+| ? | ? | ? |
+
+**Ejemplo:**  
+una persona no responde ninguna parte de una encuesta.
+:::
+
+::: {.column width="50%"}
+#### Item nonresponse
+
+**Faltan solo algunas variables**
+
+| X1 | X2 | Y |
+|---|---|---|
+| ✓ | ? | ✓ |
+
+**Ejemplo:**  
+un registro sí existe, pero una de sus variables no fue capturada.
+:::
+
+::::
+
+<!-- ::: {.callout-note appearance="simple"}
+## En esta clase
+
+Nos enfocaremos en **item nonresponse**,  
+porque es el caso más común en **machine learning** y en tabulares reales.
+::: -->
+
+---
+
+# Mecanismos de ausencia {.title-section}
+
+## MCAR — Missing Completely At Random
+
+La probabilidad de missing **no depende de ninguna variable**.
+
+$$
+f(R \mid Y, X, \theta) = f(R \mid \theta)
+$$
+
+Se puede entender como que “Se perdieron filas al azar.”
+
+> Ejemplo: falla aleatoria en el sistema de captura de datos.
+
+---
+
+## Ejemplo sintético: MCAR en acción
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+np.random.seed(42)
+
+# 1. Generamos una variable completa
+n = 4000
+x_true = np.random.normal(loc=12, scale=2.2, size=n)
+
+# 2. Introducimos missing completamente al azar
+p_missing = 0.20
+mcar_mask = np.random.rand(n) < p_missing
+
+x_mcar = x_true.copy()
+x_mcar[mcar_mask] = np.nan
+
+# 3. Construimos dataframe largo para comparar distribuciones
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": x_true,
+        "Grupo": "Distribución completa"
+    }),
+    pd.DataFrame({
+        "Item_Weight": x_mcar[~np.isnan(x_mcar)],
+        "Grupo": "Datos observados (MCAR)"
+    })
+], ignore_index=True)
+
+# 4. Histograma interactivo
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Grupo",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="MCAR: la muestra observada se parece a la distribución original"
+)
+
+fig.update_layout(
+    height=450,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frecuencia",
+    legend_title=""
+)
+
+fig.show()
+
+# 5. Resumen numérico
+print(f"Proporción missing: {mcar_mask.mean():.2%}")
+print(f"Media verdadera:    {x_true.mean():.4f}")
+print(f"Media observada:    {np.nanmean(x_mcar):.4f}")
+print(f"Desv. estándar verdadera: {x_true.std():.4f}")
+print(f"Desv. estándar observada: {np.nanstd(x_mcar):.4f}")
+```
+
+---
+
+### Interpretación
+
+- la ausencia es independiente de los datos observados
+- también es independiente de los datos no observados
+- es el caso más simple desde el punto de vista estadístico
+
+### Consecuencia práctica
+
+Si ignoramos los faltantes bajo MCAR:
+
+- no necesariamente introducimos sesgo
+- pero sí perdemos información y potencia estadística
+
+---
+
+## MAR — Missing At Random
+
+> La probabilidad de missing depende **solo de variables observadas**.
+
+$$
+f(R \mid Y, X, \theta) = f(R \mid Y_{obs}, X, \theta)
+$$
+
+Se entiende como “Faltan más datos en ciertos grupos observables.”
+
+> Ejemplo: `Item_Weight` falta más en ciertos `Outlet_Type` que sí conocemos.
+
+---
+## Ejemplo sintético: MAR en acción
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+np.random.seed(42)
+
+# 1. Datos sintéticos
+n = 5000
+outlet_type = np.random.choice(
+    ["Supermarket", "Grocery Store", "Mini Market"],
+    size=n,
+    p=[0.50, 0.40, 0.10]
+)
+
+# 2. Item_Weight claramente distinto por grupo
+weight = np.select(
+    [outlet_type == "Supermarket",
+     outlet_type == "Grocery Store",
+     outlet_type == "Mini Market"],
+    [
+        np.random.normal(15.0, 1.8, n),   # más alto
+        np.random.normal(8.8, 1.2, n),    # más bajo
+        np.random.normal(11.8, 1.0, n)    # intermedio
+    ]
+)
+
+df_true = pd.DataFrame({
+    "Outlet_Type": outlet_type,
+    "Item_Weight": weight
+})
+
+# 3. Missing MAR: depende solo de Outlet_Type
+p_missing = np.select(
+    [df_true["Outlet_Type"] == "Supermarket",
+     df_true["Outlet_Type"] == "Grocery Store",
+     df_true["Outlet_Type"] == "Mini Market"],
+    [0.03, 0.75, 0.20]
+)
+
+mar_mask = np.random.rand(n) < p_missing
+
+df_mar = df_true.copy()
+df_mar.loc[mar_mask, "Item_Weight"] = np.nan
+
+# 4. Missing por grupo
+miss_by_group = (
+    df_mar.assign(missing=df_mar["Item_Weight"].isna())
+          .groupby("Outlet_Type", as_index=False)["missing"]
+          .mean()
+)
+
+fig1 = px.bar(
+    miss_by_group,
+    x="Outlet_Type",
+    y="missing",
+    title="MAR: la probabilidad de missing depende de Outlet_Type",
+    labels={"missing": "Proporción missing", "Outlet_Type": "Outlet Type"}
+)
+
+fig1.update_layout(height=420, yaxis_tickformat=".0%")
+fig1.show()
+
+print("Proporción missing por grupo:")
+print(miss_by_group.round(3))
+
+print("\nMedia verdadera:", round(df_true["Item_Weight"].mean(), 3), "Media observada:", round(df_mar["Item_Weight"].mean(), 3))
+
+```
+
+---
+
+## Efecto de MAR sobre la muestra observada
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": df_true["Item_Weight"],
+        "Grupo": "Distribución completa"
+    }),
+    pd.DataFrame({
+        "Item_Weight": df_mar["Item_Weight"].dropna(),
+        "Grupo": "Datos observados"
+    })
+], ignore_index=True)
+
+mean_true = df_true["Item_Weight"].mean()
+mean_obs  = df_mar["Item_Weight"].mean()
+
+fig2 = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Grupo",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="Bajo MAR, la muestra observada puede dejar de ser representativa"
+)
+
+fig2.add_vline(
+    x=mean_true,
+    line_width=3,
+    line_dash="dash",
+    line_color="#1f77b4",
+    annotation_text=f"Media completa = {mean_true:.2f}",
+    annotation_position="top left"
+)
+
+fig2.add_vline(
+    x=mean_obs,
+    line_width=3,
+    line_dash="dot",
+    line_color="#d62728",
+    annotation_text=f"Media observada = {mean_obs:.2f}",
+    annotation_position="top right"
+)
+
+fig2.update_layout(
+    height=430,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frecuencia",
+    legend_title=""
+)
+
+fig2.show()
+```
+
+---
+
+### Interpretación
+
+- la ausencia puede explicarse con variables que sí vemos
+- condicionado en lo observado, el missing ya no depende del valor faltante
+- es el supuesto más común en análisis aplicados
+
+### Consecuencia práctica
+
+Si ignoramos los faltantes bajo MAR:
+
+- podemos introducir sesgo
+- pero una imputación que use variables observadas puede corregirlo parcialmente o bien
+
+---
+
+## MNAR — Missing Not At Random
+
+> La probabilidad de missing depende **del propio valor faltante**.
+
+$$
+f(R \mid Y, X, \theta) = f(R \mid Y_{obs}, Y_{mis}, X, \theta)
+$$
+
+Es decit “Los valores faltan precisamente por su valor.”
+
+> Ejemplo: `Item_Weight` falta más en productos muy pesados, justamente por su peso.
+
+---
+
+## Ejemplo sintético: MNAR en acción
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+np.random.seed(42)
+
+# 1. Generamos la población verdadera
+n = 5000
+weight_true = np.random.normal(12, 2.2, n)
+
+df_true = pd.DataFrame({
+    "Item_Weight": weight_true
+})
+
+# 2. Probabilidad de missing depende del propio valor
+# valores altos tienen más probabilidad de faltar
+logit = -6 + 0.55 * weight_true
+p_missing = 1 / (1 + np.exp(-logit))
+
+mnar_mask = np.random.rand(n) < p_missing
+
+df_mnar = df_true.copy()
+df_mnar.loc[mnar_mask, "Item_Weight"] = np.nan
+
+# 3. Comparación de distribuciones
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": df_true["Item_Weight"],
+        "Grupo": "Distribución completa"
+    }),
+    pd.DataFrame({
+        "Item_Weight": df_mnar["Item_Weight"].dropna(),
+        "Grupo": "Datos observados"
+    })
+], ignore_index=True)
+
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Grupo",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="MNAR: los valores altos desaparecen con mayor probabilidad"
+)
+
+fig.update_layout(
+    height=430,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frecuencia"
+)
+
+fig.show()
+
+print(f"Media verdadera: {df_true['Item_Weight'].mean():.3f}")
+print(f"Media observada: {df_mnar['Item_Weight'].mean():.3f}")
+print(f"Proporción missing: {mnar_mask.mean():.2%}")
+```
+
+---
+
+### Interpretación
+
+- el mecanismo de ausencia depende de información no observada
+- el dato faltante es parte de la causa de su propia ausencia
+- es el caso más difícil de manejar
+
+### Consecuencia práctica
+
+Si ignoramos los faltantes bajo MNAR:
+
+- aparece sesgo estructural
+- ni una buena imputación estándar garantiza corregir completamente el problema
+
+
+<!-- ---
+
+## Ejemplo sintético base
+
+Generaremos una población artificial donde conocemos la "verdad".
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+n = 5000
+
+region = np.random.choice(["Norte", "Centro", "Sur"], size=n, p=[0.3, 0.4, 0.3])
+promo = np.random.binomial(1, 0.45, size=n)
+
+base_weight = np.random.normal(12, 2.2, size=n)
+base_price = 40 + 2.5 * base_weight + 8 * promo + np.random.normal(0, 5, size=n)
+
+df_true = pd.DataFrame({
+    "Region": region,
+    "Promo": promo,
+    "Item_Weight": base_weight,
+    "Item_MRP": base_price
+})
+
+df_true.head()
+```
+
+---
+
+## Distribuciones de referencia
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+fig = make_subplots(rows=1, cols=2, subplot_titles=["Item_Weight", "Item_MRP"])
+
+fig.add_trace(go.Histogram(x=df_true["Item_Weight"], nbinsx=40, name="Peso", opacity=0.75), row=1, col=1)
+fig.add_trace(go.Histogram(x=df_true["Item_MRP"], nbinsx=40, name="MRP", opacity=0.75), row=1, col=2)
+
+fig.update_layout(height=400, title="Distribuciones en los datos completos", showlegend=False)
+fig.show()
+```
+
+---
+
+## Caso 1: MCAR
+
+En MCAR, eliminamos valores **completamente al azar**.
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+df_mcar = df_true.copy()
+mcar_mask = np.random.rand(n) < 0.18
+df_mcar.loc[mcar_mask, "Item_Weight"] = np.nan
+
+df_mcar["Item_Weight"].isna().mean()
+```
+
+## Lectura
+
+Ese porcentaje representa missingness artificial generada sin depender de ninguna variable.
+
+---
+
+## Visualización MCAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+tmp = pd.DataFrame({
+    "valor": pd.concat([df_true["Item_Weight"], df_mcar["Item_Weight"]], ignore_index=True),
+    "grupo": (["Completo"] * len(df_true)) + (["Con MCAR"] * len(df_mcar))
+}).dropna()
+
+fig = px.histogram(
+    tmp, x="valor", color="grupo", barmode="overlay", opacity=0.6, nbins=40,
+    title="MCAR: la forma de la distribución observada cambia poco"
+)
+fig.update_layout(height=420, xaxis_title="Item_Weight", yaxis_title="Frecuencia")
+fig.show()
+```
+
+---
+
+## ¿Qué pasa si hacemos `dropna` bajo MCAR?
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+df_drop_mcar = df_mcar.dropna(subset=["Item_Weight"])
+
+rows_lost = len(df_mcar) - len(df_drop_mcar)
+pct_lost = rows_lost / len(df_mcar) * 100
+
+print(f"Filas perdidas: {rows_lost} ({pct_lost:.1f}%)")
+print(f"Media original: {df_true['Item_Weight'].mean():.4f}")
+print(f"Media tras dropna: {df_drop_mcar['Item_Weight'].mean():.4f}")
+print(f"Desv. estándar original: {df_true['Item_Weight'].std():.4f}")
+print(f"Desv. estándar tras dropna: {df_drop_mcar['Item_Weight'].std():.4f}")
+```
+
+## Mensaje clave
+
+Bajo MCAR, `dropna()` puede no sesgar demasiado la media,  
+pero **sí reduce la muestra y la potencia**.
+
+---
+
+## Imputación por media bajo MCAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+imp_mean = SimpleImputer(strategy="mean")
+weight_mean_mcar = imp_mean.fit_transform(df_mcar[["Item_Weight"]]).flatten()
+weight_mean_mcar = pd.Series(weight_mean_mcar, index=df_mcar.index)
+
+print(f"Media imputada: {weight_mean_mcar.mean():.4f}")
+print(f"Desv. estándar imputada: {weight_mean_mcar.std():.4f}")
+```
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+compare_mcar = pd.concat([
+    pd.DataFrame({"Item_Weight": df_true["Item_Weight"], "Grupo": "Ground Truth"}),
+    pd.DataFrame({"Item_Weight": weight_mean_mcar, "Grupo": "Imputado con media"})
+], ignore_index=True)
+
+fig = px.histogram(
+    compare_mcar, x="Item_Weight", color="Grupo", barmode="overlay",
+    opacity=0.6, nbins=40, title="MCAR + imputación por media"
+)
+fig.update_layout(height=420)
+fig.show()
+```
+
+---
+
+## Interpretación: imputación por media
+
+- Puede preservar la **media global**.
+- Pero reduce artificialmente la **varianza**.
+- Introduce una "montaña" extra en el valor medio.
+- Deteriora relaciones entre variables.
+
+---
+
+## Caso 2: MAR
+
+Ahora haremos que el missing dependa de una variable observada: `Region`.
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+df_mar = df_true.copy()
+
+p_missing = np.select(
+    [df_mar["Region"] == "Norte", df_mar["Region"] == "Centro", df_mar["Region"] == "Sur"],
+    [0.08, 0.18, 0.35]
+)
+
+mar_mask = np.random.rand(n) < p_missing
+df_mar.loc[mar_mask, "Item_Weight"] = np.nan
+
+df_mar.groupby("Region")["Item_Weight"].apply(lambda s: s.isna().mean()).round(3)
+```
+
+---
+
+## Visualización MAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+miss_by_region = (
+    df_mar.assign(missing=df_mar["Item_Weight"].isna())
+          .groupby("Region", as_index=False)["missing"].mean()
+)
+
+fig = px.bar(
+    miss_by_region, x="Region", y="missing",
+    title="MAR: la ausencia depende de una variable observada (Region)"
+)
+fig.update_layout(height=420, yaxis_title="Proporción missing")
+fig.show()
+```
+
+---
+
+## ¿Qué pasa con `dropna` bajo MAR?
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+df_drop_mar = df_mar.dropna(subset=["Item_Weight"])
+
+summary = pd.DataFrame({
+    "Completo": df_true.groupby("Region")["Item_Weight"].mean(),
+    "Después_dropna": df_drop_mar.groupby("Region")["Item_Weight"].mean()
+}).round(3)
+
+summary
+```
+
+## Lectura
+
+Aunque la media por región quizá no explote de inmediato,
+la muestra observada **ya no es representativa de la población original**.
+
+---
+
+## Imputación por media vs KNN bajo MAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+mean_mar = SimpleImputer(strategy="mean").fit_transform(df_mar[["Item_Weight"]]).flatten()
+
+# Para KNN necesitamos variables numéricas auxiliares
+df_mar_num = df_mar.copy()
+df_mar_num["Region_code"] = df_mar_num["Region"].map({"Norte": 0, "Centro": 1, "Sur": 2})
+
+knn_mar = KNNImputer(n_neighbors=7)
+knn_input = df_mar_num[["Item_Weight", "Promo", "Item_MRP", "Region_code"]]
+knn_out = knn_mar.fit_transform(knn_input)
+knn_weight_mar = pd.Series(knn_out[:, 0], index=df_mar.index)
+
+print("Media original:", round(df_true["Item_Weight"].mean(), 3))
+print("Media media-imputation:", round(pd.Series(mean_mar).mean(), 3))
+print("Media KNN-imputation:", round(knn_weight_mar.mean(), 3))
+```
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+compare_mar = pd.concat([
+    pd.DataFrame({"Item_Weight": df_true["Item_Weight"], "Metodo": "Ground Truth"}),
+    pd.DataFrame({"Item_Weight": pd.Series(mean_mar), "Metodo": "Media"}),
+    pd.DataFrame({"Item_Weight": knn_weight_mar, "Metodo": "KNN"})
+], ignore_index=True)
+
+fig = px.box(
+    compare_mar.sample(2500, random_state=1),
+    x="Metodo", y="Item_Weight",
+    title="MAR: comparación entre métodos de imputación"
+)
+fig.update_layout(height=420)
+fig.show()
+```
+
+---
+
+## Mensaje sobre MAR
+
+Si el missing depende de variables observadas,  
+**usar esas variables en la imputación ayuda**.
+
+Ese es el corazón del supuesto MAR.
+
+---
+
+## Caso 3: MNAR
+
+Ahora el missing dependerá del propio valor de `Item_Weight`.
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+df_mnar = df_true.copy()
+
+# Pesos altos tienen más probabilidad de faltar
+logit = -8 + 0.6 * df_mnar["Item_Weight"]
+prob_mnar = 1 / (1 + np.exp(-logit))
+
+mnar_mask = np.random.rand(n) < prob_mnar
+df_mnar.loc[mnar_mask, "Item_Weight"] = np.nan
+
+pd.Series({
+    "Proporción missing": df_mnar["Item_Weight"].isna().mean(),
+    "Peso medio verdadero": df_true["Item_Weight"].mean()
+}).round(3)
+```
+
+---
+
+## Visualización MNAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+fig = make_subplots(rows=1, cols=2, subplot_titles=[
+    "Peso observado vs verdadero",
+    "Probabilidad de missing por peso verdadero"
+])
+
+fig.add_trace(go.Histogram(x=df_true["Item_Weight"], nbinsx=40, name="Verdadero", opacity=0.6), row=1, col=1)
+fig.add_trace(go.Histogram(x=df_mnar["Item_Weight"].dropna(), nbinsx=40, name="Observado", opacity=0.6), row=1, col=1)
+
+fig.add_trace(go.Scatter(
+    x=df_true["Item_Weight"],
+    y=prob_mnar,
+    mode="markers",
+    name="P(missing)",
+    opacity=0.3
+), row=1, col=2)
+
+fig.update_layout(height=430, title="MNAR: los pesos altos desaparecen más")
+fig.show()
+```
+
+---
+
+## Problema central de MNAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+print(f"Media verdadera: {df_true['Item_Weight'].mean():.4f}")
+print(f"Media observada (solo casos no faltantes): {df_mnar['Item_Weight'].mean():.4f}")
+```
+
+## Lectura
+
+Aquí el sesgo aparece **antes de imputar**:
+la parte observada ya está distorsionada.
+
+---
+
+## Comparación de estrategias bajo MNAR
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+mean_mnar = SimpleImputer(strategy="mean").fit_transform(df_mnar[["Item_Weight"]]).flatten()
+
+df_mnar_num = df_mnar.copy()
+df_mnar_num["Region_code"] = df_mnar_num["Region"].map({"Norte": 0, "Centro": 1, "Sur": 2})
+knn_input_mnar = df_mnar_num[["Item_Weight", "Promo", "Item_MRP", "Region_code"]]
+knn_weight_mnar = pd.Series(KNNImputer(n_neighbors=7).fit_transform(knn_input_mnar)[:, 0], index=df_mnar.index)
+
+print(f"Media verdadera: {df_true['Item_Weight'].mean():.4f}")
+print(f"Media con imputación media: {pd.Series(mean_mnar).mean():.4f}")
+print(f"Media con KNN: {knn_weight_mnar.mean():.4f}")
+```
+
+## Conclusión
+
+Ni siquiera una mejor imputación arregla del todo el problema,  
+porque el mecanismo depende del valor no observado.
+
+---
+
+## Resumen comparativo
+
+| Mecanismo | ¿`dropna` sesga? | ¿Imputar ayuda? | Dificultad |
+|---|---:|---:|---|
+| MCAR | Poco / no necesariamente | Algo | Baja |
+| MAR  | Sí, puede sesgar | Sí, si usamos variables observadas | Media |
+| MNAR | Sí, fuertemente | Limitadamente | Alta |
+
+---
+
+## Conexión con BigMart
+
+Ejemplos plausibles en BigMart:
+
+- **MCAR**: falla aleatoria en el sistema de pesaje.
+- **MAR**: `Outlet_Size` falta más en cierto `Outlet_Type`.
+- **MNAR**: productos muy pesados no se registran justamente por su peso.
+
+## Idea didáctica
+
+BigMart es útil para discutir mecanismos realistas,
+aunque los ejemplos sintéticos son mejores para enseñar
+porque conocemos la "verdad". -->
+
+# Estrategias para manejar datos faltantes
+
+---
+
+## De la teoría a la práctica
+
+Una vez que entendemos **cómo** y **por qué** aparecen los datos faltantes,  
+la siguiente pregunta natural es:
+
+> **¿Qué estrategias existen para tratarlos?**
+
+No todas las técnicas son igual de adecuadas:  
+su validez depende del **mecanismo de ausencia**,  
+de la **cantidad de missing values**  
+y del papel que juega la variable en el análisis.
+
+---
+
+## Estrategias prácticas
+
+::: incremental
+
+- **Casos completos**  
+  eliminar observaciones incompletas; simple, pero pierde información.
+
+- **Imputación simple**  
+  media, mediana o moda; rápida, pero subestima varianza.
+
+- **Imputación múltiple**  
+  genera varias imputaciones y combina resultados; incorpora incertidumbre.
+
+- **Modelos de regresión / KNN**  
+  usan variables observadas para imputar; útiles especialmente bajo **MAR**.
+
+:::
+
+---
+
+## Imputación simple
+
+Consiste en reemplazar valores faltantes por un valor representativo de la variable.
+
+Es decir , si no conocemos un valor, podemos **sustituirlo por una estimación simple**  calculada a partir de los datos observados.
+
+::: incremental
+
+- media
+- mediana
+- moda
+- constante
+
+:::
+
+---
+
+### Imputación por media
+
+Sea una variable $Y$ con valores faltantes, la imputación por media reemplaza:
+
+$$
+Y_{mis} \leftarrow \bar{Y}_{obs}
+$$
+
+donde
+
+$$
+\bar{Y}_{obs} =
+\frac{1}{n_{obs}}
+\sum_{i=1}^{n_{obs}} Y_i
+$$
+
+---
+
+## Ejemplo sintético: imputación simple
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+from sklearn.impute import SimpleImputer
+
+np.random.seed(42)
+
+# -----------------------------
+# 1. Datos sintéticos "reales"
+# -----------------------------
+n = 4000
+true_weight = np.random.normal(12, 2.0, n)
+
+df_true = pd.DataFrame({
+    "Item_Weight": true_weight
+})
+
+# Missing MCAR
+mask = np.random.rand(n) < 0.25
+df_missing = df_true.copy()
+df_missing.loc[mask, "Item_Weight"] = np.nan
+
+# Para mostrar la moda de forma interesante,
+# discretizamos un poco la variable
+df_missing["Item_Weight_rounded"] = df_missing["Item_Weight"].round(1)
+df_true["Item_Weight_rounded"] = df_true["Item_Weight"].round(1)
+
+# -----------------------------
+# 2. Imputaciones simples
+# -----------------------------
+mean_imp = SimpleImputer(strategy="mean")
+median_imp = SimpleImputer(strategy="median")
+mostfreq_imp = SimpleImputer(strategy="most_frequent")
+const_imp = SimpleImputer(strategy="constant", fill_value=10.0)
+
+weight_mean = mean_imp.fit_transform(df_missing[["Item_Weight"]]).flatten()
+weight_median = median_imp.fit_transform(df_missing[["Item_Weight"]]).flatten()
+weight_const = const_imp.fit_transform(df_missing[["Item_Weight"]]).flatten()
+
+# Para moda usamos la versión redondeada
+weight_mode = mostfreq_imp.fit_transform(df_missing[["Item_Weight_rounded"]]).flatten()
+
+# -----------------------------
+# 3. DataFrame largo para Plotly
+# -----------------------------
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": df_true["Item_Weight"],
+        "Método": "Original"
+    }),
+    pd.DataFrame({
+        "Item_Weight": weight_mean,
+        "Método": "Media"
+    }),
+    pd.DataFrame({
+        "Item_Weight": weight_median,
+        "Método": "Mediana"
+    }),
+    pd.DataFrame({
+        "Item_Weight": weight_mode,
+        "Método": "Moda"
+    }),
+    pd.DataFrame({
+        "Item_Weight": weight_const,
+        "Método": "Constante = 10"
+    }),
+], ignore_index=True)
+
+# -----------------------------
+# 4. Histograma interactivo
+# -----------------------------
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Método",
+    barmode="overlay",
+    opacity=0.55,
+    nbins=40,
+    title="Comparación de imputaciones simples"
+)
+
+fig.add_vline(
+    x=df_true["Item_Weight"].mean(),
+    line_dash="dash",
+    line_color="black",
+    annotation_text="media original"
+)
+
+fig.update_layout(
+    height=500,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frecuencia",
+    legend_title="Método"
+)
+
+fig.show()
+
+# -----------------------------
+# 5. Resumen numérico
+# -----------------------------
+summary = pd.DataFrame({
+    "Método": ["Original", "Media", "Mediana", "Moda", "Constante = 10"],
+    "Media": [
+        df_true["Item_Weight"].mean(),
+        pd.Series(weight_mean).mean(),
+        pd.Series(weight_median).mean(),
+        pd.Series(weight_mode).mean(),
+        pd.Series(weight_const).mean(),
+    ],
+    "Desv. estándar": [
+        df_true["Item_Weight"].std(),
+        pd.Series(weight_mean).std(),
+        pd.Series(weight_median).std(),
+        pd.Series(weight_mode).std(),
+        pd.Series(weight_const).std(),
+    ]
+}).round(3)
+
+
+```
+---
+
+### Consecuencia estadística
+
+La imputación simple suele:
+
+- preservar parcialmente la **tendencia central**
+- **reducir artificialmente la varianza**
+- introducir una **acumulación artificial** en el valor imputado, porque muchos faltantes se reemplazan por el mismo número
+
+---
+
+## Imputación múltiple
+
+En lugar de crear **un solo dataset imputado**, generamos **varias versiones plausibles**. Esto poque cada valor faltante puede tener **varias estimaciones posibles**.
+
+La imputación múltiple:
+
+1. genera **m datasets imputados**
+2. ajusta el modelo en cada uno
+3. **combina los resultados**
+
+---
+
+### Formulación matemática
+
+Sea $q_i$ la estimación del parámetro en el dataset imputado $i$. la estimación final y su varianza:
+
+$$
+\bar{q} = \frac{1}{m} \sum_{i=1}^{m} q_i \qquad T = \bar{U} + \left(1 + \frac{1}{m}\right) B
+$$
+
+donde
+
+- $\bar{U}$ = varianza promedio dentro de imputaciones  
+- $B$ = varianza entre imputaciones
+
+---
+
+## Ejemplo sintético: imputación múltiple
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+
+np.random.seed(42)
+
+# ----------------------------
+# 1. Datos sintéticos
+# ----------------------------
+n = 400
+
+price = np.random.normal(50, 10, n)
+size  = np.random.normal(100, 20, n)
+
+weight = 0.08 * price + 0.02 * size + np.random.normal(0, 1, n)
+
+df = pd.DataFrame({
+    "Price": price,
+    "Size": size,
+    "Item_Weight": weight
+})
+
+# ----------------------------
+# 2. Introducir missing
+# ----------------------------
+mask = np.random.rand(n) < 0.25
+df_missing = df.copy()
+df_missing.loc[mask, "Item_Weight"] = np.nan
+
+# ----------------------------
+# 3. Varias imputaciones
+# ----------------------------
+imputations = []
+
+for seed in range(5):
+    imp = IterativeImputer(
+        sample_posterior=True,
+        random_state=seed
+    )
+
+    imputed = pd.DataFrame(
+        imp.fit_transform(df_missing),
+        columns=df.columns
+    )
+
+    imputed["Dataset"] = f"Imputación {seed+1}"
+    imputations.append(imputed)
+
+# ----------------------------
+# 4. Datos para graficar
+# ----------------------------
+observed = df.loc[~mask].copy()
+removed_true = df.loc[mask].copy()   # valores reales eliminados
+
+imputed_only = []
+for i, imp_df in enumerate(imputations, start=1):
+    tmp = imp_df.loc[mask, ["Price", "Item_Weight"]].copy()
+    tmp["Dataset"] = f"Imputación {i}"
+    imputed_only.append(tmp)
+
+imputed_only = pd.concat(imputed_only, ignore_index=True)
+
+# ----------------------------
+# 5. Figura
+# ----------------------------
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "Antes: observados y valores reales eliminados",
+        "Después: varias imputaciones plausibles"
+    ]
+)
+
+# Panel izquierdo: observados
+fig.add_trace(
+    go.Scatter(
+        x=observed["Price"],
+        y=observed["Item_Weight"],
+        mode="markers",
+        name="Observados",
+        opacity=0.55,
+        marker=dict(size=7, color="steelblue")
+    ),
+    row=1, col=1
+)
+
+# Panel izquierdo: valores reales eliminados
+fig.add_trace(
+    go.Scatter(
+        x=removed_true["Price"],
+        y=removed_true["Item_Weight"],
+        mode="markers",
+        name="Valores reales eliminados",
+        marker=dict(size=9, symbol="x", color="crimson", line=dict(width=1))
+    ),
+    row=1, col=1
+)
+
+# Panel derecho: observados de referencia
+fig.add_trace(
+    go.Scatter(
+        x=observed["Price"],
+        y=observed["Item_Weight"],
+        mode="markers",
+        name="Observados (referencia)",
+        opacity=0.20,
+        marker=dict(size=6, color="gray")
+    ),
+    row=1, col=2
+)
+
+# Panel derecho: imputaciones
+colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+
+for i, dataset in enumerate(imputed_only["Dataset"].unique()):
+    sub = imputed_only[imputed_only["Dataset"] == dataset]
+    fig.add_trace(
+        go.Scatter(
+            x=sub["Price"],
+            y=sub["Item_Weight"],
+            mode="markers",
+            name=dataset,
+            opacity=0.7,
+            marker=dict(size=7, color=colors[i])
+        ),
+        row=1, col=2
+    )
+
+# fig.update_layout(
+#     height=500,
+#     title="Imputación múltiple: valores reales ocultos vs varias imputaciones plausibles",
+#     legend_title=""
+# )
+
+fig.update_xaxes(title_text="Price", row=1, col=1)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=1)
+
+fig.update_xaxes(title_text="Price", row=1, col=2)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=2)
+
+fig.show()
+```
+
+---
+
+### Ventajas
+
+- **incorpora la incertidumbre** del valor faltante
+- preserva mejor la **variabilidad** que la imputación simple
+- permite obtener inferencias más **rigurosas**
+
+### Desventajas
+
+- es más **costosa computacionalmente**
+- requiere **varios datasets imputados**
+- depende de supuestos de modelado, típicamente cercanos a **MAR**
+
+---
+
+## Imputación con KNN / modelos
+
+En lugar de usar un único valor global, estimamos los faltantes usando **información de observaciones similares**.
+
+Es decir, si un valor falta, buscamos observaciones **parecidas en otras variables**
+y usamos sus valores para estimarlo.
+
+Ejemplo:
+
+- productos con **precio, categoría y tienda similares**
+- probablemente tendrán **peso similar**
+
+---
+
+### Formulación matemática (KNN)
+
+Para una observación con valor faltante $x_i$:
+
+1. se identifican los $k$ vecinos más cercanos
+2. se estima el valor faltante usando sus valores
+
+$$
+\hat{x}_i = \frac{1}{k}\sum_{j \in N_k(i)} x_j
+$$
+
+donde $N_k(i)$ son los **k vecinos más cercanos**.
+
+---
+
+## Ejemplo sintético: imputación con KNN
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.impute import KNNImputer
+from sklearn.neighbors import NearestNeighbors
+
+np.random.seed(42)
+
+# ----------------------------
+# 1. Datos sintéticos
+# ----------------------------
+n = 400
+
+price = np.random.normal(50, 10, n)
+size  = np.random.normal(100, 20, n)
+
+# relación estructural
+weight = 0.08 * price + 0.02 * size + np.random.normal(0, 1, n)
+
+df = pd.DataFrame({
+    "Price": price,
+    "Size": size,
+    "Item_Weight": weight
+})
+
+# ----------------------------
+# 2. Introducir missing
+# ----------------------------
+mask = np.random.rand(n) < 0.25
+df_missing = df.copy()
+df_missing.loc[mask, "Item_Weight"] = np.nan
+
+# ----------------------------
+# 3. Imputación KNN
+# ----------------------------
+k = 5
+imputer = KNNImputer(n_neighbors=k)
+
+df_knn = pd.DataFrame(
+    imputer.fit_transform(df_missing),
+    columns=df.columns
+)
+
+# ----------------------------
+# 4. Elegir un caso missing para ilustrar vecinos
+# ----------------------------
+missing_idx = df_missing[df_missing["Item_Weight"].isna()].index[0]
+
+observed_df = df_missing[df_missing["Item_Weight"].notna()].copy()
+
+# vecinos usando variables observadas (Price, Size)
+nn = NearestNeighbors(n_neighbors=k)
+nn.fit(observed_df[["Price", "Size"]])
+
+target_point = df_missing.loc[[missing_idx], ["Price", "Size"]]
+distances, neighbor_pos = nn.kneighbors(target_point)
+neighbor_idx = observed_df.iloc[neighbor_pos[0]].index
+
+# valor real ocultado artificialmente
+true_hidden_value = df.loc[missing_idx, "Item_Weight"]
+
+# ----------------------------
+# 5. Figura en dos paneles
+# ----------------------------
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "Antes",
+        "Después de KNN"
+    ]
+)
+
+# --- Panel izquierdo ---
+fig.add_trace(
+    go.Scatter(
+        x=observed_df["Price"],
+        y=observed_df["Item_Weight"],
+        mode="markers",
+        name="Observados",
+        opacity=0.55,
+        marker=dict(size=7)
+    ),
+    row=1, col=1
+)
+
+# Mostrar las posiciones reales eliminadas artificialmente
+fig.add_trace(
+    go.Scatter(
+        x=df.loc[mask, "Price"],
+        y=df.loc[mask, "Item_Weight"],
+        mode="markers",
+        name="Valores reales eliminados",
+        marker=dict(size=8, symbol="x", color="crimson")
+    ),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=[df.loc[missing_idx, "Price"]],
+        y=[df.loc[missing_idx, "Item_Weight"]],
+        mode="markers",
+        name="Caso ejemplo (real oculto)",
+        marker=dict(size=14, symbol="star", color="black")
+    ),
+    row=1, col=1
+)
+
+# --- Panel derecho ---
+fig.add_trace(
+    go.Scatter(
+        x=df["Price"],
+        y=df["Item_Weight"],
+        mode="markers",
+        name="Datos reales",
+        opacity=0.20,
+        marker=dict(size=6)
+    ),
+    row=1, col=2
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=observed_df.loc[neighbor_idx, "Price"],
+        y=observed_df.loc[neighbor_idx, "Item_Weight"],
+        mode="markers",
+        name=f"{k} vecinos más cercanos",
+        marker=dict(size=11, symbol="diamond")
+    ),
+    row=1, col=2
+)
+
+# valor real eliminado artificialmente
+fig.add_trace(
+    go.Scatter(
+        x=[df.loc[missing_idx, "Price"]],
+        y=[true_hidden_value],
+        mode="markers",
+        name="Valor real oculto",
+        marker=dict(size=14, symbol="x", color="crimson")
+    ),
+    row=1, col=2
+)
+
+# valor imputado
+fig.add_trace(
+    go.Scatter(
+        x=[df_knn.loc[missing_idx, "Price"]],
+        y=[df_knn.loc[missing_idx, "Item_Weight"]],
+        mode="markers",
+        name="Valor imputado",
+        marker=dict(size=15, symbol="star", color="black")
+    ),
+    row=1, col=2
+)
+
+# línea horizontal del imputado
+fig.add_hline(
+    y=df_knn.loc[missing_idx, "Item_Weight"],
+    line_dash="dot",
+    annotation_text=f"imputado = {df_knn.loc[missing_idx, 'Item_Weight']:.2f}",
+    row=1, col=2
+)
+
+# línea horizontal del valor real
+fig.add_hline(
+    y=true_hidden_value,
+    line_dash="dash",
+    annotation_text=f"real = {true_hidden_value:.2f}",
+    row=1, col=2
+)
+
+fig.update_xaxes(title_text="Price", row=1, col=1)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=1)
+
+fig.update_xaxes(title_text="Price", row=1, col=2)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=2)
+
+fig.update_layout(
+    height=520,
+    legend_title=""
+)
+
+fig.show()
+```
+
+---
+
+### Ventajas
+
+- preserva mejor la **estructura de los datos**
+- utiliza **relaciones entre variables**
+- suele funcionar bien bajo **MAR**
+
+### Desventajas
+
+- depende de la **métrica de distancia**
+- puede ser **costoso computacionalmente** en datasets grandes
+- su desempeño disminuye si hay **muchos valores faltantes**
+
+---
+
+<!-- ## Imputación multiple
+
+1. Generar $m$ datasets imputados.
+2. Estimar el modelo en cada uno.
+3. Combinar resultados.
+
+Si $q_i$ es el estimador en la imputación $i$:
+
+$$
+\bar{q}_m = \frac{1}{m}\sum_{i=1}^m q_i
+$$
+
+y la varianza total:
+
+$$
+T_m = \left(1+\frac{1}{m}\right)b_m + \bar{u}_m
+$$
+
+## Idea clave
+
+Se incorpora la incertidumbre **dentro** y **entre** imputaciones. -->
+
+---
+
+## Recomendaciones para práctica profesional
+
+- Visualiza siempre el patrón de faltantes.
+- No uses imputación por media como solución automática.
+- Piensa si la ausencia puede ser informativa.
+- Si asumes MAR, incluye buenas variables auxiliares.
+- Haz análisis de sensibilidad cuando el riesgo de MNAR sea alto.
+
+---
+
+## Mini ejercicio en vivo
+
+**Pregunta:** si un patrón de missing cambia por `Region`, ¿qué mecanismo parece más plausible?
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+df_check = (
+    df_mar.assign(missing=df_mar["Item_Weight"].isna())
+          .groupby(["Region", "Promo"], as_index=False)["missing"].mean()
+)
+
+df_check
+```
+
+## Para discutir
+
+- ¿Se parece a MCAR?
+- ¿Qué variables usarías para imputar?
+- ¿`dropna` sería aceptable aquí?
+
+
+---
+
+## Cierre
+
+> Manejar datos faltantes no es una tarea de limpieza menor.  
+> Es una decisión estadística que afecta inferencia, predicción y credibilidad.
+
+## Próximo paso sugerido
+
+Tomar un dataset real como **BigMart** y comparar
+cómo cambian las predicciones de ventas bajo distintas imputaciones.
