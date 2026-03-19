@@ -1,0 +1,1336 @@
+---
+title: "EDA Integrador: BigMart Sales"
+subtitle: "Heterogeneidad · Concentración · Correlación · PCA"
+author: "Diego Villalba"
+format:
+  revealjs:
+    theme: unam-theme.scss
+    incremental: true
+    code-fold: true      # habilita fold globalmente
+    code-tools: true
+    slide-number: true
+    chalkboard: true
+    transition: slide
+    background-transition: fade
+    highlight-style: github
+    embed-resources: false
+    fig-align: center
+    footer: "Facultad de Ciencias UNAM · Minería de Datos · 2026"
+    logo: "Logo_FC_Color.png"
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{python}
+#| include: false
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+import warnings
+warnings.filterwarnings('ignore')
+
+# ── Paleta UNAM (solo elementos de tema, nunca datos) ─────────
+AZUL   = "#0b4a6f"
+AZUL_L = "#5c7f9b"
+ACENTO = "#4fb6d6"
+FONDO  = "#ffffff"
+TEXTO  = "#2f4f63"
+GRIS_L = "#d9e3ea"
+BG_PLT = "#f4f8fb"
+
+# ── Colorway original de Plotly (paleta categórica por defecto)
+PLOTLY_COLORWAY = [
+    "#636efa", "#EF553B", "#00cc96", "#ab63fa", "#FFA15A",
+    "#19d3f3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"
+]
+
+# ── Template global ───────────────────────────────────────────
+pio.templates["unam"] = go.layout.Template(
+    layout=go.Layout(
+        colorway      = PLOTLY_COLORWAY,
+        paper_bgcolor = FONDO,
+        plot_bgcolor  = BG_PLT,
+        font          = dict(
+            family="Helvetica Neue, Arial, sans-serif",
+            color=TEXTO, size=13
+        ),
+        xaxis=dict(
+            gridcolor=GRIS_L, zerolinecolor=AZUL_L,
+            linecolor=AZUL_L, tickfont=dict(color=TEXTO),
+            title=dict(font=dict(color=TEXTO))
+        ),
+        yaxis=dict(
+            gridcolor=GRIS_L, zerolinecolor=AZUL_L,
+            linecolor=AZUL_L, tickfont=dict(color=TEXTO),
+            title=dict(font=dict(color=TEXTO))
+        ),
+        legend=dict(font=dict(color=TEXTO)),
+    )
+)
+pio.templates.default = "unam"
+
+# ── Carga y limpieza ──────────────────────────────────────────
+df = pd.read_csv("../data/bigmart_sales.csv")
+
+df['Item_Fat_Content'] = df['Item_Fat_Content'].replace(
+    {'low fat': 'Low Fat', 'LF': 'Low Fat', 'reg': 'Regular'})
+df['Outlet_Age'] = 2013 - df['Outlet_Establishment_Year']
+df['Item_Weight'] = df.groupby('Item_Identifier')['Item_Weight'].transform(
+    lambda x: x.fillna(x.median()))
+df['Item_Weight'] = df['Item_Weight'].fillna(df['Item_Weight'].median())
+df['Outlet_Size'] = df.groupby('Outlet_Type')['Outlet_Size'].transform(
+    lambda x: x.fillna(x.mode()[0] if not x.mode().empty else 'Small'))
+```
+
+## El encargo {.title-section}
+
+## El encargo
+
+BigMart es una cadena de supermercados con **10 tiendas** en distintas ciudades. El equipo directivo hace la pregunta:
+
+> *"¿Qué factores explican por qué algunos productos y algunas tiendas venden mucho más que otras?"*
+
+**Nuestro rol hoy:** analistas de datos. Antes de construir cualquier modelo predictivo, necesitamos **entender** los datos.
+
+::: {.callout-note}
+Este es exactamente el trabajo de un EDA completo: no solo calcular números, sino **responder preguntas de negocio** con evidencia estadística.
+:::
+
+---
+
+## El dataset
+
+```{python}
+#| echo: False
+df[['Item_Identifier','Item_Weight','Item_Fat_Content',
+    'Item_Visibility','Item_Type','Item_MRP',
+    'Outlet_Type','Outlet_Size','Outlet_Location_Type',
+    'Outlet_Age','Item_Outlet_Sales']].head(4)
+```
+
+---
+## Variables clave
+
+| Variable | Tipo | Descripción |
+|---|---|---|
+| `Item_MRP` | Numérica | Precio máximo de venta al público |
+| `Item_Visibility` | Numérica | % de espacio en anaquel que ocupa el producto |
+| `Item_Weight` | Numérica | Peso del producto (kg) |
+| `Outlet_Age` | Numérica | Años de operación de la tienda |
+
+---
+
+## Variables clave
+
+| Variable | Tipo | Descripción |
+|---|---|---|
+| `Outlet_Type` | Categórica | Tipo de tienda (Grocery / Supermercado 1–3) |
+| `Outlet_Location_Type` | Categórica | Nivel socioeconómico de la ciudad (Tier 1–3) |
+| `Outlet_Size` | Categórica | Tamaño físico de la tienda |
+
+---
+
+## Variables clave
+
+| Variable | Tipo | Descripción |
+|---|---|---|
+| `Outlet_Size` | Categórica | Tamaño físico de la tienda |
+| `Item_Type` | Categórica | Categoría del producto (16 tipos) |
+| **`Item_Outlet_Sales`** | **Numérica** | **Ventas totales del producto en esa tienda** |
+
+---
+
+## Lo que ya sabemos {.title-section}
+
+## Lo que ya sabemos: ventas
+
+Medidas univariadas de dsitribución de `Item_Outlet_Sales`:
+
+```{python}
+#| echo: false
+s     = df['Item_Outlet_Sales']
+media = s.mean()
+med   = s.median()
+std   = s.std()
+sesgo = s.skew()
+kurt  = s.kurtosis()
+```
+```{python}
+#| echo: false
+
+tabla = pd.DataFrame({
+    "Medida": ["Media", "Mediana", "Desv. std", "Sesgo", "Curtosis"],
+    "Valor": [
+        f"${media:,.0f}",
+        f"${med:,.0f}",
+        f"${std:,.0f}",
+        f"{sesgo:.2f}",
+        f"{kurt:.2f}"
+    ],
+    "Interpretación": [
+        "Promedio de ventas",
+        "Menor que la media",
+        "Alta variabilidad",
+        "Asimetría positiva",
+        "Colas pesadas"
+    ]
+})
+
+
+tabla.style.hide(axis="index")
+
+
+```
+
+
+---
+
+## Lo que ya sabemos: distribución
+
+```{python}
+#| echo: false
+#| fig-align: center
+fig = make_subplots(
+    rows=2, cols=1,
+    row_heights=[0.18, 0.82],   # boxplot arriba delgado, histograma abajo
+    shared_xaxes=True,
+    vertical_spacing=0.02
+)
+
+# ── Boxplot horizontal (fila superior) ──────────────────
+fig.add_trace(go.Box(
+    x=df['Item_Outlet_Sales'],
+    orientation='h',
+    opacity=0.75,
+    boxmean=True, name="",
+    hovertemplate=(
+        "Mín: %{lowerfence:,.0f}<br>"
+        "Q1:  %{q1:,.0f}<br>"
+        "Med: %{median:,.0f}<br>"
+        "Q3:  %{q3:,.0f}<br>"
+        "Máx: %{upperfence:,.0f}<br>"
+        "<extra></extra>"
+    )
+), row=1, col=1)
+
+# ── Histograma (fila inferior) ───────────────────────────
+fig.add_trace(go.Histogram(
+    x=df['Item_Outlet_Sales'],
+    nbinsx=60,
+    opacity=0.8,
+    name="Ventas",
+    hovertemplate="Rango: %{x}<br>Frecuencia: %{y}<extra></extra>"
+), row=2, col=1)
+
+# ── Ejes ────────────────────────────────────────────────
+fig.update_xaxes(
+    title_text="Item_Outlet_Sales ($)",
+    title=dict(font=dict(color=TEXTO)),
+    tickfont=dict(color=TEXTO),
+    gridcolor=GRIS_L,
+    zeroline=False,
+    row=2, col=1
+)
+fig.update_yaxes(
+    tickfont=dict(color=TEXTO),
+    gridcolor=GRIS_L,
+    title_text="Frecuencia",
+    title=dict(font=dict(color=TEXTO)),
+    row=2, col=1
+)
+fig.update_yaxes(visible=False, row=1, col=1)
+
+# ── Layout ──────────────────────────────────────────────
+fig.update_layout(
+    paper_bgcolor=FONDO,
+    plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO),
+    
+    margin=dict(t=10, b=35, l=55, r=15),
+    showlegend=False,
+    # annotations=[dict(
+    #     text="Sesgo positivo (cola derecha): pocos productos con ventas muy altas",
+    #     x=0.5, y=-0.1, xref='paper', yref='paper',
+    #     showarrow=False,
+    #     font=dict(color=AZUL_L, size=12),
+    #     xanchor='center'
+    # )]
+)
+fig.show()
+```
+
+::: {.callout-tip}
+**Punto de partida:** la distribución es asimétrica y tiene outliers. Esto ya nos dice que *no todas las observaciones se comportan igual*. Hoy investigamos **por qué**.
+:::
+
+
+---
+
+## Pregunta 1 {.title-section}
+
+## ¿Todas las tiendas venden igual? {.centered}
+
+---
+
+## Heterogeneidad
+
+Cuando queremos comparar **variabilidad entre grupos** con distintas medias, la desviación estándar sola no es suficiente.
+
+$$CV = \frac{\sigma}{\mu} \times 100\%$$
+
+El el coeficiente de variación (CV) nos dice: *¿qué tan grande es la dispersión relativa a la media?*
+
+| CV | Interpretación |
+|:---:|---|
+| < 15 % | Muy homogéneo |
+| 15–30 % | Moderadamente variable |
+| > 30 % | Alta heterogeneidad |
+
+---
+
+## ¿Por qué no comparar desviaciones estándar?
+
+```{python}
+#| echo: false
+tiendas = ["Tienda A", "Tienda B"]
+medias  = [3000, 300]
+sigmas  = [1500, 1500]
+cvs     = [s/m*100 for s, m in zip(sigmas, medias)]
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["Misma σ, medias distintas", "Coeficiente de variación (CV %)"],
+    column_widths=[0.6, 0.4]
+)
+
+colores = [AZUL, ACENTO]
+
+# ── Panel izq: barras con barras de error ───────────────
+for i, (t, m, s, c) in enumerate(zip(tiendas, medias, sigmas, colores)):
+    fig.add_trace(go.Bar(
+        x=[t], y=[m],
+        error_y=dict(type='data', array=[s],
+                     thickness=2.5, width=10),
+        opacity=0.85,
+        name=t, width=0.4,
+        text=[f"μ = ${m:,}<br>σ = ${s:,}"],
+        textposition='inside',
+        textfont=dict(color=FONDO, size=13),
+        hovertemplate=f"<b>{t}</b><br>μ = ${m:,}<br>σ = ${s:,}<extra></extra>"
+    ), row=1, col=1)
+
+# ── Panel der: CV ───────────────────────────────────────
+for i, (t, cv, c) in enumerate(zip(tiendas, cvs, colores)):
+    fig.add_trace(go.Bar(
+        x=[t], y=[cv],
+        opacity=0.85,
+        name=t, width=0.4, showlegend=False,
+        text=[f"{cv:.0f}%"],
+        textposition='outside',
+        textfont=dict(size=15, family="Helvetica Neue, Arial, sans-serif"),
+        hovertemplate=f"<b>{t}</b><br>CV = {cv:.0f}%<extra></extra>"
+    ), row=1, col=2)
+
+# ── Línea de referencia CV = 30% ────────────────────────
+fig.add_hline(y=30, line_dash="dot", line_color=AZUL_L,
+              annotation_text="CV = 30 %",
+              annotation_font_color=AZUL_L,
+              annotation_position="top right",
+              row=1, col=2)
+
+# ── Anotación conclusión ─────────────────────────────────
+fig.add_annotation(
+    x=0.5, y=-0.18, xref='paper', yref='paper',
+    text="<b>Misma σ, conclusión opuesta:</b>  "
+         "Tienda A es moderadamente variable (CV=50%),  "
+         "Tienda B es extremadamente variable (CV=500%)",
+    showarrow=False,
+    font=dict(color=AZUL, size=12),
+    xanchor='center'
+)
+
+# ── Ejes ─────────────────────────────────────────────────
+fig.update_yaxes(
+    title_text="Ventas promedio ($)",
+    title=dict(font=dict(color=TEXTO)),
+    tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+    tickformat="$,.0f", row=1, col=1
+)
+fig.update_yaxes(
+    title_text="CV (%)",
+    title=dict(font=dict(color=TEXTO)),
+    tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+    row=1, col=2
+)
+fig.update_xaxes(tickfont=dict(color=TEXTO, size=13), gridcolor=GRIS_L)
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO),
+    margin=dict(t=50, b=60, l=15, r=15),
+    showlegend=False
+)
+fig.show()
+```
+
+---
+
+## CV por tipo de tienda
+
+```{python}
+#| echo: false
+cv_outlet = (df.groupby('Outlet_Type')['Item_Outlet_Sales']
+               .agg(Media='mean', Desv_std='std',
+                    CV=lambda x: x.std()/x.mean()*100)
+               .round(2))
+```
+
+```{python}
+#| echo: false
+outlet_stats = (df.groupby('Outlet_Type')['Item_Outlet_Sales']
+                  .agg(media='mean', std='std',
+                       cv=lambda x: x.std()/x.mean()*100)
+                  .reset_index().sort_values('media', ascending=False))
+
+fig = make_subplots(1, 2,
+    subplot_titles=["Media de ventas por tipo de tienda",
+                    "Coeficiente de variación (CV %)"])
+
+fig.add_trace(go.Bar(
+    x=outlet_stats['Outlet_Type'], y=outlet_stats['media'],
+    text=outlet_stats['media'].round(0).astype(int),
+    textposition='outside', textfont=dict(color=TEXTO),
+    error_y=dict(type='data', array=outlet_stats['std'],
+                 color=AZUL_L, thickness=1.5)
+), row=1, col=1)
+
+fig.add_trace(go.Bar(
+    x=outlet_stats['Outlet_Type'], y=outlet_stats['cv'],
+    text=outlet_stats['cv'].round(1).astype(str) + '%',
+    textposition='outside', textfont=dict(color=TEXTO)
+), row=1, col=2)
+
+fig.add_hline(y=30, line_dash="dash", line_color=ACENTO,
+              annotation_text="CV=30%",
+              annotation_font_color=ACENTO, row=1, col=2)
+
+for c in [1, 2]:
+    fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     tickangle=-15, row=1, col=c)
+    fig.update_yaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     row=1, col=c)
+fig.update_yaxes(title_text="Ventas promedio ($)", row=1, col=1,
+                 title=dict(font=dict(color=TEXTO)))
+fig.update_yaxes(title_text="CV (%)", row=1, col=2,
+                 title=dict(font=dict(color=TEXTO)))
+
+fig.update_layout(
+    height=600, 
+    margin=dict(t=50), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## ¿Por qué Grocery Store tiene menor media pero mayor CV?
+
+- Grocery Store tiene **bajo volumen de ventas**
+
+- Presenta **alta variabilidad relativa (CV alto)**
+
+### Insight EDA
+- La distribución es **inestable respecto a su escala**  
+- La media no es representativa por sí sola  
+
+### Insight negocio
+- Las ventas son **difíciles de anticipar**  
+- El comportamiento es **más volátil que en supermercados**  
+
+---
+
+## ¿Qué implica esto para la gestión de inventario?
+
+- Alta variabilidad → **demanda poco predecible**  
+
+
+- Mayor riesgo de:
+  - sobrestock  
+  - quiebres de inventario  
+
+
+### Insight EDA
+- Se requiere análisis adicional ( como segmentación  ) para entender mejor los patrones de demanda
+
+
+---
+
+## Heterogeneidad entre tiendas individuales
+
+```{python}
+#| echo: false
+import plotly.graph_objects as go
+
+# Agrupación
+ventas_outlet = (
+    df.groupby(['Outlet_Identifier','Outlet_Type'])['Item_Outlet_Sales']
+      .agg(media='mean', std='std',
+           cv=lambda x: x.std()/x.mean()*100)
+      .reset_index()
+      .sort_values('media', ascending=True)
+)
+
+# Mapa de colores (ajústalo a tu tema)
+COLOR_MAP = {
+    'Supermarket Type1': '#4C78A8',
+    'Supermarket Type2': '#F58518',
+    'Supermarket Type3': '#54A24B',
+    'Grocery Store': '#E45756'
+}
+
+fig = go.Figure()
+
+# Una barra por tipo (para tener leyenda correcta)
+for tipo in ventas_outlet['Outlet_Type'].unique():
+    df_tipo = ventas_outlet[ventas_outlet['Outlet_Type'] == tipo]
+
+    fig.add_trace(go.Bar(
+        x=df_tipo['media'],
+        y=df_tipo['Outlet_Identifier'],
+        orientation='h',
+        name=tipo,
+        marker=dict(color=COLOR_MAP.get(tipo, '#333333')),
+        error_x=dict(
+            type='data',
+            array=df_tipo['std'],
+            thickness=1.5
+        ),
+        text=[f"CV={v:.0f}%" for v in df_tipo['cv']],
+        textposition='outside',
+        textfont=dict(size=11),
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Tipo: " + tipo + "<br>"
+            "Media: $%{x:,.0f}<br>"
+            "<extra></extra>"
+        )
+    ))
+
+# Layout
+fig.update_xaxes(
+    title_text="Ventas promedio por ítem ($)",
+    gridcolor="#DDDDDD"
+)
+
+fig.update_yaxes(
+    title_text="Tienda"
+)
+
+fig.update_layout(
+    title="Heterogeneidad entre tiendas (coloreado por tipo)",
+    height=600,
+    barmode='group',  # importante para no sobreponer
+    legend_title="Tipo de tienda",
+    margin=dict(t=50)
+)
+
+fig.show()
+```
+
+---
+
+## Heterogeneidad entre tiendas individuales
+
+::: {.incremental}
+
+- Existe alta variabilidad entre tiendas del mismo tipo
+
+- OUT027 vende ~10x más que OUT010 y OUT019
+
+### Insight EDA
+
+- El tipo de tienda **no explica completamente las ventas**
+
+- Hay **subgrupos internos (heterogeneidad intra-clase)**
+
+- Posible mezcla de distribuciones → no es unimodal
+
+### Insight negocio
+
+- No todas las tiendas del mismo tipo deben tratarse igual, se requiere segmentación a nivel tienda (no solo tipo)
+
+:::
+
+
+---
+
+## Boxplots por tipo de tienda
+
+```{python}
+#| echo: false
+outlet_order = ['Grocery Store','Supermarket Type1',
+                'Supermarket Type2','Supermarket Type3']
+
+fig = go.Figure()
+for tipo in outlet_order:
+    sub = df[df['Outlet_Type'] == tipo]['Item_Outlet_Sales']
+    fig.add_trace(go.Box(
+        y=sub, name=tipo,
+        opacity=0.8,
+        boxmean=True,
+        hovertemplate=(
+            f"<b>{tipo}</b><br>"
+            "Q1: %{q1:,.0f}<br>"
+            "Mediana: %{median:,.0f}<br>"
+            "Q3: %{q3:,.0f}<br>"
+            "<extra></extra>"
+        )
+    ))
+
+fig.update_yaxes(title_text="Item_Outlet_Sales ($)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+fig.update_xaxes(tickfont=dict(color=TEXTO))
+fig.update_layout(
+    title=dict(text="Distribución de ventas por tipo de tienda",
+               font=dict(color=AZUL, size=14)),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=600,
+    margin=dict(t=50, b=20), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## **Para discutir:** 
+
+
+- ¿Qué nos dice la diferencia entre media y mediana en Grocery Store? 
+- ¿Cómo se refleja el sesgo aquí?
+
+---
+
+## Pregunta 2 {.title-section}
+
+## ¿Pocos productos generan casi todo el ingreso? {.centered}
+
+---
+
+## Concentración: Lorenz y Gini
+
+La **curva de Lorenz** visualiza qué fracción de las ventas totales acumula el X% de los productos (ordenados de menor a mayor).
+
+El **índice de Gini** resume esa desigualdad en un número:
+
+$$G = 1 - 2\int_0^1 L(x)\,dx \qquad G \in [0,\,1]$$
+
+- $G = 0$: todos los productos venden exactamente igual (igualdad perfecta)
+- $G = 1$: un solo producto genera todo el ingreso (desigualdad máxima)
+
+<!-- ::: {.callout-note}
+Aunque el Gini se asocia a economía, es una herramienta general para medir **concentración** en cualquier variable no negativa.
+::: -->
+
+---
+
+## Curva de Lorenz: ventas por producto
+
+```{python}
+#| echo: False
+# Ventas totales por producto (sumando todas las tiendas)
+ventas_item = (df.groupby('Item_Identifier')['Item_Outlet_Sales']
+                 .sum().sort_values())
+
+# Curva de Lorenz
+n         = len(ventas_item)
+lorenz_y  = np.cumsum(ventas_item.values) / ventas_item.sum()
+lorenz_x  = np.arange(1, n + 1) / n
+
+# Índice de Gini
+gini = 1 - 2 * np.trapz(lorenz_y, lorenz_x)
+
+
+top20_n   = int(n * 0.20)
+top20_pct = ventas_item.iloc[-top20_n:].sum() / ventas_item.sum() * 100
+
+fig = go.Figure()
+
+# Línea de igualdad perfecta
+fig.add_trace(go.Scatter(
+    x=[0, 1], y=[0, 1],
+    mode='lines',
+    line=dict(color=GRIS_L, dash='dash', width=2),
+    name='Igualdad perfecta'
+))
+
+# Curva de Lorenz
+fig.add_trace(go.Scatter(
+    x=np.concatenate([[0], lorenz_x]),
+    y=np.concatenate([[0], lorenz_y]),
+    mode='lines',
+    line=dict(width=3),
+    fill='tonexty',
+    name=f'Lorenz (Gini={gini:.3f})',
+    hovertemplate=(
+        "%{x:.1%} de productos<br>"
+        "acumulan %{y:.1%} de ventas<br>"
+        "<extra></extra>"
+    )
+))
+
+# Punto del 20%
+idx20 = int(len(lorenz_x) * 0.20)
+fig.add_trace(go.Scatter(
+    x=[lorenz_x[idx20]], y=[lorenz_y[idx20]],
+    mode='markers+text',
+    marker=dict(size=12, symbol='circle'),
+    text=[f"  20% prod → {lorenz_y[idx20]:.1%} ventas"],
+    textposition='middle right',
+    textfont=dict(color=AZUL, size=12),
+    name='Punto 20%',
+    showlegend=False
+))
+
+fig.update_xaxes(title_text="Fracción acumulada de productos",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 tickformat='.0%')
+fig.update_yaxes(title_text="Fracción acumulada de ventas",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 tickformat='.0%')
+fig.update_layout(
+    title=dict(
+        text=f"Curva de Lorenz — Gini = {gini:.3f}  |  Top 20% → {top20_pct:.1f}% de ventas",
+        font=dict(color=AZUL, size=14)
+    ),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=490,
+    margin=dict(t=55),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+
+print(f"Número de productos únicos: {n}")
+print(f"Índice de Gini:             {gini:.4f}")
+print(f"Top 20% de productos →      {top20_pct:.1f}% de ventas")
+
+```
+
+---
+
+## ¿Se cumple la regla 80/20 de Pareto?
+
+::: {.incremental}
+
+- El top 20% de productos genera ~38.5% de ventas  
+
+- No se cumple estrictamente la regla 80/20  
+
+### Insight EDA
+- Existe concentración, pero no extrema  
+- Distribución “Pareto-like”, no pura  
+
+### Insight negocio
+- Las ventas no dependen solo de unos pocos productos  
+- Existe diversificación en el catálogo  
+
+:::
+
+---
+
+## ¿Qué implica para la gestión del catálogo?
+
+::: {.incremental}
+
+- No todos los productos aportan igual valor  
+
+- Existe un grupo de productos clave  
+
+### Insight EDA
+- Se requiere segmentación del catálogo  
+- Identificar niveles de contribución  
+
+### Insight negocio
+- Priorizar:
+  - inventario de productos top  
+  - visibilidad y promoción  
+
+:::
+
+---
+
+## Concentración por categoría de producto
+
+```{python}
+#| echo: false
+cat_ventas = (df.groupby('Item_Type')['Item_Outlet_Sales']
+                .sum()
+                .sort_values(ascending=False)
+                .reset_index())
+cat_ventas['pct']  = cat_ventas['Item_Outlet_Sales'] / cat_ventas['Item_Outlet_Sales'].sum() * 100
+cat_ventas['acum'] = cat_ventas['pct'].cumsum()
+
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=cat_ventas['Item_Type'], y=cat_ventas['pct'],
+    name="% del total",
+    text=cat_ventas['pct'].round(1).astype(str) + '%',
+    textposition='outside', textfont=dict(color=TEXTO, size=10)
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=cat_ventas['Item_Type'], y=cat_ventas['acum'],
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=7),
+    name="% acumulado"
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color=ACENTO,
+              annotation_text="80%", annotation_font_color=ACENTO,
+              secondary_y=True)
+
+fig.update_xaxes(tickfont=dict(color=TEXTO), tickangle=-35,
+                 gridcolor=GRIS_L)
+fig.update_yaxes(title_text="% de ventas totales",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 secondary_y=False)
+fig.update_yaxes(title_text="% acumulado",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), range=[0,110],
+                 secondary_y=True)
+fig.update_layout(
+    title=dict(text="Diagrama de Pareto por categoría — las 5 primeras acumulan ~55%",
+               font=dict(color=AZUL, size=13)),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=600,
+    margin=dict(t=55),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## Pregunta 3 {.title-section}
+
+## ¿Qué variables se relacionan con las ventas? {.centered}
+
+---
+
+## Correlación: recuerdo rápido
+
+El coeficiente de correlación de Pearson mide la **fuerza y dirección** de la relación lineal entre dos variables:
+
+$$r = \frac{\sum(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum(x_i-\bar{x})^2 \cdot \sum(y_i-\bar{y})^2}} \qquad r \in [-1,\,1]$$
+
+::: {.callout-important}
+**Correlación ≠ causalidad.** Una relación estadística fuerte no implica que una variable *cause* la otra.
+:::
+
+---
+
+## Correlación: Guia de interpretación
+
+| $|r|$ | Interpretación |
+|:---:|---|
+| 0.0 – 0.1 | Despreciable |
+| 0.1 – 0.3 | Débil |
+| 0.3 – 0.5 | Moderada |
+| 0.5 – 0.7 | Fuerte |
+| 0.7 – 1.0 | Muy fuerte |
+
+---
+
+## Matriz de correlación
+
+```{python}
+#| echo: false
+import matplotlib.pyplot as plt
+
+# Extraer coolwarm de matplotlib como colorscale de Plotly
+coolwarm = plt.get_cmap('coolwarm')
+colorscale = [
+    [i/255, f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
+    for i, (r, g, b, _) in enumerate(
+        [coolwarm(x) for x in [i/255 for i in range(256)]]
+    )
+]
+
+num_cols = ['Item_Weight','Item_Visibility',
+            'Item_MRP','Outlet_Age','Item_Outlet_Sales']
+corr = df[num_cols].corr()
+
+labels = ['Peso\nproducto','Visibilidad\nanaquel',
+          'Precio\nmáximo','Antigüedad\ntienda','Ventas']
+
+fig = go.Figure(data=go.Heatmap(
+    z=corr.values,
+    x=labels, y=labels,
+    colorscale=colorscale,
+    zmid=0, zmin=-1, zmax=1,
+    text=corr.values.round(3),
+    texttemplate='%{text}',
+    textfont=dict(size=13, color=TEXTO),
+    hovertemplate='%{y} ↔ %{x}<br>r = %{z:.3f}<extra></extra>',
+    showscale=True,
+    colorbar=dict(
+        tickfont=dict(color=TEXTO),
+        title=dict(text='r', font=dict(color=TEXTO))
+    )
+))
+
+fig.update_xaxes(tickfont=dict(color=TEXTO), side='bottom')
+fig.update_yaxes(tickfont=dict(color=TEXTO))
+fig.update_layout(
+    title=dict(text="Matriz de correlación — variables numéricas BigMart",
+               font=dict(color=AZUL, size=14)),
+    paper_bgcolor=FONDO, plot_bgcolor=FONDO,
+    font=dict(color=TEXTO), height=600,
+    margin=dict(t=55)
+)
+fig.show()
+```
+
+---
+
+## ¿Qué correlación es más sorprendente?
+
+::: {.incremental}
+
+- La correlación entre visibilidad y ventas es débil o negativa  
+
+- No sigue la intuición de “más visibilidad → más ventas”  
+
+### Insight EDA
+- Posible relación no lineal o sesgada  
+- La variable puede estar mal medida o contener outliers  
+
+### Insight negocio
+- Mayor visibilidad puede asociarse a productos de baja rotación  
+- No necesariamente indica mejor desempeño  
+
+:::
+
+---
+
+## ¿Esperaríamos una correlación negativa?
+
+::: {.incremental}
+
+- Intuitivamente, esperaríamos correlación positiva  
+
+- Sin embargo, observamos lo contrario  
+
+### Insight EDA
+- La correlación simple no captura causalidad  
+- Puede existir confusión por variables ocultas  
+
+### Insight negocio
+- Productos con baja demanda reciben más visibilidad  
+- Estrategias de exhibición buscan impulsar ventas bajas  
+
+:::
+
+---
+
+
+## Precio vs Ventas: la correlación más fuerte
+
+```{python}
+#| echo: false
+sample = df.sample(1500, random_state=42)
+outlet_types = sample['Outlet_Type'].unique()
+
+fig = go.Figure()
+for tipo in outlet_types:
+    sub = sample[sample['Outlet_Type'] == tipo]
+    fig.add_trace(go.Scatter(
+        x=sub['Item_MRP'], y=sub['Item_Outlet_Sales'],
+        mode='markers',
+        marker=dict(opacity=0.55, size=6),
+        name=tipo,
+        hovertemplate=(
+            "<b>" + tipo + "</b><br>"
+            "MRP: $%{x:.1f}<br>"
+            "Ventas: $%{y:,.0f}<br>"
+            "<extra></extra>"
+        )
+    ))
+
+m, b = np.polyfit(df['Item_MRP'], df['Item_Outlet_Sales'], 1)
+x_line = np.array([df['Item_MRP'].min(), df['Item_MRP'].max()])
+fig.add_trace(go.Scatter(
+    x=x_line, y=m*x_line+b,
+    mode='lines',
+    line=dict(color=AZUL, width=2.5, dash='dot'),
+    name='Tendencia (r=0.57)',
+    showlegend=True
+))
+
+fig.update_xaxes(title_text="Precio máximo (Item_MRP)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+fig.update_yaxes(title_text="Ventas (Item_Outlet_Sales)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+fig.update_layout(
+    title=dict(text="Precio vs Ventas — r = 0.57 (relación fuerte, positiva)",
+               font=dict(color=AZUL, size=14)),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=600,
+    margin=dict(t=55),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## Visibilidad vs Ventas: la paradoja del anaquel
+
+```{python}
+#| echo: false
+fig = go.Figure()
+for tipo in outlet_types:
+    sub = sample[sample['Outlet_Type'] == tipo]
+    fig.add_trace(go.Scatter(
+        x=sub['Item_Visibility'], y=sub['Item_Outlet_Sales'],
+        mode='markers',
+        marker=dict(opacity=0.5, size=6),
+        name=tipo
+    ))
+
+m2, b2 = np.polyfit(df['Item_Visibility'], df['Item_Outlet_Sales'], 1)
+x2 = np.array([df['Item_Visibility'].min(), df['Item_Visibility'].max()])
+fig.add_trace(go.Scatter(
+    x=x2, y=m2*x2+b2, mode='lines',
+    line=dict(color=AZUL, width=2.5, dash='dot'),
+    name='Tendencia (r=−0.13)', showlegend=True
+))
+
+fig.update_xaxes(title_text="Visibilidad en anaquel (Item_Visibility)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 tickformat='.0%')
+fig.update_yaxes(title_text="Ventas (Item_Outlet_Sales)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+fig.update_layout(
+    title=dict(
+        text="Visibilidad vs Ventas — r = −0.13 (¡correlación negativa!)",
+        font=dict(color=AZUL, size=14)),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=600,
+    margin=dict(t=55),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## **Para discutir:** 
+
+- ¿Por qué productos con *más* espacio en anaquel venden *menos*? 
+- ¿Podría ser que los productos de nicho necesiten más espacio pero tengan demanda baja?
+
+---
+
+## Pregunta 4 {.title-section}
+
+## ¿Existe estructura latente en los datos? {.centered}
+
+---
+
+## Del EDA al PCA
+
+Hasta ahora exploramos cada variable **por separado** o **en pares**.
+
+Pero los datos tienen **4 dimensiones numéricas** simultáneas:
+
+$$(\text{Peso},\; \text{Visibilidad},\; \text{Precio},\; \text{Antigüedad tienda})$$
+
+**La pregunta ahora es:** ¿podemos resumir estas 4 dimensiones en 2 o 3 componentes que conserven la mayor información posible, y que nos permitan *visualizar* la estructura de los datos?
+
+::: {.callout-tip}
+PCA no reemplaza el EDA univariado y bivariado — lo **sintetiza**. Las variables que mostraron correlaciones altas entre sí tenderán a dominar los mismos componentes principales.
+:::
+
+---
+
+## Paso 1: Estandarizar
+
+Las escalas son completamente distintas — sin estandarización, el PCA quedaría dominado por `Item_MRP`:
+
+```{python}
+#| echo: true
+pca_cols = ['Item_Weight','Item_Visibility','Item_MRP','Outlet_Age']
+
+# Ver la escala de cada variable
+df[pca_cols].describe().loc[['mean','std','min','max']].round(3)
+```
+
+---
+
+## Paso 1: Estandarizar
+```{python}
+#| echo: true
+scaler = StandardScaler()
+X_std  = scaler.fit_transform(df[pca_cols])
+
+# Verificar: todas con media ≈ 0 y std ≈ 1
+pd.DataFrame(X_std, columns=pca_cols).describe().loc[['mean','std']].round(4)
+```
+
+---
+
+## Paso 2: Aplicar PCA
+
+```{python}
+#| echo: false
+pca    = PCA()
+scores = pca.fit_transform(X_std)
+
+pct_pca  = pca.explained_variance_ratio_ * 100
+acum_pca = np.cumsum(pct_pca)
+pcs      = [f"PC{i+1}" for i in range(len(pct_pca))]
+
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=pcs, y=pct_pca,
+    name="% Varianza",
+    text=[f"{v:.1f}%" for v in pct_pca],
+    textposition='outside', textfont=dict(color=TEXTO, size=13)
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=pcs, y=acum_pca, mode='lines+markers',
+    line=dict(width=3),
+    marker=dict(size=10),
+    name="% Acumulado"
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color=ACENTO,
+              annotation_text="80% acumulado",
+              annotation_font_color=ACENTO, secondary_y=True)
+
+fig.update_yaxes(title_text="% Varianza por componente",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 secondary_y=False)
+fig.update_yaxes(title_text="% Varianza acumulada",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), range=[0,115],
+                 secondary_y=True)
+fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+fig.update_layout(
+    title=dict(text="Scree Plot — PC1 + PC2 explican el 60% de la varianza",
+               font=dict(color=AZUL, size=14)),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=400,
+    margin=dict(t=55, b=20),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+**Para discutir:** ¿Cuántos componentes retendríamos por la regla de Kaiser ($\lambda > 1$)? ¿Y por la regla del 80%?
+
+---
+
+## Loadings: ¿qué mide cada componente?
+
+```{python}
+#| echo: false
+loadings = pd.DataFrame(
+    pca.components_.T,
+    index=pca_cols,
+    columns=[f'PC{i+1}' for i in range(4)]
+).round(4)
+
+comps = pca.components_
+labels_short = ['Peso', 'Visibilidad', 'Precio\n(MRP)', 'Antigüedad\ntienda']
+
+fig = make_subplots(1, 2,
+    subplot_titles=["PC1 — loadings", "PC2 — loadings"])
+
+fig.add_trace(go.Bar(
+    x=labels_short, y=comps[0],
+    text=[f"{v:.3f}" for v in comps[0]],
+    textposition='outside', textfont=dict(color=TEXTO)
+), row=1, col=1)
+
+fig.add_trace(go.Bar(
+    x=labels_short, y=comps[1],
+    text=[f"{v:.3f}" for v in comps[1]],
+    textposition='outside', textfont=dict(color=TEXTO)
+), row=1, col=2)
+
+for c in [1, 2]:
+    fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L, row=1, col=c)
+    fig.update_yaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L,
+                     range=[-0.85, 0.85], row=1, col=c)
+
+fig.add_hline(y=0, line_color=AZUL_L, line_width=1, row=1, col=1)
+fig.add_hline(y=0, line_color=AZUL_L, line_width=1, row=1, col=2)
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=450,
+    margin=dict(t=55, b=20), showlegend=False,
+    annotations=[
+        dict(x=0.5, y=-0.12, xref='paper', yref='paper',
+             text="<b>PC1:</b> contrasta precio vs antigüedad de tienda   "
+                  "<b>PC2:</b> captura peso y visibilidad del producto",
+             showarrow=False, font=dict(color=AZUL_L, size=12), xanchor='center')
+    ]
+)
+fig.show()
+
+print(loadings)
+
+```
+
+---
+
+## Biplot: estructura en 2D
+
+```{python}
+#| echo: false
+sample_idx = df.sample(1000, random_state=7).index
+sc    = scores[sample_idx]
+tipos = df.loc[sample_idx, 'Outlet_Type']
+
+fig = go.Figure()
+for tipo in tipos.unique():
+    mask = tipos == tipo
+    fig.add_trace(go.Scatter(
+        x=sc[mask, 0], y=sc[mask, 1],
+        mode='markers',
+        marker=dict(opacity=0.5, size=6),
+        name=tipo
+    ))
+
+# Vectores de loadings escalados
+escala = 2.5
+for i, (var, ls) in enumerate(zip(labels_short, comps.T)):
+    fig.add_annotation(
+        x=ls[0]*escala, y=ls[1]*escala, ax=0, ay=0,
+        arrowhead=3, arrowcolor=AZUL, arrowwidth=2.5,
+        xref='x', yref='y', axref='x', ayref='y', showarrow=True
+    )
+    fig.add_annotation(
+        x=ls[0]*escala*1.22, y=ls[1]*escala*1.18,
+        text=f"<b>{var}</b>", showarrow=False,
+        font=dict(color=AZUL, size=11)
+    )
+
+fig.update_xaxes(title_text=f"PC1 ({pct_pca[0]:.1f}%)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 zeroline=True, zerolinecolor=AZUL_L)
+fig.update_yaxes(title_text=f"PC2 ({pct_pca[1]:.1f}%)",
+                 title=dict(font=dict(color=TEXTO)),
+                 tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                 zeroline=True, zerolinecolor=AZUL_L)
+fig.update_layout(
+    title=dict(text="Biplot: productos en espacio reducido coloreados por tipo de tienda",
+               font=dict(color=AZUL, size=13)),
+    paper_bgcolor=FONDO, plot_bgcolor=BG_PLT,
+    font=dict(color=TEXTO), height=600,
+    margin=dict(t=55),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## **Para discutir:** 
+
+- ¿Por qué Grocery Store se separa del resto en el eje PC1? 
+- ¿Qué dice eso sobre cómo difieren de los supermercados?
+
+---
+
+## ¿Qué sigue? {.title-section}
+
+## Lo que encontramos hoy
+
+```{python}
+#| echo: false
+hallazgos = [
+    ("🏪 Heterogeneidad",
+     "OUT027 vende ~10× más que OUT010.\nEl CV entre tipos de tienda va de 57% a 77%.\nNo todas las tiendas son iguales — el tipo de outlet importa."),
+    ("📦 Concentración",
+     "Las ventas NO siguen Pareto 80/20.\nGini = 0.34: concentración moderada.\nFruits & Vegetables + Snack Foods = 30% del ingreso."),
+    ("🔗 Correlación",
+     "Precio (MRP) es el predictor más fuerte: r = 0.57.\nVisibilidad tiene correlación negativa: r = −0.13.\nPeso y antigüedad tienen correlación débil."),
+    ("🔬 PCA",
+     "PC1 + PC2 explican ~60% de la varianza.\nPC1 contrasta precio vs antigüedad de tienda.\nGrocery Store se separa claramente en el espacio reducido."),
+]
+
+fig = go.Figure(data=[go.Table(
+    columnwidth=[200, 480],
+    header=dict(
+        values=["<b>Análisis</b>","<b>Hallazgo principal</b>"],
+        fill_color=AZUL, font=dict(color=FONDO, size=13),
+        align='left', height=34
+    ),
+    cells=dict(
+        values=[[h[0] for h in hallazgos],
+                [h[1] for h in hallazgos]],
+        fill_color=[[BG_PLT, FONDO, BG_PLT, FONDO]]*2,
+        font=dict(color=TEXTO, size=12),
+        align='left', height=52
+    )
+)])
+fig.update_layout(paper_bgcolor=FONDO, height=340,
+                  margin=dict(t=10, b=5, l=5, r=5))
+fig.show()
+```
+
+---
+
+## El EDA como mapa para el modelado
+
+El EDA no es un fin en sí mismo — es el **mapa** que guía las decisiones de modelado:
+
+| Hallazgo EDA | Decisión para el modelo |
+|---|---|
+| `Item_MRP` tiene r = 0.57 con ventas | Incluirla, probablemente sea el predictor más importante |
+| `Outlet_Type` genera grupos muy distintos | Considerar variables dummy o modelos por segmento |
+| `Item_Visibility` tiene r negativa | Investigar si hay colinealidad o efecto confusor |
+| Ventas con sesgo positivo fuerte | Considerar transformación logarítmica de la variable objetivo |
+| PC1 separa Grocery Store | Posible variable de interacción tipo×precio |
+
+::: {.callout-tip}
+**Próxima clase:** con este mapa, construiremos un modelo de regresión para predecir `Item_Outlet_Sales`. El EDA que hicimos hoy nos dirá exactamente qué variables incluir y cómo prepararlas.
+:::
+
+---
+
+## {.title-section}
+
+::: {style="padding-top: 60px;"}
+
+# ¿Preguntas?
+
+**Almacenes y Minería de Datos**
+
+Facultad de Ciencias · UNAM · 2026
+
+:::
