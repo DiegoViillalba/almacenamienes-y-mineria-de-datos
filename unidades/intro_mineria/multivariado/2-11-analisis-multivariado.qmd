@@ -1,0 +1,808 @@
+---
+title: "Análisis Exploratorio de Datos Multivariado: PCA y Visualización"
+format:
+  html:
+    code-fold: true
+    theme: cosmo
+execute:
+  echo: true
+  warning: false
+---
+
+```{python}
+#| include: false
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.datasets import load_iris, make_blobs
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+# La maldición de la dimensionalidad
+
+## El problema geométrico
+
+Cuando el número de variables $p$ crece, la geometría del espacio se vuelve profundamente contraintuitiva. El fenómeno conocido como **maldición de la dimensionalidad** (*curse of dimensionality*, Bellman, 1957) describe cómo el volumen del espacio crece tan rápidamente que los datos se vuelven inevitablemente dispersos.
+
+Consideremos una hiperesfera de radio $r$ inscrita en un hipercubo de lado $2r$ en $\mathbb{R}^d$. La proporción del volumen de la esfera respecto al cubo es:
+
+$$
+\frac{V_{\text{esfera}}}{V_{\text{cubo}}} = \frac{\pi^{d/2} r^d}{\Gamma(d/2 + 1) \cdot (2r)^d} = \frac{\pi^{d/2}}{2^d \, \Gamma(d/2 + 1)}
+$$
+
+Esta proporción **tiende a cero** cuando $d \to \infty$. En $d = 2$ la esfera ocupa ~78% del cubo; en $d = 10$ apenas el 0.25%; en $d = 100$, es esencialmente cero. Todo el volumen se concentra en las esquinas del hipercubo.
+
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from scipy.special import gamma
+
+dims = np.arange(1, 51)
+ratio = (np.pi**(dims/2)) / (2**dims * gamma(dims/2 + 1))
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=dims, y=ratio,
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=5),
+    hovertemplate="d=%{x}<br>Ratio=%{y:.4f}<extra></extra>"
+))
+fig.update_layout(
+    title="Fracción del volumen del hipercubo ocupada por la hiperesfera",
+    xaxis_title="Dimensión d",
+    yaxis_title="Volumen esfera / Volumen cubo",
+    height=380
+)
+fig.show()
+```
+
+## Implicaciones para el análisis de datos
+
+Para mantener una densidad de muestreo fija $\rho$ en $\mathbb{R}^d$, el número de observaciones necesario escala como:
+
+$$
+n \sim \rho \cdot L^d
+$$
+
+Con $p = 20$ variables, el número de correlaciones posibles es $\binom{20}{2} = 190$. Con $p = 100$, son 4,950. Revisar e interpretar cada relación manualmente deja de ser practicable. Por ello necesitamos métodos que resuman la información sin perder lo esencial.
+
+---
+
+# Fundamentos matemáticos del PCA
+
+## Formulación del problema
+
+Sea $X \in \mathbb{R}^{n \times p}$ una matriz de datos con $n$ observaciones y $p$ variables. Asumimos que los datos están **centrados**:
+
+$$
+\tilde{X} = X - \mathbf{1}\bar{x}^T, \quad \bar{x} = \frac{1}{n}\sum_{i=1}^n x_i
+$$
+
+El Análisis de Componentes Principales busca una proyección lineal $Z = \tilde{X} W$ donde $W \in \mathbb{R}^{p \times k}$, $k \leq p$, tal que la varianza total de $Z$ sea máxima.
+
+## La matriz de covarianza muestral
+
+La matriz de covarianza muestral se define como:
+
+$$
+S = \frac{1}{n-1} \tilde{X}^T \tilde{X} \in \mathbb{R}^{p \times p}
+$$
+
+Sus propiedades clave son:
+
+- **Simétrica**: $S = S^T$
+- **Semidefinida positiva**: $v^T S v \geq 0$ para todo $v \in \mathbb{R}^p$
+- La diagonal $s_{jj} = \text{Var}(x_j)$
+- Los elementos fuera de la diagonal $s_{jk} = \text{Cov}(x_j, x_k)$
+
+Por ser simétrica y semidefinida positiva, $S$ admite una **descomposición espectral** completa con eigenvalores reales no negativos.
+
+## El problema de optimización
+
+El primer componente principal $w_1$ se define como la dirección de **máxima varianza**:
+
+$$
+w_1 = \underset{\|w\|=1}{\arg\max} \; w^T S w
+$$
+
+Por el método de multiplicadores de Lagrange, la condición de optimalidad es:
+
+$$
+S w = \lambda w
+$$
+
+Es decir, $w_1$ es el **eigenvector** de $S$ asociado al **eigenvalor máximo** $\lambda_1$. La varianza proyectada en esa dirección es exactamente $\lambda_1$.
+
+El $k$-ésimo componente principal $w_k$ se obtiene maximizando la varianza sujeto a ser ortogonal a los $k-1$ componentes anteriores:
+
+$$
+w_k = \underset{\substack{\|w\|=1 \\ w \perp w_1, \ldots, w_{k-1}}}{\arg\max} \; w^T S w
+$$
+
+La solución es el $k$-ésimo eigenvector de $S$, con eigenvalor $\lambda_k$, donde $\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_p \geq 0$.
+
+## Varianza explicada
+
+La varianza total de los datos es la traza de $S$:
+
+$$
+\text{Var}_{\text{total}} = \text{tr}(S) = \sum_{j=1}^p \lambda_j
+$$
+
+La proporción de varianza explicada por la $k$-ésima componente es:
+
+$$
+\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}
+$$
+
+Y la varianza acumulada por las primeras $K$ componentes:
+
+$$
+\text{PVE}_{\leq K} = \frac{\sum_{k=1}^K \lambda_k}{\sum_{j=1}^p \lambda_j}
+$$
+
+---
+
+# PCA y la Descomposición en Valores Singulares (SVD)
+
+## La conexión fundamental
+
+En la práctica, el PCA **nunca** se calcula mediante la eigendescomposición de $S$ directamente. En cambio, se utiliza la **Descomposición en Valores Singulares (SVD)** de la matriz centrada $\tilde{X}$, que es numéricamente más estable y eficiente.
+
+Toda matriz $\tilde{X} \in \mathbb{R}^{n \times p}$ admite la descomposición:
+
+$$
+\tilde{X} = U \Sigma V^T
+$$
+
+donde:
+
+- $U \in \mathbb{R}^{n \times n}$: matriz ortogonal de **vectores singulares izquierdos** (columnas = eigenvectores de $\tilde{X}\tilde{X}^T$)
+- $\Sigma \in \mathbb{R}^{n \times p}$: matriz diagonal de **valores singulares** $\sigma_1 \geq \sigma_2 \geq \cdots \geq \sigma_{\min(n,p)} \geq 0$
+- $V \in \mathbb{R}^{p \times p}$: matriz ortogonal de **vectores singulares derechos** (columnas = eigenvectores de $\tilde{X}^T\tilde{X}$)
+
+## La equivalencia con PCA
+
+La relación entre SVD y PCA es directa:
+
+$$
+S = \frac{1}{n-1}\tilde{X}^T\tilde{X} = \frac{1}{n-1}(U\Sigma V^T)^T(U\Sigma V^T) = \frac{1}{n-1} V \Sigma^2 V^T
+$$
+
+Por tanto:
+
+- Las **columnas de $V$** son los **eigenvectores de $S$** (componentes principales)
+- Los **eigenvalores** de $S$ son $\lambda_k = \sigma_k^2 / (n-1)$
+- Los **scores** (proyecciones) son $Z = \tilde{X}V = U\Sigma$
+
+## ¿Por qué SVD y no eigendescomposición directa?
+
+La eigendescomposición de $S$ requiere calcular primero $S = \tilde{X}^T\tilde{X}/(n-1)$, lo cual:
+
+1. **Pierde precisión numérica**: los números de condición se elevan al cuadrado. Si $\tilde{X}$ tiene número de condición $\kappa$, $S$ tiene $\kappa^2$.
+2. **Es ineficiente cuando $n \ll p$**: la SVD puede trabajar directamente con la matrix de $n \times p$ usando la *thin SVD*, evitando la costosa matriz $p \times p$.
+3. **El algoritmo de Golub-Reinsch** para SVD es más estable numéricamente que los algoritmos de eigendescomposición para matrices no simétricas.
+
+```{python}
+#| code-fold: false
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import load_iris
+
+X = load_iris().data
+X_std = StandardScaler().fit_transform(X)
+
+# Método 1: eigendescomposición de S
+S = np.cov(X_std.T)
+eigenvalues, eigenvectors = np.linalg.eigh(S)
+# eigh ordena de menor a mayor, invertir
+idx = np.argsort(eigenvalues)[::-1]
+eigenvalues = eigenvalues[idx]
+eigenvectors = eigenvectors[:, idx]
+
+# Método 2: SVD directa sobre X_std
+U, sigma, Vt = np.linalg.svd(X_std, full_matrices=False)
+lambda_svd = sigma**2 / (len(X_std) - 1)
+
+print("Eigenvalores via S:  ", np.round(eigenvalues, 6))
+print("Eigenvalores via SVD:", np.round(lambda_svd, 6))
+print("Son idénticos:", np.allclose(eigenvalues, lambda_svd))
+```
+
+---
+
+# Implementación paso a paso
+
+## Dataset: Iris
+
+Usamos el clásico dataset Iris con 4 variables numéricas para ilustrar cada paso del PCA.
+
+```{python}
+iris = load_iris()
+X = iris.data
+y = iris.target
+nombres = iris.target_names
+feature_names = ['Sépalo largo', 'Sépalo ancho', 'Pétalo largo', 'Pétalo ancho']
+
+df_iris = pd.DataFrame(X, columns=feature_names)
+df_iris['Especie'] = [nombres[i] for i in y]
+df_iris.describe().round(3)
+```
+
+## Paso 1: Estandarización
+
+La estandarización es **obligatoria** cuando las variables tienen escalas distintas. Sin ella, las variables con mayor varianza absoluta dominarían el PCA independientemente de su relevancia.
+
+$$
+z_{ij} = \frac{x_{ij} - \bar{x}_j}{s_j}
+$$
+
+Después de estandarizar: $\bar{z}_j = 0$ y $s_{z_j} = 1$ para toda variable $j$.
+
+```{python}
+scaler = StandardScaler()
+X_std = scaler.fit_transform(X)
+
+# Verificar
+df_check = pd.DataFrame({
+    'Variable': feature_names,
+    'Media original': X.mean(axis=0).round(3),
+    'Desv original': X.std(axis=0).round(3),
+    'Media estand.': X_std.mean(axis=0).round(10),
+    'Desv estand.': X_std.std(axis=0).round(3)
+})
+df_check
+```
+
+## Paso 2: Matriz de covarianza
+
+```{python}
+S = np.cov(X_std.T)
+
+fig = go.Figure(data=go.Heatmap(
+    z=S,
+    x=feature_names,
+    y=feature_names,
+    colorscale='RdBu_r',
+    zmid=0, zmin=-1, zmax=1,
+    text=np.round(S, 3),
+    texttemplate='%{text}',
+    textfont=dict(size=13),
+    hovertemplate='%{y} ↔ %{x}<br>cov = %{z:.3f}<extra></extra>',
+    colorbar=dict(title='Covarianza')
+))
+fig.update_layout(
+    title="Matriz de covarianza — datos estandarizados (= matriz de correlación)",
+    height=420
+)
+fig.show()
+```
+
+::: {.callout-note}
+Cuando los datos están estandarizados, la matriz de covarianza es idéntica a la **matriz de correlación de Pearson**. Por eso PCA sobre datos estandarizados equivale a hacer PCA sobre correlaciones.
+:::
+
+## Paso 3: Eigendescomposición vía SVD
+
+```{python}
+pca = PCA()
+scores = pca.fit_transform(X_std)
+
+eigenvalues = pca.explained_variance_
+pve = pca.explained_variance_ratio_ * 100
+pve_acum = np.cumsum(pve)
+
+df_pca = pd.DataFrame({
+    'Componente': [f'PC{i+1}' for i in range(len(eigenvalues))],
+    'Eigenvalue (λ)': eigenvalues.round(4),
+    '% Varianza': pve.round(2),
+    '% Acumulado': pve_acum.round(2)
+})
+df_pca
+```
+
+## Paso 4: Scree plot
+
+```{python}
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=df_pca['Componente'], y=df_pca['% Varianza'],
+    name='% Varianza',
+    text=[f"{v:.1f}%" for v in pve],
+    textposition='outside'
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=df_pca['Componente'], y=pve_acum,
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=9),
+    name='% Acumulado'
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color="gray",
+              annotation_text="80%", secondary_y=True)
+
+fig.update_yaxes(title_text="% Varianza por componente", secondary_y=False)
+fig.update_yaxes(title_text="% Varianza acumulada", range=[0, 110], secondary_y=True)
+fig.update_layout(
+    title="Scree Plot — Regla de Kaiser: retener componentes con λ > 1",
+    height=380
+)
+fig.show()
+```
+
+::: {.callout-tip}
+**Criterios para elegir $k$:**
+
+- **Regla de Kaiser**: retener componentes con $\lambda_k > 1$ (solo aplica con datos estandarizados)
+- **Varianza acumulada**: retener los primeros $k$ que superen el 80% (o 90%)
+- **Scree plot**: buscar el "codo" donde la pendiente cae abruptamente
+- **Interpretabilidad de dominio**: ¿los componentes tienen sentido en el problema?
+:::
+
+## Paso 5: Biplot
+
+El **biplot** superpone los scores de las observaciones y los vectores de los loadings en el mismo espacio reducido, permitiendo interpretar simultáneamente la estructura de las observaciones y la contribución de las variables.
+
+```{python}
+loadings = pca.components_   # shape: (n_components, n_features)
+scores_df = pd.DataFrame(scores[:, :2], columns=['PC1', 'PC2'])
+scores_df['Especie'] = [nombres[i] for i in y]
+
+fig = go.Figure()
+
+# Scores
+for especie in nombres:
+    mask = scores_df['Especie'] == especie
+    fig.add_trace(go.Scatter(
+        x=scores_df.loc[mask, 'PC1'],
+        y=scores_df.loc[mask, 'PC2'],
+        mode='markers',
+        marker=dict(size=7, opacity=0.7),
+        name=especie
+    ))
+
+# Vectores de loadings escalados
+escala = 3.0
+for i, feat in enumerate(feature_names):
+    fig.add_annotation(
+        x=loadings[0, i] * escala,
+        y=loadings[1, i] * escala,
+        ax=0, ay=0,
+        arrowhead=3, arrowwidth=2,
+        xref='x', yref='y', axref='x', ayref='y',
+        showarrow=True
+    )
+    fig.add_annotation(
+        x=loadings[0, i] * escala * 1.15,
+        y=loadings[1, i] * escala * 1.15,
+        text=f"<b>{feat}</b>",
+        showarrow=False,
+        font=dict(size=11)
+    )
+
+fig.update_xaxes(title_text=f"PC1 ({pve[0]:.1f}%)",
+                 zeroline=True, zerolinecolor='lightgray')
+fig.update_yaxes(title_text=f"PC2 ({pve[1]:.1f}%)",
+                 zeroline=True, zerolinecolor='lightgray',
+                 scaleanchor='x')
+fig.update_layout(
+    title="Biplot: scores + loadings — Iris",
+    height=480,
+    legend=dict(title='Especie')
+)
+fig.show()
+```
+
+**Interpretación del biplot:**
+
+- Las flechas (loadings) indican la dirección y magnitud en que cada variable contribuye a los componentes
+- Flechas largas → la variable tiene alta contribución a ese componente
+- Flechas apuntando en la misma dirección → variables altamente correlacionadas
+- La separación de los grupos indica qué tan bien distingue PCA las clases
+
+## Paso 6: Loadings detallados
+
+```{python}
+df_loadings = pd.DataFrame(
+    loadings[:2].T,
+    index=feature_names,
+    columns=['PC1', 'PC2']
+).round(4)
+
+fig = make_subplots(1, 2, subplot_titles=['PC1 — Loadings', 'PC2 — Loadings'])
+
+fig.add_trace(go.Bar(
+    x=feature_names, y=loadings[0],
+    text=[f"{v:.3f}" for v in loadings[0]],
+    textposition='outside'
+), row=1, col=1)
+
+fig.add_trace(go.Bar(
+    x=feature_names, y=loadings[1],
+    text=[f"{v:.3f}" for v in loadings[1]],
+    textposition='outside'
+), row=1, col=2)
+
+for c in [1, 2]:
+    fig.update_yaxes(range=[-1.1, 1.1], zeroline=True,
+                     zerolinecolor='lightgray', row=1, col=c)
+    fig.update_xaxes(tickangle=-25, row=1, col=c)
+
+fig.update_layout(
+    height=380,
+    showlegend=False,
+    annotations=[dict(
+        x=0.5, y=-0.18, xref='paper', yref='paper',
+        text="PC1 ≈ tamaño general del pétalo y sépalo | PC2 ≈ contraste sépalo largo vs ancho",
+        showarrow=False, font=dict(size=12, color='gray'),
+        xanchor='center'
+    )]
+)
+fig.show()
+```
+
+---
+
+# Ejemplo avanzado: Dataset sintético con ruido
+
+```{python}
+np.random.seed(42)
+n = 300
+
+# Señal en 2D embebida en 10 dimensiones con ruido
+t = np.linspace(0, 2*np.pi, n)
+signal = np.column_stack([np.cos(t), np.sin(t)])
+
+# Proyección a 10D con matriz aleatoria + ruido
+A = np.random.randn(2, 10)
+X_high = signal @ A + 0.3 * np.random.randn(n, 10)
+X_high_std = StandardScaler().fit_transform(X_high)
+
+pca_high = PCA()
+pca_high.fit(X_high_std)
+pve_high = pca_high.explained_variance_ratio_ * 100
+pve_high_acum = np.cumsum(pve_high)
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=[f"PC{i+1}" for i in range(10)], y=pve_high,
+    name='% Varianza',
+    text=[f"{v:.1f}%" for v in pve_high],
+    textposition='outside'
+))
+fig.add_trace(go.Scatter(
+    x=[f"PC{i+1}" for i in range(10)], y=pve_high_acum,
+    mode='lines+markers', name='% Acumulado',
+    yaxis='y2'
+))
+fig.update_layout(
+    title="Señal 2D embebida en 10D: PCA recupera las 2 dimensiones relevantes",
+    yaxis=dict(title='% Varianza'),
+    yaxis2=dict(title='% Acumulado', overlaying='y', side='right', range=[0, 110]),
+    height=380
+)
+fig.show()
+```
+
+---
+
+# Limitaciones del PCA
+
+## 1. Linealidad
+
+PCA busca direcciones de máxima varianza **lineales**. No puede capturar estructuras no lineales en los datos.
+
+```{python}
+from sklearn.datasets import make_swiss_roll
+
+X_swiss, t_swiss = make_swiss_roll(n_samples=800, noise=0.1, random_state=42)
+X_swiss_std = StandardScaler().fit_transform(X_swiss)
+
+pca_swiss = PCA(n_components=2)
+scores_swiss = pca_swiss.fit_transform(X_swiss_std)
+
+fig = make_subplots(1, 2,
+    subplot_titles=['Swiss Roll (3D original)',
+                    'Proyección PCA (2D) — estructura perdida'],
+    specs=[[{'type': 'scatter3d'}, {'type': 'scatter'}]])
+
+fig.add_trace(go.Scatter3d(
+    x=X_swiss[:,0], y=X_swiss[:,1], z=X_swiss[:,2],
+    mode='markers',
+    marker=dict(size=3, color=t_swiss, colorscale='Viridis', opacity=0.7),
+    showlegend=False
+), row=1, col=1)
+
+fig.add_trace(go.Scatter(
+    x=scores_swiss[:,0], y=scores_swiss[:,1],
+    mode='markers',
+    marker=dict(size=4, color=t_swiss, colorscale='Viridis', opacity=0.7),
+    showlegend=False
+), row=1, col=2)
+
+fig.update_layout(height=420,
+    annotations=[dict(
+        x=0.5, y=-0.08, xref='paper', yref='paper',
+        text="PCA colapsa el Swiss Roll: puntos lejanos en la variedad quedan superpuestos",
+        showarrow=False, font=dict(size=12, color='gray'), xanchor='center'
+    )])
+fig.show()
+```
+
+## 2. Sensibilidad a outliers
+
+PCA minimiza la varianza de la reconstrucción, que es equivalente a minimizar el error cuadrático medio. Por tanto, es **muy sensible a outliers**, ya que un solo punto alejado puede dominar la dirección del primer componente.
+
+La alternativa robusta es **Robust PCA** (Candès et al., 2011), que descompone $X = L + S$ donde $L$ es la componente de bajo rango y $S$ es una matriz dispersa de outliers.
+
+## 3. Interpretabilidad de los componentes
+
+Los componentes principales son **combinaciones lineales de todas las variables originales**. Aunque técnicamente óptimos, son difíciles de interpretar porque cada componente involucra a todas las variables con distintos pesos.
+
+**Sparse PCA** resuelve esto añadiendo una penalización $\ell_1$ al problema de optimización:
+
+$$
+\underset{\|w\|=1}{\max} \; w^T S w - \rho \|w\|_1
+$$
+
+Esto produce loadings con muchos ceros, haciendo los componentes más interpretables.
+
+## 4. Escala y estandarización
+
+PCA es **sensible a la escala** de las variables. Sin estandarización, las variables con mayor varianza absoluta dominan los componentes principales. La decisión de estandarizar (o no) debe tomarse según el contexto:
+
+- **Estandarizar** cuando las variables tienen unidades distintas (alturas en cm e ingresos en pesos)
+- **No estandarizar** cuando todas las variables están en la misma escala y la diferencia de varianza es informativa (e.g., datos de expresión génica)
+
+## 5. Asunción de normalidad (implícita)
+
+PCA es óptimo en el sentido de máxima varianza bajo **cualquier distribución**. Sin embargo, su interpretación probabilística (PCA probabilístico, Tipping & Bishop 1999) asume normalidad:
+
+$$
+x = W z + \mu + \varepsilon, \quad z \sim \mathcal{N}(0, I), \quad \varepsilon \sim \mathcal{N}(0, \sigma^2 I)
+$$
+
+Para datos con distribuciones muy asimétricas o discretas, otras técnicas pueden ser más apropiadas.
+
+## 6. PCA no captura estructura de clases
+
+PCA es un método **no supervisado** — maximiza varianza global sin considerar etiquetas. Puede ocurrir que la dirección de máxima varianza no sea la que mejor separa las clases.
+
+```{python}
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+X_iris_std = StandardScaler().fit_transform(load_iris().data)
+y_iris = load_iris().target
+nombres_iris = load_iris().target_names
+
+# PCA
+pca_comp = PCA(n_components=2)
+scores_pca = pca_comp.fit_transform(X_iris_std)
+
+# LDA
+lda = LinearDiscriminantAnalysis(n_components=2)
+scores_lda = lda.fit_transform(X_iris_std, y_iris)
+
+fig = make_subplots(1, 2,
+    subplot_titles=['PCA (no supervisado)', 'LDA (supervisado)'])
+
+colors = px.colors.qualitative.Set1[:3]
+for i, esp in enumerate(nombres_iris):
+    mask = y_iris == i
+    fig.add_trace(go.Scatter(
+        x=scores_pca[mask, 0], y=scores_pca[mask, 1],
+        mode='markers', marker=dict(color=colors[i], size=7, opacity=0.7),
+        name=esp, legendgroup=esp
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=scores_lda[mask, 0], y=scores_lda[mask, 1],
+        mode='markers', marker=dict(color=colors[i], size=7, opacity=0.7),
+        name=esp, legendgroup=esp, showlegend=False
+    ), row=1, col=2)
+
+fig.update_layout(height=400,
+    title="PCA vs LDA en Iris — LDA optimiza separación entre clases")
+fig.show()
+```
+
+---
+
+# Más allá del PCA: técnicas no lineales
+
+Cuando los datos tienen estructuras no lineales, PCA falla. Las siguientes técnicas abordan esta limitación.
+
+## t-SNE (t-distributed Stochastic Neighbor Embedding)
+
+t-SNE (van der Maaten & Hinton, 2008) construye una distribución de probabilidad sobre pares de puntos en el espacio original y minimiza la divergencia KL con la distribución en el espacio reducido:
+
+$$
+\text{KL}(P \| Q) = \sum_{i \neq j} p_{ij} \log \frac{p_{ij}}{q_{ij}}
+$$
+
+donde $p_{ij}$ captura similitudes en el espacio original y $q_{ij}$ en el espacio reducido usando una distribución $t$ de Student.
+
+**Características:**
+- Excelente para visualización en 2D/3D
+- Preserva estructura **local** (vecinos cercanos)
+- **No preserva distancias globales** — la distancia entre clusters no es interpretable
+- No determinista: ejecuciones distintas dan resultados distintos
+- No produce una transformación reutilizable para nuevos datos
+- Hiperparámetro clave: **perplexity** (típicamente 5–50)
+
+```{python}
+from sklearn.manifold import TSNE
+
+X_iris_std = StandardScaler().fit_transform(load_iris().data)
+y_iris = load_iris().target
+nombres_iris = load_iris().target_names
+
+tsne = TSNE(n_components=2, perplexity=30, random_state=42, n_iter=1000)
+scores_tsne = tsne.fit_transform(X_iris_std)
+
+fig = go.Figure()
+for i, esp in enumerate(nombres_iris):
+    mask = y_iris == i
+    fig.add_trace(go.Scatter(
+        x=scores_tsne[mask, 0], y=scores_tsne[mask, 1],
+        mode='markers',
+        marker=dict(size=8, opacity=0.75),
+        name=esp
+    ))
+
+fig.update_layout(
+    title="t-SNE en Iris (perplexity=30) — preserva estructura local",
+    xaxis_title="t-SNE 1", yaxis_title="t-SNE 2",
+    height=400
+)
+fig.show()
+```
+
+## UMAP (Uniform Manifold Approximation and Projection)
+
+UMAP (McInnes et al., 2018) está fundamentado en la **teoría de categorías** y la geometría Riemanniana. El algoritmo construye una representación del manifold topológico de los datos y optimiza una representación en baja dimensión que preserve esa topología.
+
+Matemáticamente, UMAP modela cada punto $x_i$ como el centro de una bola geodésica de radio $\rho_i$ (distancia al vecino más cercano), construyendo un grafo difuso ponderado con pesos:
+
+$$
+w(x_i, x_j) = \exp\left(-\frac{d(x_i, x_j) - \rho_i}{\sigma_i}\right)
+$$
+
+y simetrizado como:
+
+$$
+B(x_i, x_j) = w(x_i, x_j) + w(x_j, x_i) - w(x_i, x_j) \cdot w(x_j, x_i)
+$$
+
+La proyección minimiza la divergencia de entropia cruzada fuzzy entre el grafo original y el proyectado.
+
+**Ventajas sobre t-SNE:**
+
+| Característica | t-SNE | UMAP |
+|---|---|---|
+| Velocidad | Lento ($O(n^2)$) | Rápido ($O(n^{1.14})$) |
+| Estructura global | No preserva | Preserva mejor |
+| Nuevos datos | No (sin extensión) | Sí (`transform()`) |
+| Determinismo | No | Sí (con `random_state`) |
+| Escalabilidad | Hasta ~10k puntos | Hasta millones |
+
+```{python}
+try:
+    import umap
+    UMAP_DISPONIBLE = True
+except ImportError:
+    UMAP_DISPONIBLE = False
+
+if UMAP_DISPONIBLE:
+    reducer = umap.UMAP(n_components=2, random_state=42)
+    scores_umap = reducer.fit_transform(X_iris_std)
+
+    fig = go.Figure()
+    for i, esp in enumerate(nombres_iris):
+        mask = y_iris == i
+        fig.add_trace(go.Scatter(
+            x=scores_umap[mask, 0], y=scores_umap[mask, 1],
+            mode='markers',
+            marker=dict(size=8, opacity=0.75),
+            name=esp
+        ))
+    fig.update_layout(
+        title="UMAP en Iris — preserva estructura local y global",
+        xaxis_title="UMAP 1", yaxis_title="UMAP 2",
+        height=400
+    )
+    fig.show()
+else:
+    print("UMAP no instalado. Instalar con: pip install umap-learn")
+```
+
+## Comparación de métodos
+
+```{python}
+# Comparación en 4 paneles con make_blobs
+np.random.seed(42)
+X_blobs, y_blobs = make_blobs(n_samples=400, centers=4,
+                               n_features=8, random_state=42)
+X_blobs_std = StandardScaler().fit_transform(X_blobs)
+
+# PCA
+scores_pca_b = PCA(n_components=2).fit_transform(X_blobs_std)
+
+# t-SNE
+scores_tsne_b = TSNE(n_components=2, perplexity=30,
+                      random_state=42).fit_transform(X_blobs_std)
+
+resultados = {
+    'PCA': scores_pca_b,
+    't-SNE': scores_tsne_b,
+}
+
+fig = make_subplots(1, len(resultados),
+    subplot_titles=list(resultados.keys()))
+
+colors_b = px.colors.qualitative.Set2[:4]
+for col_idx, (nombre, scores_b) in enumerate(resultados.items(), 1):
+    for cls in range(4):
+        mask = y_blobs == cls
+        fig.add_trace(go.Scatter(
+            x=scores_b[mask, 0], y=scores_b[mask, 1],
+            mode='markers',
+            marker=dict(color=colors_b[cls], size=6, opacity=0.7),
+            name=f'Cluster {cls+1}',
+            showlegend=(col_idx == 1)
+        ), row=1, col=col_idx)
+
+fig.update_layout(
+    title="PCA vs t-SNE en datos sintéticos (4 clusters, 8 dimensiones)",
+    height=380
+)
+fig.show()
+```
+
+## Cuándo usar cada método
+
+| Situación | Método recomendado |
+|---|---|
+| Preprocesamiento antes de modelado | **PCA** |
+| Visualización exploratoria | **t-SNE** o **UMAP** |
+| Dataset grande (>50k puntos) | **UMAP** |
+| Necesito transformar nuevos datos | **PCA** o **UMAP** |
+| Interpretabilidad de componentes | **PCA** (o Sparse PCA) |
+| Estructura no lineal compleja | **UMAP** |
+| Análisis supervisado + reducción | **LDA** |
+
+---
+
+# Resumen y conexiones
+
+El PCA es el punto de partida del análisis multivariante moderno. Sus conexiones van más allá de la estadística descriptiva:
+
+- **Álgebra lineal**: eigendescomposición, SVD, espacios vectoriales
+- **Estadística**: modelo probabilístico gaussiano, máxima verosimilitud
+- **Optimización**: problema de Rayleigh quotient, multiplicadores de Lagrange
+- **Aprendizaje automático**: preprocesamiento, regularización, autoencoders lineales
+- **Geometría diferencial**: UMAP extiende PCA al caso de variedades Riemannianas
+
+La familia de métodos de reducción de dimensionalidad puede verse como un espectro continuo desde lo lineal (PCA) hasta lo fuertemente no lineal (t-SNE, UMAP), con un trade-off entre interpretabilidad, preservación de estructura global y escalabilidad.
+
+---
+
+# Ejercicios propuestos
+
+1. **PCA desde cero**: implementa PCA usando únicamente `numpy.linalg.svd` sin usar `sklearn`. Verifica que tus eigenvalores y eigenvectores coincidan con los de `sklearn.decomposition.PCA`.
+
+2. **Efecto de la estandarización**: aplica PCA al dataset Iris con y sin estandarización. ¿Cambian los componentes? ¿Cambia la varianza explicada? Justifica matemáticamente.
+
+3. **Reconstrucción**: dado un dataset $X$ y su proyección PCA a $k$ componentes, reconstruye la aproximación $\hat{X} = Z_k W_k^T + \mu$. Grafica el error de reconstrucción $\|X - \hat{X}\|_F$ en función de $k$.
+
+4. **Comparación t-SNE vs UMAP**: aplica ambas técnicas al dataset de dígitos MNIST (disponible en `sklearn.datasets.load_digits`). Compara visualmente la separación de clases y el tiempo de cómputo.
+
+5. **Regla de Kaiser**: ¿por qué la regla de Kaiser ($\lambda > 1$) solo aplica cuando los datos están estandarizados? Demuéstralo con un ejemplo donde viola la regla sin estandarizar.
