@@ -1,0 +1,817 @@
+---
+title: "Análisis Exploratorio de Datos Multivariado: Ejemplos prácticos"
+format:
+  html:
+    code-fold: true
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-expand: 1
+execute:
+  echo: true
+  warning: false
+
+---
+
+```{python}
+#| include: false
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.datasets import load_iris, make_blobs
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+# Ejemplo práctico: Implementación paso a paso
+
+## Dataset: Iris {.unnumbered}
+
+Para este ejemplousaremos Scikit-learn, mediante el clásico dataset *Iris* (flores de lirio de este lado del charco), que contiene mediciones de flores de tres especies (*setosa*, *versicolor* y *virginica*). Cada observación está descrita por cuatro variables numéricas:
+
+- longitud del sépalo  
+- ancho del sépalo  
+- longitud del pétalo  
+- ancho del pétalo  
+
+Estas variables capturan características morfológicas de las flores y presentan correlaciones entre sí, lo que lo convierte en un ejemplo ideal para ilustrar cómo PCA identifica estructura y reduce dimensionalidad.
+
+![](https://www.embedded-robotics.com/wp-content/uploads/2022/01/Iris-Dataset-Classification-1024x367.png)
+
+
+```{python}
+iris = load_iris()
+X = iris.data
+y = iris.target
+nombres = iris.target_names
+feature_names = ['Sépalo largo', 'Sépalo ancho', 'Pétalo largo', 'Pétalo ancho']
+
+df_iris = pd.DataFrame(X, columns=feature_names)
+df_iris['Especie'] = [nombres[i] for i in y]
+df_iris.describe().round(3)
+```
+
+## Paso 1: Estandarización {.unnumbered}
+
+La estandarización es **obligatoria** cuando las variables tienen escalas distintas. Sin ella, las variables con mayor varianza absoluta dominarían el PCA independientemente de su relevancia.
+
+$$
+z_{ij} = \frac{x_{ij} - \bar{x}_j}{s_j}
+$$
+
+Después de estandarizar: $\bar{z}_j = 0$ y $s_{z_j} = 1$ para toda variable $j$.
+
+```{python}
+scaler = StandardScaler()
+X_std = scaler.fit_transform(X)
+
+# Verificar
+df_check = pd.DataFrame({
+    'Variable': feature_names,
+    'Media original': X.mean(axis=0).round(3),
+    'Desv original': X.std(axis=0).round(3),
+    'Media estand.': X_std.mean(axis=0).round(10),
+    'Desv estand.': X_std.std(axis=0).round(3)
+})
+df_check
+```
+
+## Paso 2: Matriz de covarianza {.unnumbered}
+
+```{python}
+S = np.cov(X_std.T)
+
+fig = go.Figure(data=go.Heatmap(
+    z=S,
+    x=feature_names,
+    y=feature_names,
+    colorscale='RdBu_r',
+    zmid=0, zmin=-1, zmax=1,
+    text=np.round(S, 3),
+    texttemplate='%{text}',
+    textfont=dict(size=13),
+    hovertemplate='%{y} ↔ %{x}<br>cov = %{z:.3f}<extra></extra>',
+    colorbar=dict(title='Covarianza')
+))
+fig.update_layout(
+    title="Matriz de covarianza — datos estandarizados (= matriz de correlación)",
+    height=420
+)
+fig.show()
+```
+
+::: {.callout-note}
+Cuando los datos están estandarizados, la matriz de covarianza es idéntica a la **matriz de correlación de Pearson**. Por eso PCA sobre datos estandarizados equivale a hacer PCA sobre correlaciones.
+:::
+
+## Paso 3: Eigendescomposición vía SVD {.unnumbered}
+
+```{python}
+pca = PCA()
+scores = pca.fit_transform(X_std)
+
+eigenvalues = pca.explained_variance_
+pve = pca.explained_variance_ratio_ * 100
+pve_acum = np.cumsum(pve)
+
+df_pca = pd.DataFrame({
+    'Componente': [f'PC{i+1}' for i in range(len(eigenvalues))],
+    'Eigenvalue (λ)': eigenvalues.round(4),
+    '% Varianza': pve.round(2),
+    '% Acumulado': pve_acum.round(2)
+})
+df_pca
+```
+
+## Paso 4: Scree plot {.unnumbered}
+
+```{python}
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=df_pca['Componente'], y=df_pca['% Varianza'],
+    name='% Varianza',
+    text=[f"{v:.1f}%" for v in pve],
+    textposition='outside'
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=df_pca['Componente'], y=pve_acum,
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=9),
+    name='% Acumulado'
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color="gray",
+              annotation_text="80%", secondary_y=True)
+
+fig.update_yaxes(title_text="% Varianza por componente", secondary_y=False)
+fig.update_yaxes(title_text="% Varianza acumulada", range=[0, 110], secondary_y=True)
+fig.update_layout(
+    title="Scree Plot — Regla de Kaiser: retener componentes con λ > 1",
+    height=380
+)
+fig.show()
+```
+
+::: {.callout-tip}
+**Criterios para elegir $k$:**
+
+- **Regla de Kaiser**: retener componentes con $\lambda_k > 1$ (solo aplica con datos estandarizados)
+- **Varianza acumulada**: retener los primeros $k$ que superen el 80% (o 90%)
+- **Scree plot**: buscar el "codo" donde la pendiente cae abruptamente
+- **Interpretabilidad de dominio**: ¿los componentes tienen sentido en el problema?
+:::
+
+## Paso 5: Biplot {.unnumbered}
+
+El **biplot** superpone los scores de las observaciones y los vectores de los loadings en el mismo espacio reducido, permitiendo interpretar simultáneamente la estructura de las observaciones y la contribución de las variables.
+
+```{python}
+loadings = pca.components_   # shape: (n_components, n_features)
+scores_df = pd.DataFrame(scores[:, :2], columns=['PC1', 'PC2'])
+scores_df['Especie'] = [nombres[i] for i in y]
+
+fig = go.Figure()
+
+# Scores
+for especie in nombres:
+    mask = scores_df['Especie'] == especie
+    fig.add_trace(go.Scatter(
+        x=scores_df.loc[mask, 'PC1'],
+        y=scores_df.loc[mask, 'PC2'],
+        mode='markers',
+        marker=dict(size=7, opacity=0.7),
+        name=especie
+    ))
+
+# Vectores de loadings escalados
+escala = 3.0
+for i, feat in enumerate(feature_names):
+    fig.add_annotation(
+        x=loadings[0, i] * escala,
+        y=loadings[1, i] * escala,
+        ax=0, ay=0,
+        arrowhead=3, arrowwidth=2,
+        xref='x', yref='y', axref='x', ayref='y',
+        showarrow=True
+    )
+    fig.add_annotation(
+        x=loadings[0, i] * escala * 1.15,
+        y=loadings[1, i] * escala * 1.15,
+        text=f"<b>{feat}</b>",
+        showarrow=False,
+        font=dict(size=11)
+    )
+
+fig.update_xaxes(title_text=f"PC1 ({pve[0]:.1f}%)",
+                 zeroline=True, zerolinecolor='lightgray')
+fig.update_yaxes(title_text=f"PC2 ({pve[1]:.1f}%)",
+                 zeroline=True, zerolinecolor='lightgray',
+                 scaleanchor='x')
+fig.update_layout(
+    title="Biplot: scores + loadings — Iris",
+    height=480,
+    legend=dict(title='Especie')
+)
+fig.show()
+```
+
+**Interpretación del biplot:**
+
+- Las flechas (loadings) representan los **vectores de las variables proyectados** sobre el nuevo sistema de coordenadas definido por los componentes principales. Es decir, cada flecha muestra cómo una variable original se expresa en la nueva base.
+
+- Flechas largas → la variable tiene **gran proyección (norma)** sobre ese plano, por lo que contribuye significativamente a la variabilidad capturada por los componentes.
+
+- Flechas apuntando en la misma dirección → sus vectores forman un **ángulo pequeño**, lo que indica alta correlación (producto punto positivo grande).  
+  Flechas opuestas → correlación negativa.  
+  Flechas ortogonales → variables no correlacionadas.
+
+- La posición de los puntos corresponde a la **proyección de las observaciones** en el subespacio generado por los primeros componentes.  
+  La separación entre grupos refleja qué tan bien este subespacio (de menor dimensión) preserva la estructura original de los datos.
+
+En conjunto, el biplot muestra simultáneamente:
+- un **cambio de base** (álgebra lineal)  
+- y una **proyección de los datos** en un subespacio de menor dimensión
+
+## Paso 6: Loadings detallados {.unnumbered}
+
+```{python}
+
+df_loadings = pd.DataFrame(
+    loadings[:2].T,
+    index=feature_names,
+    columns=['PC1', 'PC2']
+).round(4)
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "<b>Componente Principal 1 (PC1)</b>",
+        "<b>Componente Principal 2 (PC2)</b>"
+    ]
+)
+
+# PC1
+fig.add_trace(go.Bar(
+    x=feature_names,
+    y=loadings[0],
+    text=[f"{v:.3f}" for v in loadings[0]],
+    textposition='outside'
+), row=1, col=1)
+
+# PC2
+fig.add_trace(go.Bar(
+    x=feature_names,
+    y=loadings[1],
+    text=[f"{v:.3f}" for v in loadings[1]],
+    textposition='outside'
+), row=1, col=2)
+
+# Ejes
+for c in [1, 2]:
+    fig.update_yaxes(
+        range=[-1.1, 1.1],
+        zeroline=True,
+        zerolinecolor='lightgray',
+        row=1, col=c
+    )
+    fig.update_xaxes(
+        tickangle=-25,
+        row=1, col=c
+    )
+
+# Hacer más visibles los títulos de subplots
+for ann in fig['layout']['annotations']:
+    ann['font'] = dict(size=14)
+
+# Nota interpretativa
+fig.update_layout(
+    showlegend=False,
+    height=420,
+    annotations=list(fig.layout.annotations) + [
+        dict(
+            x=0.5, y=-0.2,
+            xref='paper', yref='paper',
+            text="PC1 ≈ tamaño general | PC2 ≈ contraste estructural del sépalo",
+            showarrow=False,
+            font=dict(size=12, color='gray'),
+            xanchor='center'
+        )
+    ]
+)
+
+fig.show()
+```
+
+**Interpretación de los loadings:**
+
+Cada componente principal es una **combinación lineal de las variables originales**. Es decir:
+
+$$
+\text{PC}_k = w_{1k} x_1 + w_{2k} x_2 + \cdots + w_{pk} x_p
+$$
+
+donde los *loadings* $w_{jk}$ indican el peso de cada variable en ese componente.
+
+- **PC1** combina fuertemente *pétalo largo*, *pétalo ancho* y *sépalo largo* (coeficientes positivos similares), por lo que representa un eje de **tamaño general de la flor**. El *sépalo ancho* contribuye negativamente, ajustando ligeramente esa dirección.
+
+- **PC2** está dominado por *sépalo ancho*, con poca contribución del resto, por lo que captura un **contraste específico en la forma del sépalo**.
+
+En términos geométricos, cada componente define una **dirección en el espacio original**, y los loadings son las **coordenadas de esa dirección** en la base de variables originales.
+
+---
+
+# Ejemplo avanzado: Dataset con ruido
+
+## El problema: una partícula en movimiento que no podemos ver directamente
+
+Imagina que una partícula traza una trayectoria helicoidal en el espacio
+tridimensional. Nosotros no podemos observarla directamente — solo tenemos
+acceso a **sensores**, y cada sensor introduce su propio ruido de medición.
+
+El desafío central es: dado un conjunto de lecturas ruidosas de múltiples
+sensores, ¿podemos recuperar la trayectoria original?
+
+PCA responde exactamente a esa pregunta. Pero antes de aplicarlo,
+construyamos el experimento desde cero.
+
+---
+
+## Paso 1 — La trayectoria real y el ruido de medición
+
+Generamos 500 puntos sobre una hélice paramétrica:
+
+$$x(t) = t, \quad y(t) = \cos(t), \quad z(t) = \sin(t), \quad t \in [-10, 10]$$
+
+Luego añadimos ruido gaussiano independiente en $y$ y $z$ para simular
+la imprecisión de los instrumentos de medida.
+
+```{python}
+n_points = 500
+t = np.linspace(-10, 10, n_points)
+
+# Trayectoria limpia
+x_clean = t
+y_clean = np.cos(t)
+z_clean = np.sin(t)
+
+# Observaciones ruidosas (lo que miden los sensores)
+sigma = 0.5
+y_noise = y_clean + np.random.normal(0, sigma, n_points)
+z_noise = z_clean + np.random.normal(0, sigma, n_points)
+
+points = np.column_stack([x_clean, y_noise, z_noise])
+
+# ── Visualización ──────────────────────────────────────────
+fig = go.Figure()
+
+fig.add_trace(go.Scatter3d(
+    x=points[:, 0], y=points[:, 1], z=points[:, 2],
+    mode='markers',
+    marker=dict(size=3, color='steelblue', opacity=0.5),
+    name='Mediciones ruidosas'
+))
+
+fig.add_trace(go.Scatter3d(
+    x=x_clean, y=y_clean, z=z_clean,
+    mode='lines',
+    line=dict(color='crimson', width=4),
+    name='Trayectoria real'
+))
+
+fig.update_layout(
+    title='Trayectoria helicoidal: señal real vs. mediciones ruidosas',
+    scene=dict(
+        xaxis_title='X', yaxis_title='Y', zaxis_title='Z',
+        yaxis=dict(range=[-5, 5]),
+        xaxis=dict(range=[-11, 11])
+    ),
+    legend=dict(x=0.01, y=0.99),
+    height=520
+)
+fig.show()
+```
+
+Los puntos azules son lo que los sensores registran. La línea roja es la
+realidad que queremos recuperar. A simple vista ya es difícil distinguir
+la estructura subyacente del ruido.
+
+---
+
+## Paso 2 — Tres sensores, tres perspectivas distintas
+
+En un experimento real, distintos sensores observan el mismo fenómeno
+desde **ángulos diferentes**. Cada sensor proyecta la nube de puntos sobre
+su propio plano de referencia y mide coordenadas locales $(u, v)$ en ese
+plano — más, inevitablemente, su propio ruido adicional.
+
+Simulamos tres sensores con planos de proyección distintos.
+
+```{python}
+# ── Funciones auxiliares ────────────────────────────────────
+
+def proyection(points, plane_point, plane_normal):
+    """Proyecta cada punto sobre un plano definido por un punto y su normal."""
+    n = plane_normal / np.linalg.norm(plane_normal)
+    d = points - plane_point
+    dist = d.dot(n)
+    return points - np.outer(dist, n)
+
+
+def plane_axes(plane_normal):
+    """Devuelve dos vectores ortogonales que forman la base del plano."""
+    n = plane_normal / np.linalg.norm(plane_normal)
+    # Vector arbitrario no paralelo a n
+    arb = np.array([1, 0, 0]) if abs(n[0]) < 0.9 else np.array([0, 1, 0])
+    u = np.cross(n, arb)
+    u /= np.linalg.norm(u)
+    v = np.cross(n, u)
+    v /= np.linalg.norm(v)
+    return u, v
+
+
+def sensor_reading(points, plane_point, plane_normal, noise_std=0.5):
+    """
+    Proyecta puntos sobre el plano del sensor y devuelve:
+    - coordenadas 2D locales (s, t) con ruido adicional
+    - la proyección 3D (para visualización)
+    - los vectores de la base del plano (u, v)
+    """
+    proj_3d = proyection(points, plane_point, plane_normal)
+    u, v = plane_axes(plane_normal)
+
+    proj_vectors = proj_3d - plane_point
+    s = proj_vectors.dot(u) + np.random.normal(0, noise_std, len(points))
+    t = proj_vectors.dot(v) + np.random.normal(0, noise_std, len(points))
+
+    return s, t, proj_3d, u, v
+
+
+def plane_mesh(plane_point, plane_normal, size=12, res=20):
+    """Genera una malla rectangular para visualizar el plano del sensor."""
+    u, v = plane_axes(plane_normal)
+    lin = np.linspace(-size, size, res)
+    uu, vv = np.meshgrid(lin, lin)
+    X = plane_point[0] + uu * u[0] + vv * v[0]
+    Y = plane_point[1] + uu * u[1] + vv * v[1]
+    Z = plane_point[2] + uu * u[2] + vv * v[2]
+    return X, Y, Z
+```
+
+```{python}
+# ── Definición de los tres sensores ────────────────────────
+sensors = [
+    dict(point=np.array([5., -6., 0.]),  normal=np.array([1., -1., 0.]),
+         color='royalblue',  name='Sensor A'),
+    dict(point=np.array([10., 0., 0.]),  normal=np.array([10., 0., 0.1]),
+         color='seagreen',   name='Sensor B'),
+    dict(point=np.array([3.,  3., 3.]),  normal=np.array([1.,  1., 1.]),
+         color='darkorange', name='Sensor C'),
+]
+
+readings = []
+for s in sensors:
+    sc, tc, proj3d, u, v = sensor_reading(
+        points, s['point'], s['normal'], noise_std=0.5
+    )
+    readings.append({'s': sc, 't': tc, 'proj3d': proj3d,
+                     'u': u, 'v': v, **s})
+```
+
+### Perspectiva 3D: sensores y sus proyecciones
+
+```{python}
+fig = go.Figure()
+
+# Trayectoria real
+fig.add_trace(go.Scatter3d(
+    x=x_clean, y=y_clean, z=z_clean,
+    mode='lines', line=dict(color='crimson', width=4),
+    name='Trayectoria real'
+))
+
+# Puntos originales
+fig.add_trace(go.Scatter3d(
+    x=points[:, 0], y=points[:, 1], z=points[:, 2],
+    mode='markers', marker=dict(size=2, color='lightgray', opacity=0.4),
+    name='Mediciones originales'
+))
+
+for r in readings:
+    # Plano del sensor
+    px_m, py_m, pz_m = plane_mesh(r['point'], r['normal'], size=10)
+    fig.add_trace(go.Surface(
+        x=px_m, y=py_m, z=pz_m,
+        colorscale=[[0, r['color']], [1, r['color']]],
+        opacity=0.15, showscale=False,
+        name=f"Plano {r['name']}", showlegend=False
+    ))
+    # Proyección sobre el plano
+    fig.add_trace(go.Scatter3d(
+        x=r['proj3d'][:, 0], y=r['proj3d'][:, 1], z=r['proj3d'][:, 2],
+        mode='markers', marker=dict(size=2.5, color=r['color'], opacity=0.7),
+        name=r['name']
+    ))
+
+fig.update_layout(
+    title='Los tres sensores proyectan la nube sobre sus planos respectivos',
+    scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z',
+               xaxis=dict(range=[-12, 12]),
+               yaxis=dict(range=[-8, 8])),
+    legend=dict(x=0.01, y=0.99),
+    height=560
+)
+fig.show()
+```
+
+Cada sensor "aplana" la nube sobre su propio plano. Ninguno captura la
+hélice perfectamente, pero cada uno aporta información parcial y
+complementaria.
+
+### Lo que registra cada sensor: coordenadas 2D
+
+```{python}
+fig = make_subplots(
+    rows=1, cols=3,
+    subplot_titles=[r['name'] for r in readings],
+    shared_yaxes=False
+)
+
+for i, r in enumerate(readings, 1):
+    fig.add_trace(go.Scatter(
+        x=r['s'], y=r['t'],
+        mode='markers',
+        marker=dict(size=3, color=r['color'], opacity=0.6),
+        name=r['name'],
+        showlegend=False
+    ), row=1, col=i)
+    fig.update_xaxes(title_text='u (eje 1 del plano)', row=1, col=i,
+                     zeroline=True, zerolinecolor='lightgray')
+    fig.update_yaxes(title_text='v (eje 2 del plano)' if i == 1 else '',
+                     row=1, col=i,
+                     zeroline=True, zerolinecolor='lightgray')
+
+fig.update_layout(
+    title='Lecturas brutas de cada sensor (coordenadas 2D locales)',
+    height=400
+)
+fig.show()
+```
+
+Cada sensor produce una imagen 2D distorsionada de la misma hélice.
+El sensor A la ve casi como una elipse, el B como una banda horizontal,
+el C como una nube más compacta. Ninguno por sí solo revela la hélice
+original.
+
+---
+
+## Paso 3 — Construir la matriz de datos multi-sensor
+
+Apilamos las seis coordenadas (2 por cada sensor) para formar una
+**matriz de datos** $X \in \mathbb{R}^{500 \times 6}$. Cada fila es una
+muestra; cada columna es una variable medida por algún sensor.
+
+Esta es exactamente la estructura con la que trabaja PCA: muchas variables
+correlacionadas que comparten una estructura latente de baja dimensión.
+
+```{python}
+# Matriz de datos: 500 muestras × 6 variables (2 por sensor)
+data_matrix = np.column_stack([r['s'] for r in readings] +
+                               [r['t'] for r in readings])
+# Reordenamos: s_A, t_A, s_B, t_B, s_C, t_C
+data_matrix = np.column_stack([
+    readings[0]['s'], readings[0]['t'],
+    readings[1]['s'], readings[1]['t'],
+    readings[2]['s'], readings[2]['t'],
+])
+
+col_labels = ['A_u', 'A_v', 'B_u', 'B_v', 'C_u', 'C_v']
+
+print(f"Dimensión de la matriz de datos: {data_matrix.shape}")
+print(f"Variables: {col_labels}")
+```
+
+### Matriz de correlación entre sensores
+
+```{python}
+corr = np.corrcoef(data_matrix.T)
+
+fig = go.Figure(data=go.Heatmap(
+    z=corr,
+    x=col_labels, y=col_labels,
+    colorscale='RdBu_r',
+    zmid=0, zmin=-1, zmax=1,
+    text=np.round(corr, 2),
+    texttemplate='%{text}',
+    textfont=dict(size=11),
+    colorbar=dict(title='Correlación')
+))
+
+fig.update_layout(
+    title='Correlación entre las 6 variables medidas por los sensores',
+    height=420
+)
+fig.show()
+```
+
+La matriz de correlación revela la redundancia. Variables del mismo sensor
+están fuertemente correlacionadas entre sí, y también con variables de
+otros sensores — evidencia de que todas miden el mismo fenómeno subyacente.
+PCA explotará precisamente esa redundancia.
+
+---
+
+## Paso 4 — Aplicar PCA: ¿cuánta información hay realmente?
+
+PCA descompone la varianza total en **componentes ortogonales ordenados
+por importancia**. Si el fenómeno real vive en pocas dimensiones, la mayor
+parte de la varianza se concentrará en los primeros componentes.
+
+```{python}
+pca_full = PCA(n_components=6)
+components_full = pca_full.fit_transform(data_matrix)
+
+explained = pca_full.explained_variance_ratio_
+cumulative = np.cumsum(explained)
+
+# ── Scree plot ──────────────────────────────────────────────
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=[f'PC{i+1}' for i in range(6)],
+    y=explained * 100,
+    name='% Varianza individual',
+    text=[f'{v*100:.1f}%' for v in explained],
+    textposition='outside',
+    marker_color='steelblue'
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=[f'PC{i+1}' for i in range(6)],
+    y=cumulative * 100,
+    mode='lines+markers',
+    name='% Acumulado',
+    line=dict(color='crimson', width=2.5),
+    marker=dict(size=9)
+), secondary_y=True)
+
+fig.add_hline(y=90, line_dash='dash', line_color='gray',
+              annotation_text='90%', secondary_y=True)
+
+fig.update_yaxes(title_text='% Varianza por componente', secondary_y=False)
+fig.update_yaxes(title_text='% Varianza acumulada', range=[0, 110],
+                 secondary_y=True)
+fig.update_layout(
+    title='Scree plot: ¿cuántos componentes capturan la señal?',
+    height=400
+)
+fig.show()
+
+print("Varianza explicada por componente:")
+for i, (v, c) in enumerate(zip(explained, cumulative)):
+    print(f"  PC{i+1}: {v*100:5.1f}%   acumulado: {c*100:5.1f}%")
+```
+
+Los primeros **2–3 componentes** concentran la gran mayoría de la varianza.
+Esto confirma lo que esperábamos: el sistema tiene **2 grados de libertad
+reales** (la hélice es una curva en 3D, parametrizada por un solo
+parámetro $t$), y el resto es ruido.
+
+---
+
+## Paso 5 — Proyección en 2D: la hélice emerge del ruido
+
+Con solo los dos primeros componentes principales recuperamos la
+estructura esencial del movimiento.
+
+```{python}
+pca_2d = PCA(n_components=2)
+proj_2d = pca_2d.fit_transform(data_matrix)
+
+# Línea de referencia: sin(t) proyectada para comparación
+t_ref = np.linspace(-12, 12, 300)
+ref_x = t_ref / t_ref.max() * proj_2d[:, 0].max()
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=proj_2d[:, 0], y=proj_2d[:, 1],
+    mode='markers',
+    marker=dict(size=4, color='steelblue', opacity=0.6),
+    name='Muestras (PC1 vs PC2)'
+))
+
+# Colorear por el parámetro t para mostrar la continuidad
+fig.add_trace(go.Scatter(
+    x=proj_2d[:, 0], y=proj_2d[:, 1],
+    mode='markers',
+    marker=dict(
+        size=4, opacity=0.8,
+        color=t,
+        colorscale='Viridis',
+        colorbar=dict(title='t (tiempo)', len=0.6)
+    ),
+    name='Coloreado por t'
+))
+
+fig.update_xaxes(title_text='Componente Principal 1',
+                 zeroline=True, zerolinecolor='lightgray')
+fig.update_yaxes(title_text='Componente Principal 2',
+                 zeroline=True, zerolinecolor='lightgray',
+                 scaleanchor='x')
+fig.update_layout(
+    title=f'PC1 vs PC2 — {pca_2d.explained_variance_ratio_.sum()*100:.1f}% de la varianza total',
+    height=480
+)
+fig.show()
+```
+
+Al colorear los puntos por el parámetro $t$ (el "tiempo" de la
+trayectoria), vemos que el orden temporal se preserva perfectamente: PCA
+ha recuperado la parametrización natural de la hélice a partir de seis
+variables ruidosas.
+
+---
+
+## Paso 6 — Proyección en 3D: confirmando la estructura helicoidal
+
+Agregando el tercer componente recuperamos la geometría completa.
+
+```{python}
+pca_3d = PCA(n_components=3)
+proj_3d = pca_3d.fit_transform(data_matrix)
+
+fig = go.Figure()
+
+# Muestras coloreadas por t
+fig.add_trace(go.Scatter3d(
+    x=proj_3d[:, 0], y=proj_3d[:, 1], z=proj_3d[:, 2],
+    mode='markers',
+    marker=dict(
+        size=3, opacity=0.7,
+        color=t,
+        colorscale='Viridis',
+        colorbar=dict(title='t', len=0.5)
+    ),
+    name='Muestras'
+))
+
+# Trayectoria original reescalada para superposición visual
+scale = proj_3d[:, 0].std() / x_clean.std()
+fig.add_trace(go.Scatter3d(
+    x=x_clean * scale,
+    y=y_clean * proj_3d[:, 1].std(),
+    z=z_clean * proj_3d[:, 2].std(),
+    mode='lines',
+    line=dict(color='crimson', width=4),
+    name='Trayectoria original (reescalada)'
+))
+
+fig.update_layout(
+    title=f'Proyección 3D — {pca_3d.explained_variance_ratio_.sum()*100:.1f}% de la varianza total',
+    scene=dict(
+        xaxis_title='PC 1',
+        yaxis_title='PC 2',
+        zaxis_title='PC 3',
+        xaxis=dict(range=[-15, 15]),
+        yaxis=dict(range=[-7, 7]),
+        zaxis=dict(range=[-7, 7])
+    ),
+    legend=dict(x=0.01, y=0.99),
+    height=560
+)
+fig.show()
+```
+
+La nube de puntos reconstruida en el espacio PCA sigue fielmente la hélice
+original. PCA ha separado la señal del ruido sin conocer a priori la
+geometría de la trayectoria.
+
+
+::: {.callout-note}
+## La idea central
+
+PCA no sabe nada sobre hélices ni sobre física. Solo busca las
+direcciones de **máxima varianza** en los datos. El hecho de que esas
+direcciones coincidan con la geometría real de la trayectoria es una
+consecuencia de que **la señal real tiene más varianza que el ruido**.
+
+Cuando $\text{SNR} = \sigma_{\text{señal}} / \sigma_{\text{ruido}} \gg 1$,
+los primeros componentes principales capturan la señal; los últimos,
+el ruido.
+:::
+
+::: {.callout-warning}
+## Limitación importante
+
+PCA funciona bien aquí porque la hélice es una curva **linealizable** a
+través de sus coordenadas en el espacio de observaciones. Para estructuras
+genuinamente no lineales (manifolds curvos), se necesitan técnicas como
+**UMAP** o **t-SNE**.
+:::

@@ -1,0 +1,1168 @@
+---
+title: "Análisis de Componentes Principales"
+subtitle: "Análisis Exploratorio Multivariante · Almacenes y Minería de Datos"
+author: "Diego Villalba"
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    chalkboard: true
+    multiplex: false
+    transition: slide
+    background-transition: fade
+    highlight-style: github
+    code-fold: false
+    code-tools: true
+    html-math-method: katex
+    logo: "/images/Logo_FC_Color.png"
+    fig-align: center
+    footer: "Facultad de Ciencias UNAM · Minería de Datos · 2026"
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{python}
+#| include: false
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+import warnings
+warnings.filterwarnings('ignore')
+
+# Paleta extraída de unam-theme.scss
+AZUL    = "#0b4a6f"   # cosmos-blue
+AZUL_L  = "#5c7f9b"   # cosmos-light
+ACENTO  = "#4fb6d6"   # cosmos-accent
+FONDO   = "#ffffff"
+TEXTO   = "#2f4f63"
+GRIS_L  = "#d9e3ea"
+AZUL_TX = "#3b5f7a"
+```
+
+## ¿Por qué necesitamos PCA? {.title-section}
+
+## El problema de la dimensionalidad
+
+Con muchas variables, el número de relaciones crece explosivamente:
+
+- Con **20 variables** → $\binom{20}{2} =$ **190 correlaciones posibles**
+- Con **100 variables** → **4,950 correlaciones posibles**
+- Revisar cada una es impráctico
+
+```{python}
+#| echo: false
+import math
+
+ns    = [5, 10, 20, 50, 100]
+pairs = [math.comb(n, 2) for n in ns]
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=[str(n) for n in ns],
+    y=pairs,
+    marker_color=[AZUL_L, AZUL_L, ACENTO, AZUL, AZUL],
+    text=pairs,
+    textposition='outside',
+    textfont=dict(color=TEXTO, size=13)
+))
+fig.update_layout(
+    title=dict(text="Correlaciones posibles según número de variables",
+               font=dict(color=AZUL, size=15)),
+    xaxis=dict(title=dict(text="Número de variables", font=dict(color=TEXTO)),
+               tickfont=dict(color=TEXTO), gridcolor=GRIS_L),
+    yaxis=dict(title=dict(text="Pares de correlaciones", font=dict(color=TEXTO)),
+               tickfont=dict(color=TEXTO), gridcolor=GRIS_L),
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO),
+    height=295,
+    margin=dict(t=45, b=25, l=15, r=15)
+)
+fig.show()
+```
+
+---
+
+## ¿Qué es PCA? {.title-section}
+
+## ¿Qué es PCA?
+
+> **PCA** transforma variables **correlacionadas** en un conjunto más pequeño de variables **no correlacionadas** llamadas **componentes principales**, conservando la mayor información posible.
+
+```{python}
+#| echo: false
+fig = go.Figure()
+
+for i, label in enumerate(["X₁", "X₂", "X₃", "X₄", "X₅"]):
+    fig.add_shape(type="rect", x0=0.0, y0=i*0.18, x1=0.22, y1=i*0.18+0.14,
+                  fillcolor=ACENTO, line=dict(color=AZUL, width=1.5), opacity=0.85)
+    fig.add_annotation(x=0.11, y=i*0.18+0.07, text=f"<b>{label}</b>",
+                       showarrow=False, font=dict(color=FONDO, size=15))
+
+arrow_colors = [AZUL, AZUL_L, ACENTO, AZUL, AZUL_L]
+for i in range(5):
+    fig.add_annotation(x=0.55, y=0.36, ax=0.22, ay=i*0.18+0.07,
+                       arrowhead=2, arrowcolor=arrow_colors[i],
+                       arrowwidth=2, showarrow=True)
+
+for label, xc, fc in [("CP1", 0.62, AZUL), ("CP2", 0.82, AZUL_L)]:
+    fig.add_shape(type="rect", x0=xc-0.09, y0=0.29, x1=xc+0.09, y1=0.43,
+                  fillcolor=fc, line=dict(color=AZUL, width=1.5))
+    fig.add_annotation(x=xc, y=0.36, text=f"<b>{label}</b>",
+                       showarrow=False, font=dict(color=FONDO, size=14))
+
+fig.add_annotation(
+    x=0.5, y=-0.06,
+    text="Las variables originales se <b>combinan linealmente</b> para formar los componentes principales",
+    showarrow=False, font=dict(color=AZUL_TX, size=12), xanchor='center'
+)
+fig.update_layout(
+    xaxis=dict(visible=False, range=[-0.05, 1.0]),
+    yaxis=dict(visible=False, range=[-0.12, 1.0]),
+    paper_bgcolor=FONDO, plot_bgcolor=FONDO,
+    height=320, margin=dict(t=10, b=30, l=10, r=10)
+)
+fig.show()
+```
+
+---
+
+## Ventajas de PCA
+
+| Ventaja | Descripción |
+|---|---|
+| 🔻 **Reducción de dimensionalidad** | De $p$ variables a $k \ll p$ componentes |
+| 🔗 **No correlación** | Los componentes son ortogonales entre sí |
+| 📊 **Resumen de información** | Las primeras componentes capturan la mayor varianza |
+| 🔇 **Eliminación de ruido** | Las últimas componentes suelen ser ruido |
+
+::: {.callout-note}
+**Regla práctica:** en la mayoría de datasets reales, las primeras 2–5 componentes explican el 80–95 % de la varianza total.
+:::
+
+---
+
+## Ejemplo: perfil de salud de pacientes
+
+```{python}
+#| echo: false
+fig = go.Figure()
+
+grupos = {
+    "Componente 1\n(Adiposidad)": {
+        "vars": ["Peso", "IMC", "Cintura", "% Grasa"],
+        "color": AZUL, "x": 0.15
+    },
+    "Componente 2\n(Riesgo cardiometabólico)": {
+        "vars": ["Glucosa", "Triglicéridos", "Presión"],
+        "color": ACENTO, "x": 0.78
+    }
+}
+
+orig = ["Peso", "IMC", "Cintura", "% Grasa", "Glucosa", "Triglicéridos", "Presión"]
+for i, v in enumerate(orig):
+    fig.add_shape(type="rect", x0=0.38, y0=i*0.13, x1=0.62, y1=i*0.13+0.10,
+                  fillcolor=GRIS_L, line=dict(color=AZUL_L, width=1))
+    fig.add_annotation(x=0.50, y=i*0.13+0.05, text=v,
+                       showarrow=False, font=dict(color=AZUL, size=11))
+
+for label, info in grupos.items():
+    y_c = 0.39
+    fig.add_shape(type="rect",
+                  x0=info["x"]-0.13, y0=y_c-0.10,
+                  x1=info["x"]+0.13, y1=y_c+0.10,
+                  fillcolor=info["color"], line=dict(color=AZUL, width=2))
+    for li, line in enumerate(label.split('\n')):
+        fig.add_annotation(
+            x=info["x"], y=y_c + 0.03 - li*0.07,
+            text=f"<b>{line}</b>",
+            showarrow=False, font=dict(color=FONDO, size=10)
+        )
+    for i, v in enumerate(orig):
+        if v in info["vars"]:
+            fig.add_annotation(
+                x=info["x"] - (0.13 if info["x"] > 0.5 else -0.13),
+                y=y_c,
+                ax=0.62 if info["x"] > 0.5 else 0.38,
+                ay=i*0.13+0.05,
+                arrowhead=2, arrowcolor=info["color"],
+                arrowwidth=1.8, showarrow=True
+            )
+
+fig.update_layout(
+    xaxis=dict(visible=False, range=[0, 1]),
+    yaxis=dict(visible=False, range=[-0.1, 1.0]),
+    paper_bgcolor=FONDO, plot_bgcolor=FONDO,
+    title=dict(text="7 variables clínicas → 2 componentes interpretables",
+               font=dict(color=AZUL, size=14)),
+    height=365, margin=dict(t=40, b=10, l=10, r=10)
+)
+fig.show()
+```
+
+---
+
+## Eigenvectores y Eigenvalores {.title-section}
+
+## Repaso de Álgebra Lineal
+
+Dada una matriz cuadrada $A$, un **eigenvector** $\mathbf{v}$ satisface:
+
+$$A\mathbf{v} = \lambda \mathbf{v}$$
+
+- $\mathbf{v}$: dirección que **no rota** bajo la transformación de $A$
+- $\lambda$: escalar que indica **cuánto se escala** esa dirección
+
+```{python}
+#| echo: false
+fig = make_subplots(1, 2, subplot_titles=["Vectores originales", "Después de multiplicar por A"])
+
+A = np.array([[2, 0], [0, 1]])
+angulos = [0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi]
+
+for angle in angulos:
+    v  = np.array([np.cos(angle), np.sin(angle)])
+    Av = A @ v
+    fig.add_annotation(x=v[0], y=v[1], ax=0, ay=0,
+                       arrowhead=2, arrowcolor=GRIS_L, arrowwidth=2,
+                       xref='x', yref='y', axref='x', ayref='y', row=1, col=1)
+    fig.add_annotation(x=Av[0], y=Av[1], ax=0, ay=0,
+                       arrowhead=2, arrowcolor=GRIS_L, arrowwidth=2,
+                       xref='x2', yref='y2', axref='x2', ayref='y2', row=1, col=2)
+
+# Eigenvector (eje x) antes
+fig.add_annotation(x=1, y=0, ax=0, ay=0,
+                   arrowhead=3, arrowcolor=ACENTO, arrowwidth=3,
+                   xref='x', yref='y', axref='x', ayref='y', row=1, col=1)
+fig.add_annotation(x=0.85, y=-0.22, text="<b>eigenvector</b>", showarrow=False,
+                   font=dict(color=ACENTO, size=11), row=1, col=1)
+
+# Eigenvector después
+ev = A @ np.array([1.0, 0.0])
+fig.add_annotation(x=ev[0], y=ev[1], ax=0, ay=0,
+                   arrowhead=3, arrowcolor=ACENTO, arrowwidth=3,
+                   xref='x2', yref='y2', axref='x2', ayref='y2', row=1, col=2)
+fig.add_annotation(x=ev[0]-0.1, y=ev[1]-0.22, text="<b>λ = 2</b>",
+                   showarrow=False, font=dict(color=ACENTO, size=12), row=1, col=2)
+
+for i in [1, 2]:
+    fig.update_xaxes(range=[-2.5, 2.5], row=1, col=i,
+                     tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L)
+    fig.update_yaxes(range=[-2, 2], row=1, col=i,
+                     tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L,
+                     scaleanchor=f'x{i}')
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO),
+    height=300, margin=dict(t=40, b=10), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## Ejemplo numérico
+
+Sea $A = \begin{pmatrix} 2 & 0 \\ 0 & 3 \end{pmatrix}$
+
+::: {.columns}
+::: {.column width="50%"}
+**Vector $\mathbf{v}_1 = (1, 0)^T$:**
+
+$$A\mathbf{v}_1 = \begin{pmatrix}2\\0\end{pmatrix} = 2\begin{pmatrix}1\\0\end{pmatrix}$$
+
+✅ Eigenvector con $\lambda_1 = 2$
+
+:::
+::: {.column width="50%"}
+**Vector $\mathbf{v}_2 = (0, 1)^T$:**
+
+$$A\mathbf{v}_2 = \begin{pmatrix}0\\3\end{pmatrix} = 3\begin{pmatrix}0\\1\end{pmatrix}$$
+
+✅ Eigenvector con $\lambda_2 = 3$
+
+:::
+:::
+
+::: {.callout-important}
+**¿Es $(1,1)^T$ eigenvector de $A$?**  
+$A(1,1)^T = (2,3)^T \neq \lambda(1,1)^T$ para ningún $\lambda$. ❌
+:::
+
+---
+
+## Pasos del PCA {.title-section}
+
+## Los 5 pasos del PCA
+
+```{python}
+#| echo: false
+pasos = [
+    ("1", "Estandarizar\nlos datos",        AZUL),
+    ("2", "Matriz de\ncovarianza",          AZUL_L),
+    ("3", "Eigenvalores\ny eigenvectores",  ACENTO),
+    ("4", "Ordenar\ncomponentes",           AZUL_L),
+    ("5", "Proyectar\nlos datos",           AZUL),
+]
+
+fig = go.Figure()
+for i, (num, label, color) in enumerate(pasos):
+    x0 = i * 0.21
+    fig.add_shape(type="rect", x0=x0, y0=0.2, x1=x0+0.18, y1=0.8,
+                  fillcolor=color, line=dict(color=AZUL, width=1.5))
+    fig.add_annotation(x=x0+0.09, y=0.65, text=f"<b>Paso {num}</b>",
+                       showarrow=False, font=dict(color=FONDO, size=13))
+    fig.add_annotation(x=x0+0.09, y=0.42, text=label.replace('\n', '<br>'),
+                       showarrow=False, font=dict(color=FONDO, size=11))
+    if i < len(pasos) - 1:
+        fig.add_annotation(
+            x=x0+0.19, y=0.5, ax=x0+0.18, ay=0.5,
+            arrowhead=3, arrowcolor=AZUL, arrowwidth=2,
+            xref='x', yref='y', axref='x', ayref='y', showarrow=True
+        )
+
+fig.update_layout(
+    xaxis=dict(visible=False, range=[-0.02, 1.05]),
+    yaxis=dict(visible=False, range=[0, 1]),
+    paper_bgcolor=FONDO, plot_bgcolor=FONDO,
+    height=225, margin=dict(t=10, b=10)
+)
+fig.show()
+```
+
+---
+
+## Paso 1: Estandarización
+
+$$Z_i = \frac{X_i - \bar{X}}{s}$$
+
+**¿Por qué?** Variables con mayor escala dominarían el PCA aunque no sean más importantes.
+
+```{python}
+#| echo: true
+import numpy as np
+
+X     = np.array([2.0, 4.0, 6.0])
+media = np.mean(X)
+desv  = np.std(X, ddof=1)
+Z     = (X - media) / desv
+
+print(f"X:          {X}")
+print(f"Media:      {media:.2f}   Desv. estándar: {desv:.4f}")
+print(f"Z:          {np.round(Z, 4)}")
+print(f"Media de Z: {np.mean(Z):.10f}  (≈ 0)")
+print(f"Desv de Z:  {np.std(Z, ddof=1):.4f}    (= 1)")
+```
+
+---
+
+## Paso 1: Visualización
+
+```{python}
+#| echo: false
+np.random.seed(42)
+altura_cm = np.random.normal(170, 10, 100)
+ingreso_k = np.random.normal(25,   8, 100)
+
+scaler   = StandardScaler()
+data_std = scaler.fit_transform(np.column_stack([altura_cm, ingreso_k]))
+
+fig = make_subplots(1, 2,
+    subplot_titles=["Sin estandarizar (escalas distintas)",
+                    "Estandarizado (misma escala)"])
+
+fig.add_trace(go.Scatter(x=altura_cm, y=ingreso_k, mode='markers',
+    marker=dict(color=AZUL, opacity=0.5, size=7)), row=1, col=1)
+fig.add_trace(go.Scatter(x=data_std[:,0], y=data_std[:,1], mode='markers',
+    marker=dict(color=ACENTO, opacity=0.5, size=7)), row=1, col=2)
+
+for col, xt, yt in [(1, "Altura (cm)", "Ingreso (miles $)"),
+                    (2, "Altura (Z)",  "Ingreso (Z)")]:
+    fig.update_xaxes(title_text=xt, row=1, col=col,
+                     title=dict(font=dict(color=TEXTO)),
+                     tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+    fig.update_yaxes(title_text=yt, row=1, col=col,
+                     title=dict(font=dict(color=TEXTO)),
+                     tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=330,
+    margin=dict(t=50, b=20), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## Paso 2: Matriz de covarianza
+
+$$\text{cov}(x_j, x_k) = \frac{1}{n-1}\sum_{i=1}^{n}(x_{ij}-\bar{x}_j)(x_{ik}-\bar{x}_k)$$
+
+Para $p$ variables, $\Sigma$ tiene dimensión $p \times p$. La diagonal son **varianzas**; fuera, **covarianzas**.
+
+```{python}
+#| echo: true
+import numpy as np
+
+x1 = np.array([1, 2, 3])
+x2 = np.array([2, 4, 6])
+x3 = np.array([1, 3, 5])
+
+X     = np.column_stack([x1, x2, x3])
+Sigma = np.cov(X.T)
+
+print("Matriz de covarianza Σ:")
+print(Sigma)
+```
+
+::: {.callout-note}
+¿Qué implica que $\text{cov}(x_1, x_2) = 2$? ¿Y que $x_2$ y $x_3$ tengan la misma covarianza con $x_1$?
+:::
+
+---
+
+## Paso 2: Tipos de covarianza
+
+```{python}
+#| echo: false
+np.random.seed(7)
+n = 150
+escenarios = {
+    "Covarianza positiva":  np.random.multivariate_normal([0,0],[[1.0,0.9],[0.9,1.0]], n),
+    "Covarianza negativa":  np.random.multivariate_normal([0,0],[[1.0,-0.85],[-0.85,1.0]], n),
+    "Sin covarianza":       np.random.multivariate_normal([0,0],[[1.0,0.0],[0.0,1.0]], n),
+}
+colores_esc = [AZUL, ACENTO, AZUL_L]
+
+fig = make_subplots(1, 3, subplot_titles=list(escenarios.keys()))
+
+for i, (_, d) in enumerate(escenarios.items()):
+    cov_val = np.cov(d.T)[0, 1]
+    fig.add_trace(go.Scatter(
+        x=d[:,0], y=d[:,1], mode='markers',
+        marker=dict(color=colores_esc[i], opacity=0.45, size=5)
+    ), row=1, col=i+1)
+    fig.add_annotation(x=0, y=-2.8, text=f"<b>cov ≈ {cov_val:.2f}</b>",
+                       showarrow=False,
+                       font=dict(color=colores_esc[i], size=14),
+                       row=1, col=i+1)
+
+for c in range(1, 4):
+    fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L, row=1, col=c)
+    fig.update_yaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L, row=1, col=c)
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=310,
+    margin=dict(t=50, b=20), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## Paso 3: Eigenvalores
+
+Se resuelve la **ecuación característica**:
+
+$$\det(A - \lambda I) = 0$$
+
+**Ejemplo:** $A = \begin{pmatrix} 5 & 2 \\ 2 & 5 \end{pmatrix}$
+
+$$\det\begin{pmatrix} 5-\lambda & 2 \\ 2 & 5-\lambda \end{pmatrix} = (5-\lambda)^2 - 4 = 0$$
+
+$$\lambda^2 - 10\lambda + 21 = (\lambda-7)(\lambda-3) = 0$$
+
+$$\boxed{\lambda_1 = 7 \qquad \lambda_2 = 3}$$
+
+---
+
+## Paso 3: Eigenvectores
+
+Para cada $\lambda_i$ se resuelve $(A - \lambda_i I)\mathbf{v} = \mathbf{0}$
+
+::: {.columns}
+::: {.column width="50%"}
+**Para $\lambda_1 = 7$:**
+
+$$\begin{pmatrix}-2&2\\2&-2\end{pmatrix}\mathbf{v}=\mathbf{0} \;\Rightarrow\; y=x$$
+
+$$\mathbf{u}_1 = \frac{1}{\sqrt{2}}\begin{pmatrix}1\\1\end{pmatrix}$$
+
+:::
+::: {.column width="50%"}
+**Para $\lambda_2 = 3$:**
+
+$$\begin{pmatrix}2&2\\2&2\end{pmatrix}\mathbf{v}=\mathbf{0} \;\Rightarrow\; y=-x$$
+
+$$\mathbf{u}_2 = \frac{1}{\sqrt{2}}\begin{pmatrix}1\\-1\end{pmatrix}$$
+
+:::
+:::
+
+::: {.callout-tip}
+**En PCA:** $\mathbf{u}_1$ (mayor $\lambda$) = **primera componente principal** — dirección de mayor varianza.
+:::
+
+---
+
+## Geometría del PCA
+
+```{python}
+#| echo: false
+np.random.seed(42)
+data = np.random.multivariate_normal([0,0], [[3,2.5],[2.5,3]], 200)
+
+pca_vis = PCA(n_components=2)
+pca_vis.fit(data)
+pc1 = pca_vis.components_[0]
+pc2 = pca_vis.components_[1]
+s1  = np.sqrt(pca_vis.explained_variance_[0]) * 2.5
+s2  = np.sqrt(pca_vis.explained_variance_[1]) * 2.5
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=data[:,0], y=data[:,1], mode='markers',
+    marker=dict(color=AZUL, opacity=0.3, size=6), name='Datos'
+))
+
+for vec, scale, color, label in [
+    (pc1, s1, ACENTO, "PC1 — mayor varianza"),
+    (pc2, s2, AZUL_L, "PC2 — varianza restante")
+]:
+    fig.add_annotation(
+        x=vec[0]*scale, y=vec[1]*scale, ax=0, ay=0,
+        arrowhead=3, arrowcolor=color, arrowwidth=4,
+        xref='x', yref='y', axref='x', ayref='y', showarrow=True
+    )
+    fig.add_annotation(
+        x=vec[0]*scale*1.18, y=vec[1]*scale*1.18,
+        text=f"<b>{label}</b>", showarrow=False,
+        font=dict(color=color, size=12)
+    )
+
+fig.update_layout(
+    xaxis=dict(title=dict(text="x₁", font=dict(color=TEXTO)),
+               tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+               zeroline=True, zerolinecolor=AZUL_L),
+    yaxis=dict(title=dict(text="x₂", font=dict(color=TEXTO)),
+               tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+               zeroline=True, zerolinecolor=AZUL_L, scaleanchor='x'),
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=350,
+    margin=dict(t=20, b=20),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## Paso 4: Variabilidad explicada
+
+$$\text{Variabilidad}_i = \frac{\lambda_i}{\displaystyle\sum_{j=1}^{p} \lambda_j} \times 100\%$$
+
+**Ejemplo:** $\lambda_1 = 7,\; \lambda_2 = 3 \;\Rightarrow\; \lambda_{\text{total}} = 10$
+
+| Componente | Eigenvalue | % Varianza | % Acumulado |
+|:---:|:---:|:---:|:---:|
+| PC1 | 7 | **70 %** | 70 % |
+| PC2 | 3 | **30 %** | 100 % |
+
+```{python}
+#| echo: true
+lambdas     = np.array([7, 3])
+porcentajes = lambdas / lambdas.sum() * 100
+acumulado   = np.cumsum(porcentajes)
+
+for i, (l, p, a) in enumerate(zip(lambdas, porcentajes, acumulado), 1):
+    print(f"PC{i}: λ={l}  →  {p:.1f}%  (acum: {a:.1f}%)")
+```
+
+---
+
+## Paso 4: Scree plot
+
+```{python}
+#| echo: false
+lambdas_demo = np.array([7.0, 3.0, 0.5, 0.3, 0.15, 0.05])
+total = lambdas_demo.sum()
+pct   = lambdas_demo / total * 100
+acum  = np.cumsum(pct)
+pcs   = [f"PC{i+1}" for i in range(len(lambdas_demo))]
+
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=pcs, y=pct,
+    marker_color=[AZUL if i < 2 else AZUL_L for i in range(len(pcs))],
+    name="% Varianza",
+    text=[f"{v:.1f}%" for v in pct],
+    textposition='outside',
+    textfont=dict(color=TEXTO, size=12)
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=pcs, y=acum, mode='lines+markers',
+    line=dict(color=ACENTO, width=3),
+    marker=dict(size=9, color=ACENTO),
+    name="% Acumulado"
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color=ACENTO,
+              annotation_text="80 % acumulado",
+              annotation_font_color=ACENTO,
+              secondary_y=True)
+
+fig.update_yaxes(
+    title_text="% Varianza por componente",
+    tickfont=dict(color=TEXTO),
+    title=dict(font=dict(color=TEXTO)),
+    gridcolor=GRIS_L, secondary_y=False
+)
+fig.update_yaxes(
+    title_text="% Varianza acumulada",
+    tickfont=dict(color=TEXTO),
+    title=dict(font=dict(color=TEXTO)),
+    range=[0, 110], secondary_y=True
+)
+fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L)
+
+fig.update_layout(
+    title=dict(text="Scree Plot — ¿Cuántos componentes retener?",
+               font=dict(color=AZUL, size=15)),
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=330,
+    margin=dict(t=50, b=20),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## Paso 5: Proyectar los datos
+
+```{python}
+#| echo: false
+np.random.seed(42)
+data2   = np.random.multivariate_normal([0,0], [[3,2.5],[2.5,3]], 80)
+pca2    = PCA(n_components=2)
+scores2 = pca2.fit_transform(data2)
+pc1_vec = pca2.components_[0]
+projs   = np.outer(scores2[:,0], pc1_vec)
+
+fig = make_subplots(1, 2,
+    subplot_titles=["Datos con dirección PC1", "Reducidos a 1D (scores)"])
+
+fig.add_trace(go.Scatter(x=data2[:,0], y=data2[:,1], mode='markers',
+    marker=dict(color=AZUL, opacity=0.45, size=7)), row=1, col=1)
+
+s_pc1 = np.sqrt(pca2.explained_variance_[0]) * 2
+fig.add_annotation(
+    x=pc1_vec[0]*s_pc1, y=pc1_vec[1]*s_pc1, ax=0, ay=0,
+    arrowhead=3, arrowcolor=ACENTO, arrowwidth=4,
+    xref='x', yref='y', axref='x', ayref='y', showarrow=True, row=1, col=1
+)
+for i in range(0, 80, 8):
+    fig.add_shape(type='line',
+                  x0=data2[i,0], y0=data2[i,1],
+                  x1=projs[i,0], y1=projs[i,1],
+                  line=dict(color=GRIS_L, width=1, dash='dot'), row=1, col=1)
+fig.add_trace(go.Scatter(x=projs[:,0], y=projs[:,1], mode='markers',
+    marker=dict(color=ACENTO, opacity=0.8, size=7)), row=1, col=1)
+
+fig.add_trace(go.Scatter(x=scores2[:,0], y=np.zeros(len(scores2)), mode='markers',
+    marker=dict(color=ACENTO, size=8, opacity=0.7)), row=1, col=2)
+fig.add_hline(y=0, line_color=AZUL_L, line_width=1.5, row=1, col=2)
+fig.add_annotation(x=0, y=0.4, text="<b>Datos reducidos a 1D</b>",
+                   showarrow=False, font=dict(color=AZUL, size=12), row=1, col=2)
+
+for c in [1, 2]:
+    fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L, row=1, col=c)
+    fig.update_yaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L, row=1, col=c)
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=330,
+    margin=dict(t=50, b=20), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## PCA con `sklearn` {.title-section}
+
+## PCA con `sklearn` en Python
+
+```{python}
+#| echo: true
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+import numpy as np
+
+X = np.array([
+    [2,  5, 48],
+    [3,  7, 55],
+    [4,  8, 60],
+    [5, 10, 65],
+    [6, 11, 72],
+], dtype=float)
+
+X_std  = StandardScaler().fit_transform(X)
+pca    = PCA()
+scores = pca.fit_transform(X_std)
+
+print("Eigenvalores:         ", np.round(pca.explained_variance_, 4))
+print("% Varianza:           ", np.round(pca.explained_variance_ratio_ * 100, 2))
+print("Eigenvectores (filas):")
+print(np.round(pca.components_, 4))
+```
+
+---
+
+## Ejercicio en clase {.title-section}
+
+## 🏋️ Equipos de fútbol
+
+**Dataset:** rendimiento de 5 equipos, 3 variables
+
+| Equipo | $X_1$ Goles | $X_2$ Tiros | $X_3$ Posesión % |
+|:---:|:---:|:---:|:---:|
+| A | 2 | 5 | 48 |
+| B | 3 | 7 | 55 |
+| C | 4 | 8 | 60 |
+| D | 5 | 10 | 65 |
+| E | 6 | 11 | 72 |
+
+**Tareas:**
+
+1. Estandarizar los datos
+2. Calcular la matriz de covarianza
+3. Obtener eigenvalores y eigenvectores
+4. Calcular el % de varianza de cada componente
+5. Interpretar: ¿qué "mide" cada componente?
+
+---
+
+## 🏋️ Solución guiada
+
+```{python}
+#| echo: true
+futbol = np.array([
+    [2,  5, 48],
+    [3,  7, 55],
+    [4,  8, 60],
+    [5, 10, 65],
+    [6, 11, 72],
+], dtype=float)
+
+F_std   = StandardScaler().fit_transform(futbol)
+Sigma_f = np.cov(F_std.T)
+print("Σ (datos estandarizados):")
+print(np.round(Sigma_f, 4))
+
+pca_f = PCA()
+pca_f.fit(F_std)
+print("\nEigenvalores:", np.round(pca_f.explained_variance_, 4))
+print("% Varianza:  ", np.round(pca_f.explained_variance_ratio_ * 100, 2))
+```
+
+---
+
+## 🏋️ Visualización
+
+```{python}
+#| echo: false
+scores_f = pca_f.fit_transform(F_std)
+pct_f    = pca_f.explained_variance_ratio_ * 100
+equipos  = ["A","B","C","D","E"]
+vars_f   = ["Goles", "Tiros", "Posesión"]
+comps_f  = pca_f.components_
+lcolors  = [AZUL, ACENTO, AZUL_L]
+
+fig = make_subplots(1, 3,
+    subplot_titles=["Scores PC1 vs PC2", "Cargas (loadings)", "% Varianza"])
+
+fig.add_trace(go.Scatter(
+    x=scores_f[:,0], y=scores_f[:,1],
+    mode='markers+text', text=equipos, textposition='top center',
+    marker=dict(color=AZUL, size=13)
+), row=1, col=1)
+
+for i, var in enumerate(vars_f):
+    fig.add_annotation(
+        x=comps_f[0,i], y=comps_f[1,i], ax=0, ay=0,
+        arrowhead=3, arrowcolor=lcolors[i], arrowwidth=2.5,
+        xref='x2', yref='y2', axref='x2', ayref='y2', showarrow=True
+    )
+    fig.add_annotation(
+        x=comps_f[0,i]*1.3, y=comps_f[1,i]*1.3,
+        text=f"<b>{var}</b>", showarrow=False,
+        font=dict(color=lcolors[i], size=11), row=1, col=2
+    )
+
+pcs_lbl = [f"PC{i+1}" for i in range(len(pct_f))]
+fig.add_trace(go.Bar(
+    x=pcs_lbl, y=pct_f,
+    marker_color=[AZUL if i==0 else AZUL_L for i in range(len(pct_f))],
+    text=[f"{v:.1f}%" for v in pct_f],
+    textposition='outside', textfont=dict(color=TEXTO, size=11)
+), row=1, col=3)
+
+for c in range(1, 4):
+    fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L, row=1, col=c)
+    fig.update_yaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L, row=1, col=c)
+
+fig.update_xaxes(title_text=f"PC1 ({pct_f[0]:.1f}%)", row=1, col=1,
+                 title=dict(font=dict(color=TEXTO)))
+fig.update_yaxes(title_text=f"PC2 ({pct_f[1]:.1f}%)", row=1, col=1,
+                 title=dict(font=dict(color=TEXTO)))
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=340,
+    margin=dict(t=50, b=20), showlegend=False
+)
+fig.show()
+```
+
+---
+
+## Caso real: Iris {.title-section}
+
+## Caso real: Dataset Iris
+
+```{python}
+#| echo: true
+from sklearn.datasets import load_iris
+
+iris        = load_iris()
+X_std_iris  = StandardScaler().fit_transform(iris.data)
+pca_iris    = PCA(n_components=2)
+scores_iris = pca_iris.fit_transform(X_std_iris)
+
+print("Varianza explicada:")
+for i, p in enumerate(pca_iris.explained_variance_ratio_ * 100, 1):
+    print(f"  PC{i}: {p:.2f}%")
+print(f"  Total: {sum(pca_iris.explained_variance_ratio_)*100:.2f}%")
+```
+
+---
+
+## Biplot Iris
+
+```{python}
+#| echo: false
+pct_iris     = pca_iris.explained_variance_ratio_ * 100
+colores_iris = [AZUL, ACENTO, AZUL_L]
+nombres      = iris.target_names
+
+fig = make_subplots(1, 2,
+    subplot_titles=["PC1 vs PC2 por especie", "Loadings (contribución)"])
+
+for cls in range(3):
+    mask = iris.target == cls
+    fig.add_trace(go.Scatter(
+        x=scores_iris[mask, 0], y=scores_iris[mask, 1],
+        mode='markers',
+        marker=dict(color=colores_iris[cls], size=8, opacity=0.75),
+        name=nombres[cls]
+    ), row=1, col=1)
+
+comps_iris = pca_iris.components_
+features   = iris.feature_names
+escala     = 3
+for i, feat in enumerate(features):
+    fig.add_annotation(
+        x=comps_iris[0,i]*escala, y=comps_iris[1,i]*escala, ax=0, ay=0,
+        arrowhead=3, arrowcolor=AZUL, arrowwidth=2.5,
+        xref='x2', yref='y2', axref='x2', ayref='y2', showarrow=True
+    )
+    short = feat.replace(' (cm)','').replace('sepal ','sep.').replace('petal ','pet.')
+    fig.add_annotation(
+        x=comps_iris[0,i]*escala*1.2, y=comps_iris[1,i]*escala*1.2,
+        text=f"<b>{short}</b>", showarrow=False,
+        font=dict(color=AZUL, size=11), row=1, col=2
+    )
+
+for c in [1, 2]:
+    fig.update_xaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L, row=1, col=c)
+    fig.update_yaxes(tickfont=dict(color=TEXTO), gridcolor=GRIS_L,
+                     zeroline=True, zerolinecolor=AZUL_L, row=1, col=c)
+
+fig.update_xaxes(title_text=f"PC1 ({pct_iris[0]:.1f}%)", row=1, col=1,
+                 title=dict(font=dict(color=TEXTO)))
+fig.update_yaxes(title_text=f"PC2 ({pct_iris[1]:.1f}%)", row=1, col=1,
+                 title=dict(font=dict(color=TEXTO)))
+
+fig.update_layout(
+    paper_bgcolor=FONDO, plot_bgcolor="#f4f8fb",
+    font=dict(color=TEXTO), height=340,
+    margin=dict(t=50, b=20),
+    legend=dict(font=dict(color=TEXTO))
+)
+fig.show()
+```
+
+---
+
+## ¿Cuántos componentes retener?
+
+::: {.columns}
+::: {.column width="50%"}
+
+**1. Regla del 80 % acumulado**  
+Retener los que sumen ≥ 80 % de varianza.
+
+**2. Regla de Kaiser**  
+Retener componentes con $\lambda > 1$ (datos estandarizados).
+
+:::
+::: {.column width="50%"}
+
+**3. Scree plot**  
+Buscar el "codo" en la curva de eigenvalores.
+
+**4. Interpretabilidad**  
+¿Los componentes tienen sentido en el dominio?
+
+:::
+:::
+
+::: {.callout-warning}
+No hay una respuesta única. El contexto y la interpretabilidad importan tanto como los criterios matemáticos.
+:::
+
+---
+
+## Limitaciones de PCA
+
+| Limitación | Descripción |
+|---|---|
+| **Linealidad** | Solo captura relaciones lineales |
+| **Interpretabilidad** | Combinaciones de todas las variables |
+| **Outliers** | PCA es sensible a valores atípicos |
+| **Escala** | Requiere estandarización previa |
+| **Correlación** | Si no hay correlación, PCA no ayuda |
+
+> Alternativas no lineales: **t-SNE**, **UMAP**, **Kernel PCA**.
+
+---
+
+## Resumen
+
+```{python}
+#| echo: false
+pasos_r = [
+    ("Datos\noriginales\n(n×p)",    AZUL_L),
+    ("Estandarizar\nZ-score",       AZUL),
+    ("Matriz Σ\ncovarianza",        AZUL_L),
+    ("Eigen-\ndescomposición",      ACENTO),
+    ("Ordenar\npor λ",              AZUL_L),
+    ("Proyectar\ndatos",            AZUL),
+    ("Datos\nreducidos\n(n×k)",     ACENTO),
+]
+
+fig = go.Figure()
+for i, (label, color) in enumerate(pasos_r):
+    x0 = i * 0.155
+    fig.add_shape(type="rect", x0=x0, y0=0.25, x1=x0+0.13, y1=0.75,
+                  fillcolor=color, line=dict(color=AZUL, width=1.5))
+    for li, line in enumerate(label.split('\n')):
+        fig.add_annotation(x=x0+0.065, y=0.62 - li*0.13,
+                           text=f"<b>{line}</b>", showarrow=False,
+                           font=dict(color=FONDO, size=9))
+    if i < len(pasos_r) - 1:
+        fig.add_annotation(
+            x=x0+0.14, y=0.5, ax=x0+0.13, ay=0.5,
+            arrowhead=3, arrowcolor=AZUL, arrowwidth=2,
+            xref='x', yref='y', axref='x', ayref='y', showarrow=True
+        )
+
+fig.update_layout(
+    xaxis=dict(visible=False, range=[-0.02, 1.1]),
+    yaxis=dict(visible=False, range=[0.1, 0.9]),
+    paper_bgcolor=FONDO, plot_bgcolor=FONDO,
+    height=185, margin=dict(t=10, b=10)
+)
+fig.show()
+```
+
+```python
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+X_std      = StandardScaler().fit_transform(X)
+pca        = PCA(n_components=k)
+X_reducido = pca.fit_transform(X_std)
+```
+
+---
+
+## Tarea opcional
+
+Realiza el ejercicio de los equipos de fútbol **a mano**:
+
+1. **Estandarizar** cada variable (media y desviación estándar)
+2. **Construir** la matriz de covarianza $3 \times 3$
+3. **Resolver** $\det(\Sigma - \lambda I) = 0$
+4. **Encontrar** los eigenvectores para cada $\lambda$
+5. **Calcular** el % de varianza de cada componente
+6. **Interpretar** qué captura PC1 y qué captura PC2
+
+::: {.callout-note}
+Entrégala en una hoja el **miércoles**. Es opcional pero consolida los conceptos antes del examen.
+:::
+
+---
+
+## Referencias
+
+- **GeeksforGeeks** — [Principal Component Analysis (PCA)](https://www.geeksforgeeks.org/principal-component-analysis-pca/)
+- **George Dallas** — [PCA 4 Dummies: Eigenvectors, Eigenvalues and Dimension Reduction](https://georgemdallas.wordpress.com/2013/10/30/principal-component-analysis-4-dummies-eigenvectors-eigenvalues-and-dimension-reduction/)
+- **scikit-learn** — `sklearn.decomposition.PCA`
+- **3Blue1Brown** — *Essence of Linear Algebra* (YouTube)
+
+::: {.callout-tip}
+**Próxima clase:** trae tu laptop con `scikit-learn`, `plotly` y `numpy` instalados.
+:::
+
+---
+
+## {.title-section}
+
+::: {style="padding-top: 60px;"}
+
+# ¿Preguntas?
+
+**Almacenes y Minería de Datos**
+
+Facultad de Ciencias · UNAM · 2026
+
+:::
+
+
+
+<!-- ## La matriz de covarianza muestral
+
+$$S = \frac{1}{n-1} \tilde{X}^T \tilde{X} \in \mathbb{R}^{p \times p}$$
+
+**Propiedades clave:**
+
+- **Simétrica**: $S = S^T$
+- **Semidefinida positiva**: $v^T S v \geq 0$ para todo $v$
+- Diagonal: $s_{jj} = \text{Var}(x_j)$
+- Fuera de diagonal: $s_{jk} = \text{Cov}(x_j, x_k)$
+
+Por ser simétrica y semidefinida positiva → admite **descomposición espectral** con eigenvalores reales no negativos.
+
+## El problema de optimización
+
+El primer componente principal $w_1$ maximiza la varianza proyectada:
+
+$$w_1 = \underset{\|w\|=1}{\arg\max} \; w^T S w$$
+
+Por multiplicadores de Lagrange, la condición de optimalidad es:
+
+$$S w = \lambda w$$
+
+→ $w_1$ es el **eigenvector** de $S$ asociado al **eigenvalor máximo** $\lambda_1$.
+
+El $k$-ésimo componente $w_k$ es el $k$-ésimo eigenvector, ortogonal a los anteriores:
+
+$$\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_p \geq 0$$
+
+## Varianza explicada
+
+**Varianza total** = traza de $S$:
+
+$$\text{Var}_{\text{total}} = \text{tr}(S) = \sum_{j=1}^p \lambda_j$$
+
+**Proporción de varianza explicada** por la $k$-ésima componente:
+
+$$\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}$$
+
+**Varianza acumulada** por las primeras $K$ componentes:
+
+$$\text{PVE}_{\leq K} = \frac{\sum_{k=1}^K \lambda_k}{\sum_{j=1}^p \lambda_j}$$
+
+# PCA y la Descomposición SVD
+
+## La conexión fundamental
+
+En la práctica, el PCA **nunca** se calcula via eigendescomposición de $S$ directamente.  
+Se usa la **SVD** de $\tilde{X}$, que es más estable y eficiente:
+
+$$\tilde{X} = U \Sigma V^T$$
+
+| Matriz | Dimensión | Significado |
+|---|---|---|
+| $U$ | $n \times n$ | Vectores singulares izquierdos |
+| $\Sigma$ | $n \times p$ | Valores singulares $\sigma_1 \geq \sigma_2 \geq \cdots \geq 0$ |
+| $V$ | $p \times p$ | Vectores singulares derechos |
+
+## La equivalencia con PCA
+
+$$S = \frac{1}{n-1}\tilde{X}^T\tilde{X} = \frac{1}{n-1} V \Sigma^2 V^T$$
+
+Por tanto:
+
+- Las **columnas de $V$** son los **eigenvectores de $S$** (componentes principales)
+- Los **eigenvalores** de $S$ son $\lambda_k = \sigma_k^2 / (n-1)$
+- Los **scores** son $Z = \tilde{X}V = U\Sigma$
+
+## ¿Por qué SVD y no eigendescomposición directa?
+
+La eigendescomposición de $S$ requiere calcular primero $S = \tilde{X}^T\tilde{X}/(n-1)$, lo cual:
+
+1. **Pierde precisión numérica**: el número de condición se eleva al cuadrado ($\kappa \to \kappa^2$)
+2. **Es ineficiente cuando $n \ll p$**: la *thin SVD* evita la costosa matriz $p \times p$
+3. **El algoritmo de Golub-Reinsch** para SVD es numéricamente más estable
+
+```{python}
+#| code-fold: false
+X = load_iris().data
+X_std = StandardScaler().fit_transform(X)
+
+# Método 1: eigendescomposición de S
+S = np.cov(X_std.T)
+eigenvalues, _ = np.linalg.eigh(S)
+eigenvalues = eigenvalues[::-1]
+
+# Método 2: SVD directa
+U, sigma, Vt = np.linalg.svd(X_std, full_matrices=False)
+lambda_svd = sigma**2 / (len(X_std) - 1)
+
+print("Eigenvalores via S:  ", np.round(eigenvalues, 6))
+print("Eigenvalores via SVD:", np.round(lambda_svd, 6))
+print("Son idénticos:", np.allclose(eigenvalues, lambda_svd))
+``` -->
+
+
+<!-- **3. Interpretabilidad**  
+Cada componente involucra *todas* las variables.  
+→ Alternativa: **Sparse PCA** con penalización $\ell_1$:
+$$\underset{\|w\|=1}{\max} \; w^T S w - \rho \|w\|_1$$
+
+**4. Escala**  
+Sin estandarizar, las variables con mayor varianza dominan.  
+→ Estandarizar siempre que las unidades difieran.
+
+**5. Normalidad implícita**  
+La interpretación probabilística (Tipping & Bishop, 1999) asume $\varepsilon \sim \mathcal{N}(0, \sigma^2 I)$. -->
