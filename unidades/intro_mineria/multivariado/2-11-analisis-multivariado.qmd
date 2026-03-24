@@ -1,5 +1,5 @@
 ---
-title: "Análisis Exploratorio de Datos Multivariado: PCA y Visualización"
+title: "Análisis Exploratorio de Datos Multivariado: Teoría y Visualización"
 format:
   html:
     code-fold: true
@@ -23,9 +23,9 @@ import warnings
 warnings.filterwarnings('ignore')
 ```
 
-# La maldición de la dimensionalidad
+El análisis exploratorio de datos (EDA) ha evolucionado significativamente en los últimos años. Mientras que el enfoque clásico se centraba en estadísticas descriptivas y visualizaciones básicas, el EDA multivariable moderno reconoce que los datos reales son intrínsecamente de alta dimensión y que su comprensión requiere integrar múltiples niveles de análisis de manera estructurada.
 
-## El problema geométrico
+# La maldición de la dimensionalidad
 
 Cuando el número de variables $p$ crece, la geometría del espacio se vuelve profundamente contraintuitiva. El fenómeno conocido como **maldición de la dimensionalidad** (*curse of dimensionality*, Bellman, 1957) describe cómo el volumen del espacio crece tan rápidamente que los datos se vuelven inevitablemente dispersos.
 
@@ -35,36 +35,164 @@ $$
 \frac{V_{\text{esfera}}}{V_{\text{cubo}}} = \frac{\pi^{d/2} r^d}{\Gamma(d/2 + 1) \cdot (2r)^d} = \frac{\pi^{d/2}}{2^d \, \Gamma(d/2 + 1)}
 $$
 
-Esta proporción **tiende a cero** cuando $d \to \infty$. En $d = 2$ la esfera ocupa ~78% del cubo; en $d = 10$ apenas el 0.25%; en $d = 100$, es esencialmente cero. Todo el volumen se concentra en las esquinas del hipercubo.
+En 2 y en 3 dimensiones, esta proporción es relativamente alta (~78% y ~52% respectivamente), como se puede apreciar en la siguiente visualización interactiva donde $r=1$. 
 
 ```{python}
-import numpy as np
-import plotly.graph_objects as go
+#| echo: false
+
+# --- 2D: círculo inscrito en cuadrado ---
+theta = np.linspace(0, 2 * np.pi, 300)
+cx, cy = np.cos(theta), np.sin(theta)
+square_x = [-1, 1, 1, -1, -1]
+square_y = [-1, -1, 1, 1, -1]
+
+# --- 3D: esfera inscrita en cubo ---
+u = np.linspace(0, np.pi, 40)
+v = np.linspace(0, 2 * np.pi, 40)
+sx = np.outer(np.sin(u), np.cos(v))
+sy = np.outer(np.sin(u), np.sin(v))
+sz = np.outer(np.cos(u), np.ones_like(v))
+
+corners = np.array([[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+                    [-1,-1, 1],[1,-1, 1],[1,1, 1],[-1,1, 1]])
+edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),
+         (0,4),(1,5),(2,6),(3,7)]
+
+fig = make_subplots(
+    rows=1, cols=2,
+    column_widths=[0.45, 0.55],
+    specs=[[{"type": "xy"}, {"type": "scene"}]],
+    subplot_titles=[
+        "d = 2 · Círculo en cuadrado (~78%)",
+        "d = 3 · Esfera en cubo (~52%)"
+    ]
+)
+
+# 2D — cuadrado (fondo)
+fig.add_trace(go.Scatter(
+    x=square_x, y=square_y,
+    mode='lines', line=dict(color='royalblue', width=2.5),
+    fill='toself', fillcolor='rgba(65,105,225,0.10)',
+    name='Cuadrado', showlegend=False
+), row=1, col=1)
+
+# 2D — círculo (encima)
+fig.add_trace(go.Scatter(
+    x=cx, y=cy,
+    mode='lines', line=dict(color='crimson', width=2.5),
+    fill='toself', fillcolor='rgba(220,20,60,0.18)',
+    name='Círculo', showlegend=False
+), row=1, col=1)
+
+fig.add_annotation(
+    x=0, y=-1.38, xref='x', yref='y',
+    text="<b>V<sub>círculo</sub> / V<sub>cuadrado</sub> = π/4 ≈ 78%</b>",
+    showarrow=False, font=dict(size=13, color='crimson'), xanchor='center'
+)
+
+fig.update_xaxes(range=[-1.5, 1.5], scaleanchor='y',
+                 showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+fig.update_yaxes(range=[-1.6, 1.3],
+                 showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+
+# 3D — aristas del cubo
+for (i, j) in edges:
+    p0, p1 = corners[i], corners[j]
+    fig.add_trace(go.Scatter3d(
+        x=[p0[0], p1[0]], y=[p0[1], p1[1]], z=[p0[2], p1[2]],
+        mode='lines', line=dict(color='royalblue', width=4),
+        showlegend=False
+    ), row=1, col=2)
+
+# 3D — esfera
+fig.add_trace(go.Surface(
+    x=sx, y=sy, z=sz,
+    colorscale=[[0, 'rgba(220,20,60,0.50)'], [1, 'rgba(255,120,120,0.50)']],
+    showscale=False, name='Esfera'
+), row=1, col=2)
+
+fig.update_layout(
+    height=460,
+    margin=dict(t=50, b=10, l=10, r=10),
+    plot_bgcolor='white',
+    scene=dict(
+        xaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        yaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        zaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        aspectmode='cube',
+        annotations=[dict(
+            x=0, y=0, z=-1.5,
+            text="<b>V<sub>esfera</sub>/V<sub>cubo</sub> = π/6 ≈ 52%</b>",
+            showarrow=False, font=dict(size=12, color='crimson')
+        )]
+    )
+)
+fig.show()
+```
+
+Sin embargo, esta proporción **tiende a cero** cuando $d \to \infty$. Esto significa que la mayoría del volumen del hipercubo se concentra en las esquinas, y la esfera (que representa la región de interés) ocupa una fracción cada vez menor del espacio total.
+
+```{python}
+#| echo: false
 from scipy.special import gamma
 
-dims = np.arange(1, 51)
+dims = np.arange(1,20)
 ratio = (np.pi**(dims/2)) / (2**dims * gamma(dims/2 + 1))
 
+r2 = (np.pi**(2/2)) / (2**2 * gamma(2/2 + 1))
+r3 = (np.pi**(3/2)) / (2**3 * gamma(3/2 + 1))
+
 fig = go.Figure()
+
 fig.add_trace(go.Scatter(
     x=dims, y=ratio,
     mode='lines+markers',
     line=dict(width=2.5),
     marker=dict(size=5),
+    name='V_esfera / V_cubo',
     hovertemplate="d=%{x}<br>Ratio=%{y:.4f}<extra></extra>"
 ))
+
+# Marcador d=2
+fig.add_vline(x=2, line_dash="dash", line_color="crimson", line_width=1.8)
+fig.add_trace(go.Scatter(
+    x=[2], y=[r2],
+    mode='markers+text',
+    marker=dict(size=13, color='crimson', symbol='circle'),
+    text=[f"  d=2 ({r2:.2f})"],
+    textposition='middle right',
+    textfont=dict(color='crimson', size=12),
+    name='d=2',
+    hovertemplate=f"d=2<br>Ratio={r2:.4f}<extra></extra>"
+))
+
+# Marcador d=3
+fig.add_vline(x=3, line_dash="dash", line_color="darkorange", line_width=1.8)
+fig.add_trace(go.Scatter(
+    x=[3], y=[r3],
+    mode='markers+text',
+    marker=dict(size=13, color='darkorange', symbol='circle'),
+    text=[f"  d=3 ({r3:.2f})"],
+    textposition='middle right',
+    textfont=dict(color='darkorange', size=12),
+    name='d=3',
+    hovertemplate=f"d=3<br>Ratio={r3:.4f}<extra></extra>"
+))
+
 fig.update_layout(
     title="Fracción del volumen del hipercubo ocupada por la hiperesfera",
     xaxis_title="Dimensión d",
-    yaxis_title="Volumen esfera / Volumen cubo",
-    height=380
+    yaxis_title="V_esfera / V_cubo",
 )
 fig.show()
 ```
 
-## Implicaciones para el análisis de datos
 
-Para mantener una densidad de muestreo fija $\rho$ en $\mathbb{R}^d$, el número de observaciones necesario escala como:
+
+Esto implica que para el **análisis de datos en alta dimensión**, mantener una densidad de muestreo fija $\rho$ en $\mathbb{R}^d$, el número de observaciones necesario escala como:
 
 $$
 n \sim \rho \cdot L^d
@@ -72,88 +200,269 @@ $$
 
 Con $p = 20$ variables, el número de correlaciones posibles es $\binom{20}{2} = 190$. Con $p = 100$, son 4,950. Revisar e interpretar cada relación manualmente deja de ser practicable. Por ello necesitamos métodos que resuman la información sin perder lo esencial.
 
----
 
 # Fundamentos matemáticos del PCA
 
-## Formulación del problema
+El Análisis de Componentes Principales es una técnica de reducción de dimensionalidad que transforma un conjunto de datos con variables correlacionadas en un nuevo sistema de variables no correlacionadas llamadas **componentes principales**. Cada componente es una combinación lineal de las variables originales y representa una dirección de máxima varianza, preservando así la mayor cantidad de información posible de los datos.
 
-Sea $X \in \mathbb{R}^{n \times p}$ una matriz de datos con $n$ observaciones y $p$ variables. Asumimos que los datos están **centrados**:
+## Formulación Matemática y Procedimiento
+
+Dado un conjunto de datos $X \in \mathbb{R}^{n \times p}$, donde $n$ es el número de muestras y $p$ el número de variables, el proceso se rige por la siguiente secuencia lógica:
+
+1. **Estandarización y Centrado**
+
+    Para evitar que las unidades de medida distorsionen el análisis, los datos deben transformarse a una escala común. Esto se realiza en dos pasos:
+
+    - **Centrado:** restar la media de cada variable  
+    - **Escalado:** dividir entre su desviación estándar  
+
+    De esta forma, cada variable tiene media cero y varianza unitaria.
+
+    $$
+    \tilde{X}_{ij} = \frac{X_{ij} - \mu_j}{\sigma_j}
+    $$
+
+    donde:
+    - $\mu_j$ es la media de la variable $j$  
+    - $\sigma_j$ es su desviación estándar  
+
+
+2.  **Cálculo de la Matriz de Covarianza:** Se construye la matriz $S$ (o $\mathbf{C}$ dependiendo de la notación, $\mathbf{C}$ es común en ML), que resume la variabilidad de cada variable y la relación entre ellas:
+
+    $$S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$$
+
+    De forma elemento a elemento:
+
+    $$s_{jk} = \frac{1}{n-1} \sum_{i=1}^n (x_{ij} - \mu_j)(x_{ik} - \mu_k)$$
+
+    donde:
+    - $s_{jj}$ representa la **varianza** de la variable $j$
+    - $s_{jk}$ representa la **covarianza** entre las variables $j$ y $k$
+
+    Esta matriz es simétrica y semidefinida positiva, lo que garantiza que sus eigenvalores sean reales y no negativos.
+
+3.  **Descomposición Espectral:** Se resuelve el problema de autovalores para encontrar las direcciones principales:
+    $$S \mathbf{v} = \lambda \mathbf{v}$$
+    Aquí, $\lambda$ representa los eigenvalores (la varianza explicada en esa dirección) y $\mathbf{v}$ los eigenvectores (las direcciones o *loadings*).
+
+4.  **Optimización y Ordenamiento:** El primer componente principal $w_1$ es el eigenvector asociado al eigenvalor máximo $\lambda_1$. Los componentes siguientes se obtienen maximizando la varianza restante bajo la condición de ser ortogonales a los anteriores. Se clasifican de forma descendente: $\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_p$.
+
+5.  **Proyección y Reducción:** Finalmente, se proyectan los datos originales sobre el subespacio generado por los primeros $k$ componentes:
+    $$\mathbf{Z} = \tilde{X} \mathbf{V}_k$$
+    Donde $\mathbf{V}_k$ es la matriz que contiene los primeros $k$ eigenvectores ordenados.
+
+
+Cada componente captura una parte de la variabilidad total de los datos, la cual equivale a la traza de la matriz de covarianza ($\sum \lambda_j$). La importancia de cada componente se mide a través de la **Proporción de Varianza Explicada (PVE)**:
+
+$$\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}$$
+
+Esto permite reducir la dimensionalidad manteniendo, por ejemplo, el 95% de la varianza acumulada original.
+
+
+## Ejemplo Práctico: Cálculo Manual Paso a Paso
+
+A continuación, se desarrolla el proceso completo partiendo de una matriz de datos crudos de dos variables ($p=2$):
+
+1.  **Definición de la matriz de datos original:**
+    Supongamos $n=3$ observaciones (ej. mediciones de dos sensores) representados como filas y $p=2$ variables representadas como columnas:
+    $$X = \begin{pmatrix} 2 & 3 \\ 3 & 4 \\ 4 & 5 \end{pmatrix}$$
+
+2.  **Centrado de los datos:**
+    Calculamos la media de cada columna: $\bar{x}_1 = 3$ y $\bar{x}_2 = 4$. Restamos la media a cada fila para obtener $\tilde{X}$:
+    $$\tilde{X} = \begin{pmatrix} 2-3 & 3-4 \\ 3-3 & 4-4 \\ 4-3 & 5-4 \end{pmatrix} = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix}$$
+
+3.  **Cálculo de la matriz de covarianza ($S$):**
+    Aplicamos $S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$ con $n-1 = 2$:
+    $$S = \frac{1}{2} \begin{pmatrix} -1 & 0 & 1 \\ -1 & 0 & 1 \end{pmatrix} \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} = \frac{1}{2} \begin{pmatrix} 2 & 2 \\ 2 & 2 \end{pmatrix} = \begin{pmatrix} 1 & 1 \\ 1 & 1 \end{pmatrix}$$
+
+4.  **Obtención de eigenvalores ($\lambda$):**
+    Resolvemos el determinante $\det(S - \lambda I) = 0$:
+    $$\det \begin{pmatrix} 1-\lambda & 1 \\ 1 & 1-\lambda \end{pmatrix} = (1-\lambda)^2 - 1 = 0 \implies \lambda^2 - 2\lambda = 0$$
+    Los resultados son **$\lambda_1 = 2$** y **$\lambda_2 = 0$**. La varianza total es $2+0=2$. El primer componente explica el $100\%$ de la varianza.
+
+5.  **Obtención de eigenvectores ($\mathbf{v}$):**
+    Para $\lambda_1 = 2$, resolvemos $(S - 2I)\mathbf{v}_1 = 0$:
+    $$\begin{pmatrix} -1 & 1 \\ 1 & -1 \end{pmatrix} \begin{pmatrix} v_{11} \\ v_{21} \end{pmatrix} = 0 \implies v_{11} = v_{21}$$
+    Normalizando para que $\|v\|=1$: **$v_1 = \begin{pmatrix} 1/\sqrt{2} \\ 1/\sqrt{2} \end{pmatrix} \approx \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix}$**.
+
+6.  **Proyección de los datos ($k=1$):**
+    Transformamos los datos centrados a la nueva dimensión $Z = \tilde{X} v_1$:
+    $$Z = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix} = \begin{pmatrix} -1.414 \\ 0 \\ 1.414 \end{pmatrix}$$
+
+7.  **Conclusión:**
+    Dado que los datos originales estaban perfectamente alineados ($x_2 = x_1 + 1$), el PCA ha logrado reducir la dimensionalidad de 2 a 1 sin ninguna pérdida de información, capturando toda la estructura de los datos en un solo eje.
+
+## Ejemplo Práctico: Visualización paso a paso
+
+A continuación, se desarrolla el proceso completo de nuevo incluyendo una visualización interactiva en cada paso para ilustrar cómo se transforman los datos a lo largo del proceso de PCA.
+
+
+1. **Definición de la matriz de datos original**
 
 $$
-\tilde{X} = X - \mathbf{1}\bar{x}^T, \quad \bar{x} = \frac{1}{n}\sum_{i=1}^n x_i
+X = \begin{pmatrix} 2 & 3 \\ 3 & 4 \\ 4 & 5 \end{pmatrix}
 $$
 
-El Análisis de Componentes Principales busca una proyección lineal $Z = \tilde{X} W$ donde $W \in \mathbb{R}^{p \times k}$, $k \leq p$, tal que la varianza total de $Z$ sea máxima.
+```{python}
+import numpy as np
+import plotly.graph_objects as go
 
-## La matriz de covarianza muestral
+X = np.array([[2,3],[3,4],[4,5]])
 
-La matriz de covarianza muestral se define como:
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=X[:,0], y=X[:,1],
+    mode='markers+text',
+    text=['P1','P2','P3'],
+    textposition='top center'
+))
+fig.update_layout(title="Datos originales")
+fig.show()
+```
 
-$$
-S = \frac{1}{n-1} \tilde{X}^T \tilde{X} \in \mathbb{R}^{p \times p}
-$$
-
-Sus propiedades clave son:
-
-- **Simétrica**: $S = S^T$
-- **Semidefinida positiva**: $v^T S v \geq 0$ para todo $v \in \mathbb{R}^p$
-- La diagonal $s_{jj} = \text{Var}(x_j)$
-- Los elementos fuera de la diagonal $s_{jk} = \text{Cov}(x_j, x_k)$
-
-Por ser simétrica y semidefinida positiva, $S$ admite una **descomposición espectral** completa con eigenvalores reales no negativos.
-
-## El problema de optimización
-
-El primer componente principal $w_1$ se define como la dirección de **máxima varianza**:
+2. **Centrado de los datos**
 
 $$
-w_1 = \underset{\|w\|=1}{\arg\max} \; w^T S w
+\tilde{X} =
+\begin{pmatrix}
+-1 & -1 \\
+0 & 0 \\
+1 & 1
+\end{pmatrix}
 $$
 
-Por el método de multiplicadores de Lagrange, la condición de optimalidad es:
+```{python}
+X_centered = X - X.mean(axis=0)
+
+fig = go.Figure()
+fig.add_hline(y=0)
+fig.add_vline(x=0)
+
+fig.add_trace(go.Scatter(
+    x=X_centered[:,0], y=X_centered[:,1],
+    mode='markers+text',
+    text=['P1','P2','P3'],
+    textposition='top center'
+))
+
+
+
+fig.update_layout(title="Datos centrados")
+fig.show()
+```
+
+3. **Cálculo de la matriz de covarianza**
 
 $$
-S w = \lambda w
+S =
+\begin{pmatrix}
+1 & 1 \\
+1 & 1
+\end{pmatrix}
 $$
 
-Es decir, $w_1$ es el **eigenvector** de $S$ asociado al **eigenvalor máximo** $\lambda_1$. La varianza proyectada en esa dirección es exactamente $\lambda_1$.
+```{python}
+S = np.cov(X_centered, rowvar=False)
 
-El $k$-ésimo componente principal $w_k$ se obtiene maximizando la varianza sujeto a ser ortogonal a los $k-1$ componentes anteriores:
+fig = go.Figure(data=go.Heatmap(
+    z=S,
+    text=S.round(2),
+))
 
-$$
-w_k = \underset{\substack{\|w\|=1 \\ w \perp w_1, \ldots, w_{k-1}}}{\arg\max} \; w^T S w
-$$
+fig.update_layout(title="Matriz de covarianza")
+fig.show()
+```
 
-La solución es el $k$-ésimo eigenvector de $S$, con eigenvalor $\lambda_k$, donde $\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_p \geq 0$.
-
-## Varianza explicada
-
-La varianza total de los datos es la traza de $S$:
-
-$$
-\text{Var}_{\text{total}} = \text{tr}(S) = \sum_{j=1}^p \lambda_j
-$$
-
-La proporción de varianza explicada por la $k$-ésima componente es:
+4. **Obtención de eigenvalores**
 
 $$
-\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}
+\lambda_1 = 2, \quad \lambda_2 = 0
 $$
 
-Y la varianza acumulada por las primeras $K$ componentes:
+```{python}
+eigvals, eigvecs = np.linalg.eig(S)
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=['λ1','λ2'],
+    y=eigvals
+))
+
+fig.update_layout(title="Varianza por componente")
+fig.show()
+```
+
+5. **Obtención de eigenvectores**
 
 $$
-\text{PVE}_{\leq K} = \frac{\sum_{k=1}^K \lambda_k}{\sum_{j=1}^p \lambda_j}
+v_1 \approx
+\begin{pmatrix}
+0.707 \\
+0.707
+\end{pmatrix}
 $$
 
----
+```{python}
+v1 = eigvecs[:, np.argmax(eigvals)]
+t = np.linspace(-2,2,100)
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=X_centered[:,0], y=X_centered[:,1],
+    mode='markers'
+))
+
+fig.add_trace(go.Scatter(
+    x=t*v1[0],
+    y=t*v1[1],
+    mode='lines',
+    name='PC1'
+))
+
+fig.update_layout(title="Dirección principal (PC1)")
+fig.show()
+```
+
+6. **Proyección de los datos**
+
+$$
+Z =
+\begin{pmatrix}
+-1.414 \\
+0 \\
+1.414
+\end{pmatrix}
+$$
+
+```{python}
+Z = X_centered @ v1
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=Z,
+    y=[0,0,0],
+    mode='markers+text',
+    text=['P1','P2','P3'],
+    textposition='top center'
+))
+
+fig.update_layout(title="Datos proyectados en PC1")
+fig.show()
+```
+
+7. **Conclusión**
+
+Dado que los datos están perfectamente alineados:
+
+- Toda la varianza se concentra en una dirección  
+- PCA reduce de 2D a 1D sin pérdida  
+- La interpretación es clara: la dirección de máxima varianza coincide con la línea que conecta los puntos, y el segundo componente no aporta información adicional.
 
 # PCA y la Descomposición en Valores Singulares (SVD)
 
-## La conexión fundamental
-
-En la práctica, el PCA **nunca** se calcula mediante la eigendescomposición de $S$ directamente. En cambio, se utiliza la **Descomposición en Valores Singulares (SVD)** de la matriz centrada $\tilde{X}$, que es numéricamente más estable y eficiente.
+En la práctica, en las paqueterías modernas PCA **nunca** se calcula mediante la eigendescomposición de $S$ directamente (pueden ver el ejemplo de la documentación de [scikitlearn](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html)). En cambio, se utiliza la **Descomposición en Valores Singulares (SVD)** de la matriz centrada $\tilde{X}$, que es numéricamente más estable y eficiente.
 
 Toda matriz $\tilde{X} \in \mathbb{R}^{n \times p}$ admite la descomposición:
 
@@ -167,8 +476,6 @@ donde:
 - $\Sigma \in \mathbb{R}^{n \times p}$: matriz diagonal de **valores singulares** $\sigma_1 \geq \sigma_2 \geq \cdots \geq \sigma_{\min(n,p)} \geq 0$
 - $V \in \mathbb{R}^{p \times p}$: matriz ortogonal de **vectores singulares derechos** (columnas = eigenvectores de $\tilde{X}^T\tilde{X}$)
 
-## La equivalencia con PCA
-
 La relación entre SVD y PCA es directa:
 
 $$
@@ -181,7 +488,7 @@ Por tanto:
 - Los **eigenvalores** de $S$ son $\lambda_k = \sigma_k^2 / (n-1)$
 - Los **scores** (proyecciones) son $Z = \tilde{X}V = U\Sigma$
 
-## ¿Por qué SVD y no eigendescomposición directa?
+**¿Por qué SVD y no eigendescomposición directa?**
 
 La eigendescomposición de $S$ requiere calcular primero $S = \tilde{X}^T\tilde{X}/(n-1)$, lo cual:
 
@@ -217,11 +524,21 @@ print("Son idénticos:", np.allclose(eigenvalues, lambda_svd))
 
 ---
 
-# Implementación paso a paso
+# Ejemplo práctico: Implementación paso a paso
 
-## Dataset: Iris
+## Dataset: Iris {.unnumbered}
 
-Usamos el clásico dataset Iris con 4 variables numéricas para ilustrar cada paso del PCA.
+Para este ejemplousaremos Scikit-learn, mediante el clásico dataset *Iris* (flores de lirio de este lado del charco), que contiene mediciones de flores de tres especies (*setosa*, *versicolor* y *virginica*). Cada observación está descrita por cuatro variables numéricas:
+
+- longitud del sépalo  
+- ancho del sépalo  
+- longitud del pétalo  
+- ancho del pétalo  
+
+Estas variables capturan características morfológicas de las flores y presentan correlaciones entre sí, lo que lo convierte en un ejemplo ideal para ilustrar cómo PCA identifica estructura y reduce dimensionalidad.
+
+![](https://www.embedded-robotics.com/wp-content/uploads/2022/01/Iris-Dataset-Classification-1024x367.png)
+
 
 ```{python}
 iris = load_iris()
@@ -235,7 +552,7 @@ df_iris['Especie'] = [nombres[i] for i in y]
 df_iris.describe().round(3)
 ```
 
-## Paso 1: Estandarización
+## Paso 1: Estandarización {.unnumbered}
 
 La estandarización es **obligatoria** cuando las variables tienen escalas distintas. Sin ella, las variables con mayor varianza absoluta dominarían el PCA independientemente de su relevancia.
 
@@ -260,7 +577,7 @@ df_check = pd.DataFrame({
 df_check
 ```
 
-## Paso 2: Matriz de covarianza
+## Paso 2: Matriz de covarianza {.unnumbered}
 
 ```{python}
 S = np.cov(X_std.T)
@@ -288,7 +605,7 @@ fig.show()
 Cuando los datos están estandarizados, la matriz de covarianza es idéntica a la **matriz de correlación de Pearson**. Por eso PCA sobre datos estandarizados equivale a hacer PCA sobre correlaciones.
 :::
 
-## Paso 3: Eigendescomposición vía SVD
+## Paso 3: Eigendescomposición vía SVD {.unnumbered}
 
 ```{python}
 pca = PCA()
@@ -307,7 +624,7 @@ df_pca = pd.DataFrame({
 df_pca
 ```
 
-## Paso 4: Scree plot
+## Paso 4: Scree plot {.unnumbered}
 
 ```{python}
 fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -348,7 +665,7 @@ fig.show()
 - **Interpretabilidad de dominio**: ¿los componentes tienen sentido en el problema?
 :::
 
-## Paso 5: Biplot
+## Paso 5: Biplot {.unnumbered}
 
 El **biplot** superpone los scores de las observaciones y los vectores de los loadings en el mismo espacio reducido, permitiendo interpretar simultáneamente la estructura de las observaciones y la contribución de las variables.
 
@@ -404,100 +721,593 @@ fig.show()
 
 **Interpretación del biplot:**
 
-- Las flechas (loadings) indican la dirección y magnitud en que cada variable contribuye a los componentes
-- Flechas largas → la variable tiene alta contribución a ese componente
-- Flechas apuntando en la misma dirección → variables altamente correlacionadas
-- La separación de los grupos indica qué tan bien distingue PCA las clases
+- Las flechas (loadings) representan los **vectores de las variables proyectados** sobre el nuevo sistema de coordenadas definido por los componentes principales. Es decir, cada flecha muestra cómo una variable original se expresa en la nueva base.
 
-## Paso 6: Loadings detallados
+- Flechas largas → la variable tiene **gran proyección (norma)** sobre ese plano, por lo que contribuye significativamente a la variabilidad capturada por los componentes.
+
+- Flechas apuntando en la misma dirección → sus vectores forman un **ángulo pequeño**, lo que indica alta correlación (producto punto positivo grande).  
+  Flechas opuestas → correlación negativa.  
+  Flechas ortogonales → variables no correlacionadas.
+
+- La posición de los puntos corresponde a la **proyección de las observaciones** en el subespacio generado por los primeros componentes.  
+  La separación entre grupos refleja qué tan bien este subespacio (de menor dimensión) preserva la estructura original de los datos.
+
+En conjunto, el biplot muestra simultáneamente:
+- un **cambio de base** (álgebra lineal)  
+- y una **proyección de los datos** en un subespacio de menor dimensión
+
+## Paso 6: Loadings detallados {.unnumbered}
 
 ```{python}
+
 df_loadings = pd.DataFrame(
     loadings[:2].T,
     index=feature_names,
     columns=['PC1', 'PC2']
 ).round(4)
 
-fig = make_subplots(1, 2, subplot_titles=['PC1 — Loadings', 'PC2 — Loadings'])
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "<b>Componente Principal 1 (PC1)</b>",
+        "<b>Componente Principal 2 (PC2)</b>"
+    ]
+)
 
+# PC1
 fig.add_trace(go.Bar(
-    x=feature_names, y=loadings[0],
+    x=feature_names,
+    y=loadings[0],
     text=[f"{v:.3f}" for v in loadings[0]],
     textposition='outside'
 ), row=1, col=1)
 
+# PC2
 fig.add_trace(go.Bar(
-    x=feature_names, y=loadings[1],
+    x=feature_names,
+    y=loadings[1],
     text=[f"{v:.3f}" for v in loadings[1]],
     textposition='outside'
 ), row=1, col=2)
 
+# Ejes
 for c in [1, 2]:
-    fig.update_yaxes(range=[-1.1, 1.1], zeroline=True,
-                     zerolinecolor='lightgray', row=1, col=c)
-    fig.update_xaxes(tickangle=-25, row=1, col=c)
+    fig.update_yaxes(
+        range=[-1.1, 1.1],
+        zeroline=True,
+        zerolinecolor='lightgray',
+        row=1, col=c
+    )
+    fig.update_xaxes(
+        tickangle=-25,
+        row=1, col=c
+    )
 
+# Hacer más visibles los títulos de subplots
+for ann in fig['layout']['annotations']:
+    ann['font'] = dict(size=14)
+
+# Nota interpretativa
 fig.update_layout(
-    height=380,
     showlegend=False,
-    annotations=[dict(
-        x=0.5, y=-0.18, xref='paper', yref='paper',
-        text="PC1 ≈ tamaño general del pétalo y sépalo | PC2 ≈ contraste sépalo largo vs ancho",
-        showarrow=False, font=dict(size=12, color='gray'),
-        xanchor='center'
-    )]
+    height=420,
+    annotations=list(fig.layout.annotations) + [
+        dict(
+            x=0.5, y=-0.2,
+            xref='paper', yref='paper',
+            text="PC1 ≈ tamaño general | PC2 ≈ contraste estructural del sépalo",
+            showarrow=False,
+            font=dict(size=12, color='gray'),
+            xanchor='center'
+        )
+    ]
 )
+
 fig.show()
 ```
+
+**Interpretación de los loadings:**
+
+Cada componente principal es una **combinación lineal de las variables originales**. Es decir:
+
+$$
+\text{PC}_k = w_{1k} x_1 + w_{2k} x_2 + \cdots + w_{pk} x_p
+$$
+
+donde los *loadings* $w_{jk}$ indican el peso de cada variable en ese componente.
+
+- **PC1** combina fuertemente *pétalo largo*, *pétalo ancho* y *sépalo largo* (coeficientes positivos similares), por lo que representa un eje de **tamaño general de la flor**. El *sépalo ancho* contribuye negativamente, ajustando ligeramente esa dirección.
+
+- **PC2** está dominado por *sépalo ancho*, con poca contribución del resto, por lo que captura un **contraste específico en la forma del sépalo**.
+
+En términos geométricos, cada componente define una **dirección en el espacio original**, y los loadings son las **coordenadas de esa dirección** en la base de variables originales.
 
 ---
 
-# Ejemplo avanzado: Dataset sintético con ruido
+# Ejemplo avanzado: Dataset con ruido
+
+** El problema: una partícula en movimiento que no podemos ver directamente **
+
+Imagina que una partícula traza una trayectoria helicoidal en el espacio
+tridimensional. Nosotros no podemos observarla directamente — solo tenemos
+acceso a **sensores**, y cada sensor introduce su propio ruido de medición.
+
+El desafío central es: dado un conjunto de lecturas ruidosas de múltiples
+sensores, ¿podemos recuperar la trayectoria original?
+
+PCA responde exactamente a esa pregunta. Pero antes de aplicarlo,
+construyamos el experimento desde cero.
+
+
+## Paso 1 — La trayectoria real y el ruido de medición {.unnumbered}
+
+Generamos 500 puntos sobre una hélice paramétrica:
+
+$$x(t) = t, \quad y(t) = \cos(t), \quad z(t) = \sin(t), \quad t \in [-10, 10]$$
+
+Luego añadimos ruido gaussiano independiente en $y$ y $z$ para simular
+la imprecisión de los instrumentos de medida.
 
 ```{python}
-np.random.seed(42)
-n = 300
+n_points = 500
+t = np.linspace(-10, 10, n_points)
 
-# Señal en 2D embebida en 10 dimensiones con ruido
-t = np.linspace(0, 2*np.pi, n)
-signal = np.column_stack([np.cos(t), np.sin(t)])
+# Trayectoria limpia
+x_clean = t
+y_clean = np.cos(t)
+z_clean = np.sin(t)
 
-# Proyección a 10D con matriz aleatoria + ruido
-A = np.random.randn(2, 10)
-X_high = signal @ A + 0.3 * np.random.randn(n, 10)
-X_high_std = StandardScaler().fit_transform(X_high)
+# Observaciones ruidosas (lo que miden los sensores)
+sigma = 0.5
+y_noise = y_clean + np.random.normal(0, sigma, n_points)
+z_noise = z_clean + np.random.normal(0, sigma, n_points)
 
-pca_high = PCA()
-pca_high.fit(X_high_std)
-pve_high = pca_high.explained_variance_ratio_ * 100
-pve_high_acum = np.cumsum(pve_high)
+points = np.column_stack([x_clean, y_noise, z_noise])
 
+# ── Visualización ──────────────────────────────────────────
 fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=[f"PC{i+1}" for i in range(10)], y=pve_high,
-    name='% Varianza',
-    text=[f"{v:.1f}%" for v in pve_high],
-    textposition='outside'
+
+fig.add_trace(go.Scatter3d(
+    x=points[:, 0], y=points[:, 1], z=points[:, 2],
+    mode='markers',
+    marker=dict(size=3, color='steelblue', opacity=0.5),
+    name='Mediciones ruidosas'
 ))
-fig.add_trace(go.Scatter(
-    x=[f"PC{i+1}" for i in range(10)], y=pve_high_acum,
-    mode='lines+markers', name='% Acumulado',
-    yaxis='y2'
+
+fig.add_trace(go.Scatter3d(
+    x=x_clean, y=y_clean, z=z_clean,
+    mode='lines',
+    line=dict(color='crimson', width=4),
+    name='Trayectoria real'
 ))
+
 fig.update_layout(
-    title="Señal 2D embebida en 10D: PCA recupera las 2 dimensiones relevantes",
-    yaxis=dict(title='% Varianza'),
-    yaxis2=dict(title='% Acumulado', overlaying='y', side='right', range=[0, 110]),
-    height=380
+    title='Trayectoria helicoidal: señal real vs. mediciones ruidosas',
+    scene=dict(
+        xaxis_title='X', yaxis_title='Y', zaxis_title='Z',
+        yaxis=dict(range=[-5, 5]),
+        xaxis=dict(range=[-11, 11])
+    ),
+    legend=dict(x=0.01, y=0.99),
+    height=520
 )
 fig.show()
 ```
+
+Los puntos azules son lo que los sensores registran. La línea roja es la
+realidad que queremos recuperar. A simple vista ya es difícil distinguir
+la estructura subyacente del ruido.
+
+## Paso 2 — Tres sensores, tres perspectivas distintas {.unnumbered}
+
+En un experimento real, distintos sensores observan el mismo fenómeno
+desde **ángulos diferentes**. Cada sensor proyecta la nube de puntos sobre
+su propio plano de referencia y mide coordenadas locales $(u, v)$ en ese
+plano — más, inevitablemente, su propio ruido adicional.
+
+Simulamos tres sensores con planos de proyección distintos.
+
+```{python}
+# ── Funciones auxiliares ────────────────────────────────────
+
+def proyection(points, plane_point, plane_normal):
+    """Proyecta cada punto sobre un plano definido por un punto y su normal."""
+    n = plane_normal / np.linalg.norm(plane_normal)
+    d = points - plane_point
+    dist = d.dot(n)
+    return points - np.outer(dist, n)
+
+
+def plane_axes(plane_normal):
+    """Devuelve dos vectores ortogonales que forman la base del plano."""
+    n = plane_normal / np.linalg.norm(plane_normal)
+    # Vector arbitrario no paralelo a n
+    arb = np.array([1, 0, 0]) if abs(n[0]) < 0.9 else np.array([0, 1, 0])
+    u = np.cross(n, arb)
+    u /= np.linalg.norm(u)
+    v = np.cross(n, u)
+    v /= np.linalg.norm(v)
+    return u, v
+
+
+def sensor_reading(points, plane_point, plane_normal, noise_std=0.5):
+    """
+    Proyecta puntos sobre el plano del sensor y devuelve:
+    - coordenadas 2D locales (s, t) con ruido adicional
+    - la proyección 3D (para visualización)
+    - los vectores de la base del plano (u, v)
+    """
+    proj_3d = proyection(points, plane_point, plane_normal)
+    u, v = plane_axes(plane_normal)
+
+    proj_vectors = proj_3d - plane_point
+    s = proj_vectors.dot(u) + np.random.normal(0, noise_std, len(points))
+    t = proj_vectors.dot(v) + np.random.normal(0, noise_std, len(points))
+
+    return s, t, proj_3d, u, v
+
+
+def plane_mesh(plane_point, plane_normal, size=12, res=20):
+    """Genera una malla rectangular para visualizar el plano del sensor."""
+    u, v = plane_axes(plane_normal)
+    lin = np.linspace(-size, size, res)
+    uu, vv = np.meshgrid(lin, lin)
+    X = plane_point[0] + uu * u[0] + vv * v[0]
+    Y = plane_point[1] + uu * u[1] + vv * v[1]
+    Z = plane_point[2] + uu * u[2] + vv * v[2]
+    return X, Y, Z
+```
+
+```{python}
+# ── Definición de los tres sensores ────────────────────────
+sensors = [
+    dict(point=np.array([5., -6., 0.]),  normal=np.array([1., -1., 0.]),
+         color='royalblue',  name='Sensor A'),
+    dict(point=np.array([10., 0., 0.]),  normal=np.array([10., 0., 0.1]),
+         color='seagreen',   name='Sensor B'),
+    dict(point=np.array([3.,  3., 3.]),  normal=np.array([1.,  1., 1.]),
+         color='darkorange', name='Sensor C'),
+]
+
+readings = []
+for s in sensors:
+    sc, tc, proj3d, u, v = sensor_reading(
+        points, s['point'], s['normal'], noise_std=0.5
+    )
+    readings.append({'s': sc, 't': tc, 'proj3d': proj3d,
+                     'u': u, 'v': v, **s})
+```
+
+### Perspectiva 3D: sensores y sus proyecciones {.unnumbered}
+
+```{python}
+fig = go.Figure()
+
+# Trayectoria real
+fig.add_trace(go.Scatter3d(
+    x=x_clean, y=y_clean, z=z_clean,
+    mode='lines', line=dict(color='crimson', width=4),
+    name='Trayectoria real'
+))
+
+# Puntos originales
+fig.add_trace(go.Scatter3d(
+    x=points[:, 0], y=points[:, 1], z=points[:, 2],
+    mode='markers', marker=dict(size=2, color='lightgray', opacity=0.4),
+    name='Mediciones originales'
+))
+
+for r in readings:
+    # Plano del sensor
+    px_m, py_m, pz_m = plane_mesh(r['point'], r['normal'], size=10)
+    fig.add_trace(go.Surface(
+        x=px_m, y=py_m, z=pz_m,
+        colorscale=[[0, r['color']], [1, r['color']]],
+        opacity=0.15, showscale=False,
+        name=f"Plano {r['name']}", showlegend=False
+    ))
+    # Proyección sobre el plano
+    fig.add_trace(go.Scatter3d(
+        x=r['proj3d'][:, 0], y=r['proj3d'][:, 1], z=r['proj3d'][:, 2],
+        mode='markers', marker=dict(size=2.5, color=r['color'], opacity=0.7),
+        name=r['name']
+    ))
+
+fig.update_layout(
+    title='Los tres sensores proyectan la nube sobre sus planos respectivos',
+    scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z',
+               xaxis=dict(range=[-12, 12]),
+               yaxis=dict(range=[-8, 8])),
+    legend=dict(x=0.01, y=0.99),
+    height=560
+)
+fig.show()
+```
+
+Cada sensor "aplana" la nube sobre su propio plano. Ninguno captura la
+hélice perfectamente, pero cada uno aporta información parcial y
+complementaria.
+
+### Lo que registra cada sensor: coordenadas 2D {.unnumbered}
+
+```{python}
+fig = make_subplots(
+    rows=1, cols=3,
+    subplot_titles=[r['name'] for r in readings],
+    shared_yaxes=False
+)
+
+for i, r in enumerate(readings, 1):
+    fig.add_trace(go.Scatter(
+        x=r['s'], y=r['t'],
+        mode='markers',
+        marker=dict(size=3, color=r['color'], opacity=0.6),
+        name=r['name'],
+        showlegend=False
+    ), row=1, col=i)
+    fig.update_xaxes(title_text='u (eje 1 del plano)', row=1, col=i,
+                     zeroline=True, zerolinecolor='lightgray')
+    fig.update_yaxes(title_text='v (eje 2 del plano)' if i == 1 else '',
+                     row=1, col=i,
+                     zeroline=True, zerolinecolor='lightgray')
+
+fig.update_layout(
+    title='Lecturas brutas de cada sensor (coordenadas 2D locales)',
+    height=400
+)
+fig.show()
+```
+
+Cada sensor produce una imagen 2D distorsionada de la misma hélice.
+El sensor A la ve casi como una elipse, el B como una banda horizontal,
+el C como una nube más compacta. Ninguno por sí solo revela la hélice
+original.
+
+## Paso 3 — Construir la matriz de datos multi-sensor {.unnumbered}
+
+Apilamos las seis coordenadas (2 por cada sensor) para formar una
+**matriz de datos** $X \in \mathbb{R}^{500 \times 6}$. Cada fila es una
+muestra; cada columna es una variable medida por algún sensor.
+
+Esta es exactamente la estructura con la que trabaja PCA: muchas variables
+correlacionadas que comparten una estructura latente de baja dimensión.
+
+```{python}
+# Matriz de datos: 500 muestras × 6 variables (2 por sensor)
+data_matrix = np.column_stack([r['s'] for r in readings] +
+                               [r['t'] for r in readings])
+# Reordenamos: s_A, t_A, s_B, t_B, s_C, t_C
+data_matrix = np.column_stack([
+    readings[0]['s'], readings[0]['t'],
+    readings[1]['s'], readings[1]['t'],
+    readings[2]['s'], readings[2]['t'],
+])
+
+col_labels = ['A_u', 'A_v', 'B_u', 'B_v', 'C_u', 'C_v']
+
+print(f"Dimensión de la matriz de datos: {data_matrix.shape}")
+print(f"Variables: {col_labels}")
+```
+
+### Matriz de correlación entre sensores {.unnumbered}
+
+```{python}
+corr = np.corrcoef(data_matrix.T)
+
+fig = go.Figure(data=go.Heatmap(
+    z=corr,
+    x=col_labels, y=col_labels,
+    colorscale='RdBu_r',
+    zmid=0, zmin=-1, zmax=1,
+    text=np.round(corr, 2),
+    texttemplate='%{text}',
+    textfont=dict(size=11),
+    colorbar=dict(title='Correlación')
+))
+
+fig.update_layout(
+    title='Correlación entre las 6 variables medidas por los sensores',
+    height=420
+)
+fig.show()
+```
+
+La matriz de correlación revela la redundancia. Variables del mismo sensor
+están fuertemente correlacionadas entre sí, y también con variables de
+otros sensores — evidencia de que todas miden el mismo fenómeno subyacente.
+PCA explotará precisamente esa redundancia.
+
+
+## Paso 4 — Aplicar PCA: ¿cuánta información hay realmente? {.unnumbered}
+
+PCA descompone la varianza total en **componentes ortogonales ordenados
+por importancia**. Si el fenómeno real vive en pocas dimensiones, la mayor
+parte de la varianza se concentrará en los primeros componentes.
+
+```{python}
+pca_full = PCA(n_components=6)
+components_full = pca_full.fit_transform(data_matrix)
+
+explained = pca_full.explained_variance_ratio_
+cumulative = np.cumsum(explained)
+
+# ── Scree plot ──────────────────────────────────────────────
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=[f'PC{i+1}' for i in range(6)],
+    y=explained * 100,
+    name='% Varianza individual',
+    text=[f'{v*100:.1f}%' for v in explained],
+    textposition='outside',
+    marker_color='steelblue'
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=[f'PC{i+1}' for i in range(6)],
+    y=cumulative * 100,
+    mode='lines+markers',
+    name='% Acumulado',
+    line=dict(color='crimson', width=2.5),
+    marker=dict(size=9)
+), secondary_y=True)
+
+fig.add_hline(y=90, line_dash='dash', line_color='gray',
+              annotation_text='90%', secondary_y=True)
+
+fig.update_yaxes(title_text='% Varianza por componente', secondary_y=False)
+fig.update_yaxes(title_text='% Varianza acumulada', range=[0, 110],
+                 secondary_y=True)
+fig.update_layout(
+    title='Scree plot: ¿cuántos componentes capturan la señal?',
+    height=400
+)
+fig.show()
+
+print("Varianza explicada por componente:")
+for i, (v, c) in enumerate(zip(explained, cumulative)):
+    print(f"  PC{i+1}: {v*100:5.1f}%   acumulado: {c*100:5.1f}%")
+```
+
+Los primeros **2–3 componentes** concentran la gran mayoría de la varianza.
+Esto confirma lo que esperábamos: el sistema tiene **2 grados de libertad
+reales** (la hélice es una curva en 3D, parametrizada por un solo
+parámetro $t$), y el resto es ruido.
+
+
+## Paso 5 — Proyección en 2D: la hélice emerge del ruido {.unnumbered}
+
+Con solo los dos primeros componentes principales recuperamos la
+estructura esencial del movimiento.
+
+```{python}
+pca_2d = PCA(n_components=2)
+proj_2d = pca_2d.fit_transform(data_matrix)
+
+# Línea de referencia: sin(t) proyectada para comparación
+t_ref = np.linspace(-12, 12, 300)
+ref_x = t_ref / t_ref.max() * proj_2d[:, 0].max()
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=proj_2d[:, 0], y=proj_2d[:, 1],
+    mode='markers',
+    marker=dict(size=4, color='steelblue', opacity=0.6),
+    name='Muestras (PC1 vs PC2)'
+))
+
+# Colorear por el parámetro t para mostrar la continuidad
+fig.add_trace(go.Scatter(
+    x=proj_2d[:, 0], y=proj_2d[:, 1],
+    mode='markers',
+    marker=dict(
+        size=4, opacity=0.8,
+        color=t,
+        colorscale='Viridis',
+        colorbar=dict(title='t (tiempo)', len=0.6)
+    ),
+    name='Coloreado por t'
+))
+
+fig.update_xaxes(title_text='Componente Principal 1',
+                 zeroline=True, zerolinecolor='lightgray')
+fig.update_yaxes(title_text='Componente Principal 2',
+                 zeroline=True, zerolinecolor='lightgray',
+                 scaleanchor='x')
+fig.update_layout(
+    title=f'PC1 vs PC2 — {pca_2d.explained_variance_ratio_.sum()*100:.1f}% de la varianza total',
+    height=480
+)
+fig.show()
+```
+
+Al colorear los puntos por el parámetro $t$ (el "tiempo" de la
+trayectoria), vemos que el orden temporal se preserva perfectamente: PCA
+ha recuperado la parametrización natural de la hélice a partir de seis
+variables ruidosas.
+
+## Paso 6 — Proyección en 3D: confirmando la estructura helicoidal {.unnumbered}
+
+Agregando el tercer componente recuperamos la geometría completa.
+
+```{python}
+pca_3d = PCA(n_components=3)
+proj_3d = pca_3d.fit_transform(data_matrix)
+
+fig = go.Figure()
+
+# Muestras coloreadas por t
+fig.add_trace(go.Scatter3d(
+    x=proj_3d[:, 0], y=proj_3d[:, 1], z=proj_3d[:, 2],
+    mode='markers',
+    marker=dict(
+        size=3, opacity=0.7,
+        color=t,
+        colorscale='Viridis',
+        colorbar=dict(title='t', len=0.5)
+    ),
+    name='Muestras'
+))
+
+# Trayectoria original reescalada para superposición visual
+scale = proj_3d[:, 0].std() / x_clean.std()
+fig.add_trace(go.Scatter3d(
+    x=x_clean * scale,
+    y=y_clean * proj_3d[:, 1].std(),
+    z=z_clean * proj_3d[:, 2].std(),
+    mode='lines',
+    line=dict(color='crimson', width=4),
+    name='Trayectoria original (reescalada)'
+))
+
+fig.update_layout(
+    title=f'Proyección 3D — {pca_3d.explained_variance_ratio_.sum()*100:.1f}% de la varianza total',
+    scene=dict(
+        xaxis_title='PC 1',
+        yaxis_title='PC 2',
+        zaxis_title='PC 3',
+        xaxis=dict(range=[-15, 15]),
+        yaxis=dict(range=[-7, 7]),
+        zaxis=dict(range=[-7, 7])
+    ),
+    legend=dict(x=0.01, y=0.99),
+    height=560
+)
+fig.show()
+```
+
+La nube de puntos reconstruida en el espacio PCA sigue fielmente la hélice
+original. PCA ha separado la señal del ruido sin conocer a priori la
+geometría de la trayectoria.
+
+::: {.callout-note}
+## La idea central
+
+PCA no sabe nada sobre hélices ni sobre física. Solo busca las
+direcciones de **máxima varianza** en los datos. El hecho de que esas
+direcciones coincidan con la geometría real de la trayectoria es una
+consecuencia de que **la señal real tiene más varianza que el ruido**.
+
+Cuando $\text{SNR} = \sigma_{\text{señal}} / \sigma_{\text{ruido}} \gg 1$,
+los primeros componentes principales capturan la señal; los últimos,
+el ruido.
+:::
+
+::: {.callout-warning}
+## Limitación importante
+
+PCA funciona bien aquí porque la hélice es una curva **linealizable** a
+través de sus coordenadas en el espacio de observaciones. Para estructuras
+genuinamente no lineales (manifolds curvos), se necesitan técnicas como
+**UMAP** o **t-SNE**.
+:::
 
 ---
 
 # Limitaciones del PCA
 
-## 1. Linealidad
+## Linealidad
 
 PCA busca direcciones de máxima varianza **lineales**. No puede capturar estructuras no lineales en los datos.
 
@@ -537,43 +1347,98 @@ fig.update_layout(height=420,
     )])
 fig.show()
 ```
+Este es un ejemplo clásico: el Swiss Roll es una variedad no lineal que PCA no puede "desenrollar". Técnicas como **Isomap** o **UMAP** sí pueden recuperar la estructura subyacente.
 
-## 2. Sensibilidad a outliers
+## Sensibilidad a outliers
 
 PCA minimiza la varianza de la reconstrucción, que es equivalente a minimizar el error cuadrático medio. Por tanto, es **muy sensible a outliers**, ya que un solo punto alejado puede dominar la dirección del primer componente.
 
+```{python}
+#| echo: false
+
+np.random.seed(42)
+
+# ─────────────────────────────
+# 1. Datos base (estructura real)
+# ─────────────────────────────
+n = 150
+x = np.random.normal(0, 1, n)
+y = 0.5 * x + np.random.normal(0, 0.3, n)
+
+X = np.vstack([x, y])
+
+# ─────────────────────────────
+# 2. PCA sin outlier
+# ─────────────────────────────
+cov = np.cov(X)
+eigvals, eigvecs = np.linalg.eig(cov)
+pc1_clean = eigvecs[:, np.argmax(eigvals)]
+
+# ─────────────────────────────
+# 3. Agregar outlier
+# ─────────────────────────────
+x_out = np.append(x, [4])
+y_out = np.append(y, [9])
+
+X_out = np.vstack([x_out, y_out])
+
+cov_out = np.cov(X_out)
+eigvals_out, eigvecs_out = np.linalg.eig(cov_out)
+pc1_outlier = eigvecs_out[:, np.argmax(eigvals_out)]
+
+# ─────────────────────────────
+# 4. Plot
+# ─────────────────────────────
+fig = go.Figure()
+
+# Datos normales
+fig.add_trace(go.Scatter(
+    x=x,
+    y=y,
+    mode='markers',
+    name='Datos normales'
+))
+
+# Outlier
+fig.add_trace(go.Scatter(
+    x=[4],
+    y=[9],
+    mode='markers',
+    marker=dict(size=12),
+    name='Outlier'
+))
+
+# Línea PC1 sin outlier
+t = np.linspace(-3, 3, 100)
+fig.add_trace(go.Scatter(
+    x=t * pc1_clean[0],
+    y=t * pc1_clean[1],
+    mode='lines',
+    name='PC1 (sin outlier)'
+))
+
+# Línea PC1 con outlier
+fig.add_trace(go.Scatter(
+    x=t * pc1_outlier[0],
+    y=t * pc1_outlier[1],
+    mode='lines',
+    line=dict(dash='dash'),
+    name='PC1 (con outlier)'
+))
+
+fig.update_layout(
+    title="Sensibilidad de PCA a outliers",
+    xaxis_title="Variable 1",
+    yaxis_title="Variable 2"
+)
+
+fig.show()
+```
+
 La alternativa robusta es **Robust PCA** (Candès et al., 2011), que descompone $X = L + S$ donde $L$ es la componente de bajo rango y $S$ es una matriz dispersa de outliers.
 
-## 3. Interpretabilidad de los componentes
 
-Los componentes principales son **combinaciones lineales de todas las variables originales**. Aunque técnicamente óptimos, son difíciles de interpretar porque cada componente involucra a todas las variables con distintos pesos.
-
-**Sparse PCA** resuelve esto añadiendo una penalización $\ell_1$ al problema de optimización:
-
-$$
-\underset{\|w\|=1}{\max} \; w^T S w - \rho \|w\|_1
-$$
-
-Esto produce loadings con muchos ceros, haciendo los componentes más interpretables.
-
-## 4. Escala y estandarización
-
-PCA es **sensible a la escala** de las variables. Sin estandarización, las variables con mayor varianza absoluta dominan los componentes principales. La decisión de estandarizar (o no) debe tomarse según el contexto:
-
-- **Estandarizar** cuando las variables tienen unidades distintas (alturas en cm e ingresos en pesos)
-- **No estandarizar** cuando todas las variables están en la misma escala y la diferencia de varianza es informativa (e.g., datos de expresión génica)
-
-## 5. Asunción de normalidad (implícita)
-
-PCA es óptimo en el sentido de máxima varianza bajo **cualquier distribución**. Sin embargo, su interpretación probabilística (PCA probabilístico, Tipping & Bishop 1999) asume normalidad:
-
-$$
-x = W z + \mu + \varepsilon, \quad z \sim \mathcal{N}(0, I), \quad \varepsilon \sim \mathcal{N}(0, \sigma^2 I)
-$$
-
-Para datos con distribuciones muy asimétricas o discretas, otras técnicas pueden ser más apropiadas.
-
-## 6. PCA no captura estructura de clases
+## PCA no captura estructura de clases
 
 PCA es un método **no supervisado** — maximiza varianza global sin considerar etiquetas. Puede ocurrir que la dirección de máxima varianza no sea la que mejor separa las clases.
 
@@ -614,11 +1479,160 @@ fig.update_layout(height=400,
 fig.show()
 ```
 
----
+## Asunción de normalidad (implícita)
+
+PCA es óptimo en el sentido de máxima varianza bajo **cualquier distribución**. Sin embargo, su interpretación probabilística (PCA probabilístico, Tipping & Bishop 1999) asume normalidad:
+
+$$
+x = W z + \mu + \varepsilon, \quad z \sim \mathcal{N}(0, I), \quad \varepsilon \sim \mathcal{N}(0, \sigma^2 I)
+$$
+
+Para datos con distribuciones muy asimétricas o discretas, otras técnicas pueden ser más apropiadas.
+
 
 # Más allá del PCA: técnicas no lineales
 
-Cuando los datos tienen estructuras no lineales, PCA falla. Las siguientes técnicas abordan esta limitación.
+Cuando los datos tienen estructuras no lineales, PCA falla. Las siguientes técnicas abordan esta limitación. Analizaremos dos de las más populares: **t-SNE** y **UMAP**. 
+
+Para esta sección emplearemos el MNIST dataset, un dataset de imágenes de dígitos escritos a mano que tiene una estructura no lineal compleja con las siguientes caracteristicas:
+
+- 70,000 imágenes de dígitos manuscritos (28x28 píxeles → 784 dimensiones)
+- 10 clases (dígitos 0–9)
+- Desafío clásico para reducción de dimensionalidad
+
+```{python}
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.datasets import fetch_openml
+
+np.random.seed(42)
+
+# ─────────────────────────────
+# Cargar MNIST
+# ─────────────────────────────
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+X = mnist.data
+y = mnist.target.astype(int)
+
+# ─────────────────────────────
+# Seleccionar 1 ejemplo por clase (0–9)
+# ─────────────────────────────
+images = []
+labels = []
+
+for digit in range(10):
+    idx = np.where(y == digit)[0][0]  # primer ejemplo de esa clase
+    images.append(X[idx])
+    labels.append(digit)
+
+images = np.array(images)
+
+# ─────────────────────────────
+# Subplots 2x5
+# ─────────────────────────────
+fig = make_subplots(
+    rows=2, cols=5,
+    subplot_titles=[f"{l}" for l in labels],
+    horizontal_spacing=0.02,
+    vertical_spacing=0.08
+)
+
+# ─────────────────────────────
+# Agregar imágenes
+# ─────────────────────────────
+for i, img in enumerate(images):
+    row = i // 5 + 1
+    col = i % 5 + 1
+    
+    gray = img.reshape(28, 28)
+    rgb  = np.stack([gray, gray, gray], axis=-1).astype(np.uint8)
+    
+    fig.add_trace(
+        go.Image(z=rgb),
+        row=row, col=col
+    )
+
+# ─────────────────────────────
+# Quitar ejes
+# ─────────────────────────────
+for i in range(1, 11):
+    fig.update_xaxes(showticklabels=False, row=(i-1)//5+1, col=(i-1)%5+1)
+    fig.update_yaxes(showticklabels=False, row=(i-1)//5+1, col=(i-1)%5+1)
+
+
+fig.show()
+```
+
+Notemos que si realizamos PCA sobre este dataset, los dígitos no se separan claramente en el espacio de componentes principales. Esto se debe a que la estructura de los datos es altamente no lineal: dígitos similares pueden estar cerca en el espacio original pero no necesariamente en el espacio PCA.
+
+```{python}
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_openml
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+np.random.seed(42)
+
+# ─────────────────────────────
+# Cargar MNIST (subset)
+# ─────────────────────────────
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+
+X = mnist.data
+y = mnist.target.astype(int)
+
+idx = np.random.choice(len(X), 3000, replace=False)
+X = X[idx]
+y = y[idx]
+
+# ─────────────────────────────
+# Estandarizar
+# ─────────────────────────────
+X_std = StandardScaler().fit_transform(X)
+
+# ─────────────────────────────
+# PCA
+# ─────────────────────────────
+pca = PCA(n_components=2)
+scores_pca = pca.fit_transform(X_std)
+pve = pca.explained_variance_ratio_ * 100
+
+# ─────────────────────────────
+# Plot
+# ─────────────────────────────
+fig = go.Figure()
+
+colors = [
+    '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+    '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'
+]
+
+for digit in range(10):
+    mask = y == digit
+
+    fig.add_trace(go.Scatter(
+        x=scores_pca[mask, 0],
+        y=scores_pca[mask, 1],
+        mode='markers',
+        marker=dict(size=4, opacity=0.6, color=colors[digit]),
+        name=str(digit)
+    ))
+
+fig.update_layout(
+    title="PCA en MNIST: proyección lineal de máxima varianza",
+    xaxis_title=f"PC1 ({pve[0]:.1f}% var)",
+    yaxis_title=f"PC2 ({pve[1]:.1f}% var)",
+    height=500,
+    legend_title="Dígito"
+)
+
+fig.show()
+```
+A continuación, veremos cómo técnicas no lineales como t-SNE y UMAP pueden revelar la estructura subyacente de los dígitos, agrupando visualmente los dígitos similares y separando claramente las clases, a pesar de la complejidad no lineal de los datos.
 
 ## t-SNE (t-distributed Stochastic Neighbor Embedding)
 
@@ -631,6 +1645,7 @@ $$
 donde $p_{ij}$ captura similitudes en el espacio original y $q_{ij}$ en el espacio reducido usando una distribución $t$ de Student.
 
 **Características:**
+
 - Excelente para visualización en 2D/3D
 - Preserva estructura **local** (vecinos cercanos)
 - **No preserva distancias globales** — la distancia entre clusters no es interpretable
@@ -638,31 +1653,82 @@ donde $p_{ij}$ captura similitudes en el espacio original y $q_{ij}$ en el espac
 - No produce una transformación reutilizable para nuevos datos
 - Hiperparámetro clave: **perplexity** (típicamente 5–50)
 
+La *perplexity* controla cuántos vecinos considera relevantes cada punto al construir la representación.
+
+Formalmente, está relacionada con la **entropía de una distribución de probabilidad local**:
+
+$$
+\text{Perplexity} = 2^{H(P_i)}
+$$
+
+donde $P_i$ describe qué tan probable es que otros puntos sean vecinos de $x_i$. Ajustar la perplexity es crucial: valores muy bajos pueden fragmentar la estructura, mientras que valores muy altos pueden mezclar clusters distintos.
+
 ```{python}
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_openml
+from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
 
-X_iris_std = StandardScaler().fit_transform(load_iris().data)
-y_iris = load_iris().target
-nombres_iris = load_iris().target_names
+np.random.seed(42)
 
-tsne = TSNE(n_components=2, perplexity=30, random_state=42, n_iter=1000)
-scores_tsne = tsne.fit_transform(X_iris_std)
+# ─────────────────────────────
+# Cargar MNIST (subset)
+# ─────────────────────────────
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
 
+X = mnist.data
+y = mnist.target.astype(int)
+
+idx = np.random.choice(len(X), 3000, replace=False)
+X = X[idx]
+y = y[idx]
+
+# ─────────────────────────────
+# Estandarizar
+# ─────────────────────────────
+X_std = StandardScaler().fit_transform(X)
+
+# ─────────────────────────────
+# t-SNE
+# ─────────────────────────────
+scores_tsne = TSNE(
+    n_components=2,
+    perplexity=30,
+    random_state=42,
+    init='pca'
+).fit_transform(X_std)
+
+# ─────────────────────────────
+# Plot
+# ─────────────────────────────
 fig = go.Figure()
-for i, esp in enumerate(nombres_iris):
-    mask = y_iris == i
+
+colors = [
+    '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+    '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'
+]
+
+for digit in range(10):
+    mask = y == digit
+
     fig.add_trace(go.Scatter(
-        x=scores_tsne[mask, 0], y=scores_tsne[mask, 1],
+        x=scores_tsne[mask, 0],
+        y=scores_tsne[mask, 1],
         mode='markers',
-        marker=dict(size=8, opacity=0.75),
-        name=esp
+        marker=dict(size=4, opacity=0.6, color=colors[digit]),
+        name=str(digit)
     ))
 
 fig.update_layout(
-    title="t-SNE en Iris (perplexity=30) — preserva estructura local",
-    xaxis_title="t-SNE 1", yaxis_title="t-SNE 2",
-    height=400
+    title="t-SNE en MNIST: estructura no lineal de los dígitos",
+    xaxis_title="Dimensión 1",
+    yaxis_title="Dimensión 2",
+    height=500,
+    legend_title="Dígito"
 )
+
 fig.show()
 ```
 
@@ -695,77 +1761,74 @@ La proyección minimiza la divergencia de entropia cruzada fuzzy entre el grafo 
 | Escalabilidad | Hasta ~10k puntos | Hasta millones |
 
 ```{python}
-try:
-    import umap
-    UMAP_DISPONIBLE = True
-except ImportError:
-    UMAP_DISPONIBLE = False
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_openml
+from sklearn.preprocessing import StandardScaler
+import umap.umap_ as umap
 
-if UMAP_DISPONIBLE:
-    reducer = umap.UMAP(n_components=2, random_state=42)
-    scores_umap = reducer.fit_transform(X_iris_std)
-
-    fig = go.Figure()
-    for i, esp in enumerate(nombres_iris):
-        mask = y_iris == i
-        fig.add_trace(go.Scatter(
-            x=scores_umap[mask, 0], y=scores_umap[mask, 1],
-            mode='markers',
-            marker=dict(size=8, opacity=0.75),
-            name=esp
-        ))
-    fig.update_layout(
-        title="UMAP en Iris — preserva estructura local y global",
-        xaxis_title="UMAP 1", yaxis_title="UMAP 2",
-        height=400
-    )
-    fig.show()
-else:
-    print("UMAP no instalado. Instalar con: pip install umap-learn")
-```
-
-## Comparación de métodos
-
-```{python}
-# Comparación en 4 paneles con make_blobs
 np.random.seed(42)
-X_blobs, y_blobs = make_blobs(n_samples=400, centers=4,
-                               n_features=8, random_state=42)
-X_blobs_std = StandardScaler().fit_transform(X_blobs)
 
-# PCA
-scores_pca_b = PCA(n_components=2).fit_transform(X_blobs_std)
+# ─────────────────────────────
+# Cargar MNIST (subset)
+# ─────────────────────────────
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
 
-# t-SNE
-scores_tsne_b = TSNE(n_components=2, perplexity=30,
-                      random_state=42).fit_transform(X_blobs_std)
+X = mnist.data
+y = mnist.target.astype(int)
 
-resultados = {
-    'PCA': scores_pca_b,
-    't-SNE': scores_tsne_b,
-}
+idx = np.random.choice(len(X), 3000, replace=False)
+X = X[idx]
+y = y[idx]
 
-fig = make_subplots(1, len(resultados),
-    subplot_titles=list(resultados.keys()))
+# ─────────────────────────────
+# Estandarizar
+# ─────────────────────────────
+X_std = StandardScaler().fit_transform(X)
 
-colors_b = px.colors.qualitative.Set2[:4]
-for col_idx, (nombre, scores_b) in enumerate(resultados.items(), 1):
-    for cls in range(4):
-        mask = y_blobs == cls
-        fig.add_trace(go.Scatter(
-            x=scores_b[mask, 0], y=scores_b[mask, 1],
-            mode='markers',
-            marker=dict(color=colors_b[cls], size=6, opacity=0.7),
-            name=f'Cluster {cls+1}',
-            showlegend=(col_idx == 1)
-        ), row=1, col=col_idx)
+# ─────────────────────────────
+# UMAP
+# ─────────────────────────────
+scores_umap = umap.UMAP(
+    n_components=2,
+    n_neighbors=15,
+    min_dist=0.1,
+    random_state=42
+).fit_transform(X_std)
+
+# ─────────────────────────────
+# Plot
+# ─────────────────────────────
+fig = go.Figure()
+
+colors = [
+    '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+    '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'
+]
+
+for digit in range(10):
+    mask = y == digit
+
+    fig.add_trace(go.Scatter(
+        x=scores_umap[mask, 0],
+        y=scores_umap[mask, 1],
+        mode='markers',
+        marker=dict(size=4, opacity=0.6, color=colors[digit]),
+        name=str(digit)
+    ))
 
 fig.update_layout(
-    title="PCA vs t-SNE en datos sintéticos (4 clusters, 8 dimensiones)",
-    height=380
+    title="UMAP en MNIST: estructura global y local",
+    xaxis_title="Dimensión 1",
+    yaxis_title="Dimensión 2",
+    height=500,
+    legend_title="Dígito"
 )
+
 fig.show()
 ```
+
 
 ## Cuándo usar cada método
 
@@ -779,7 +1842,14 @@ fig.show()
 | Estructura no lineal compleja | **UMAP** |
 | Análisis supervisado + reducción | **LDA** |
 
----
+La elección del método de reducción de dimensionalidad depende del objetivo del análisis y de la naturaleza de los datos. No existe una técnica universalmente superior: cada método enfatiza distintos aspectos de la estructura.
+
+PCA es adecuado cuando se busca una representación lineal, interpretable y reutilizable, especialmente en contextos de preprocesamiento para modelos. En contraste, t-SNE y UMAP están diseñados principalmente para exploración visual, priorizando la preservación de relaciones locales, aunque sacrifican interpretabilidad y capacidad de generalización.
+
+UMAP ofrece un equilibrio interesante entre estructura local y global, además de escalar mejor a datasets grandes. Finalmente, métodos como LDA incorporan información de clases, siendo más apropiados cuando el objetivo es discriminación supervisada.
+
+En conjunto, la elección del método debe responder a la pregunta central del análisis:  
+¿buscamos interpretar, visualizar o modelar?
 
 # Resumen y conexiones
 
