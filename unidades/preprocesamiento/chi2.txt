@@ -1,0 +1,143 @@
+
+## Ejemplo: Vacunas y COVID-19
+
+
+|                | Asintomático | Leve | Grave |
+|----------------|-------------|------|-------|
+| Vacunado       | 447         | 47   | 6     |
+| No vacunado    | 253         | 172  | 75    |
+
+Estos datos representan el estado clínico de personas infectadas con COVID-19, clasificadas según su condición de vacunación.
+
+- Filas: indican si la persona está vacunada o no  
+- Columnas: describen la severidad de la enfermedad (asintomático, leve, grave)
+
+
+---
+
+## Ejemplo: Vacunas y COVID-19
+
+El objetivo es analizar si existe una asociación entre la vacunación y la severidad de los síntomas.
+
+En particular, buscamos responder:
+
+> ¿La distribución de severidad es la misma en vacunados y no vacunados, o la vacunación está relacionada con una menor gravedad?
+
+
+```{python}
+np.random.seed(7)
+
+# Simulación basada en eficacias reportadas (~90% para vacunados vs ~40% sin vacuna)
+n_vac = 500
+n_no_vac = 500
+
+vacunados_grave = np.random.binomial(n_vac, 0.02)    # 2% caso grave
+vacunados_leve  = np.random.binomial(n_vac, 0.08)
+vacunados_asint = n_vac - vacunados_grave - vacunados_leve
+
+novac_grave = np.random.binomial(n_no_vac, 0.18)      # 18% caso grave
+novac_leve  = np.random.binomial(n_no_vac, 0.35)
+novac_asint = n_no_vac - novac_grave - novac_leve
+
+tabla_vac = pd.DataFrame({
+    "Asintomático": [vacunados_asint, novac_asint],
+    "Leve": [vacunados_leve, novac_leve],
+    "Grave": [vacunados_grave, novac_grave]
+}, index=["Vacunado", "No vacunado"])
+
+chi2_v, p_v, dof_v, exp_v = chi2_contingency(tabla_vac)
+cramer_vac = np.sqrt(chi2_v / (tabla_vac.values.sum() * min(1, 2)))
+
+
+```
+
+---
+
+## Visualización: Vacunas y severidad
+
+
+```{python}
+tabla_vac_pct = tabla_vac.div(tabla_vac.sum(axis=1), axis=0) * 100
+
+fig = go.Figure()
+colors = ["#2a9d8f", "#e9c46a", "#e63946"]
+for i, col in enumerate(tabla_vac_pct.columns):
+    fig.add_trace(go.Bar(
+        name=col, x=tabla_vac_pct.index,
+        y=tabla_vac_pct[col].round(1),
+        marker_color=colors[i],
+        text=tabla_vac_pct[col].round(1).astype(str) + "%",
+        textposition="inside"
+    ))
+
+fig.update_layout(
+    barmode="stack",
+    title="Distribución de severidad según estado de vacunación (%)",
+    yaxis_title="Porcentaje (%)",
+    template="plotly_white",
+    height=430
+)
+fig.show()
+print(f"\nχ² = {chi2_v:.2f} | p = {p_v:.2e} | V de Cramér = {cramer_vac:.3f}")
+
+```
+
+---
+
+## Frecuecias observadas
+
+```{python}
+import plotly.express as px
+
+fig = px.imshow(
+    tabla_vac.values,
+    x=tabla_vac.columns,
+    y=tabla_vac.index,
+    text_auto=True,
+    aspect="auto",
+    title="Frecuencias observadas: Vacunación vs Severidad"
+)
+
+fig.update_layout(template="plotly_white", height=400)
+fig.show()
+```
+
+---
+
+## Contribución de cada celda
+
+
+```{python}
+residuos = (tabla_vac.values - exp_v) / np.sqrt(exp_v)
+
+fig = px.imshow(
+    residuos,
+    x=tabla_vac.columns,
+    y=tabla_vac.index,
+    text_auto=True,
+    aspect="auto",
+    title="Residuos estandarizados (observado vs esperado)"
+)
+
+fig.update_layout(template="plotly_white", height=400)
+fig.show()
+```
+---
+
+### Interpretación
+
+- El valor de χ² es alto → hay desviaciones importantes respecto a la independencia  
+- El p-value es extremadamente pequeño → la relación no es atribuible al azar  
+- El V de Cramér indica la **fuerza de la asociación**
+
+Observando las gráficas:
+
+- En vacunados predominan los casos **asintomáticos**
+- En no vacunados aumentan notablemente los casos **graves**
+- Las mayores contribuciones al χ² provienen de:
+  - "Vacunado–Asintomático"
+  - "No vacunado–Grave"
+
+Estas celdas son las que rompen la independencia
+
+---

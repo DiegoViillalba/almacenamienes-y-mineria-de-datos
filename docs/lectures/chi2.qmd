@@ -1,0 +1,1214 @@
+---
+title: "Análisis de correlación para datos nominales: prueba χ²"
+author: "Diego Villalba"
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    chalkboard: true
+    multiplex: false
+    transition: slide
+    background-transition: fade
+    highlight-style: github
+    code-fold: false
+    code-tools: false
+    html-math-method: katex
+    logo: "/images/Logo_FC_Color.png"
+    fig-align: center
+    footer: "Facultad de Ciencias UNAM · Minería de Datos · 2026"
+---
+
+```{python}
+#| include: false
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+```
+## Recordatorio: correlación
+
+- Ya vimos correlación para variables **numéricas** (Pearson, Spearman)
+- Mide la **dependencia lineal** entre variables continuas
+
+$$r = \frac{\sum_{i=1}^n (x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum(x_i-\bar{x})^2 \sum(y_i-\bar{y})^2}}$$
+
+- Pero el mundo real está lleno de datos **categóricos**…
+
+---
+
+## Problema
+
+::: {.callout-warning}
+¿Qué hacemos cuando los datos son **categóricos (nominales)**?
+:::
+
+Ejemplos cotidianos:
+
+- ¿El **sexo biológico** está relacionado con la **preferencia de marca**?
+- ¿El **nivel educativo** influye en el **partido político** votado?
+- ¿El **tipo de tratamiento** médico afecta el **resultado clínico**?
+
+---
+
+## Idea clave: independencia estadística
+
+Dos variables categóricas $X$ e $Y$ son **independientes** si:
+
+$$P(X = x_i, Y = y_j) = P(X = x_i) \cdot P(Y = y_j) \quad \forall\, i, j$$
+
+La probabilidad de X no cambia aunque conozcamos Y, y viceversa.
+
+> Matemáticamente, si la probabilidad conjunta **no se factoriza**, entonces las variables están relacionadas.
+
+---
+
+## De probabilidad a frecuencias
+
+En la práctica no observamos probabilidades, sino **conteos**.
+
+La frecuencia **esperada** bajo independencia es:
+
+$$e_{ij} = \frac{(\text{total fila}_i) \times (\text{total columna}_j)}{n}$$
+
+Esto deriva directamente de estimar 
+$$P(X=i) \approx n_i/n \quad \text{y} \quad P(Y=j) \approx n_j/n$$
+
+---
+
+## Ejemplo: de independencia a frecuencias esperadas
+
+Se tiene realiza una encuesta a $n=100$ personas sobre su género y bebida preferida:
+
+- $X$: Género → {Hombre, Mujer}, $Y$: Bebida → {Café, Té}
+- Queremos ver cómo la **independencia** se traduce en una tabla de datos
+
+---
+
+## Totales observados (marginales)
+
+Al realizazr EDA, lo primero que vemos son los **marginales**:
+
+- Total hombres: **50** | Total mujeres: **50**
+- Total café: **60** | Total té: **40**
+
+
+```{python}
+fig = go.Figure()
+
+fig.add_trace(go.Bar(
+    name="P(Género)",
+    x=["Hombre", "Mujer"],
+    y=[0.5, 0.5],
+    marker_color=["#457b9d", "#e63946"],
+    text=["50%", "50%"], textposition="outside",
+    width=0.4
+))
+
+fig.add_trace(go.Bar(
+    name="P(Bebida)",
+    x=["Café", "Té"],
+    y=[0.6, 0.4],
+    marker_color=["#2a9d8f", "#e9c46a"],
+    text=["60%", "40%"], textposition="outside",
+    width=0.4
+))
+
+fig.update_layout(
+    title="Probabilidades marginales — lo único que sabemos antes de asumir independencia",
+    yaxis_title="Probabilidad",
+    yaxis_range=[0, 0.85],
+    template="plotly_white",
+    barmode="group",
+    height=400
+)
+fig.show()
+```
+
+
+---
+
+## Probabilidades marginales
+
+Podemos estimar probabilidades directamente de frecuencias relativas:
+
+$$
+P(X=\text{Hombre}) = \frac{50}{100} = 0.5, \quad P(Y=\text{Café}) = \frac{60}{100} = 0.6
+$$
+
+Si fueran independientes, la probabilidad conjunta **se factoriza** tomando el valor:
+
+$$
+P(\text{Hombre} | \text{Café}) = P(\text{Hombre}) \times P(\text{Café}) = 0.5 \times 0.6 = 0.30
+$$
+
+
+---
+
+## Paso a frecuencias esperadas
+
+Multiplicamos la probabilidad conjunta por $n$:
+
+$$
+e_{11} = P(\text{Hombre}) \cdot P(\text{Café}) \cdot n = 0.5 \times 0.6 \times 100 = 30
+$$
+
+Es decir, si no hubiera relación entre género y bebida, esperaríamos que **30 hombres** prefieran café.
+
+
+De manera general, para cualquier celda $(i,j)$ de la tabla:
+
+$$
+e_{ij} = \frac{(\text{total fila}_i)(\text{total columna}_j)}{n}
+$$
+
+---
+
+## Tabla esperada completa
+```{python}
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+
+labels_x = ["Café", "Té"]
+labels_y = ["Hombre", "Mujer"]
+esp = np.array([[30, 20], [30, 20]])
+
+fig = go.Figure(go.Heatmap(
+    z=esp, x=labels_x, y=labels_y,
+    colorscale="Blues", showscale=False,
+    text=esp, texttemplate="%{text}",
+    zmin=0, zmax=40
+))
+
+# Anotación de totales
+for i, (row, rtot) in enumerate(zip(esp, [50, 50])):
+    fig.add_annotation(x=2.35, y=labels_y[i], text=f"<b>{rtot}</b>",
+                       showarrow=False, font=dict(size=13, color="#457b9d"),
+                       xref="x", yref="y")
+for j, (col, ctot) in enumerate(zip(labels_x, [60, 40])):
+    fig.add_annotation(x=labels_x[j], y=-0.65, text=f"<b>{ctot}</b>",
+                       showarrow=False, font=dict(size=13, color="#457b9d"),
+                       xref="x", yref="y")
+
+fig.update_layout(
+    title="Tabla esperada bajo independencia — cada celda = (fila × col) / n",
+    template="plotly_white", height=600,
+    xaxis=dict(range=[-0.5, 2.6]),
+    yaxis=dict(range=[-1, 1.5]),
+    margin=dict(l=20, r=20, t=50, b=40)
+)
+fig.show()
+```
+
+---
+
+## La tabla esperada como modelo baseline
+
+- Representa **cómo se verían los datos si no hubiera ninguna relación**
+- Es nuestro **modelo nulo de referencia**
+- Si los datos reales se parecen → no hay evidencia de asociación
+- Si los datos reales se alejan → hay algo que explicar
+
+> χ² cuantifica exactamente que tan lejos están los datos observados de esta tabla esperada bajo independencia.
+
+---
+
+## χ² como distancia a la independencia
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from scipy.stats import chi2_contingency
+
+k_vals = np.arange(30, 56, 1)
+chi2_vals = []
+
+for k in k_vals:
+    tabla = np.array([[k, 50 - k], [60 - k, 50 - (60 - k)]])
+    if tabla.min() >= 0:
+        chi2_v, *_ = chi2_contingency(tabla)
+        chi2_vals.append(chi2_v)
+    else:
+        chi2_vals.append(np.nan)
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=k_vals, y=chi2_vals,
+    mode="lines+markers",
+    line=dict(color="#457b9d", width=2.5),
+    marker=dict(size=5),
+    name="χ²"
+))
+
+fig.add_vline(x=30, line_dash="dash", line_color="#2a9d8f",
+              annotation_text="k=30: independencia exacta (χ²=0)",
+              annotation_position="top right",
+              annotation_font_color="#2a9d8f")
+
+fig.add_hline(y=3.841, line_dash="dot", line_color="#e63946",
+              annotation_text="Valor crítico α=0.05 (gl=1)",
+              annotation_position="bottom right",
+              annotation_font_color="#e63946")
+
+fig.update_layout(
+    title="χ² crece mientras más se alejan los datos de la independencia",
+    xaxis_title="Hombres que toman café (k) — marginales fijos en 50/50 y 60/40",
+    yaxis_title="Estadístico χ²",
+    template="plotly_white",
+    height=600
+)
+fig.show()
+```
+
+---
+
+## Interpretación del gráfico
+
+- En $k = 30$: los datos **coinciden exactamente** con la tabla esperada → χ² = 0
+- Mientras $k$ crece: más hombres toman café de lo esperado → asociación creciente
+- La línea roja punteada marca el **umbral de decisión** con α = 0.05
+- A la derecha de ese umbral: **rechazamos independencia**
+
+> Los marginales permanecen fijos — solo cambia la distribución interna.
+
+---
+
+## Nuestra herramienta: prueba χ²
+
+Mide qué tan lejos están las frecuencias observadas de lo que esperaríamos si no hubiera relación.
+
+$$\chi^2 = \sum_{i=1}^{r} \sum_{j=1}^{c} \frac{(O_{ij} - E_{ij})^2}{E_{ij}}$$
+
+- $O_{ij}$: frecuencia **observada** en celda $(i,j)$
+- $E_{ij}$: frecuencia **esperada** bajo independencia
+- Suma sobre todas las $r \times c$ celdas de la tabla de contingencia
+
+---
+
+## ¿Por qué dividir entre $E_{ij}$?
+
+::: {.callout-tip}
+La división **normaliza** el error relativo, no el absoluto.
+:::
+
+Una diferencia de 10 personas es **muy relevante** si se esperaban 12,  
+pero **despreciable** si se esperaban 1,000.
+
+$$\frac{(O_{ij} - E_{ij})^2}{E_{ij}} \approx Z_{ij}^2 \quad \text{(contribución chi-cuadrado de la celda)}$$
+
+---
+
+## Distribución de χ² (intuición)
+
+Bajo $H_0$ (independencia):
+
+- Las diferencias $(o_{ij} - e_{ij})$ son solo **azar**
+- No hay estructura real, solo fluctuaciones
+
+El estadístico:
+
+$$
+\chi^2 = \sum \frac{(o_{ij} - e_{ij})^2}{e_{ij}}
+$$
+
+> mide qué tan grandes son esas desviaciones
+
+---
+
+## ¿Por qué sigue una χ²?
+
+Cada término:
+
+$$
+\frac{o_{ij} - e_{ij}}{\sqrt{e_{ij}}}
+$$
+
+se comporta como:
+
+$$
+\mathcal{N}(0,1)
+$$
+
+Entonces:
+
+$$
+\chi^2 = \sum Z^2
+$$
+
+> Suma de normales al cuadrado → distribución χ²
+
+---
+
+## Grados de libertad
+
+$$
+(r-1)(c-1)
+$$
+
+- No todas las celdas son libres  
+- Los totales por fila y columna están fijos  
+
+Ejemplo 2×2:
+
+|        | A | B | Total |
+|--------|---|---|-------|
+| X      | ? | ? | fijo  |
+| Y      | ? | ? | fijo  |
+
+> Si conoces 3 celdas, la cuarta queda determinada
+
+---
+
+Los **grados de libertad** reflejan cuántos parámetros se estimaron libremente en la tabla.
+
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from scipy.stats import chi2
+
+x = np.linspace(0, 30, 500)
+
+fig = go.Figure()
+for df_, color in zip([1, 2, 4, 6, 9], ["#e63946","#457b9d","#2a9d8f","#e9c46a","#f4a261"]):
+    fig.add_trace(go.Scatter(
+        x=x, y=chi2.pdf(x, df_),
+        mode="lines", name=f"gl = {df_}",
+        line=dict(color=color, width=2.5)
+    ))
+
+fig.update_layout(
+    title="Distribución χ² para distintos grados de libertad",
+    xaxis_title="χ²", yaxis_title="Densidad",
+    template="plotly_white",
+    legend_title="g.l.",
+    height=400
+)
+fig.show()
+```
+
+> Más g.l. = más formas en las que los datos pueden variar 
+
+---
+
+## Región de rechazo y p-value
+
+El p-value es la probabilidad de obtener un χ² tan extremo como el observado, asumiendo que $H_0$ es cierto:
+$$ p = P(\chi^2 \ge \chi^2_{\text{obs}} \mid H_0) $$
+
+```{python}
+from scipy.stats import chi2
+
+gl = 4
+chi2_obs = 11.5
+x = np.linspace(0, 25, 500)
+
+fig = go.Figure()
+
+# Distribución completa
+fig.add_trace(go.Scatter(
+    x=x, y=chi2.pdf(x, gl),
+    fill="tozeroy", fillcolor="rgba(69,123,157,0.2)",
+    line=dict(color="#457b9d", width=2),
+    name="Distribución χ²(4)"
+))
+
+# Área de rechazo
+x_tail = x[x >= chi2_obs]
+fig.add_trace(go.Scatter(
+    x=np.concatenate([[chi2_obs], x_tail, [x_tail[-1]]]),
+    y=np.concatenate([[0], chi2.pdf(x_tail, gl), [0]]),
+    fill="toself", fillcolor="rgba(230,57,70,0.5)",
+    line=dict(color="#e63946", width=2),
+    name=f"p-value = {chi2.sf(chi2_obs, gl):.4f}"
+))
+
+fig.add_vline(x=chi2_obs, line_dash="dash", line_color="#e63946",
+              annotation_text=f"χ²={chi2_obs}", annotation_position="top right")
+
+fig.update_layout(
+    title="Región de rechazo (α = 0.05, gl = 4)",
+    xaxis_title="χ²", yaxis_title="Densidad",
+    template="plotly_white", height=420
+)
+fig.show()
+```
+
+---
+
+## Decisión
+
+- Si $p$-value $< 0.05$ → rechazamos $H_0$  
+- Si $p$-value $\ge 0.05$ → no hay evidencia suficiente  
+
+Aquí:
+
+- $p \approx 0.0215 \; < \; 0.05$
+
+> La desviación observada es **poco probable bajo independencia**
+
+
+> El $p$-value mide qué tan **sorprendentes** son los datos si no hubiera relación
+
+---
+
+## Supuestos de la prueba χ²
+
+::: {.callout-important}
+La prueba **NO es válida** si se violan estos supuestos.
+:::
+
+1. **Independencia** de las observaciones
+2. **Tamaño de muestra** suficiente: $n \geq 20$
+3. **Frecuencias esperadas** $\geq 5$ en al menos el 80% de las celdas
+4. **Ninguna celda** con $E_{ij} = 0$
+
+> Si $E_{ij} < 5$: usar **prueba exacta de Fisher** (tablas 2×2) o combinar categorías.
+
+---
+
+## Ejemplo: Tabaquismo × Ejercicio
+
+```{python}
+import pandas as pd
+
+np.random.seed(42)
+n = 300
+
+# Datos CON dependencia real
+fumar_base = np.random.choice([0, 1, 2, 3], size=n, p=[0.35, 0.30, 0.20, 0.15])
+ejercicio = []
+for f in fumar_base:
+    if f == 0:
+        ejercicio.append(np.random.choice(["Nunca", "Ocasional", "Frecuente"], p=[0.15, 0.35, 0.50]))
+    elif f == 1:
+        ejercicio.append(np.random.choice(["Nunca", "Ocasional", "Frecuente"], p=[0.30, 0.45, 0.25]))
+    elif f == 2:
+        ejercicio.append(np.random.choice(["Nunca", "Ocasional", "Frecuente"], p=[0.55, 0.35, 0.10]))
+    else:
+        ejercicio.append(np.random.choice(["Nunca", "Ocasional", "Frecuente"], p=[0.70, 0.25, 0.05]))
+
+fumar_labels = {0: "No fuma", 1: "Ocasional", 2: "Regular", 3: "Exceso"}
+df = pd.DataFrame({
+    "Fumar": [fumar_labels[f] for f in fumar_base],
+    "Ejercicio": ejercicio
+})
+
+tabla = pd.crosstab(df["Fumar"], df["Ejercicio"])
+tabla
+```
+
+```{python}
+from scipy.stats import chi2_contingency
+
+chi2_val, p_val, dof, expected = chi2_contingency(tabla)
+
+print(f"χ² = {chi2_val:.4f}")
+print(f"p-value = {p_val:.6f}")
+print(f"Grados de libertad = {dof}")
+print(f"\nFrecuencias esperadas (mínima = {expected.min():.2f})")
+print(f"¿Todas ≥ 5? {'✓ Sí' if expected.min() >= 5 else '✗ No — verificar supuesto'}")
+```
+
+---
+
+## Fuerza de asociación: V de Cramér
+
+El χ² **no indica la magnitud** de la relación, solo si existe.  
+Para cuantificarla usamos la **V de Cramér**:
+
+$$V = \sqrt{\frac{\chi^2 / n}{\min(r-1,\, c-1)}} \in [0, 1]$$
+
+| V | Interpretación |
+|---|---|
+| 0.00 – 0.10 | Asociación negligible |
+| 0.10 – 0.20 | Asociación débil |
+| 0.20 – 0.40 | Asociación moderada |
+| > 0.40 | Asociación fuerte |
+
+
+```{python}
+n_total = tabla.values.sum()
+min_dim = min(tabla.shape[0] - 1, tabla.shape[1] - 1)
+cramer_v = np.sqrt(chi2_val / (n_total * min_dim))
+
+print(f"V de Cramér = {cramer_v:.4f}")
+if cramer_v < 0.10:
+    interp = "Asociación negligible"
+elif cramer_v < 0.20:
+    interp = "Asociación débil"
+elif cramer_v < 0.40:
+    interp = "Asociación moderada"
+else:
+    interp = "Asociación fuerte"
+print(f"Interpretación: {interp}")
+```
+
+---
+
+## Visualización: Observadas vs Esperadas
+
+```{python}
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+obs = tabla.values
+exp = expected
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=("Frecuencias Observadas", "Frecuencias Esperadas")
+)
+
+fig.add_trace(go.Heatmap(
+    z=obs, x=tabla.columns.tolist(), y=tabla.index.tolist(),
+    colorscale="Blues", text=obs, texttemplate="%{text}",
+    showscale=False, name="Observadas"
+), row=1, col=1)
+
+fig.add_trace(go.Heatmap(
+    z=np.round(exp, 1), x=tabla.columns.tolist(), y=tabla.index.tolist(),
+    colorscale="Oranges", text=np.round(exp, 1), texttemplate="%{text}",
+    showscale=False, name="Esperadas"
+), row=1, col=2)
+
+fig.update_layout(
+    title="Comparación: Observadas vs Esperadas bajo H₀",
+    template="plotly_white", height=420
+)
+fig.show()
+```
+
+---
+
+## Residuos estandarizados
+
+¿Qué **celdas específicas** explican el χ²?
+
+$$r_{ij} = \frac{O_{ij} - E_{ij}}{\sqrt{E_{ij}(1 - p_{i\cdot})(1 - p_{\cdot j})}}$$
+
+Valores $|r_{ij}| > 2$ indican celdas con **desviaciones significativas**.
+
+---
+
+## Residuos estandarizados
+
+```{python}
+from scipy.stats import chi2_contingency
+
+# Residuos estandarizados (ajustados)
+row_sums = obs.sum(axis=1, keepdims=True)
+col_sums = obs.sum(axis=0, keepdims=True)
+n = obs.sum()
+
+pi = row_sums / n
+pj = col_sums / n
+std_res = (obs - exp) / np.sqrt(exp * (1 - pi) * (1 - pj))
+
+fig = px.imshow(
+    np.round(std_res, 2),
+    x=tabla.columns.tolist(),
+    y=tabla.index.tolist(),
+    color_continuous_scale="RdBu_r",
+    color_continuous_midpoint=0,
+    text_auto=True,
+    title="Residuos estandarizados (|r| > 2 → desviación significativa)"
+)
+fig.update_layout(template="plotly_white", height=420)
+fig.show()
+```
+
+> Existe evidencia estadistica fuerte de que el habito de fumar esta asociado con el nivel de ejercicio.
+
+
+---
+
+## Ejemplo: Vacunas y COVID-19
+
+
+|                | Asintomático | Leve | Grave |
+|----------------|-------------|------|-------|
+| Vacunado       | 447         | 47   | 6     |
+| No vacunado    | 253         | 172  | 75    |
+
+Estos datos representan el estado clínico de personas infectadas con COVID-19, clasificadas según su condición de vacunación.
+
+- Filas: indican si la persona está vacunada o no  
+- Columnas: describen la severidad de la enfermedad (asintomático, leve, grave)
+
+
+---
+
+## Ejemplo: Vacunas y COVID-19
+
+El objetivo es analizar si existe una asociación entre la vacunación y la severidad de los síntomas.
+
+En particular, buscamos responder:
+
+> ¿La distribución de severidad es la misma en vacunados y no vacunados, o la vacunación está relacionada con una menor gravedad?
+
+
+```{python}
+np.random.seed(7)
+
+# Simulación basada en eficacias reportadas (~90% para vacunados vs ~40% sin vacuna)
+n_vac = 500
+n_no_vac = 500
+
+vacunados_grave = np.random.binomial(n_vac, 0.02)    # 2% caso grave
+vacunados_leve  = np.random.binomial(n_vac, 0.08)
+vacunados_asint = n_vac - vacunados_grave - vacunados_leve
+
+novac_grave = np.random.binomial(n_no_vac, 0.18)      # 18% caso grave
+novac_leve  = np.random.binomial(n_no_vac, 0.35)
+novac_asint = n_no_vac - novac_grave - novac_leve
+
+tabla_vac = pd.DataFrame({
+    "Asintomático": [vacunados_asint, novac_asint],
+    "Leve": [vacunados_leve, novac_leve],
+    "Grave": [vacunados_grave, novac_grave]
+}, index=["Vacunado", "No vacunado"])
+
+chi2_v, p_v, dof_v, exp_v = chi2_contingency(tabla_vac)
+cramer_vac = np.sqrt(chi2_v / (tabla_vac.values.sum() * min(1, 2)))
+
+
+```
+
+---
+
+## Visualización: Vacunas y severidad
+
+
+```{python}
+tabla_vac_pct = tabla_vac.div(tabla_vac.sum(axis=1), axis=0) * 100
+
+fig = go.Figure()
+colors = ["#2a9d8f", "#e9c46a", "#e63946"]
+for i, col in enumerate(tabla_vac_pct.columns):
+    fig.add_trace(go.Bar(
+        name=col, x=tabla_vac_pct.index,
+        y=tabla_vac_pct[col].round(1),
+        marker_color=colors[i],
+        text=tabla_vac_pct[col].round(1).astype(str) + "%",
+        textposition="inside"
+    ))
+
+fig.update_layout(
+    barmode="stack",
+    title="Distribución de severidad según estado de vacunación (%)",
+    yaxis_title="Porcentaje (%)",
+    template="plotly_white",
+    height=430
+)
+fig.show()
+print(f"\nχ² = {chi2_v:.2f} | p = {p_v:.2e} | V de Cramér = {cramer_vac:.3f}")
+
+```
+
+---
+
+## Frecuecias observadas
+
+```{python}
+import plotly.express as px
+
+fig = px.imshow(
+    tabla_vac.values,
+    x=tabla_vac.columns,
+    y=tabla_vac.index,
+    text_auto=True,
+    aspect="auto",
+    title="Frecuencias observadas: Vacunación vs Severidad"
+)
+
+fig.update_layout(template="plotly_white", height=400)
+fig.show()
+```
+
+---
+
+## Contribución de cada celda
+
+
+```{python}
+residuos = (tabla_vac.values - exp_v) / np.sqrt(exp_v)
+
+fig = px.imshow(
+    residuos,
+    x=tabla_vac.columns,
+    y=tabla_vac.index,
+    text_auto=True,
+    aspect="auto",
+    title="Residuos estandarizados (observado vs esperado)"
+)
+
+fig.update_layout(template="plotly_white", height=400)
+fig.show()
+```
+---
+
+### Interpretación
+
+- El valor de χ² es alto → hay desviaciones importantes respecto a la independencia  
+- El p-value es extremadamente pequeño → la relación no es atribuible al azar  
+- El V de Cramér indica la **fuerza de la asociación**
+
+Observando las gráficas:
+
+- En vacunados predominan los casos **asintomáticos**
+- En no vacunados aumentan notablemente los casos **graves**
+- Las mayores contribuciones al χ² provienen de:
+  - "Vacunado–Asintomático"
+  - "No vacunado–Grave"
+
+Estas celdas son las que rompen la independencia
+
+---
+
+## χ² y reducción de datos
+
+Hasta ahora usamos χ² para:
+
+- Detectar **dependencia** entre variables categóricas  
+- Evaluar significancia estadística  
+
+Sin embargo, también es una herramienta clave para:
+
+> χ² también sirve para **reducir dimensionalidad**
+
+- Si dos variables están fuertemente asociadas  contienen **información redundante**
+
+
+---
+
+## Redundancia en variables categóricas
+
+Dos variables $X$ e $Y$ son redundantes si:
+
+$$
+P(X,Y) \neq P(X)P(Y) \quad \text{(dependencia fuerte)}
+$$
+
+- Conocer $X$ da información sobre $Y$  
+- Ambas variables aportan contenido similar  
+
+En la práctica
+
+- Mantener ambas → **ruido + sobreajuste**  
+- Eliminar una → modelo más simple  
+
+> χ² + V de Cramér permiten detectar esta redundancia
+
+---
+
+## Caso real: Encuesta de satisfacción — Aerolínea
+
+Una aerolínea recolecta datos de **1,000 pasajeros** y queremos predecir `Satisfacción` con las siguientes variables:
+
+- `Clase`: Económica, Business, Primera
+- `Tipo_viaje`: Negocio, Vacaciones  
+- `Frecuencia`: Frecuente, Ocasional, Primera vez
+- `Retraso`: Sin retraso, Leve (<30min), Grave (>30min)
+- `Satisfacción`: Baja, Media, Alta ← **variable objetivo**
+- `Asiento_preferido`: Ventana, Pasillo, Centro ← ¿aporta algo?
+- `Momento_compra`: Anticipado, Último momento ← ¿aporta algo?
+
+---
+
+## Dataset
+```{python}
+import numpy as np
+import pandas as pd
+from scipy.stats import chi2_contingency
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+
+np.random.seed(42)
+n = 1000
+
+# --- Variable base: Clase del vuelo ---
+clase = np.random.choice(["Económica","Business","Primera"],
+                          size=n, p=[0.65, 0.25, 0.10])
+
+# --- Tipo de viaje: asociado con clase (Business vuela por negocios) ---
+tipo_map = {
+    "Económica": [0.30, 0.70],   # más vacaciones
+    "Business":  [0.85, 0.15],   # casi todo negocios
+    "Primera":   [0.70, 0.30]
+}
+tipo = np.array([np.random.choice(["Negocio","Vacaciones"],
+                 p=tipo_map[c]) for c in clase])
+
+# --- Frecuencia: asociada con clase ---
+freq_map = {
+    "Económica": [0.15, 0.45, 0.40],
+    "Business":  [0.65, 0.30, 0.05],
+    "Primera":   [0.75, 0.20, 0.05]
+}
+frecuencia = np.array([np.random.choice(["Frecuente","Ocasional","Primera vez"],
+                       p=freq_map[c]) for c in clase])
+
+# --- Retraso: levemente asociado con tipo de viaje ---
+retraso_map = {
+    "Negocio":    [0.50, 0.30, 0.20],
+    "Vacaciones": [0.45, 0.35, 0.20]
+}
+retraso = np.array([np.random.choice(["Sin retraso","Leve","Grave"],
+                    p=retraso_map[t]) for t in tipo])
+
+# --- Satisfacción: depende de Clase Y Retraso (variable objetivo) ---
+satisf = []
+for c, r in zip(clase, retraso):
+    if c == "Primera" and r == "Sin retraso":
+        satisf.append(np.random.choice(["Baja","Media","Alta"], p=[0.05,0.15,0.80]))
+    elif c == "Business" and r != "Grave":
+        satisf.append(np.random.choice(["Baja","Media","Alta"], p=[0.10,0.35,0.55]))
+    elif c == "Económica" and r == "Grave":
+        satisf.append(np.random.choice(["Baja","Media","Alta"], p=[0.60,0.30,0.10]))
+    elif c == "Económica" and r == "Sin retraso":
+        satisf.append(np.random.choice(["Baja","Media","Alta"], p=[0.20,0.45,0.35]))
+    else:
+        satisf.append(np.random.choice(["Baja","Media","Alta"], p=[0.30,0.40,0.30]))
+satisf = np.array(satisf)
+
+# --- Asiento preferido: INDEPENDIENTE de todo ---
+asiento = np.random.choice(["Ventana","Pasillo","Centro"],
+                            size=n, p=[0.45, 0.40, 0.15])
+
+# --- Momento de compra: INDEPENDIENTE de todo ---
+def p_norm():
+    p = np.array([0.50, 0.50]) + np.random.uniform(-0.03, 0.03, 2)
+    return p / p.sum()
+
+momento = np.array([np.random.choice(["Anticipado","Último momento"],
+                    p=p_norm()) for _ in range(n)])
+
+df = pd.DataFrame({
+    "Clase": clase, "Tipo_viaje": tipo, "Frecuencia": frecuencia,
+    "Retraso": retraso, "Satisfacción": satisf,
+    "Asiento": asiento, "Momento_compra": momento
+})
+
+```
+
+| Clase     | Tipo_viaje | Frecuencia  | Retraso      | Satisfacción | Asiento | Momento_compra |
+|-----------|------------|-------------|--------------|--------------|---------|----------------|
+| Económica | Negocio    | Ocasional   | Leve         | Media        | Ventana | Último momento |
+| Primera   | Negocio    | Frecuente   | Leve         | Alta         | Pasillo | Último momento |
+| Business  | Vacaciones | Ocasional   | Sin retraso  | Alta         | Centro  | Último momento |
+| Económica | Vacaciones | Ocasional   | Leve         | Baja         | Ventana | Último momento |
+| Económica | Vacaciones | Ocasional   | Leve         | Baja         | Centro  | Anticipado     |
+| Económica | Vacaciones | Primera vez | Grave        | Baja         | Ventana | Último momento |
+| Económica | Vacaciones | Ocasional   | Grave        | Baja         | Pasillo | Anticipado     |
+| Business  | Negocio    | Ocasional   | Sin retraso  | Media        | Pasillo | Anticipado     |
+
+---
+
+## Paso 2: ¿Qué tan asociada está cada variable con Satisfacción?
+```{python}
+predictoras = ["Clase","Tipo_viaje","Frecuencia","Retraso","Asiento","Momento_compra"]
+resultados = []
+
+for var in predictoras:
+    tabla = pd.crosstab(df[var], df["Satisfacción"])
+    chi2_v, p_v, dof_v, exp_v = chi2_contingency(tabla)
+    n_tot = tabla.values.sum()
+    min_dim = min(tabla.shape[0]-1, tabla.shape[1]-1)
+    cramer = np.sqrt(chi2_v / (n_tot * min_dim))
+
+    if cramer > 0.3:
+        fuerza = "Fuerte"
+    elif cramer > 0.1:
+        fuerza = "Moderada"
+    else:
+        fuerza = "Débil"
+
+    resultados.append({
+        "Variable": var, "χ²": round(chi2_v,2),
+        "p-value": round(p_v, 4), "V de Cramér": round(cramer, 3),
+        "Fuerza": fuerza
+    })
+
+res_df = pd.DataFrame(resultados).sort_values("V de Cramér", ascending=False)
+```
+
+| Variable         | χ²     | p-value | V de Cramér | Fuerza   |
+|------------------|--------|---------|-------------|----------|
+| Retraso          | 108.79 | 0.0000  | 0.233       | Moderada |
+| Clase            | 74.03  | 0.0000  | 0.192       | Moderada |
+| Tipo_viaje       | 9.79   | 0.0075  | 0.099       | Débil    |
+| Frecuencia       | 16.60  | 0.0023  | 0.091       | Débil    |
+| Asiento          | 2.05   | 0.7265  | 0.032       | Débil    |
+| Momento_compra   | 0.60   | 0.7401  | 0.025       | Débil    |
+
+---
+
+## Paso 3: Visualizar fuerza de asociación con Satisfacción
+```{python}
+colores = {"Fuerte": "#e63946", "Moderada": "#e9c46a", "Débil": "#2a9d8f"}
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=res_df["Variable"],
+    y=res_df["V de Cramér"],
+    marker_color=[colores[f] for f in res_df["Fuerza"]],
+    text=res_df["V de Cramér"].astype(str),
+    textposition="outside"
+))
+
+fig.add_hline(y=0.1, line_dash="dot", line_color="#e9c46a",
+              annotation_text="Umbral débil/moderada (0.1)",
+              annotation_position="top left",
+              annotation_font_color="#b5850a")
+fig.add_hline(y=0.3, line_dash="dot", line_color="#e63946",
+              annotation_text="Umbral moderada/fuerte (0.3)",
+              annotation_position="top left",
+              annotation_font_color="#e63946")
+
+fig.update_layout(
+    title="V de Cramér de cada variable vs Satisfacción",
+    yaxis_title="V de Cramér", yaxis_range=[0, 1.0],
+    template="plotly_white", height=430, showlegend=False
+)
+fig.show()
+```
+
+---
+
+## Paso 4: ¿Hay redundancia entre predictoras?
+
+Antes de eliminar, verificamos si alguna predictora útil es **redundante con otra**.
+```{python}
+vars_utiles = ["Clase","Tipo_viaje","Frecuencia","Retraso"]
+m = len(vars_utiles)
+matriz = pd.DataFrame(np.zeros((m, m)), index=vars_utiles, columns=vars_utiles)
+
+for i, v1 in enumerate(vars_utiles):
+    for j, v2 in enumerate(vars_utiles):
+        if i == j:
+            matriz.loc[v1,v2] = 1.0
+        elif i < j:
+            t = pd.crosstab(df[v1], df[v2])
+            chi2_v, _, _, _ = chi2_contingency(t)
+            n_tot = t.values.sum()
+            min_d = min(t.shape[0]-1, t.shape[1]-1)
+            v = round(np.sqrt(chi2_v / (n_tot * min_d)), 3)
+            matriz.loc[v1,v2] = v
+            matriz.loc[v2,v1] = v
+
+fig = px.imshow(
+    matriz.values,
+    x=vars_utiles, y=vars_utiles,
+    color_continuous_scale="RdYlGn_r",
+    zmin=0, zmax=1,
+    text_auto=True,
+    title="V de Cramér entre predictoras — ¿hay redundancia interna?"
+)
+fig.update_layout(
+    template="plotly_white", height=400,
+    coloraxis_colorbar_title="V de Cramér"
+)
+fig.show()
+```
+
+---
+
+## Paso 5: Distribución de Satisfacción por variable clave
+```{python}
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=("Satisfacción por Clase", "Satisfacción por Retraso")
+)
+
+orden_sat = ["Baja","Media","Alta"]
+colores_sat = {"Baja": "#e63946", "Media": "#e9c46a", "Alta": "#2a9d8f"}
+
+for sat in orden_sat:
+    # Por Clase
+    sub = df[df["Satisfacción"]==sat]
+    counts_clase = sub["Clase"].value_counts().reindex(["Económica","Business","Primera"], fill_value=0)
+    totales_clase = df["Clase"].value_counts().reindex(["Económica","Business","Primera"])
+    pct_clase = (counts_clase / totales_clase * 100).round(1)
+
+    fig.add_trace(go.Bar(
+        name=sat, x=["Económica","Business","Primera"],
+        y=pct_clase.values,
+        marker_color=colores_sat[sat],
+        text=pct_clase.astype(str)+"%",
+        textposition="inside",
+        showlegend=(True if sat=="Baja" else False)  # evitar duplicados
+    ), row=1, col=1)
+
+    # Por Retraso
+    counts_ret = sub["Retraso"].value_counts().reindex(["Sin retraso","Leve","Grave"], fill_value=0)
+    totales_ret = df["Retraso"].value_counts().reindex(["Sin retraso","Leve","Grave"])
+    pct_ret = (counts_ret / totales_ret * 100).round(1)
+
+    fig.add_trace(go.Bar(
+        name=sat, x=["Sin retraso","Leve","Grave"],
+        y=pct_ret.values,
+        marker_color=colores_sat[sat],
+        text=pct_ret.astype(str)+"%",
+        textposition="inside",
+        showlegend=True
+    ), row=1, col=2)
+
+fig.update_layout(
+    barmode="stack",
+    template="plotly_white", height=430,
+    legend_title="Satisfacción"
+)
+fig.show()
+```
+
+---
+
+## Paso 6: Impacto real en el modelo
+
+Implementamos un modelo de clasificación (Random Forest) para comparar el rendimiento con diferentes conjuntos de variables desde mayor a menor redundancia:
+
+```{python}
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import LabelEncoder
+
+df_enc = df.copy()
+for col in df_enc.columns:
+    df_enc[col] = LabelEncoder().fit_transform(df_enc[col])
+
+y = df_enc["Satisfacción"]
+
+configs = {
+    "Todas (6 vars)":       ["Clase","Tipo_viaje","Frecuencia","Retraso","Asiento","Momento_compra"],
+    "Sin ruido (4 vars)":   ["Clase","Tipo_viaje","Frecuencia","Retraso"],
+    "Solo fuertes (2 vars)":["Clase","Retraso"],
+}
+
+scores, stds, nombres = [], [], []
+for nombre, cols in configs.items():
+    cv = cross_val_score(
+        RandomForestClassifier(n_estimators=200, random_state=42),
+        df_enc[cols], y, cv=5, scoring="accuracy"
+    )
+    scores.append(cv.mean())
+    stds.append(cv.std())
+    nombres.append(nombre)
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=nombres, y=[round(s,4) for s in scores],
+    error_y=dict(type="data", array=[round(s,4) for s in stds], visible=True),
+    marker_color=["#457b9d","#2a9d8f","#e9c46a"],
+    text=[f"{s:.1%}" for s in scores],
+    textposition="outside", width=0.4
+))
+
+fig.update_layout(
+    title="Accuracy (CV=5) según conjunto de variables seleccionadas por χ²",
+    yaxis_title="Accuracy promedio ± std",
+    yaxis_range=[0, 1.1],
+    template="plotly_white", height=420
+)
+fig.show()
+```
+
+---
+
+## Decisión final
+```{python}
+decision = pd.DataFrame({
+    "Variable":        ["Clase","Retraso","Frecuencia","Tipo_viaje","Asiento","Momento_compra"],
+    "V vs Satisf.":    [
+        res_df.loc[res_df.Variable=="Clase",         "V de Cramér"].values[0],
+        res_df.loc[res_df.Variable=="Retraso",       "V de Cramér"].values[0],
+        res_df.loc[res_df.Variable=="Frecuencia",    "V de Cramér"].values[0],
+        res_df.loc[res_df.Variable=="Tipo_viaje",    "V de Cramér"].values[0],
+        res_df.loc[res_df.Variable=="Asiento",       "V de Cramér"].values[0],
+        res_df.loc[res_df.Variable=="Momento_compra","V de Cramér"].values[0],
+    ],
+    "Redundante con":  ["—","—","Clase (V≈0.5)","Clase (V≈0.6)","—","—"],
+    "Decisión": [
+        "Conservar — asociación fuerte con objetivo",
+        "Conservar — asociación fuerte con objetivo",
+        "Opcional — moderada pero redundante con Clase",
+        "Opcional — moderada pero redundante con Clase",
+        "Eliminar — independiente del objetivo (ruido)",
+        "Eliminar — independiente del objetivo (ruido)",
+    ]
+})
+
+fig = go.Figure(go.Table(
+    header=dict(
+        values=["<b>Variable</b>","<b>V vs Satisfacción</b>",
+                "<b>Redundante con</b>","<b>Decisión</b>"],
+        fill_color="#457b9d", font=dict(color="white", size=12),
+        align="center", height=35
+    ),
+    cells=dict(
+        values=[decision[c] for c in decision.columns],
+        fill_color=[
+            ["white"]*6,
+            ["white"]*6,
+            ["white"]*6,
+            ["#d4edda","#d4edda","#fff3cd","#fff3cd","#fde8e8","#fde8e8"]
+        ],
+        align=["center","center","center","left"],
+        font=dict(size=18), height=32
+    )
+))
+fig.update_layout(
+    title="Resumen de decisiones — reducción guiada por χ² y V de Cramér",
+    template="plotly_white", height=600
+)
+fig.show()
+```
+
+---
+
+## Conclusión
+
+- **Asiento** y **Momento de compra** eliminadas: V ≈ 0 → ruido puro
+- **Frecuencia** y **Tipo de viaje**: moderadas pero redundantes con **Clase**
+- Con solo **2 variables** (Clase + Retraso) se obtiene accuracy equivalente
+- El proceso es **transparente y justificable estadísticamente**
+
+> χ² no solo limpia el dataset — **explica por qué** cada variable entra o sale
+
+---
+
+## Conclusión del ejemplo
+
+- **Clima** eliminada: V = 0.8+ con Región → información completamente redundante
+- **Día** eliminada: V ≈ 0.0 → ruido puro, no aporta señal
+- **Accuracy prácticamente igual** con la mitad de variables
+- **Modelos más simples** → más interpretables, más rápidos, menos sobreajuste
+
+> χ² + V de Cramér = criterio estadístico formal para justificar la reducción
+
+---
+
+## Conclusión
+
+::: {.callout-note}
+## Lo que la prueba χ² nos da
+- **Decisión formal**: rechazar o no la independencia con control del error tipo I
+- **Diagnóstico celda a celda**: residuos estandarizados revelan dónde está la relación
+- **Magnitud**: V de Cramér cuantifica qué tan fuerte es la asociación
+:::
+
+- Herramienta **indispensable** en EDA categórico, estudios clínicos, ciencias sociales y ML
+- Siempre verificar **supuestos** antes de interpretar
+- Combinar con **visualizaciones** para comunicar los hallazgos
+
+
+
+<!-- ## Comparativa de pruebas de asociación
+
+| Situación | Prueba recomendada |
+|---|---|
+| Tabla 2×2 con $n < 20$ o $E_{ij} < 5$ | **Prueba exacta de Fisher** |
+| Tabla $r \times c$ cualquiera | **χ² de Pearson** |
+| Variable ordinal × nominal | **Tau de Kendall / Gamma** |
+| Dos variables ordinales | **Spearman / Kendall** |
+| Comparar proporciones entre 2 grupos | **Prueba Z de proporciones** | -->
