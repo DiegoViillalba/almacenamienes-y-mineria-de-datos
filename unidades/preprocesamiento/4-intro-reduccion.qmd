@@ -1,0 +1,18 @@
+Agregar una variable casi redundante puede volver muy inestables los coeficientes de una regresión. El problema no suele estar en el ajuste, sino en cómo el modelo reparte el peso entre features casi iguales.
+
+Para mostrarlo, tomé el dataset de diabetes de scikit-learn y agregué una variable sintética lc = 2·bmi + ε, con ruido gaussiano pequeño (σ = 0.05). Así introduzco una colinealidad casi perfecta entre bmi y lc. Entrené el modelo desde cuatro inicializaciones distintas y grafiqué las trayectorias del optimizador en dos planos del espacio de pesos.
+
+A la izquierda, w_bmi vs w_lc, el par (casi) colineal. Lo que normalmente sería un paraboloide con mínimo puntual se deforma en un valle extremadamente alargado. Las trayectorias caen rápido hacia el fondo del valle, pero una vez ahí avanzan muy lentamente a lo largo de él, la curvatura en esa dirección es tan baja que los gradientes son minúsculos.
+
+A la derecha, w_s5 vs w_bp, un par no afectado por la colinealidad introducida. Allí las curvas de nivel son elipses bien definidas alrededor de un mínimo único, y las trayectorias convergen de forma mucho más directa. La diferencia entre ambos paneles se explica por la geometría de la loss. 
+
+En regresión lineal, los coeficientes óptimos se obtienen resolviendo w = (XᵀX)⁻¹Xᵀy. Cuando dos features son casi linealmente dependientes, la matriz XᵀX se vuelve mal condicionada y aparece una dirección de curvatura muy pequeña, asociada a un valle casi plano. En esas condiciones, el optimizador progresa rápido en la dirección empinada, pero extremadamente lento en la dirección degenerada.
+
+Acá es importante distinguir dos casos. Si la dependencia lineal fuera exacta, XᵀX sería singular, la inversa no existiría y no habría una solución única, existirían infinitas combinaciones de pesos igualmente óptimas. Pero en este ejemplo agregué un pequeño ruido gaussiano, así que la dependencia no es perfecta. El mínimo sigue siendo técnicamente único, lo que cambia no es la unicidad, sino el condicionamiento del problema.
+
+En teoría, si se entrena lo suficiente, todas las inicializaciones deberían converger al mismo punto. Pero en la práctica casi nadie espera decenas de miles de iteraciones para una regresión lineal. Si el entrenamiento se corta antes, los coeficientes observados entre variables colineales pueden depender mucho de la inicialización y volverse poco estables, aunque las predicciones cambien muy poco.
+
+
+Solo agregaría que la intuición geométrica se formaliza con el gradient flow dw/dt = −∇L(w) = −2XᵀX w + 2Xᵀy. Al descomponer en la base de eigenvectores de XᵀX, cada componente evoluciona como wᵢ(t) = wᵢ* + (wᵢ(0) − wᵢ*)e^{−2λᵢt}, lo que muestra que la convergencia en cada dirección del espacio de pesos es exponencial con constante de tiempo τᵢ = 1/(2λᵢ)
+
+https://www.linkedin.com/posts/micol-michanie-2556bb23a_agregar-una-variable-casi-redundante-puede-share-7442268653762408448-7JVA?utm_source=share&utm_medium=member_desktop&rcm=ACoAADdoibQB52-TwNEnamoZurqdDLOu_uL_nak
