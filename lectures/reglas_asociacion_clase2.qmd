@@ -1,0 +1,1233 @@
+---
+title: "Reglas de Asociación: ¿Cuándo Confiar en Ellas?"
+subtitle: "Interpretación Crítica y Selección de Reglas Útiles"
+author: "Diego Villalba"
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    code-fold: true
+    echo: true
+    fig-align: center
+    transition: slide
+    highlight-style: github
+    logo: "Logo_FC_Color.png"
+bibliography: referencias_asociacion.bib
+---
+
+## ¿Dónde estamos?
+
+**La sesión pasada:**  calculamos soporte, confianza y lift manualmente.  
+Generamos reglas con `mlxtend`. Todo "funcionó".
+
+. . .
+
+**La pregunta de hoy:**
+
+> *¿Cuántas de esas reglas realmente significan algo?*
+
+. . .
+
+::: {.callout-warning}
+Generar reglas es fácil. **Interpretarlas bien es difícil.**
+:::
+
+---
+
+## Configuración del Entorno
+
+```{python}
+#| label: setup
+#| warning: false
+#| message: false
+
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, association_rules
+
+np.random.seed(42)
+```
+
+---
+
+## El Dataset: Muestra de Groceries
+
+```{python}
+#| label: dataset
+
+# Subset representativo del dataset Groceries
+transacciones_raw = [
+    ["whole milk", "yogurt", "bread"],
+    ["whole milk", "butter", "eggs"],
+    ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"],
+    ["whole milk", "soda", "chips"],
+    ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"],
+    ["eggs", "butter", "cheese"],
+    ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"],
+    ["whole milk", "bread", "eggs"],
+    ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"],
+    ["bread", "eggs", "cheese"],
+    ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"],
+    ["chips", "soda", "beer"],
+    ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"],
+    ["whole milk", "bread", "sugar"],
+    ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"],
+    ["coffee", "sugar", "bread"],
+    ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"],
+    ["bread", "chips", "soda"],
+    ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"],
+    ["whole milk", "butter", "cheese"],
+    ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"],
+    ["chips", "candy", "soda"],
+    ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"],
+    ["yogurt", "cheese", "eggs"],
+    ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"],
+    ["whole milk", "vegetables", "eggs"],
+    ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"],
+    ["whole milk", "fruit", "cheese"],
+    ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"],
+    ["coffee", "bread", "butter"],
+    ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"],
+    ["whole milk", "sugar", "butter"],
+    ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"],
+    ["granola", "yogurt", "fruit"],
+]
+
+print(f"Total de transacciones: {len(transacciones_raw)}")
+print(f"Ejemplo — Transacción 1: {transacciones_raw[0]}")
+```
+
+---
+
+## Visualización: Frecuencia de Ítems
+
+```{python}
+#| label: frecuencia-items
+#| echo: false
+te = TransactionEncoder()
+te_array = te.fit_transform(transacciones_raw)
+df = pd.DataFrame(te_array, columns=te.columns_)
+
+freq = df.sum().sort_values(ascending=False)
+
+fig = px.bar(
+    x=freq.index,
+    y=freq.values,
+    labels={"x": "Ítem", "y": "Frecuencia absoluta"},
+    title="Frecuencia de Ítems en 50 Transacciones",
+    color=freq.values,
+    color_continuous_scale="Blues",
+)
+fig.update_layout(showlegend=False, height=400)
+fig.show()
+```
+
+::: {.callout-note}
+**Pregunta:** ¿Qué ítem domina? ¿Podría esto distorsionar las reglas?
+:::
+
+---
+
+## Visualización: Matriz de Co-ocurrencia
+
+```{python}
+#| label: matriz-dispersa
+#| echo: false
+top_items = freq.head(10).index.tolist()
+df_top = df[top_items]
+
+cooc = df_top.T.dot(df_top)
+np.fill_diagonal(cooc.values, 0)
+
+fig = px.imshow(
+    cooc,
+    title="Co-ocurrencia entre ítems principales",
+    color_continuous_scale="Oranges",
+    labels={"color": "Co-ocurrencias"},
+    aspect="auto",
+)
+fig.update_layout(height=420)
+fig.show()
+```
+
+::: {.callout-note}
+**Pregunta:** ¿Qué par de ítems co-ocurre más? ¿Es eso suficiente para confiar en una regla?
+:::
+
+---
+
+## Generación de Reglas
+
+```{python}
+#| label: generar-reglas
+#| echo: false
+itemsets = apriori(df, min_support=0.10, use_colnames=True)
+reglas = association_rules(itemsets, metric="lift", min_threshold=0.5)
+reglas["antecedents_str"] = reglas["antecedents"].apply(lambda x: ", ".join(list(x)))
+reglas["consequents_str"] = reglas["consequents"].apply(lambda x: ", ".join(list(x)))
+reglas["regla"] = reglas["antecedents_str"] + " → " + reglas["consequents_str"]
+
+print(f"Reglas generadas: {len(reglas)}")
+reglas[["regla", "support", "confidence", "lift"]].sort_values(
+    "lift", ascending=False
+).head(8).round(3)
+```
+
+---
+
+## El Problema Central
+
+> **Alta confianza ≠ Relación fuerte**
+
+. . .
+
+Una regla puede tener confianza = 0.90 y aun así **no decirnos nada nuevo**.
+
+. . .
+
+¿Por qué? Porque si el consecuente ocurre muy frecuentemente de todas formas...
+
+$$\text{lift} = \frac{P(A \cup B)}{P(A) \cdot P(B)} = \frac{\text{confidence}}{P(B)}$$
+
+. . .
+
+Si $\text{lift} \approx 1$: A y B son **independientes**. La regla no aporta [@tan2006introduction].
+
+---
+
+## ¿Qué Mide Realmente Cada Métrica?
+
+| Métrica | Pregunta que responde | Limitación |
+|---|---|---|
+| **Support** | ¿Qué tan común es este patrón? | No dice si es interesante |
+| **Confidence** | Si A, ¿qué tan probable B? | Ignora la frecuencia base de B |
+| **Lift** | ¿Es la relación real o casual? | Sensible a samples pequeños |
+
+. . .
+
+::: {.callout-important}
+**Regla de oro:** Una regla útil necesita **soporte razonable** Y **lift > 1** [@han2011data].
+:::
+
+---
+
+## Scatter: El Gráfico Clave
+
+```{python}
+#| label: scatter-interactivo
+#| echo: false
+fig = px.scatter(
+    reglas,
+    x="confidence",
+    y="lift",
+    size="support",
+    hover_data={"regla": True, "support": ":.3f", "confidence": ":.3f", "lift": ":.3f"},
+    color="lift",
+    color_continuous_scale="RdYlGn",
+    title="Espacio de Reglas: Confidence vs. Lift (tamaño = Support)",
+    labels={"confidence": "Confianza", "lift": "Lift", "support": "Soporte"},
+    size_max=30,
+)
+
+# Línea de referencia: lift = 1 (independencia estadística)
+fig.add_hline(
+    y=1.0,
+    line_dash="dash",
+    line_color="red",
+    annotation_text="Lift = 1 (independencia)",
+    annotation_position="top left",
+)
+
+fig.update_layout(height=500)
+fig.show()
+```
+
+---
+
+## Interpretando el Scatter
+
+. . .
+
+🟢 **Cuadrante ideal:** Alta confianza + Alto lift + Buen soporte  
+
+🔴 **Zona peligrosa:** Alta confianza + Lift ≤ 1 → **Regla espuria**  
+
+🟡 **Zona gris:** Alto lift + Bajo soporte → ¿Señal o ruido?
+
+. . .
+
+::: {.callout-warning}
+**Pregunta para reflexionar:**  
+¿Por qué una regla con confidence = 1.0 puede estar **por debajo** de la línea roja?
+:::
+
+---
+
+## Disección de Reglas: Caso 1
+
+```{python}
+#| label: caso-regla-debil
+
+# Regla con alta confianza pero lift bajo
+caso1 = reglas[reglas["confidence"] > 0.5].sort_values("lift").head(3)
+caso1[["regla", "support", "confidence", "lift"]].round(3)
+```
+
+. . .
+
+**¿Qué está pasando?**  
+El consecuente es tan frecuente que aparece "solo". La regla no añade poder predictivo [@agrawal1994fast].
+
+---
+
+## Disección de Reglas: Caso 2
+
+```{python}
+#| label: caso-regla-fuerte
+
+# Regla con lift alto
+caso2 = reglas[reglas["support"] >= 0.10].sort_values("lift", ascending=False).head(3)
+caso2[["regla", "support", "confidence", "lift"]].round(3)
+```
+
+. . .
+
+**¿Qué significa lift > 1.5?**  
+Los ítems co-ocurren **50% más** de lo esperado por azar.  
+Esto sí es una señal estadísticamente relevante.
+
+---
+
+## Selección de Reglas Útiles
+
+```{python}
+#| label: filtrado-reglas
+
+reglas_utiles = reglas[
+    (reglas["lift"] > 1.2) &
+    (reglas["confidence"] > 0.4) &
+    (reglas["support"] >= 0.10)
+].sort_values("lift", ascending=False)
+
+print(f"De {len(reglas)} reglas → {len(reglas_utiles)} reglas útiles")
+reglas_utiles[["regla", "support", "confidence", "lift"]].round(3)
+```
+
+. . .
+
+**Criterios aplicados:**  
+- Lift > 1.2: relación no trivial  
+- Confidence > 0.4: predictividad mínima  
+- Support ≥ 0.10: patrón frecuente, no ruido
+
+---
+
+## Cuándo NO Usar Reglas de Asociación
+
+. . .
+
+❌ **Dataset pequeño** → el soporte es inestable estadísticamente
+
+. . .
+
+❌ **Ítems muy frecuentes dominan** → distorsión por "whole milk effect"
+
+. . .
+
+❌ **Buscas causalidad** → las reglas son correlacionales, no causales [@pearl2009causality]
+
+. . .
+
+❌ **Necesitas interpretabilidad temporal** → Apriori no captura secuencias
+
+. . .
+
+::: {.callout-tip}
+**Alternativas:** Para secuencias → GSP, PrefixSpan.  
+Para causalidad → modelos causales.
+:::
+
+---
+
+## Resumen: El Filtro Mental
+
+```{mermaid}
+flowchart TD
+    A["¿La regla tiene lift > 1?"] -->|NO| B["Descartar<br/>(relación espuria o independiente)"]
+    A -->|SÍ| C["¿Soporte razonable (> 5–10%)?"]
+    
+    C -->|NO| D["Precaución<br/>(puede ser ruido)"]
+    C -->|SÍ| E["¿Confidence útil para el contexto?"]
+    
+    E -->|SÍ| F["Regla candidata ✓"]
+```
+
+. . .
+
+> *"Una buena regla de asociación no es la más frecuente ni la más confiable. Es la más **sorprendente** dado lo que ya sabemos."*
+
+
+---
+
+# Bloque A: El Lift Tiene Límites {background-color="#1a1a2e"}
+
+---
+
+## El Lift es Asimétrico
+
+El lift de $A \to B$ es **igual** al lift de $B \to A$.
+
+. . .
+
+```{python}
+#| label: simetria-lift
+
+ej = reglas[reglas["regla"].str.contains("yogurt") &
+            reglas["regla"].str.contains("whole milk")][
+    ["regla", "confidence", "lift"]
+].round(3)
+ej
+```
+
+. . .
+
+::: {.callout-warning}
+**Problema:** El lift no distingue dirección.  
+`{yogurt} → {whole milk}` y `{whole milk} → {yogurt}` tienen **lift idéntico**.  
+Pero la confianza puede ser muy diferente. ¿Por qué importa esto?
+:::
+
+---
+
+## Asimetría de Confianza: La Dirección Sí Importa
+
+```{python}
+#| label: asimetria-confianza
+
+# Comparar las dos direcciones de la misma relación
+par = reglas[
+    (reglas["antecedents_str"].isin(["whole milk", "yogurt"])) &
+    (reglas["consequents_str"].isin(["whole milk", "yogurt"]))
+][["regla", "support", "confidence", "lift"]].round(3)
+par
+```
+
+. . .
+
+La dirección con **mayor confianza** es la acción más respaldada por los datos.
+
+> Si queremos recomendar: "¿Qué le ofrezco a quien compra X?" — la dirección importa.
+
+---
+
+## El Problema del Lift Máximo
+
+El lift tiene un techo teórico que depende del soporte de los ítems:
+
+$$\text{lift}_{\max}(A, B) = \frac{1}{\max(P(A), P(B))}$$
+
+. . .
+
+```{python}
+#| label: lift-maximo
+
+freq_rel = df.mean()  # soporte individual de cada ítem
+
+# Calcular lift máximo teórico para cada regla
+def lift_max(row):
+    pa = freq_rel.get(row["antecedents_str"], np.nan)
+    pb = freq_rel.get(row["consequents_str"], np.nan)
+    if pd.isna(pa) or pd.isna(pb):
+        return np.nan
+    return 1 / max(pa, pb)
+
+# Solo reglas con antecedente/consecuente simples (1 ítem)
+reglas_simples = reglas[
+    reglas["antecedents"].apply(len) == 1
+].copy()
+reglas_simples["lift_max_teorico"] = reglas_simples.apply(lift_max, axis=1)
+reglas_simples["lift_relativo"] = (
+    reglas_simples["lift"] / reglas_simples["lift_max_teorico"]
+)
+reglas_simples[["regla", "lift", "lift_max_teorico", "lift_relativo"]].round(3).head(8)
+```
+
+---
+
+## Lift Relativo: Una Normalización Más Justa
+
+```{python}
+#| label: scatter-lift-relativo
+
+fig = px.scatter(
+    reglas_simples.dropna(subset=["lift_relativo"]),
+    x="lift",
+    y="lift_relativo",
+    size="support",
+    color="confidence",
+    hover_data={"regla": True, "lift": ":.3f",
+                "lift_max_teorico": ":.3f", "lift_relativo": ":.3f"},
+    color_continuous_scale="Viridis",
+    title="Lift Observado vs. Lift Relativo (fracción del máximo teórico)",
+    labels={"lift": "Lift observado", "lift_relativo": "Lift / Lift_máx"},
+    size_max=25,
+)
+fig.add_hline(y=0.5, line_dash="dot", line_color="orange",
+              annotation_text="50% del máximo teórico")
+fig.update_layout(height=430)
+fig.show()
+```
+
+::: {.callout-note}
+Una regla que alcanza el 60-70% del lift máximo teórico es mucho más interesante que una con lift alto en términos absolutos pero bajo en términos relativos.
+:::
+
+---
+
+# Bloque B: Métricas Complementarias {background-color="#162032"}
+
+---
+
+## Más Allá del Lift: Tres Métricas Clave
+
+La literatura propone docenas de métricas [@tan2006introduction]. Estas tres son las más usadas en práctica:
+
+. . .
+
+**Leverage (Apalancamiento)**
+$$\text{lev}(A \to B) = P(A \cup B) - P(A) \cdot P(B)$$
+
+> Diferencia absoluta entre co-ocurrencia observada e independencia.  
+> Rango: $[-1, 1]$. Leverage = 0 ↔ independencia.
+
+. . .
+
+**Conviction**
+$$\text{conv}(A \to B) = \frac{1 - P(B)}{1 - \text{confidence}(A \to B)}$$
+
+> ¿Qué tan a menudo A ocurre sin B, relativo a lo esperado bajo independencia?  
+> Rango: $(0, \infty)$. Conviction → ∞ cuando confidence → 1.
+
+. . .
+
+**Zhang's Metric**
+$$Z(A, B) = \frac{P(A \cup B) - P(A)P(B)}{\max\{P(A \cup B)(1-P(A)), P(A)P(B \setminus A)\}}$$
+
+> Rango: $[-1, 1]$. Simétrico, robusto a ítems muy frecuentes.
+
+---
+
+## Calculando las Métricas Complementarias
+
+```{python}
+#| label: metricas-complementarias
+
+# mlxtend calcula leverage y conviction directamente
+itemsets2 = apriori(df, min_support=0.10, use_colnames=True)
+reglas_ext = association_rules(
+    itemsets2,
+    metric="lift",
+    min_threshold=0.5
+)
+
+# Zhang's metric (manual — no está en mlxtend)
+def zhang(row):
+    pab = row["support"]
+    pa  = row["antecedent support"]
+    pb  = row["consequent support"]
+    num = pab - pa * pb
+    den = max(pab * (1 - pa), pa * (pb - pab))
+    return num / den if den != 0 else 0
+
+reglas_ext["zhang"] = reglas_ext.apply(zhang, axis=1)
+reglas_ext["antecedents_str"] = reglas_ext["antecedents"].apply(
+    lambda x: ", ".join(sorted(x))
+)
+reglas_ext["consequents_str"] = reglas_ext["consequents"].apply(
+    lambda x: ", ".join(sorted(x))
+)
+reglas_ext["regla"] = (reglas_ext["antecedents_str"]
+                       + " → " + reglas_ext["consequents_str"])
+
+cols = ["regla", "support", "confidence", "lift", "leverage", "conviction", "zhang"]
+reglas_ext[cols].sort_values("zhang", ascending=False).head(8).round(3)
+```
+
+---
+
+## ¿Coinciden las Métricas? Correlaciones
+
+```{python}
+#| label: correlacion-metricas
+
+metricas = ["support", "confidence", "lift", "leverage", "conviction", "zhang"]
+corr = reglas_ext[metricas].corr().round(2)
+
+fig = px.imshow(
+    corr,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    zmin=-1, zmax=1,
+    title="Correlación entre Métricas de Interés",
+    aspect="auto",
+)
+fig.update_layout(height=420)
+fig.show()
+```
+
+. . .
+
+::: {.callout-important}
+**Pregunta clave:** ¿Qué pares de métricas discrepan más?  
+Donde hay discrepancia, la interpretación requiere juicio humano.
+:::
+
+---
+
+## Cuándo Usar Cada Métrica
+
+```{python}
+#| label: radar-metricas
+
+# Normalizar métricas para comparación visual (0-1)
+from sklearn.preprocessing import MinMaxScaler
+
+scaler = MinMaxScaler()
+metricas_viz = ["support", "confidence", "lift", "leverage", "zhang"]
+reglas_norm = reglas_ext.copy()
+reglas_norm[metricas_viz] = scaler.fit_transform(reglas_ext[metricas_viz])
+
+# Seleccionar top 5 reglas por lift original
+top5_idx = reglas_ext["lift"].nlargest(5).index
+top5 = reglas_norm.loc[top5_idx]
+
+fig = go.Figure()
+for _, row in top5.iterrows():
+    fig.add_trace(go.Scatterpolar(
+        r=[row[m] for m in metricas_viz],
+        theta=metricas_viz,
+        fill='toself',
+        name=row["regla"][:35],
+        opacity=0.6,
+    ))
+
+fig.update_layout(
+    polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+    title="Perfil Normalizado de las Top 5 Reglas por Lift",
+    height=480,
+    showlegend=True,
+)
+fig.show()
+```
+
+---
+
+## Interpretando el Radar
+
+Cada regla tiene un **"perfil"** de métricas.
+
+. . .
+
+| Perfil | Interpretación |
+|---|---|
+| Todas las métricas altas | Regla robusta — coinciden múltiples criterios |
+| Lift alto, leverage bajo | Relación relativa fuerte, pero frecuencia absoluta baja |
+| Conviction muy alto | Confidence casi 1 — casi regla determinista |
+| Zhang cerca de 0 | Relación débil aunque otras métricas lo disimulen |
+
+. . .
+
+::: {.callout-tip}
+Si lift, leverage y zhang apuntan en la misma dirección: **confiar**.  
+Si discrepan: **investigar más** antes de actuar.
+:::
+
+---
+
+# Bloque C: Sensibilidad a Parámetros {background-color="#0d2137"}
+
+---
+
+## El Problema del Umbral Arbitrario
+
+Cuando ejecutamos:
+
+```python
+apriori(df, min_support=0.10)
+association_rules(itemsets, metric="lift", min_threshold=1.0)
+```
+
+. . .
+
+Estamos tomando decisiones que **no tienen justificación estadística intrínseca**.
+
+. . .
+
+¿Qué pasa si cambiamos `min_support` de 0.10 a 0.08?  
+¿O `min_threshold` de 1.0 a 1.2?
+
+. . .
+
+::: {.callout-warning}
+**Hipótesis a explorar:**  
+Muchas de las "reglas" que encontramos son artefactos del umbral elegido, no patrones reales.
+:::
+
+---
+
+## Experimento: Sensibilidad al Soporte Mínimo
+
+```{python}
+#| label: sensibilidad-support
+
+soportes = [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18, 0.20]
+resultados = []
+
+for s in soportes:
+    its = apriori(df, min_support=s, use_colnames=True)
+    if len(its) == 0:
+        resultados.append({"min_support": s, "n_itemsets": 0, "n_reglas": 0})
+        continue
+    r = association_rules(its, metric="lift", min_threshold=1.0)
+    resultados.append({
+        "min_support": s,
+        "n_itemsets": len(its),
+        "n_reglas": len(r),
+        "lift_mediana": r["lift"].median() if len(r) > 0 else np.nan,
+        "lift_max": r["lift"].max() if len(r) > 0 else np.nan,
+    })
+
+df_sens = pd.DataFrame(resultados)
+df_sens.round(3)
+```
+
+---
+
+## Visualización de Sensibilidad
+
+```{python}
+#| label: plot-sensibilidad
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=df_sens["min_support"],
+    y=df_sens["n_reglas"],
+    mode="lines+markers",
+    name="N° de reglas",
+    yaxis="y1",
+    line=dict(color="#e63946", width=2),
+    marker=dict(size=8),
+))
+
+fig.add_trace(go.Scatter(
+    x=df_sens["min_support"],
+    y=df_sens["lift_mediana"],
+    mode="lines+markers",
+    name="Lift mediana",
+    yaxis="y2",
+    line=dict(color="#457b9d", width=2, dash="dash"),
+    marker=dict(size=8),
+))
+
+fig.update_layout(
+    title="Sensibilidad al Umbral de Soporte Mínimo",
+    xaxis=dict(title="min_support"),
+    yaxis=dict(title="N° de reglas", side="left"),
+    yaxis2=dict(title="Lift mediana", overlaying="y", side="right"),
+    legend=dict(x=0.7, y=0.9),
+    height=430,
+)
+fig.show()
+```
+
+::: {.callout-note}
+**Observar:** A medida que sube `min_support`, bajan las reglas pero sube el lift mediano. ¿Por qué?
+:::
+
+---
+
+## Sensibilidad al Umbral de Lift
+
+```{python}
+#| label: sensibilidad-lift
+
+its_fijo = apriori(df, min_support=0.10, use_colnames=True)
+lifts_umbral = np.arange(0.6, 2.5, 0.1)
+res_lift = []
+
+for lt in lifts_umbral:
+    r = association_rules(its_fijo, metric="lift", min_threshold=float(lt))
+    res_lift.append({
+        "min_lift": round(lt, 1),
+        "n_reglas": len(r),
+        "confidence_media": r["confidence"].mean() if len(r) > 0 else np.nan,
+    })
+
+df_lift_sens = pd.DataFrame(res_lift)
+
+fig = px.line(
+    df_lift_sens,
+    x="min_lift",
+    y="n_reglas",
+    markers=True,
+    title="¿Cuántas reglas sobreviven según el umbral de lift mínimo?",
+    labels={"min_lift": "Umbral mínimo de lift", "n_reglas": "Reglas que superan el umbral"},
+    color_discrete_sequence=["#2a9d8f"],
+)
+fig.update_layout(height=380)
+fig.show()
+```
+
+---
+
+## La Curva Soporte-Confianza: Un Mapa Completo
+
+```{python}
+#| label: mapa-soporte-confianza
+
+grid_support = np.arange(0.06, 0.20, 0.02)
+grid_conf    = np.arange(0.20, 1.00, 0.10)
+heatmap_data = []
+
+for s in grid_support:
+    for c in grid_conf:
+        its = apriori(df, min_support=s, use_colnames=True)
+        if len(its) == 0:
+            heatmap_data.append({"min_support": round(s,2),
+                                  "min_confidence": round(c,2), "n_reglas": 0})
+            continue
+        r = association_rules(its, metric="confidence", min_threshold=float(c))
+        heatmap_data.append({
+            "min_support": round(s, 2),
+            "min_confidence": round(c, 2),
+            "n_reglas": len(r),
+        })
+
+df_heatmap = pd.DataFrame(heatmap_data)
+pivot = df_heatmap.pivot(index="min_confidence", columns="min_support", values="n_reglas")
+
+fig = px.imshow(
+    pivot,
+    color_continuous_scale="YlOrRd",
+    title="Mapa de Calor: N° de Reglas según Soporte y Confianza Mínimos",
+    labels={"x": "Soporte mínimo", "y": "Confianza mínima", "color": "N° reglas"},
+    aspect="auto",
+    text_auto=True,
+)
+fig.update_layout(height=430)
+fig.show()
+```
+
+---
+
+## ¿Qué Nos Dice el Mapa?
+
+. . .
+
+La zona de mayor densidad de reglas (esquina inferior izquierda) corresponde a los **umbrales más laxos**.
+
+. . .
+
+Pero más reglas no significa más conocimiento — significa **más ruido**.
+
+. . .
+
+::: {.callout-important}
+**Conclusión del bloque C:**  
+El número de reglas obtenidas es una función de los parámetros elegidos, no solo del dataset.  
+Cambiar `min_support` de 0.10 a 0.08 puede duplicar las reglas sin agregar conocimiento real.  
+Siempre reportar los parámetros junto con los resultados [@han2011data, cap. 6].
+:::
+
+---
+
+# Bloque D: Grafo de Reglas y Caso de Estudio {background-color="#0f3460"}
+
+---
+
+## Visualización como Grafo
+
+Las reglas forman una **red de relaciones** entre ítems.  
+Un grafo permite ver la estructura global de un vistazo.
+
+```{python}
+#| label: grafo-setup
+
+# Seleccionar reglas útiles para el grafo
+reglas_grafo = reglas_ext[
+    (reglas_ext["lift"] > 1.1) &
+    (reglas_ext["support"] >= 0.10) &
+    (reglas_ext["antecedents"].apply(len) == 1) &
+    (reglas_ext["consequents"].apply(len) == 1)
+].copy()
+
+print(f"Reglas en el grafo: {len(reglas_grafo)}")
+reglas_grafo[["regla", "support", "confidence", "lift"]].round(3).head(10)
+```
+
+---
+
+## Grafo Interactivo de Reglas
+
+```{python}
+#| label: grafo-interactivo
+
+import math
+
+# Nodos únicos
+nodos = list(set(
+    reglas_grafo["antecedents_str"].tolist() +
+    reglas_grafo["consequents_str"].tolist()
+))
+n = len(nodos)
+nodo_idx = {nd: i for i, nd in enumerate(nodos)}
+
+# Layout circular
+angulos = [2 * math.pi * i / n for i in range(n)]
+xs = [math.cos(a) for a in angulos]
+ys = [math.sin(a) for a in angulos]
+
+# Aristas
+edge_x, edge_y, edge_text = [], [], []
+for _, row in reglas_grafo.iterrows():
+    x0, y0 = xs[nodo_idx[row["antecedents_str"]]], ys[nodo_idx[row["antecedents_str"]]]
+    x1, y1 = xs[nodo_idx[row["consequents_str"]]], ys[nodo_idx[row["consequents_str"]]]
+    edge_x += [x0, x1, None]
+    edge_y += [y0, y1, None]
+
+# Importancia de nodo = suma de lifts de sus reglas
+importancia = {}
+for nd in nodos:
+    r_sub = reglas_grafo[
+        (reglas_grafo["antecedents_str"] == nd) |
+        (reglas_grafo["consequents_str"] == nd)
+    ]
+    importancia[nd] = r_sub["lift"].sum()
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=edge_x, y=edge_y,
+    mode="lines",
+    line=dict(width=1, color="#aaaaaa"),
+    hoverinfo="none",
+    showlegend=False,
+))
+
+fig.add_trace(go.Scatter(
+    x=xs, y=ys,
+    mode="markers+text",
+    text=nodos,
+    textposition="top center",
+    marker=dict(
+        size=[max(10, importancia.get(nd, 1) * 4) for nd in nodos],
+        color=[importancia.get(nd, 0) for nd in nodos],
+        colorscale="Plasma",
+        showscale=True,
+        colorbar=dict(title="Importancia<br>(suma lifts)"),
+    ),
+    hovertext=[
+        f"{nd}<br>Importancia: {importancia.get(nd,0):.2f}"
+        for nd in nodos
+    ],
+    hoverinfo="text",
+    showlegend=False,
+))
+
+fig.update_layout(
+    title="Grafo de Reglas de Asociación (solo ítems simples, lift > 1.1)",
+    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    height=520,
+    plot_bgcolor="white",
+)
+fig.show()
+```
+
+---
+
+## Leyendo el Grafo
+
+. . .
+
+**Nodos grandes y brillantes:** ítems que participan en muchas relaciones fuertes.
+
+. . .
+
+**Nodos pequeños y oscuros:** ítems periféricos — aparecen en pocas reglas o con lift bajo.
+
+. . .
+
+**Ítems centrales vs. ítems puente:**
+
+- **Central** (ej. `whole milk`): muchas conexiones, pero ¿son todas genuinas?
+- **Puente** (ej. `granola`): pocas conexiones, pero cada una puede ser muy informativa.
+
+. . .
+
+::: {.callout-warning}
+Un ítem muy central en el grafo no es necesariamente el más **interesante**.  
+Puede serlo simplemente por ser el más **frecuente**.
+:::
+
+---
+
+## Caso de Estudio: El "Whole Milk Problem"
+
+```{python}
+#| label: whole-milk-problem
+
+# Todas las reglas que tienen whole milk como consecuente
+wm_consecuente = reglas_ext[
+    reglas_ext["consequents_str"] == "whole milk"
+][["regla", "support", "confidence", "lift", "leverage", "zhang"]].round(3)
+
+# Soporte base de whole milk
+p_wm = df["whole milk"].mean()
+print(f"P(whole milk) = {p_wm:.3f}  →  aparece en el {p_wm*100:.1f}% de las transacciones\n")
+wm_consecuente.sort_values("lift", ascending=False)
+```
+
+. . .
+
+::: {.callout-warning}
+**Pregunta:** Si `P(whole milk) ≈ 0.60`, ¿qué confianza necesita una regla `X → whole milk` para que su lift sea mayor que 1.0?
+:::
+
+---
+
+## Respuesta: El Umbral Mínimo de Confianza Útil
+
+```{python}
+#| label: umbral-confianza-util
+
+p_wm = df["whole milk"].mean()
+print(f"Para que lift > 1.0, necesitamos:")
+print(f"  confidence > P(whole milk) = {p_wm:.3f}")
+print()
+print(f"Para que lift > 1.2, necesitamos:")
+print(f"  confidence > 1.2 × {p_wm:.3f} = {1.2 * p_wm:.3f}")
+print()
+print(f"Para que lift > 1.5, necesitamos:")
+print(f"  confidence > 1.5 × {p_wm:.3f} = {1.5 * p_wm:.3f}")
+print()
+print("Reglas con whole milk como consecuente y lift > 1.2:")
+candidatas = reglas_ext[
+    (reglas_ext["consequents_str"] == "whole milk") &
+    (reglas_ext["lift"] > 1.2)
+][["regla", "confidence", "lift"]].round(3)
+print(candidatas.to_string(index=False) if len(candidatas) > 0
+      else "  → Ninguna supera ese umbral con este dataset.")
+```
+
+---
+
+## Generalización: La Regla del Consecuente Frecuente
+
+. . .
+
+Para cualquier ítem B con soporte $P(B)$, el umbral mínimo de confianza para que una regla sea no-trivial es:
+
+$$\text{confidence}_{\min} > P(B)$$
+
+. . .
+
+Y para que sea "sustancialmente" no-trivial con factor $k$:
+
+$$\text{confidence}_{\min} > k \cdot P(B)$$
+
+. . .
+
+```{python}
+#| label: umbral-por-item
+
+umbrales = []
+for item in df.columns:
+    p = df[item].mean()
+    umbrales.append({
+        "item": item,
+        "P(item)": round(p, 3),
+        "conf_min para lift>1": round(p, 3),
+        "conf_min para lift>1.5": round(1.5*p, 3),
+    })
+
+pd.DataFrame(umbrales).sort_values("P(item)", ascending=False).head(8)
+```
+
+---
+
+## Diagnóstico Completo de una Regla
+
+Tomemos la regla más prometedora del dataset y la diseccionamos completamente:
+
+```{python}
+#| label: diseccion-completa
+
+mejor = reglas_ext.sort_values("zhang", ascending=False).iloc[0]
+
+print("=" * 55)
+print(f"REGLA: {mejor['regla']}")
+print("=" * 55)
+print(f"\n[PREVALENCIA]")
+print(f"  P(antecedente)         = {mejor['antecedent support']:.3f}")
+print(f"  P(consecuente)         = {mejor['consequent support']:.3f}")
+print(f"  P(ambos)               = {mejor['support']:.3f}")
+print(f"  P esperado (indep.)    = {mejor['antecedent support']*mejor['consequent support']:.3f}")
+
+print(f"\n[MÉTRICAS]")
+print(f"  Support    = {mejor['support']:.3f}  → aparece en {int(mejor['support']*50)}/50 transacciones")
+print(f"  Confidence = {mejor['confidence']:.3f}")
+print(f"  Lift       = {mejor['lift']:.3f}   → co-ocurren {mejor['lift']:.1f}x más que por azar")
+print(f"  Leverage   = {mejor['leverage']:.3f}  → diff. absoluta sobre independencia")
+print(f"  Conviction = {mejor['conviction']:.3f}")
+print(f"  Zhang      = {mejor['zhang']:.3f}")
+
+print(f"\n[VEREDICTO]")
+if mejor['lift'] > 1.3 and mejor['zhang'] > 0.2 and mejor['support'] >= 0.10:
+    print("  ✓ Regla ROBUSTA: lift, zhang y soporte coinciden.")
+elif mejor['lift'] > 1.0:
+    print("  ~ Regla DÉBIL: lift > 1 pero otras métricas no confirman.")
+else:
+    print("  ✗ Regla ESPURIA: descartar.")
+```
+
+---
+
+## Síntesis: El Pipeline Completo de Evaluación
+
+```{python}
+#| label: pipeline-evaluacion
+
+def evaluar_regla(row, n_transacciones=50, verbose=True):
+    """Evaluación sistemática de una regla de asociación."""
+    veredicto = []
+    puntos = 0
+
+    # Criterio 1: lift
+    if row["lift"] > 1.5:
+        veredicto.append("✓ Lift fuerte (>1.5)")
+        puntos += 3
+    elif row["lift"] > 1.1:
+        veredicto.append("~ Lift moderado (1.1–1.5)")
+        puntos += 1
+    else:
+        veredicto.append("✗ Lift débil (≤1.1)")
+
+    # Criterio 2: soporte absoluto
+    n_obs = int(row["support"] * n_transacciones)
+    if n_obs >= 10:
+        veredicto.append(f"✓ Soporte sólido ({n_obs} transacciones)")
+        puntos += 2
+    elif n_obs >= 5:
+        veredicto.append(f"~ Soporte mínimo ({n_obs} transacciones)")
+        puntos += 1
+    else:
+        veredicto.append(f"✗ Soporte insuficiente ({n_obs} transacciones)")
+
+    # Criterio 3: Zhang
+    if row["zhang"] > 0.3:
+        veredicto.append("✓ Zhang robusto (>0.3)")
+        puntos += 2
+    elif row["zhang"] > 0.1:
+        veredicto.append("~ Zhang moderado")
+        puntos += 1
+    else:
+        veredicto.append("✗ Zhang débil (≤0.1)")
+
+    # Criterio 4: conviction
+    if row["conviction"] > 1.5:
+        veredicto.append("✓ Conviction alta (>1.5)")
+        puntos += 1
+
+    clasificacion = (
+        "ROBUSTA" if puntos >= 6
+        else "CANDIDATA" if puntos >= 3
+        else "DESCARTAR"
+    )
+
+    if verbose:
+        print(f"\nRegla: {row['regla']}")
+        for v in veredicto:
+            print(f"  {v}")
+        print(f"  → CLASIFICACIÓN: {clasificacion} (puntos: {puntos}/8)")
+    return clasificacion
+
+# Evaluar top 5 reglas por lift
+top_reglas = reglas_ext.sort_values("lift", ascending=False).head(5)
+for _, row in top_reglas.iterrows():
+    evaluar_regla(row)
+```
+
+---
+
+## Conclusión: Lo que Cambia con Este Marco
+
+. . .
+
+**Antes (enfoque mecánico):**  
+_"Genero reglas, filtro por confidence > 0.5, reporto las top 10."_
+
+. . .
+
+**Ahora (enfoque crítico):**  
+_"Examino lift, zhang y conviction. Verifico sensibilidad al umbral. Reporto solo las reglas que coinciden en múltiples métricas."_
+
+. . .
+
+| Dimensión | Antes | Ahora |
+|---|---|---|
+| Métricas usadas | 1–2 | 4–5 |
+| Dirección importa | No | Sí |
+| Sensibilidad a parámetros | Ignorada | Explorada |
+| Visualización | Tabla | Grafo + scatter |
+| Veredicto | Automático | Sistemático |
+
+. . .
+
+::: {.callout-tip}
+**El analista que usa este marco genera menos reglas y más confiables.**  
+Eso es mejor ciencia de datos.
+:::
+
+---
+
+## Lecturas Recomendadas
+
+Para profundizar en métricas de interés y evaluación de patrones:
+
+- **Tan et al. (2006)**, cap. 6: Comparación sistemática de 21 métricas de interés — el artículo de referencia para elegir métricas [@tan2006introduction].
+- **Han, Kamber & Pei (2011)**, cap. 6: Patrones frecuentes, asociación, correlación — tratamiento completo con pruebas de significancia.
+- **Agrawal & Srikant (1994)**: El paper original — leerlo para entender qué limitaciones reconocían los autores desde el inicio [@agrawal1994fast].
+- **Pearl (2009)**: Para entender por qué las reglas de asociación nunca pueden hablar de causalidad [@pearl2009causality].
+
+---
+
+## Referencias
+
+::: {#refs}
+:::
+
+```{python}
+#| echo: false
+# Fin Clase 3
+```
