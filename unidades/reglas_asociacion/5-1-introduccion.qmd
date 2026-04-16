@@ -1,0 +1,683 @@
+---
+title: "Reglas de Asociación: Fundamentos, Interpretación y Selección"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_asociacion.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+```{python}
+#| label: setup-capitulo
+#| echo: false
+
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, association_rules
+
+np.random.seed(42)
+
+# Dataset de referencia: muestra representativa de Groceries
+transacciones_raw = [
+    ["whole milk", "yogurt", "bread"],
+    ["whole milk", "butter", "eggs"],
+    ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"],
+    ["whole milk", "soda", "chips"],
+    ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"],
+    ["eggs", "butter", "cheese"],
+    ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"],
+    ["whole milk", "bread", "eggs"],
+    ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"],
+    ["bread", "eggs", "cheese"],
+    ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"],
+    ["chips", "soda", "beer"],
+    ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"],
+    ["whole milk", "bread", "sugar"],
+    ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"],
+    ["coffee", "sugar", "bread"],
+    ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"],
+    ["bread", "chips", "soda"],
+    ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"],
+    ["whole milk", "butter", "cheese"],
+    ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"],
+    ["chips", "candy", "soda"],
+    ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"],
+    ["yogurt", "cheese", "eggs"],
+    ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"],
+    ["whole milk", "vegetables", "eggs"],
+    ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"],
+    ["whole milk", "fruit", "cheese"],
+    ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"],
+    ["coffee", "bread", "butter"],
+    ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"],
+    ["whole milk", "sugar", "butter"],
+    ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"],
+    ["granola", "yogurt", "fruit"],
+]
+
+te = TransactionEncoder()
+te_array = te.fit_transform(transacciones_raw)
+df = pd.DataFrame(te_array, columns=te.columns_)
+
+itemsets = apriori(df, min_support=0.10, use_colnames=True)
+reglas = association_rules(itemsets, metric="lift", min_threshold=0.5)
+reglas["antecedents_str"] = reglas["antecedents"].apply(lambda x: ", ".join(sorted(x)))
+reglas["consequents_str"] = reglas["consequents"].apply(lambda x: ", ".join(sorted(x)))
+reglas["regla"] = reglas["antecedents_str"] + " → " + reglas["consequents_str"]
+
+# Zhang's metric (no incluida en mlxtend)
+def zhang(row):
+    pab = row["support"]
+    pa  = row["antecedent support"]
+    pb  = row["consequent support"]
+    num = pab - pa * pb
+    den = max(pab * (1 - pa), pa * (pb - pab))
+    return num / den if den != 0 else 0.0
+
+reglas["zhang"] = reglas.apply(zhang, axis=1)
+```
+
+## Introducción {#sec-intro}
+
+En la mayoría de los contextos donde se recopilan datos transaccionales —ventas minoristas, registros médicos, historiales de navegación web, interacciones en plataformas digitales— existe una pregunta recurrente que antecede a cualquier modelo predictivo: *¿qué elementos tienden a aparecer juntos?* Esta pregunta, aparentemente simple, da lugar a uno de los problemas más estudiados en la minería de datos: el descubrimiento de reglas de asociación.
+
+El problema fue formalizado por @agrawal1994fast en el contexto del análisis de canastas de mercado (*market basket analysis*), donde cada transacción de un supermercado registra el conjunto de productos adquiridos por un cliente en una visita. La motivación original era directamente comercial: identificar productos que se compran juntos con frecuencia permite optimizar la disposición física de los artículos en tienda, diseñar estrategias de promoción cruzada y personalizar recomendaciones. El mismo formalismo, sin embargo, se ha aplicado desde entonces en dominios tan distintos como la bioinformática —para identificar genes que se co-expresan—, la epidemiología —para detectar síntomas que co-ocurren en pacientes—, y la ciberseguridad —para reconocer patrones de acceso que preceden a intrusiones [@han2011data].
+
+Lo que hace al problema pedagógicamente valioso no es su aplicabilidad, sino la tensión que revela entre dos tareas que parecen equivalentes pero no lo son: *generar* reglas es computacionalmente sencillo; *interpretar y seleccionar* reglas útiles requiere juicio estadístico genuino. Un analista que genere reglas sin comprensión crítica de las métricas que las respaldan puede llegar a conclusiones erróneas con aparente rigor cuantitativo. Este capítulo busca construir, de manera progresiva, los instrumentos conceptuales necesarios para evitar ese error.
+
+La exposición está organizada de lo concreto a lo formal. Se comienza con definiciones motivadas por ejemplos del mundo real, se desarrolla el proceso de generación de reglas, y se dedica la mayor parte del capítulo al problema que resulta ser el más difícil: no cómo obtener reglas, sino cómo decidir cuáles valen la pena.
+
+## Definiciones Fundamentales {#sec-definiciones}
+
+### El Modelo de Datos: Transacciones e Ítems
+
+El punto de partida es un conjunto de transacciones $\mathcal{D} = \{T_1, T_2, \ldots, T_n\}$, donde cada transacción $T_i$ es un subconjunto de un universo finito de ítems $\mathcal{I} = \{i_1, i_2, \ldots, i_m\}$. En el contexto de un supermercado, $\mathcal{I}$ es el catálogo completo de productos y cada $T_i$ es el conjunto de productos comprados en una visita particular. Es importante notar que este modelo no registra cantidades ni precios: únicamente la presencia o ausencia de cada ítem en cada transacción [@tan2006introduction].
+
+Un *itemset* es cualquier subconjunto $X \subseteq \mathcal{I}$. Un itemset de cardinalidad $k$ se denomina $k$-itemset. Por ejemplo, $\{$leche, pan$\}$ es un 2-itemset, y $\{$leche, pan, mantequilla$\}$ es un 3-itemset.
+
+### Soporte
+
+La primera métrica fundamental es el soporte, que mide la prevalencia de un patrón en el dataset.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** El *soporte* de un itemset $X$ en $\mathcal{D}$ es la fracción de transacciones que contienen a $X$:
+
+$$\text{supp}(X) = \frac{|\{T_i \in \mathcal{D} : X \subseteq T_i\}|}{|\mathcal{D}|}$$ {#eq-support}
+:::
+
+En términos probabilísticos, $\text{supp}(X) = P(X)$, es decir, la probabilidad empírica de observar el itemset $X$ en una transacción elegida al azar. Para una regla $A \Rightarrow B$, el soporte es $P(A \cup B)$: la probabilidad de que tanto el antecedente como el consecuente estén presentes en la misma transacción.
+
+El soporte tiene una propiedad formal relevante conocida como la *propiedad antimonotona* o principio Apriori: si un itemset $X$ tiene soporte menor que un umbral $\sigma_{\min}$, entonces cualquier superconjunto $Y \supset X$ también tendrá soporte menor que $\sigma_{\min}$. Esta propiedad, demostrada formalmente en @agrawal1994fast, es la base algorítmica que hace tractable la búsqueda de patrones frecuentes en datasets con miles de ítems.
+
+**Interpretación e intuición.** El soporte responde a la pregunta: *¿qué tan común es este patrón en los datos?* Un soporte bajo indica que el patrón es raro, lo que puede deberse a una relación genuinamente infrecuente o simplemente a que ambos ítems son raros por separado. Un soporte alto es condición necesaria —pero no suficiente— para que una regla sea útil en la práctica.
+
+### Confianza
+
+La confianza mide el poder predictivo de una regla: dado que ocurre el antecedente, ¿con qué frecuencia ocurre también el consecuente?
+
+::: {.callout-note appearance="minimal"}
+**Definición.** La *confianza* de la regla $A \Rightarrow B$ es la probabilidad condicional empírica de $B$ dado $A$:
+
+$$\text{conf}(A \Rightarrow B) = \frac{\text{supp}(A \cup B)}{\text{supp}(A)} = P(B \mid A)$$ {#eq-confidence}
+:::
+
+Una confianza de 0.80 para la regla $A \Rightarrow B$ significa que, en el 80% de las transacciones que contienen a $A$, también aparece $B$. Esta interpretación como probabilidad condicional hace que la confianza sea intuitiva: es la tasa de acierto de la regla como regla de predicción.
+
+**La limitación fundamental de la confianza.** A pesar de su intuitividad, la confianza presenta una limitación crítica que con frecuencia pasa desapercibida: *ignora la frecuencia base del consecuente*. Considérese la siguiente situación: en un supermercado donde el 65% de todas las transacciones incluyen leche entera, cualquier regla cuyo consecuente sea leche entera tendrá automáticamente una confianza de al menos 65%, independientemente de cuál sea el antecedente. Una confianza de 0.70 para la regla $\{$pan$\} \Rightarrow \{$leche entera$\}$ no es impresionante si la leche entera aparece en el 65% de las transacciones: el pan añade menos de 10 puntos porcentuales sobre la tasa base. La regla tiene poder predictivo mínimo.
+
+Este problema —confundir alta confianza con relación fuerte— es el error más común en el análisis de reglas de asociación, y motiva la necesidad del lift como métrica complementaria.
+
+### Lift
+
+El lift cuantifica cuánto se aleja la relación entre $A$ y $B$ de la independencia estadística.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** El *lift* de la regla $A \Rightarrow B$ es el cociente entre la confianza observada y la confianza esperada bajo independencia:
+
+$$\text{lift}(A \Rightarrow B) = \frac{\text{conf}(A \Rightarrow B)}{P(B)} = \frac{P(A \cup B)}{P(A) \cdot P(B)}$$ {#eq-lift}
+:::
+
+La interpretación probabilística es directa: si $A$ y $B$ fueran estadísticamente independientes, la probabilidad de su co-ocurrencia sería $P(A) \cdot P(B)$. El lift es precisamente el factor por el cual la co-ocurrencia observada supera (o cae por debajo de) esta expectativa bajo independencia [@tan2006introduction].
+
+- $\text{lift} = 1$: $A$ y $B$ son estadísticamente independientes. La presencia de $A$ no aporta información sobre $B$.
+- $\text{lift} > 1$: $A$ y $B$ co-ocurren más frecuentemente de lo esperado bajo independencia. La regla señala una asociación positiva.
+- $\text{lift} < 1$: $A$ y $B$ co-ocurren menos frecuentemente de lo esperado. La presencia de $A$ inhibe la presencia de $B$.
+
+Una propiedad algebraica importante es que el lift es simétrico: $\text{lift}(A \Rightarrow B) = \text{lift}(B \Rightarrow A)$. Esto tiene implicaciones prácticas significativas que se discuten en la @sec-interpretacion.
+
+### Un Ejemplo Concreto
+
+Para anclar las definiciones, considérese el siguiente dataset de cinco transacciones:
+
+| Transacción | Ítems |
+|---|---|
+| $T_1$ | leche, pan, mantequilla |
+| $T_2$ | leche, pan |
+| $T_3$ | leche, mantequilla |
+| $T_4$ | pan, mantequilla |
+| $T_5$ | leche, pan, queso |
+
+Para la regla $\{$pan$\} \Rightarrow \{$leche$\}$:
+
+$$\text{supp}(\{pan, leche\}) = \frac{3}{5} = 0.60$$
+
+$$\text{conf}(\{pan\} \Rightarrow \{leche\}) = \frac{\text{supp}(\{pan, leche\})}{\text{supp}(\{pan\})} = \frac{3/5}{4/5} = 0.75$$
+
+$$\text{lift}(\{pan\} \Rightarrow \{leche\}) = \frac{0.75}{P(\{leche\})} = \frac{0.75}{4/5} = 0.9375$$
+
+El lift de 0.9375 — menor que 1 — revela que, a pesar de una confianza aparentemente alta de 0.75, la presencia de pan en realidad *reduce ligeramente* la probabilidad de encontrar leche en la misma transacción, en relación con la tasa base de leche (que es 0.80). La confianza del 75% era engañosa porque la leche ya era muy frecuente.
+
+## Generación de Reglas Frecuentes {#sec-generacion}
+
+### De Itemsets Frecuentes a Reglas
+
+El proceso de descubrimiento de reglas de asociación se divide en dos etapas [@agrawal1994fast; @han2011data]:
+
+1. **Descubrimiento de itemsets frecuentes:** identificar todos los itemsets $X \subseteq \mathcal{I}$ cuyo soporte supere un umbral mínimo $\sigma_{\min}$ fijado por el analista.
+
+2. **Generación de reglas a partir de itemsets frecuentes:** para cada itemset frecuente $X$ de cardinalidad $k \geq 2$, generar todas las reglas $A \Rightarrow B$ donde $A \cup B = X$, $A \cap B = \emptyset$, $A \neq \emptyset$ y $B \neq \emptyset$, y retener solo aquellas cuya confianza supere un umbral mínimo $\gamma_{\min}$.
+
+La separación entre estas dos etapas no es arbitraria: la primera es computacionalmente costosa —el espacio de todos los subconjuntos posibles de $\mathcal{I}$ tiene cardinalidad $2^{|\mathcal{I}|}$— mientras que la segunda, una vez conocidos los itemsets frecuentes, es relativamente rápida.
+
+### El Algoritmo Apriori
+
+El algoritmo Apriori, propuesto en @agrawal1994fast, fue el primero en resolver eficientemente la primera etapa mediante una estrategia de búsqueda en anchura que explota la propiedad antimonotona del soporte. La idea central es que no tiene sentido evaluar el soporte de un $k$-itemset si alguno de sus $(k-1)$-subconjuntos ya es infrecuente: por antimonotonía, el $k$-itemset también será infrecuente. Esto permite podar el espacio de búsqueda de manera drástica.
+
+El funcionamiento a alto nivel es el siguiente: en cada iteración $k$, el algoritmo genera candidatos de tamaño $k$ a partir de los itemsets frecuentes de tamaño $k-1$ (fase de unión), descarta aquellos que contienen subconjuntos infrecuentes (fase de poda) y escanea el dataset para calcular el soporte de los candidatos restantes. El proceso termina cuando no se pueden generar nuevos candidatos frecuentes.
+
+No es objetivo de este capítulo detallar la implementación del algoritmo — para ello puede consultarse @han2011data, capítulo 6, o @tan2006introduction, capítulo 5. Lo que sí importa aquí es comprender sus parámetros y sus consecuencias sobre los resultados.
+
+### Los Parámetros como Decisiones del Analista
+
+La ejecución de Apriori requiere especificar al menos dos umbrales:
+
+- **$\sigma_{\min}$ (soporte mínimo):** controla cuán frecuente debe ser un patrón para ser considerado. Un valor bajo produce más itemsets frecuentes —y potencialmente más reglas— pero también más ruido. Un valor alto filtra agresivamente y puede eliminar patrones genuinos pero poco frecuentes.
+
+- **$\gamma_{\min}$ (confianza mínima):** controla cuán predictiva debe ser una regla para ser reportada. Como se discutirá en la @sec-problema, este umbral no tiene interpretación estadística directa: su valor apropiado depende del dominio.
+
+Un aspecto crucial que los textos de introducción rara vez enfatizan es que *los resultados dependen directamente de los parámetros elegidos*. El número de reglas obtenidas puede variar en un orden de magnitud al cambiar $\sigma_{\min}$ en unos pocos puntos porcentuales. Esto implica que reportar reglas sin reportar los parámetros con los que fueron generadas es una práctica metodológicamente deficiente.
+
+El siguiente bloque de código ilustra esta sensibilidad de manera empírica:
+
+```{python}
+#| label: sensibilidad-parametros
+#| fig-cap: "Número de reglas generadas en función del soporte mínimo (confianza mínima fija en 0.3). La caída es pronunciada: pasar de soporte 0.08 a 0.14 puede reducir las reglas a la mitad."
+
+soportes = [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]
+resultados_sens = []
+
+for s in soportes:
+    its = apriori(df, min_support=s, use_colnames=True)
+    if len(its) == 0:
+        resultados_sens.append({"min_support": s, "n_reglas": 0, "lift_med": np.nan})
+        continue
+    r = association_rules(its, metric="confidence", min_threshold=0.3)
+    resultados_sens.append({
+        "min_support": round(s, 2),
+        "n_reglas": len(r),
+        "lift_med": round(r["lift"].median(), 3) if len(r) > 0 else np.nan,
+    })
+
+df_sens = pd.DataFrame(resultados_sens)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=df_sens["min_support"], y=df_sens["n_reglas"],
+    mode="lines+markers", name="N° de reglas",
+    line=dict(color="#e63946", width=2), marker=dict(size=8),
+    yaxis="y1",
+))
+fig.add_trace(go.Scatter(
+    x=df_sens["min_support"], y=df_sens["lift_med"],
+    mode="lines+markers", name="Lift mediano",
+    line=dict(color="#457b9d", width=2, dash="dash"), marker=dict(size=8),
+    yaxis="y2",
+))
+fig.update_layout(
+    xaxis=dict(title="Soporte mínimo (σ_min)"),
+    yaxis=dict(title="N° de reglas generadas", side="left"),
+    yaxis2=dict(title="Lift mediano", overlaying="y", side="right"),
+    legend=dict(x=0.65, y=0.95),
+    height=400,
+    title="Sensibilidad de los resultados al soporte mínimo",
+)
+fig.show()
+```
+
+Nótese el comportamiento opuesto de ambas curvas: al aumentar $\sigma_{\min}$, el número de reglas disminuye mientras que el lift mediano tiende a aumentar. Esto no es una coincidencia: los itemsets frecuentes con soporte muy bajo son los más susceptibles de ser artefactos estadísticos, y al filtrarlos se conservan los patrones con mayor señal relativa.
+
+## El Problema de las Demasiadas Reglas {#sec-problema}
+
+### La Explosión Combinatoria
+
+Supóngase un dataset con 100 ítems distintos y $\sigma_{\min} = 0.01$. El número de posibles itemsets es $2^{100} - 1$, un número astronómico. Incluso con la poda del algoritmo Apriori, y con un soporte mínimo razonablemente restrictivo, es posible generar decenas de miles de reglas a partir de datasets de tamaño moderado. El dataset Groceries original, con 9835 transacciones y 169 ítems, puede generar entre varios cientos y varios miles de reglas según los parámetros elegidos [@han2011data].
+
+Este volumen de resultados crea un problema de segundo orden: la proliferación de reglas hace que la revisión manual sea inviable, y la selección automatizada requiere criterios que, si son mal elegidos, pueden introducir un sesgo sistemático.
+
+### Redundancia e Irrelevancia
+
+Parte del problema es estructural. Dado un itemset frecuente $X = \{A, B, C\}$, el algoritmo genera todas las particiones posibles como reglas: $\{A\} \Rightarrow \{B, C\}$, $\{B\} \Rightarrow \{A, C\}$, $\{C\} \Rightarrow \{A, B\}$, $\{A, B\} \Rightarrow \{C\}$, $\{A, C\} \Rightarrow \{B\}$, $\{B, C\} \Rightarrow \{A\}$. Muchas de estas reglas comparten la misma información de co-ocurrencia y son, en cierta medida, redundantes entre sí. La elección del consecuente más adecuado depende del contexto de aplicación, no del algoritmo.
+
+Una capa adicional de dificultad es la irrelevancia. Una regla puede ser formalmente válida —soporte y confianza por encima de los umbrales— y al mismo tiempo no añadir ninguna información accionable. Esto ocurre sistemáticamente cuando el consecuente es un ítem muy frecuente: la regla parece predictiva porque su confianza es alta, pero en realidad refleja la mera ubicuidad del consecuente, no una relación genuina con el antecedente.
+
+Este es el problema central que toda metodología rigurosa de análisis de reglas de asociación debe abordar, y que las métricas de evaluación descritas en la siguiente sección intentan resolver.
+
+## Métricas de Evaluación: Interpretación Profunda {#sec-metricas}
+
+### Soporte: Prevalencia, No Interés
+
+El soporte, tal como fue definido en @sec-definiciones, responde exclusivamente a la pregunta *¿qué tan frecuente es este patrón?* No dice nada sobre si el patrón es inesperado, interesante o accionable. Una regla con soporte muy alto puede ser trivial: si el 80% de los clientes compra agua embotellada, la regla $\{X\} \Rightarrow \{$agua$\}$ tendrá soporte alto para prácticamente cualquier $X$, sin revelar nada útil.
+
+El soporte sí tiene un papel importante como **umbral de confiabilidad estadística**: un patrón respaldado por muy pocas observaciones es inestable y puede desaparecer o cambiar sustancialmente al agregar nuevos datos. En un dataset de 50 transacciones, un soporte de 0.10 corresponde a apenas 5 observaciones — insuficiente para afirmaciones estadísticas robustas. Con datasets más grandes (del orden de miles de transacciones), los umbrales de soporte pueden y deben ser más exigentes.
+
+### Confianza: Predictividad Condicional con un Sesgo Estructural
+
+La confianza mide $P(B \mid A)$: la probabilidad de que el consecuente esté presente dado el antecedente. Su interpretación como probabilidad condicional es clara y directamente útil en sistemas de recomendación: si el 80% de los clientes que compran pan también compran mantequilla, esa confianza justifica directamente recomendar mantequilla a alguien que acaba de poner pan en su carrito.
+
+Sin embargo, la confianza tiene un sesgo estructural bien documentado [@tan2006introduction]: es monótonamente creciente en $P(B)$. Para un antecedente fijo $A$:
+
+$$\text{conf}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A)} \leq \frac{P(B)}{P(A)} \cdot P(A) = P(B) \cdot \frac{1}{P(A)}$$
+
+La confianza depende de $P(B)$ de manera directa. Un ítem $B$ muy frecuente producirá, ceteris paribus, reglas de alta confianza para cualquier antecedente $A$, simplemente porque $B$ aparece en casi todas las transacciones. Esta dependencia hace que la confianza no sea comparable entre reglas con consecuentes de frecuencias muy distintas, lo que introduce una fuente de sesgo sistemática si se usa como único criterio de selección.
+
+La consecuencia práctica es la siguiente: antes de declarar que una regla tiene "alta confianza", es necesario comparar esa confianza con $P(B)$. Solo si $\text{conf}(A \Rightarrow B) \gg P(B)$ puede afirmarse que la presencia de $A$ aporta genuinamente a la predicción de $B$.
+
+::: {.callout-important}
+**Umbral de confianza no-trivial.** Para que la regla $A \Rightarrow B$ tenga lift $> k$, se requiere:
+$$\text{conf}(A \Rightarrow B) > k \cdot P(B)$$
+En particular, para que la regla sea simplemente no-trivial (lift $> 1$), es necesario que la confianza supere la frecuencia base del consecuente: $\text{conf}(A \Rightarrow B) > P(B)$.
+:::
+
+### Lift: La Métrica Central de Interés
+
+El lift, definido en @eq-lift, corrige el sesgo de la confianza al normalizar por $P(B)$. Su interpretación como razón de verosimilitud hace que sea directamente comparable entre reglas con distintos consecuentes.
+
+Desde el punto de vista de la probabilidad, el lift es el cociente entre la probabilidad conjunta observada y la probabilidad conjunta esperada bajo la hipótesis de independencia:
+
+$$\text{lift}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A) \cdot P(B)}$$
+
+Un lift significativamente mayor que 1 constituye evidencia en favor de una asociación genuina entre $A$ y $B$. Un lift cercano a 1 indica que conocer $A$ no modifica la probabilidad de $B$, lo que hace que la regla sea informacionalmente vacía [@tan2006introduction].
+
+**La asimetría del lift.** Como se mencionó al final de @sec-definiciones, el lift es simétrico: $\text{lift}(A \Rightarrow B) = \text{lift}(B \Rightarrow A)$. Esto puede resultar sorprendente, pues la confianza sí es asimétrica. La razón es algebraica: el lift compara $P(A \cup B)$ con $P(A) \cdot P(B)$, y esta expresión trata a $A$ y a $B$ de manera equivalente. 
+
+La asimetría del lift tiene implicaciones prácticas: cuando se generan las reglas $A \Rightarrow B$ y $B \Rightarrow A$, ambas tienen exactamente el mismo lift pero pueden tener confianzas muy diferentes. La dirección que debe preferirse en una aplicación real depende del contexto: si el objetivo es recomendar $B$ dado que se observó $A$, la confianza de $A \Rightarrow B$ es la métrica relevante; si el objetivo es recomendar $A$ dado $B$, lo es $\text{conf}(B \Rightarrow A)$.
+
+**Limitaciones del lift.** A pesar de su superioridad sobre la confianza para detectar asociaciones no triviales, el lift tiene dos limitaciones importantes:
+
+1. *Inestabilidad con soporte bajo.* En datasets pequeños o con ítems raros, el lift puede inflarse artificialmente. Si $A$ y $B$ son ítems raros —$P(A) = P(B) = 0.01$— y co-ocurren una sola vez, su soporte es $P(A \cup B) = 0.01$ y su lift es $1/0.01 = 100$. Este valor es enorme pero está respaldado por una sola observación, lo que lo hace estadísticamente no significativo.
+
+2. *Techo variable.* El valor máximo que puede alcanzar el lift no es universal: depende de los soportes individuales de $A$ y $B$. El lift máximo teórico es $1/\max(P(A), P(B))$, lo que implica que no es válido comparar lifts entre reglas con distintos niveles de frecuencia sin esta corrección.
+
+Estas limitaciones motivan el uso de métricas complementarias, que se introducen en la @sec-seleccion.
+
+### Resumen Comparativo
+
+La @tbl-metricas sintetiza las propiedades de las tres métricas fundamentales.
+
+| Métrica | Pregunta que responde | Escala | Limitación principal |
+|---|---|---|---|
+| Soporte | ¿Qué tan común es el patrón? | $[0, 1]$ | No mide interés |
+| Confianza | ¿Qué tan predecible es $B$ dado $A$? | $[0, 1]$ | Sesgada por $P(B)$ |
+| Lift | ¿Es la co-ocurrencia mayor que el azar? | $(0, +\infty)$ | Inestable con soporte bajo |
+
+: Propiedades de las métricas fundamentales de reglas de asociación. {#tbl-metricas}
+
+Ninguna de las tres métricas es suficiente por sí sola. La práctica correcta consiste en utilizarlas en conjunto y privilegiar reglas que resulten sólidas según múltiples criterios.
+
+## Interpretación Visual del Espacio de Reglas {#sec-visual}
+
+### Representación en el Espacio Soporte-Confianza-Lift
+
+El conjunto de reglas generadas por Apriori puede visualizarse como una nube de puntos en un espacio tridimensional definido por soporte, confianza y lift. Esta representación permite identificar de manera inmediata los distintos tipos de reglas —las útiles, las engañosas y las triviales— y orienta la selección de manera más informada que la simple inspección de tablas.
+
+La forma más conveniente de reducir esta representación tridimensional a un gráfico plano es proyectar confianza y lift sobre los ejes cartesianos, y codificar el soporte mediante el tamaño de los marcadores. El uso de color para representar el lift añade redundancia visual que facilita la identificación de los cuadrantes de interés.
+
+```{python}
+#| label: fig-scatter-reglas
+#| fig-cap: "Espacio de reglas: confianza (eje horizontal) vs. lift (eje vertical), con el soporte codificado en el tamaño del marcador y el lift en el color. La línea roja discontinua marca lift = 1, la frontera de independencia estadística. Las reglas por debajo de esta línea son espurias o triviales. Pasar el cursor sobre cualquier punto revela la regla completa."
+
+fig = px.scatter(
+    reglas,
+    x="confidence",
+    y="lift",
+    size="support",
+    hover_data={
+        "regla": True,
+        "support": ":.3f",
+        "confidence": ":.3f",
+        "lift": ":.3f",
+    },
+    color="lift",
+    color_continuous_scale="RdYlGn",
+    labels={
+        "confidence": "Confianza",
+        "lift": "Lift",
+        "support": "Soporte",
+    },
+    size_max=28,
+)
+
+fig.add_hline(
+    y=1.0,
+    line_dash="dash",
+    line_color="crimson",
+    annotation_text="Lift = 1 (independencia estadística)",
+    annotation_position="top left",
+    annotation_font_color="crimson",
+)
+
+fig.update_layout(
+    height=500,
+    xaxis=dict(range=[0, 1.05], title="Confianza"),
+    yaxis=dict(title="Lift"),
+    coloraxis_colorbar=dict(title="Lift"),
+)
+fig.show()
+```
+
+### Lectura del Gráfico: Cuatro Zonas
+
+La @fig-scatter-reglas define implícitamente cuatro zonas de interpretación:
+
+**Zona I — Cuadrante deseable (lift alto, confianza alta, marcador grande).** Las reglas en esta zona son las candidatas más sólidas: tienen poder predictivo (confianza alta), representan una asociación genuina no explicada por las frecuencias base (lift > 1), y están respaldadas por una cantidad razonable de transacciones (soporte alto). Son los patrones más accionables.
+
+**Zona II — Alta confianza, lift bajo (debajo de la línea roja).** Esta es la zona de mayor riesgo para el analista no crítico. Las reglas aquí pueden tener confianzas impresionantes —0.70, 0.80 o más— pero un lift cercano o inferior a 1. En la mayoría de los casos, esto se debe al problema de la frecuencia base: el consecuente es tan ubícuo que aparece independientemente del antecedente. Confiar en estas reglas para tomar decisiones es, en el mejor de los casos, inútil y, en el peor, contraproducente.
+
+**Zona III — Lift alto, soporte bajo (marcadores pequeños por encima de la línea).** Estas reglas señalan asociaciones potencialmente fuertes, pero están respaldadas por pocas observaciones. Su lift puede ser un artefacto estadístico: en un dataset de 50 transacciones, dos ítems que co-ocurren apenas 5 veces pueden mostrar un lift elevado por pura aleatoriedad. La regla puede ser genuina, pero requiere cautela y, de ser posible, validación con datos adicionales.
+
+**Zona IV — Bajo en todo.** Reglas sin soporte, sin confianza relevante y con lift cercano a 1. No hay argumento para retenerlas.
+
+### Co-ocurrencia Bruta: La Matriz de Transacciones
+
+Antes de interpretar las métricas formales, una visualización complementaria de utilidad es la matriz de co-ocurrencia entre los ítems más frecuentes. Esta matriz registra, para cada par de ítems, el número absoluto de transacciones en las que ambos aparecen simultáneamente.
+
+```{python}
+#| label: fig-coocurrencia
+#| fig-cap: "Matriz de co-ocurrencia entre los 10 ítems más frecuentes del dataset. La diagonal está fijada a cero (un ítem no co-ocurre consigo mismo). Las celdas de intensidad naranja alta deben interpretarse con precaución cuando involucran ítems de alta frecuencia base."
+
+freq = df.sum().sort_values(ascending=False)
+top_items = freq.head(10).index.tolist()
+df_top = df[top_items]
+cooc = df_top.T.dot(df_top)
+np.fill_diagonal(cooc.values, 0)
+
+fig = px.imshow(
+    cooc,
+    color_continuous_scale="Oranges",
+    labels={"color": "Co-ocurrencias"},
+    aspect="auto",
+    text_auto=True,
+)
+fig.update_layout(height=430)
+fig.show()
+```
+
+Una observación importante sobre la @fig-coocurrencia: las celdas con mayor intensidad tienden a corresponder a pares que involucran los ítems más frecuentes —en este caso, *whole milk* y *bread*. Esto no es evidencia de una asociación especialmente fuerte entre ellos; es, en gran medida, consecuencia de sus altas frecuencias individuales. La co-ocurrencia bruta es el numerador de $P(A \cup B)$, pero no incorpora los denominadores $P(A)$ y $P(B)$ que son necesarios para evaluar si la relación es no trivial. Las celdas más informativas son aquellas con alta intensidad entre ítems de frecuencia moderada, como el clúster *granola-yogurt-fruit*.
+
+## Selección de Reglas Útiles {#sec-seleccion}
+
+### Criterios Prácticos de Filtrado
+
+El proceso de selección de reglas útiles no es un procedimiento automatizable en su totalidad: requiere decisiones del analista que deben estar informadas por el contexto del problema. Sin embargo, es posible enunciar un conjunto de criterios generales que sirven como punto de partida [@tan2006introduction; @han2011data]:
+
+**Criterio 1: Lift sustancialmente mayor que 1.** Una regla cuyo lift no supera de manera apreciable el valor de referencia de la independencia (1.0) no revela ninguna asociación genuina entre el antecedente y el consecuente. Un umbral pragmático es lift $\geq 1.2$ para relaciones débiles y lift $\geq 1.5$ para relaciones moderadas. En datasets grandes y en aplicaciones donde el costo de una decisión incorrecta es alto, valores más exigentes (lift $\geq 2.0$) son más apropiados.
+
+**Criterio 2: Soporte respaldado por suficientes observaciones.** El soporte mínimo debe traducirse a un número absoluto de transacciones que resulte estadísticamente sensato. Con un dataset de 50 transacciones, soporte $= 0.10$ corresponde a apenas 5 observaciones — un valor muy inestable. Con un dataset de 9000 transacciones, ese mismo soporte corresponde a 900 observaciones, lo cual es perfectamente robusto.
+
+**Criterio 3: Confianza superior a la frecuencia base del consecuente.** Como se derivó en @sec-metricas, la condición $\text{conf}(A \Rightarrow B) > P(B)$ es equivalente a lift $> 1$. Una buena práctica es calcular explícitamente el "umbral de confianza no-trivial" para cada posible consecuente antes de analizar las reglas, tal como ilustra la siguiente tabla:
+
+```{python}
+#| label: tbl-umbrales-confianza
+#| tbl-cap: "Umbral mínimo de confianza necesario para que una regla sea no-trivial (lift > 1) o sustancialmente no-trivial (lift > 1.5), calculado a partir de la frecuencia base de cada ítem."
+
+umbrales = []
+for item in df.columns:
+    p = df[item].mean()
+    umbrales.append({
+        "Ítem": item,
+        "P(ítem)": round(p, 3),
+        "conf mín para lift > 1.0": round(p, 3),
+        "conf mín para lift > 1.5": round(1.5 * p, 3),
+    })
+
+pd.DataFrame(umbrales).sort_values("P(ítem)", ascending=False).head(10)
+```
+
+Esta tabla es una herramienta diagnóstica directamente útil: antes de entusiasmarse con una regla cuyo consecuente es *whole milk*, conviene consultar que la confianza supera 0.58 (para lift > 1) o 0.87 (para lift > 1.5). Si la confianza observada no alcanza esos valores, la regla no aporta nada.
+
+### Métricas Complementarias
+
+La literatura de minería de datos propone numerosas métricas alternativas al lift para evaluar el interés de una regla [@tan2006introduction]. Tres de las más utilizadas en la práctica son las siguientes.
+
+**Leverage (apalancamiento).**
+
+$$\text{lev}(A \Rightarrow B) = P(A \cup B) - P(A) \cdot P(B)$$
+
+El leverage es la diferencia absoluta entre la co-ocurrencia observada y la esperada bajo independencia. Su interpretación es más directa que la del lift: mide cuántas transacciones *adicionales*, sobre el baseline de independencia, tienen tanto $A$ como $B$. Un leverage de 0.05 en un dataset de 1000 transacciones significa que aproximadamente 50 transacciones tienen tanto $A$ como $B$ más allá de lo que esperaríamos si fueran independientes. El rango del leverage es $[-P(A) \cdot P(B), \min(P(A), P(B)) - P(A) \cdot P(B)]$.
+
+**Conviction.**
+
+$$\text{conv}(A \Rightarrow B) = \frac{1 - P(B)}{1 - \text{conf}(A \Rightarrow B)}$$
+
+La conviction mide con qué frecuencia la regla $A \Rightarrow B$ está "equivocada" — es decir, con qué frecuencia $A$ ocurre sin $B$ — en relación con lo esperado bajo independencia. A diferencia del lift, la conviction es asimétrica: $\text{conv}(A \Rightarrow B) \neq \text{conv}(B \Rightarrow A)$ en general, lo que la hace más apropiada para evaluar reglas dirigidas. Cuando la confianza tiende a 1, la conviction tiende a infinito, lo cual puede interpretarse como que la regla es cuasi-determinista. Conviction $= 1$ indica independencia.
+
+**Zhang's metric.**
+
+$$Z(A, B) = \frac{P(A \cup B) - P(A) \cdot P(B)}{\max\{P(A \cup B)(1 - P(A)),\; P(A)(P(B) - P(A \cup B))\}}$$
+
+La métrica de Zhang, propuesta para superar algunas limitaciones del lift, tiene rango $[-1, 1]$ y es simétrica. Su principal ventaja es que normaliza correctamente tanto en el caso de co-ocurrencia alta como en el de co-ocurrencia baja, siendo más robusta ante ítems muy frecuentes. Un valor de Zhang cercano a 0 indica independencia; valores positivos cercanos a 1 indican asociación fuerte.
+
+```{python}
+#| label: tbl-metricas-completas
+#| tbl-cap: "Comparación de métricas para las 8 reglas con mayor lift. Las métricas adicionales —leverage, conviction y Zhang— permiten corroborar o cuestionar lo que el lift sugiere."
+
+cols_mostrar = ["regla", "support", "confidence", "lift", "leverage", "conviction", "zhang"]
+reglas.sort_values("lift", ascending=False).head(8)[cols_mostrar].round(3)
+```
+
+### Reglas Fuertes vs. Reglas Débiles: Un Contraste
+
+Para ilustrar la diferencia entre una regla bien respaldada y una engañosa, considérense los dos extremos del espacio de reglas:
+
+```{python}
+#| label: contraste-reglas
+
+print("=== REGLAS CON ALTA CONFIANZA PERO LIFT BAJO ===")
+print("(apariencia de fortaleza, realidad de trivialidad)\n")
+debiles = reglas[reglas["confidence"] > 0.45].sort_values("lift").head(3)
+print(debiles[["regla", "support", "confidence", "lift", "zhang"]].round(3).to_string(index=False))
+
+print("\n=== REGLAS CON LIFT ALTO Y SOPORTE RAZONABLE ===")
+print("(señal genuina respaldada por múltiples métricas)\n")
+fuertes = reglas[
+    (reglas["lift"] > 1.3) & (reglas["support"] >= 0.10)
+].sort_values("lift", ascending=False).head(3)
+print(fuertes[["regla", "support", "confidence", "lift", "zhang"]].round(3).to_string(index=False))
+```
+
+Las reglas del primer grupo tienen confianzas aparentemente razonables, pero sus lifts cercanos a 1 y sus valores de Zhang bajos revelan que no hay asociación genuina entre antecedente y consecuente. Las reglas del segundo grupo, aunque puedan tener confianzas más modestas en términos absolutos, son más informativas porque representan desviaciones reales del comportamiento esperado bajo independencia.
+
+### Un Procedimiento de Selección Sistemático
+
+El siguiente procedimiento condensa los criterios anteriores en una función de evaluación que puede aplicarse a cualquier conjunto de reglas:
+
+```{python}
+#| label: pipeline-seleccion
+
+def evaluar_regla(row, n_transacciones=50, verbose=True):
+    """
+    Evalúa el interés de una regla de asociación según cuatro criterios.
+    Retorna una clasificación cualitativa: ROBUSTA, CANDIDATA o DESCARTAR.
+    """
+    observaciones = []
+    puntos = 0
+
+    # Criterio 1: Lift
+    if row["lift"] > 1.5:
+        observaciones.append("Lift fuerte  (> 1.5)")
+        puntos += 3
+    elif row["lift"] > 1.1:
+        observaciones.append("Lift moderado  (1.1 – 1.5)")
+        puntos += 1
+    else:
+        observaciones.append("Lift débil  (≤ 1.1)  — no trivial")
+
+    # Criterio 2: Soporte absoluto
+    n_obs = int(row["support"] * n_transacciones)
+    if n_obs >= 10:
+        observaciones.append(f"Soporte sólido  ({n_obs} transacciones)")
+        puntos += 2
+    elif n_obs >= 5:
+        observaciones.append(f"Soporte mínimo  ({n_obs} transacciones)")
+        puntos += 1
+    else:
+        observaciones.append(f"Soporte insuficiente  ({n_obs} transacciones)")
+
+    # Criterio 3: Zhang
+    if row["zhang"] > 0.3:
+        observaciones.append("Zhang robusto  (> 0.3)")
+        puntos += 2
+    elif row["zhang"] > 0.1:
+        observaciones.append("Zhang moderado  (0.1 – 0.3)")
+        puntos += 1
+    else:
+        observaciones.append("Zhang débil  (≤ 0.1)")
+
+    # Criterio 4: Conviction
+    if row["conviction"] > 1.5:
+        observaciones.append("Conviction alta  (> 1.5)")
+        puntos += 1
+
+    clasificacion = (
+        "ROBUSTA" if puntos >= 6
+        else "CANDIDATA" if puntos >= 3
+        else "DESCARTAR"
+    )
+
+    if verbose:
+        print(f"Regla: {row['regla']}")
+        for obs in observaciones:
+            print(f"  • {obs}")
+        print(f"  → Clasificación: {clasificacion}  (puntos: {puntos}/8)\n")
+    return clasificacion
+
+# Aplicar a las 5 reglas con mayor lift
+print("Evaluación de las 5 reglas con mayor lift:\n")
+for _, row in reglas.sort_values("lift", ascending=False).head(5).iterrows():
+    evaluar_regla(row)
+```
+
+Este procedimiento no debe interpretarse como un algoritmo definitivo: los umbrales y los pesos son propuestas que deben ajustarse al dominio. Su valor pedagógico reside en hacer explícita la multidimensionalidad del juicio sobre la calidad de una regla, en contraste con la práctica de usar una única métrica como criterio absoluto.
+
+## Limitaciones del Enfoque {#sec-limitaciones}
+
+### El Problema de la Causalidad
+
+Quizás la limitación más importante del análisis de reglas de asociación, y la más frecuentemente ignorada, es que las reglas son *descriptivas* y *correlacionales*, nunca *causales* [@pearl2009causality]. La regla $\{$pan$\} \Rightarrow \{$mantequilla$\}$ con lift alto nos dice que quienes compran pan tienden a comprar mantequilla con más frecuencia de la esperada. No nos dice que comprar pan *causa* la compra de mantequilla, ni que poner pan al lado de la mantequilla *causará* que más personas los compren juntos. La confusión entre correlación y causalidad en el análisis de datos ha sido extensamente documentada como una fuente de errores costosos en decisiones de negocio y de política [@pearl2009causality].
+
+La distinción es especialmente relevante en aplicaciones de alto impacto como medicina o epidemiología. Identificar que ciertos síntomas co-ocurren con cierta diagnosis no equivale a entender el mecanismo causal que los conecta. Para inferencias causales son necesarios diseños experimentales o marcos formales de causalidad como los grafos causales de @pearl2009causality.
+
+### Ítems Dominantes y Sesgo por Frecuencia Base
+
+Como se ha analizado en detalle a lo largo de este capítulo, la presencia de ítems con soporte muy alto introduce un sesgo estructural en el análisis. En el dataset Groceries, *whole milk* aparece en aproximadamente el 26% de las 9835 transacciones originales —y en el 58% de la muestra de 50 transacciones utilizada en los ejemplos computacionales. Este dominio hace que *whole milk* aparezca como consecuente en un gran número de reglas con alta confianza, la mayoría de las cuales no representa asociaciones genuinas.
+
+Una estrategia práctica para mitigar este problema es eliminar o tratar de manera especial los ítems cuyo soporte supere un umbral alto (por ejemplo, 40–50%) antes de ejecutar el análisis, o analizar subgrupos del dataset donde la distribución de ítems sea más homogénea.
+
+### Ausencia de Estructura Temporal
+
+El modelo de datos de las reglas de asociación —conjuntos sin orden— es incapaz de capturar relaciones temporales. Si una secuencia de comportamiento es relevante (por ejemplo, los clientes compran primero un producto básico y luego un complemento en visitas posteriores), Apriori la ignorará. Para este tipo de análisis existen algoritmos de descubrimiento de patrones secuenciales, como GSP (*Generalized Sequential Patterns*) y PrefixSpan, que extienden el formalismo de Apriori a secuencias ordenadas de itemsets [@han2011data].
+
+### Inestabilidad con Datasets Pequeños
+
+Los ejemplos computacionales de este capítulo utilizan 50 transacciones, lo cual es suficiente para ilustrar los conceptos pero insuficiente para afirmaciones estadísticas robustas. Con datasets pequeños, el soporte es muy sensible a fluctuaciones individuales: agregar o eliminar una sola transacción puede cambiar el soporte de un itemset en 2 puntos porcentuales (1/50), lo que puede hacer que un patrón cruce el umbral mínimo en una dirección u otra. En la práctica, el análisis de reglas de asociación requiere datasets con al menos varios cientos de transacciones para ser confiable, y preferiblemente miles.
+
+### Sensibilidad a los Parámetros
+
+Como se demostró en @sec-generacion, el número y la naturaleza de las reglas obtenidas dependen fuertemente de los parámetros elegidos. Esta sensibilidad tiene dos consecuencias metodológicas: (1) los resultados no son objetivos en el sentido de ser independientes de las decisiones del analista, y (2) dos análisis del mismo dataset con parámetros distintos pueden producir conclusiones superficialmente contradictorias. La buena práctica consiste en explorar el espacio de parámetros sistemáticamente y reportar la robustez de los hallazgos ante variaciones razonables.
+
+## Resumen Conceptual {#sec-resumen}
+
+Este capítulo ha desarrollado los fundamentos del análisis de reglas de asociación con énfasis en la interpretación crítica. Los puntos clave que el lector debe retener son los siguientes:
+
+**Sobre las definiciones fundamentales:**
+
+- El soporte mide la prevalencia de un patrón; la confianza mide su poder predictivo condicional; el lift mide su desviación respecto a la independencia estadística.
+- Ninguna de las tres métricas es suficiente por sí sola: soporte alto no implica interés, confianza alta no implica relación genuina, lift alto con soporte bajo puede ser ruido.
+
+**Sobre la generación de reglas:**
+
+- El proceso de generación es automático y produce grandes volúmenes de reglas; el proceso de selección requiere juicio estadístico y conocimiento del dominio.
+- Los parámetros de Apriori ($\sigma_{\min}$, $\gamma_{\min}$) son decisiones del analista sin fundamento estadístico intrínseco; siempre deben reportarse junto con los resultados.
+
+**Sobre el problema central:**
+
+- Alta confianza no equivale a relación fuerte cuando el consecuente es frecuente. El lift corrige este sesgo.
+- El umbral mínimo de confianza para que una regla sea no-trivial es $\text{conf}(A \Rightarrow B) > P(B)$.
+
+**Sobre la selección de reglas útiles:**
+
+- El scatter lift-vs-confianza con soporte codificado en tamaño es la visualización más informativa para explorar el espacio de reglas.
+- Métricas complementarias como leverage, conviction y Zhang's metric permiten corroborar o cuestionar lo que el lift sugiere. Las reglas robustas son aquellas que resultan sólidas según múltiples criterios simultáneamente.
+- La dirección de la regla importa para la toma de decisiones: el lift es simétrico pero la confianza no.
+
+**Sobre las limitaciones:**
+
+- Las reglas de asociación son herramientas descriptivas y correlacionales; no permiten inferir causalidad.
+- El enfoque no captura estructura temporal; para secuencias ordenadas se requieren algoritmos especializados.
+- Los resultados son inestables con datasets pequeños y sensibles a la elección de parámetros.
+
+El objetivo final no es maximizar el número de reglas obtenidas, sino identificar el subconjunto pequeño de reglas que representan patrones genuinamente no triviales, respaldados por suficientes observaciones y consistentes con múltiples métricas de evaluación. Alcanzar este objetivo requiere, más que dominio algorítmico, una comprensión sólida de los fundamentos estadísticos que subyacen a cada métrica.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::
