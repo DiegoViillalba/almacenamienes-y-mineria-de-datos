@@ -1,0 +1,858 @@
+---
+title: "Más Allá del Lift: Métricas Avanzadas, Sensibilidad y Estructura de Reglas"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_asociacion.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+```{python}
+#| label: setup-cap2
+#| echo: false
+
+import math
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, association_rules
+from sklearn.preprocessing import MinMaxScaler
+
+np.random.seed(42)
+
+# Dataset de referencia — idéntico al capítulo anterior para continuidad
+transacciones_raw = [
+    ["whole milk", "yogurt", "bread"],
+    ["whole milk", "butter", "eggs"],
+    ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"],
+    ["whole milk", "soda", "chips"],
+    ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"],
+    ["eggs", "butter", "cheese"],
+    ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"],
+    ["whole milk", "bread", "eggs"],
+    ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"],
+    ["bread", "eggs", "cheese"],
+    ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"],
+    ["chips", "soda", "beer"],
+    ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"],
+    ["whole milk", "bread", "sugar"],
+    ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"],
+    ["coffee", "sugar", "bread"],
+    ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"],
+    ["bread", "chips", "soda"],
+    ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"],
+    ["whole milk", "butter", "cheese"],
+    ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"],
+    ["chips", "candy", "soda"],
+    ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"],
+    ["yogurt", "cheese", "eggs"],
+    ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"],
+    ["whole milk", "vegetables", "eggs"],
+    ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"],
+    ["whole milk", "fruit", "cheese"],
+    ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"],
+    ["coffee", "bread", "butter"],
+    ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"],
+    ["whole milk", "sugar", "butter"],
+    ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"],
+    ["granola", "yogurt", "fruit"],
+]
+
+te = TransactionEncoder()
+te_array = te.fit_transform(transacciones_raw)
+df = pd.DataFrame(te_array, columns=te.columns_)
+
+itemsets = apriori(df, min_support=0.10, use_colnames=True)
+
+reglas_base = association_rules(itemsets, metric="lift", min_threshold=0.5)
+reglas_base["antecedents_str"] = reglas_base["antecedents"].apply(
+    lambda x: ", ".join(sorted(x))
+)
+reglas_base["consequents_str"] = reglas_base["consequents"].apply(
+    lambda x: ", ".join(sorted(x))
+)
+reglas_base["regla"] = reglas_base["antecedents_str"] + " → " + reglas_base["consequents_str"]
+
+# Zhang's metric — implementación manual
+def zhang(row):
+    pab = row["support"]
+    pa  = row["antecedent support"]
+    pb  = row["consequent support"]
+    num = pab - pa * pb
+    den = max(pab * (1 - pa), pa * (pb - pab))
+    return num / den if den != 0 else 0.0
+
+reglas_base["zhang"] = reglas_base.apply(zhang, axis=1)
+```
+
+## Introducción {#sec-intro-cap2}
+
+El capítulo anterior estableció los fundamentos del análisis de reglas de asociación: las definiciones de soporte, confianza y lift, el proceso de generación mediante el algoritmo Apriori, y los criterios básicos para distinguir reglas genuinas de reglas triviales. El argumento central fue que generar reglas es algorítmicamente sencillo, pero que la evaluación crítica de su validez exige ir más allá de la confianza como criterio único.
+
+Este capítulo continúa ese argumento y profundiza en cuatro direcciones que el tratamiento introductorio deja abiertas. En primer lugar, se analizan con rigor las *limitaciones estructurales del lift* como métrica de evaluación: aunque el lift corrige el sesgo de la confianza, tiene sus propias deficiencias que la literatura especializada ha documentado con detalle, y que son frecuentemente ignoradas en presentaciones introductoras. En segundo lugar, se introduce un conjunto de *métricas complementarias* —leverage, conviction y la métrica de Zhang— cuyas propiedades matemáticas permiten evaluar aspectos de las reglas que el lift no captura, y cuya combinación produce evaluaciones más robustas. En tercer lugar, se aborda el problema de la *sensibilidad a parámetros*: se demuestra empíricamente que el número, la naturaleza y la calidad de las reglas obtenidas dependen de manera no trivial de los umbrales que el analista fija al invocar el algoritmo, lo cual tiene consecuencias metodológicas directas. Finalmente, se propone una representación del conjunto de reglas como *grafo de relaciones* entre ítems, que permite identificar la estructura global del espacio de reglas y distinguir patrones centrales de patrones periféricos.
+
+El hilo conductor de todas estas secciones es el mismo que motivó el capítulo anterior: el objetivo no es maximizar el número de reglas reportadas, sino identificar el subconjunto pequeño de reglas que representan patrones no triviales, respaldados por evidencia consistente desde múltiples perspectivas.
+
+## Las Limitaciones Estructurales del Lift {#sec-limites-lift}
+
+### La Simetría del Lift y la Asimetría de la Decisión
+
+Una propiedad algebraica del lift que pocas presentaciones introductoras discuten en profundidad es su *simetría*: para cualquier par de itemsets $A$ y $B$,
+
+$$\text{lift}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A) \cdot P(B)} = \frac{P(A \cup B)}{P(B) \cdot P(A)} = \text{lift}(B \Rightarrow A)$$ {#eq-lift-simetria}
+
+La simetría se sigue directamente de la conmutatividad del producto en el denominador. El lift mide la desviación de la probabilidad conjunta $P(A \cup B)$ respecto al valor esperado bajo independencia $P(A) \cdot P(B)$, y esta desviación es la misma independientemente de cuál de los dos conjuntos se designe como antecedente y cuál como consecuente.
+
+Esta simetría tiene una consecuencia práctica importante que con frecuencia pasa inadvertida. Cuando el algoritmo genera las dos reglas $A \Rightarrow B$ y $B \Rightarrow A$ a partir del mismo itemset frecuente $\{A, B\}$, ambas reglas tendrán exactamente el mismo lift. Sin embargo, sus confianzas serán, en general, distintas:
+
+$$\text{conf}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A)}, \qquad \text{conf}(B \Rightarrow A) = \frac{P(A \cup B)}{P(B)}$$
+
+La regla con confianza más alta es aquella cuyo antecedente tiene *menor* soporte individual. Si $P(A) < P(B)$, entonces $\text{conf}(A \Rightarrow B) > \text{conf}(B \Rightarrow A)$: predecir el ítem más frecuente a partir del menos frecuente es más "fácil" en el sentido de la confianza, precisamente porque el consecuente ocurre con mayor frecuencia de base.
+
+La @tbl-asimetria ilustra este fenómeno con datos empíricos sobre el par yogurt — whole milk:
+
+```{python}
+#| label: tbl-asimetria-confianza
+#| tbl-cap: "Las dos direcciones de la relación yogurt — whole milk tienen el mismo lift pero confianzas distintas. La dirección {yogurt} → {whole milk} tiene mayor confianza porque whole milk es el ítem más frecuente de los dos."
+
+par = reglas_base[
+    (reglas_base["antecedents_str"].isin(["whole milk", "yogurt"])) &
+    (reglas_base["consequents_str"].isin(["whole milk", "yogurt"])) &
+    (reglas_base["antecedents"].apply(len) == 1)
+][["regla", "antecedent support", "consequent support", "support",
+   "confidence", "lift"]].round(3)
+par
+```
+
+La implicación práctica es directa: cuando el objetivo es tomar una acción condicionada a la observación de un ítem —"¿qué recomiendo a alguien que compra $X$?"— la dirección de la regla importa, y el lift por sí solo no permite elegirla. La confianza, a pesar de sus limitaciones ya documentadas, es la métrica relevante para guiar esa elección. Un sistema de recomendación que ordene reglas exclusivamente por lift y tome la primera dirección que encuentre puede estar recomendando la dirección subóptima.
+
+### El Techo Teórico del Lift y la Comparabilidad entre Reglas
+
+Una segunda limitación del lift, igualmente importante y menos conocida, es que su escala no es universal: el valor máximo que el lift puede alcanzar para un par dado depende de las frecuencias individuales de los ítems involucrados. Esta propiedad hace que comparar lifts entre reglas con distintos niveles de soporte individual sea, en sentido estricto, metodológicamente incorrecto.
+
+Para derivar el techo teórico, obsérvese que el soporte de la co-ocurrencia $P(A \cup B)$ está acotado superiormente por el soporte del ítem menos común de los dos: si $P(A) \leq P(B)$, entonces $P(A \cup B) \leq P(A)$ (no pueden co-ocurrir más transacciones de las que contienen al ítem más raro). Por lo tanto:
+
+$$\text{lift}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A) \cdot P(B)} \leq \frac{P(A)}{P(A) \cdot P(B)} = \frac{1}{P(B)} = \frac{1}{\max(P(A), P(B))}$$ {#eq-lift-max}
+
+El lift máximo teórico para el par $(A, B)$ es:
+
+$$\text{lift}_{\max}(A, B) = \frac{1}{\max(P(A), P(B))}$$ {#eq-lift-max-formula}
+
+Este resultado tiene una consecuencia inmediata: dos ítems frecuentes —digamos, con soporte 0.50 cada uno— tienen un lift máximo teórico de apenas 2.0. Dos ítems raros —con soporte 0.05 cada uno— tienen un lift máximo teórico de 20. Un lift observado de 1.8 para el primer par representa el 90% del máximo alcanzable; el mismo lift de 1.8 para el segundo par representa solo el 9%. La misma cifra señala una regla casi óptima en un caso y una regla débil en el otro.
+
+Para corregir esta asimetría de escala se puede construir el *lift relativo*, definido como la fracción del máximo teórico que alcanza el lift observado:
+
+$$\text{lift}_{\text{rel}}(A \Rightarrow B) = \frac{\text{lift}(A \Rightarrow B)}{\text{lift}_{\max}(A, B)} = \text{lift}(A \Rightarrow B) \cdot \max(P(A), P(B))$$ {#eq-lift-relativo}
+
+El lift relativo tiene rango $(0, 1]$ y es directamente comparable entre reglas con distintos niveles de frecuencia. Un lift relativo cercano a 1 indica que los ítems co-ocurren con la máxima frecuencia posible dado sus soportes individuales.
+
+```{python}
+#| label: tbl-lift-relativo
+#| tbl-cap: "Lift observado, lift máximo teórico y lift relativo para las reglas con antecedentes simples. Las columnas lift y lift_max_teorico no son directamente comparables entre filas; el lift_relativo sí lo es."
+
+freq_rel = df.mean()
+
+def lift_max_teorico(row):
+    pa = freq_rel.get(row["antecedents_str"], np.nan)
+    pb = freq_rel.get(row["consequents_str"], np.nan)
+    if pd.isna(pa) or pd.isna(pb):
+        return np.nan
+    return 1.0 / max(pa, pb)
+
+reglas_simples = reglas_base[
+    reglas_base["antecedents"].apply(len) == 1
+].copy()
+reglas_simples["lift_max_teorico"] = reglas_simples.apply(lift_max_teorico, axis=1)
+reglas_simples["lift_relativo"] = (
+    reglas_simples["lift"] / reglas_simples["lift_max_teorico"]
+).round(3)
+
+reglas_simples[["regla", "lift", "lift_max_teorico", "lift_relativo"]].round(3).sort_values(
+    "lift_relativo", ascending=False
+).head(10)
+```
+
+```{python}
+#| label: fig-scatter-lift-relativo
+#| fig-cap: "Lift observado (eje horizontal) versus lift relativo —fracción del máximo teórico— (eje vertical). El tamaño del marcador indica el soporte; el color indica la confianza. La línea punteada naranja marca el 50% del máximo teórico. Puntos en la esquina inferior derecha tienen lift alto en términos absolutos pero están lejos de su potencial máximo, lo que indica que se trata de ítems frecuentes cuya relación es en realidad moderada."
+
+fig = px.scatter(
+    reglas_simples.dropna(subset=["lift_relativo"]),
+    x="lift",
+    y="lift_relativo",
+    size="support",
+    color="confidence",
+    hover_data={
+        "regla": True,
+        "lift": ":.3f",
+        "lift_max_teorico": ":.3f",
+        "lift_relativo": ":.3f",
+    },
+    color_continuous_scale="Viridis",
+    labels={
+        "lift": "Lift observado",
+        "lift_relativo": "Lift relativo (fracción del máximo teórico)",
+        "confidence": "Confianza",
+    },
+    size_max=25,
+)
+fig.add_hline(
+    y=0.5,
+    line_dash="dot",
+    line_color="darkorange",
+    annotation_text="50% del máximo teórico",
+    annotation_position="bottom right",
+)
+fig.update_layout(height=460)
+fig.show()
+```
+
+La @fig-scatter-lift-relativo revela una estructura que la simple ordenación por lift absoluto oculta. Las reglas en la esquina superior izquierda —lift observado modesto, pero lift relativo alto— son asociaciones entre ítems poco frecuentes que co-ocurren con una fracción significativa de su máximo teórico posible: son reglas *específicas* y sólidas, aunque no frecuentes. Las reglas en la esquina inferior derecha —lift absoluto más alto, pero lift relativo bajo— involucran ítems frecuentes cuya co-ocurrencia, aunque superior al azar, está lejos de ser tan estrecha como el lift absoluto podría sugerir.
+
+## Métricas Complementarias al Lift {#sec-metricas-complementarias}
+
+El catálogo de métricas propuestas en la literatura para evaluar el interés de una regla de asociación es extenso: @tan2006introduction enumeran y comparan sistemáticamente más de veinte medidas distintas. Ninguna de ellas es universalmente superior; cada una captura una faceta distinta de lo que intuitivamente llamamos "interés". Este apartado desarrolla en detalle tres métricas que, por sus propiedades matemáticas y su complementariedad con el lift, son especialmente útiles en la práctica.
+
+### Leverage: La Diferencia Absoluta sobre el Azar
+
+El leverage de una regla $A \Rightarrow B$ mide la diferencia *absoluta* entre la frecuencia de co-ocurrencia observada y la esperada bajo la hipótesis de independencia estadística:
+
+$$\text{lev}(A \Rightarrow B) = P(A \cup B) - P(A) \cdot P(B)$$ {#eq-leverage}
+
+Esta definición es idéntica en estructura al numerador del lift, pero sin la normalización por $P(A) \cdot P(B)$. La consecuencia es que el leverage conserva las unidades de probabilidad, lo que le otorga una interpretación directamente operacional: un leverage de 0.05, en un dataset de 1000 transacciones, significa que aproximadamente 50 transacciones contienen tanto $A$ como $B$ más allá de lo esperado bajo independencia. Este es el número de transacciones adicionales atribuibles a la asociación.
+
+El rango teórico del leverage es $[-\min(P(A), P(B)) \cdot (1 - \max(P(A), P(B))),\; \min(P(A), P(B)) \cdot (1 - \max(P(A), P(B)))]$, centrado en cero. Un leverage positivo indica asociación positiva; negativo, inhibición; cero, independencia —exactamente como el lift, pero medido en una escala absoluta en lugar de relativa.
+
+La diferencia fundamental entre leverage y lift es de escala. El lift normaliza la desviación respecto a la independencia y produce un número adimensional comparable entre reglas con distintos consecuentes. El leverage da la magnitud absoluta de esa desviación, que es más interpretable cuando se quiere cuantificar el *impacto* de una regla: en un sistema de recomendación, el leverage es proporcional al número de transacciones adicionales que la regla puede generar si se actúa sobre ella. Sin embargo, esta misma dependencia de las frecuencias absolutas hace que el leverage sea sistemáticamente bajo para ítems raros, incluso cuando la relación entre ellos es muy fuerte en términos relativos —exactamente el problema opuesto al del lift absoluto.
+
+### Conviction: Asimetría y Cuasi-Determinismo
+
+La conviction de una regla $A \Rightarrow B$ fue introducida con la motivación de crear una métrica dirigida —asimétrica, como la confianza— que al mismo tiempo refleje el alejamiento de la independencia estadística [@tan2006introduction]:
+
+$$\text{conv}(A \Rightarrow B) = \frac{1 - P(B)}{1 - \text{conf}(A \Rightarrow B)} = \frac{P(A) \cdot (1 - P(B))}{P(A) - P(A \cup B)}$$ {#eq-conviction}
+
+La interpretación de la conviction es menos intuitiva que la del lift o el leverage, pero merece un análisis cuidadoso. El numerador $1 - P(B)$ es la frecuencia esperada de los "errores" de la regla —las transacciones en las que $B$ no ocurre— bajo la hipótesis de independencia: si $A$ y $B$ fueran independientes, una fracción $1 - P(B)$ de las transacciones que contienen $A$ no contendría $B$. El denominador $1 - \text{conf}(A \Rightarrow B)$ es la frecuencia observada de esos mismos errores. El cociente mide, por tanto, cuántas veces *menos* errores comete la regla en comparación con lo esperado bajo independencia.
+
+De esta definición se siguen varias propiedades notables:
+
+- Cuando $A$ y $B$ son independientes, $\text{conf}(A \Rightarrow B) = P(B)$, y conviction $= (1 - P(B)) / (1 - P(B)) = 1$. La conviction vale 1 si y solo si hay independencia —igual que el lift vale 1 en independencia.
+- Cuando la confianza se aproxima a 1, el denominador se aproxima a 0, y la conviction tiende a infinito. Una regla con conviction muy alta es cuasi-determinista: la presencia de $A$ predice $B$ casi con certeza.
+- Cuando la confianza es menor que $P(B)$ (es decir, cuando hay una asociación negativa), la conviction es menor que 1.
+- A diferencia del lift, la conviction es asimétrica: $\text{conv}(A \Rightarrow B) \neq \text{conv}(B \Rightarrow A)$ en general, lo que la hace adecuada para evaluar la fuerza de una regla en su dirección específica.
+
+Esta asimetría es particularmente valiosa en contextos donde la dirección de la regla tiene significado operacional: en sistemas de recomendación, en diagnóstico médico, o en cualquier aplicación donde se actúa sobre el antecedente para predecir el consecuente.
+
+### La Métrica de Zhang: Rango Acotado y Robustez
+
+La métrica de Zhang, propuesta para superar algunas de las limitaciones del lift, está definida como [@tan2006introduction]:
+
+$$Z(A, B) = \frac{P(A \cup B) - P(A) \cdot P(B)}{\max\left\{P(A \cup B)\cdot[1 - P(A)],\; P(A)\cdot[P(B) - P(A \cup B)]\right\}}$$ {#eq-zhang}
+
+El numerador es el mismo que el del leverage: la diferencia entre co-ocurrencia observada e independencia. El denominador es una normalización que garantiza que $Z \in [-1, 1]$ para cualquier par de ítems, independientemente de sus frecuencias individuales. Esta propiedad —que el lift no tiene— hace a la métrica de Zhang directamente comparable entre reglas con distintos niveles de frecuencia.
+
+La normalización en el denominador se elige como el máximo entre dos términos: $P(A \cup B) \cdot [1 - P(A)]$, que domina cuando la co-ocurrencia es alta (asociación positiva fuerte), y $P(A) \cdot [P(B) - P(A \cup B)]$, que domina cuando la co-ocurrencia es baja (asociación negativa o inhibición). Este diseño garantiza que la escala sea simétrica: $Z = 1$ corresponde a co-ocurrencia máxima ($A$ y $B$ co-ocurren siempre que ocurre el más raro de los dos), y $Z = -1$ corresponde a co-ocurrencia mínima (exclusión mutua).
+
+La métrica de Zhang es simétrica —al igual que el lift— y especialmente robusta ante ítems muy frecuentes, que son precisamente los que generan el sesgo más severo en la confianza y el leverage. Por estas razones, @tan2006introduction la recomiendan como una de las métricas más fiables para ordenar reglas por interés general cuando no hay información a priori sobre el dominio.
+
+### Cálculo y Comparación de las Cuatro Métricas
+
+```{python}
+#| label: tbl-metricas-completas
+#| tbl-cap: "Las seis métricas de evaluación para las ocho reglas con mayor valor de Zhang. Observar cómo el ranking por Zhang difiere del ranking por lift: las reglas que Zhang considera más interesantes no siempre son las de mayor lift absoluto."
+
+cols = ["regla", "support", "confidence", "lift",
+        "leverage", "conviction", "zhang"]
+reglas_base[cols].sort_values("zhang", ascending=False).head(8).round(3)
+```
+
+### La Correlación entre Métricas: Dónde Coinciden y Dónde Discrepan
+
+Una pregunta natural ante la multiplicidad de métricas es si son redundantes: si lift, leverage y Zhang siempre coinciden en ordenar las reglas, da igual cuál se use. El análisis de correlación entre métricas responde esta pregunta de manera empírica.
+
+```{python}
+#| label: fig-correlacion-metricas
+#| fig-cap: "Matriz de correlación de Pearson entre las seis métricas de evaluación calculadas sobre el conjunto completo de reglas. Los valores se muestran en el interior de cada celda. Escala rojo–blanco–azul: rojo intenso = correlación positiva alta, azul intenso = correlación negativa alta, blanco = sin correlación."
+
+metricas_cols = ["support", "confidence", "lift", "leverage", "conviction", "zhang"]
+corr_matrix = reglas_base[metricas_cols].corr().round(2)
+
+fig = px.imshow(
+    corr_matrix,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    zmin=-1,
+    zmax=1,
+    aspect="auto",
+    labels={"color": "Correlación"},
+)
+fig.update_layout(height=430)
+fig.show()
+```
+
+La @fig-correlacion-metricas revela varias relaciones estructurales de interés. En primer lugar, lift y Zhang muestran correlación positiva alta: ambas métricas miden esencialmente la misma desviación de la independencia, la diferencia es de escala y de comportamiento en los extremos. En segundo lugar, leverage y support muestran correlación positiva moderada: ítems más frecuentes producen leverages más altos en términos absolutos, reflejando la dependencia del leverage en las frecuencias base. En tercer lugar, conviction puede tener correlación baja con las demás métricas en ciertos datasets, precisamente porque es sensible a valores de confianza cercanos a 1 —donde una pequeña variación en confianza produce cambios muy grandes en conviction— mientras que el resto de métricas varía suavemente.
+
+Las zonas de correlación baja o negativa en esta matriz son las más informativas desde el punto de vista analítico: donde dos métricas discrepan, el analista necesita decidir a cuál le concede mayor peso según el contexto del problema. Una regla con lift alto pero leverage bajo involucra ítems frecuentes cuya relación relativa es fuerte pero cuyo impacto absoluto es limitado. Una regla con Zhang alto pero conviction moderada puede ser robusta en términos de asociación general pero no cuasi-determinista en su dirección específica.
+
+### El Perfil Multimétrico de una Regla
+
+Una manera de sintetizar visualmente el comportamiento de una regla en todas las métricas simultáneamente es el gráfico de radar normalizado. Para cada regla, se normalizan las métricas al rango $[0, 1]$ mediante una transformación min-max —exclusivamente con fines de visualización, sin implicar que todas las métricas sean igualmente importantes— y se traza el polígono resultante.
+
+```{python}
+#| label: fig-radar-top5
+#| fig-cap: "Perfil normalizado de las cinco reglas con mayor lift. Cada eje corresponde a una métrica, normalizada al rango [0,1]. Un polígono más grande y más regular indica una regla más robusta según múltiples criterios simultáneamente. La normalización es solo para visualización: no implica que todas las métricas tengan igual peso."
+
+metricas_viz = ["support", "confidence", "lift", "leverage", "zhang"]
+scaler = MinMaxScaler()
+reglas_norm = reglas_base.copy()
+reglas_norm[metricas_viz] = scaler.fit_transform(reglas_base[metricas_viz])
+
+top5_idx = reglas_base["lift"].nlargest(5).index
+top5 = reglas_norm.loc[top5_idx]
+
+fig = go.Figure()
+for _, row in top5.iterrows():
+    fig.add_trace(go.Scatterpolar(
+        r=[row[m] for m in metricas_viz] + [row[metricas_viz[0]]],
+        theta=metricas_viz + [metricas_viz[0]],
+        fill="toself",
+        name=row["regla"][:38],
+        opacity=0.55,
+    ))
+
+fig.update_layout(
+    polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+    height=500,
+    showlegend=True,
+    legend=dict(x=1.05, y=1.0),
+)
+fig.show()
+```
+
+La @fig-radar-top5 permite comparar simultáneamente cinco reglas en cinco dimensiones. Una regla cuyo polígono es grande y aproximadamente regular es robusta: todas las métricas coinciden en señalarla como interesante. Una regla con un polígono asimétrico —grande en un eje y pequeño en los demás— es una regla que parece buena según un criterio particular pero débil según los demás, lo que debe interpretarse con cautela.
+
+La @tbl-perfiles resume la interpretación cualitativa de los patrones de perfil más frecuentes:
+
+| Patrón del perfil | Interpretación |
+|---|---|
+| Polígono grande y regular | Regla robusta: coincidencia entre múltiples métricas |
+| Lift alto, leverage pequeño | Asociación relativa fuerte entre ítems raros; impacto absoluto limitado |
+| Conviction muy grande, resto moderado | Regla cuasi-determinista en su dirección; confianza cercana a 1 |
+| Zhang pequeño, lift moderado | El lift puede estar inflado por las frecuencias base; Zhang lo corrige |
+| Support pequeño, todo lo demás pequeño | Patrón raro posiblemente espúrio; insuficiente evidencia empírica |
+
+: Interpretación de perfiles multimétricos. {#tbl-perfiles}
+
+## Sensibilidad a los Parámetros del Algoritmo {#sec-sensibilidad}
+
+### Los Umbrales como Decisiones sin Fundamento Estadístico Intrínseco
+
+Cuando se invoca el algoritmo Apriori con parámetros específicos —por ejemplo, `min_support = 0.10` y un umbral mínimo de lift de 1.0— se están tomando decisiones que, a diferencia de los parámetros en modelos estadísticos formales, no tienen una justificación estadística intrínseca. No existe una teoría que establezca que el soporte mínimo "correcto" es 0.10 en lugar de 0.08 o 0.12. El analista elige estos umbrales en función de consideraciones prácticas —tiempo de cómputo, número manejable de resultados, conocimiento del dominio— pero el algoritmo los acepta sin cuestionarlos.
+
+Esta circunstancia tiene una consecuencia metodológica seria: el conjunto de reglas obtenido no es una propiedad objetiva del dataset, sino una función conjunta del dataset y de los parámetros elegidos. Dos analistas que trabajan con el mismo dataset pero con umbrales ligeramente distintos pueden obtener conjuntos de reglas sustancialmente diferentes y, si no son conscientes de esta dependencia, pueden llegar a conclusiones que parecen contradictorias. La buena práctica metodológica exige, como mínimo, explorar la estabilidad de los resultados ante variaciones razonables en los parámetros —lo que se denomina *análisis de sensibilidad*— y reportar esos parámetros junto con los resultados.
+
+### Sensibilidad al Soporte Mínimo
+
+El primer experimento de sensibilidad consiste en variar sistemáticamente $\sigma_{\min}$ mientras se mantiene fijo un umbral de lift de 1.0, y registrar cómo cambia el número de reglas obtenidas y la calidad mediana del conjunto resultante.
+
+```{python}
+#| label: tbl-sens-support
+#| tbl-cap: "Número de itemsets frecuentes, número de reglas generadas, y estadísticos de calidad del conjunto de reglas en función del soporte mínimo. El umbral de lift se mantiene fijo en 1.0."
+
+soportes_grid = [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18, 0.20]
+resultados_sens = []
+
+for s in soportes_grid:
+    its = apriori(df, min_support=s, use_colnames=True)
+    if len(its) == 0:
+        resultados_sens.append({
+            "σ_min": s, "Itemsets frecuentes": 0,
+            "Reglas": 0, "Lift mediano": np.nan, "Lift máximo": np.nan
+        })
+        continue
+    r = association_rules(its, metric="lift", min_threshold=1.0)
+    resultados_sens.append({
+        "σ_min": round(s, 2),
+        "Itemsets frecuentes": len(its),
+        "Reglas": len(r),
+        "Lift mediano": round(r["lift"].median(), 3) if len(r) > 0 else np.nan,
+        "Lift máximo": round(r["lift"].max(), 3) if len(r) > 0 else np.nan,
+    })
+
+pd.DataFrame(resultados_sens)
+```
+
+```{python}
+#| label: fig-sensibilidad-support
+#| fig-cap: "Comportamiento del número de reglas (eje izquierdo, rojo) y del lift mediano del conjunto (eje derecho, azul discontinuo) en función del soporte mínimo. Las dos curvas se mueven en sentidos opuestos: más soporte implica menos reglas pero de mayor calidad mediana."
+
+df_sens = pd.DataFrame(resultados_sens)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=df_sens["σ_min"], y=df_sens["Reglas"],
+    mode="lines+markers", name="N° de reglas",
+    line=dict(color="#e63946", width=2.5), marker=dict(size=9),
+    yaxis="y1",
+))
+fig.add_trace(go.Scatter(
+    x=df_sens["σ_min"], y=df_sens["Lift mediano"],
+    mode="lines+markers", name="Lift mediano",
+    line=dict(color="#457b9d", width=2.5, dash="dash"), marker=dict(size=9),
+    yaxis="y2",
+))
+fig.update_layout(
+    xaxis=dict(title="Soporte mínimo (σ_min)"),
+    yaxis=dict(title="N° de reglas generadas", side="left", showgrid=True),
+    yaxis2=dict(title="Lift mediano del conjunto", overlaying="y", side="right", showgrid=False),
+    legend=dict(x=0.60, y=0.92),
+    height=430,
+)
+fig.show()
+```
+
+El comportamiento mostrado en la @fig-sensibilidad-support no es accidental ni específico de este dataset: es una propiedad estructural del proceso de generación de reglas. Al elevar $\sigma_{\min}$, se excluyen los itemsets menos frecuentes. Muchos de estos itemsets involucran ítems raros que co-ocurren por casualidad en el dataset disponible —son, precisamente, el tipo de patrón más vulnerable a la inestabilidad estadística. Al eliminarlos, el conjunto de reglas restante tiene, en promedio, un soporte mayor y un lift mediano más alto. En términos informales: los patrones que sobreviven filtros más estrictos son, en promedio, más robustos.
+
+La tensión entre ambas curvas refleja el *compromiso fundamental del análisis de reglas de asociación*: no es posible maximizar simultáneamente el número de reglas y su calidad promedio. Todo umbral de soporte es una elección en este espacio de trade-off, y la elección correcta depende del costo relativo de los dos tipos de error: incluir reglas espurias (falsos positivos) versus omitir patrones genuinos pero poco frecuentes (falsos negativos).
+
+### Sensibilidad al Umbral de Lift
+
+El segundo experimento mantiene el soporte fijo en 0.10 y varía el umbral mínimo de lift sobre un rango amplio. El resultado muestra la curva de supervivencia del conjunto de reglas: para cada umbral, cuántas reglas lo superan.
+
+```{python}
+#| label: fig-curva-supervivencia-lift
+#| fig-cap: "Curva de supervivencia del conjunto de reglas en función del umbral mínimo de lift. Cada punto responde a la pregunta: si exijo que lift ≥ x, ¿cuántas reglas quedan? Una caída abrupta en algún valor x indica que muchas reglas se concentran justo por encima de ese umbral."
+
+its_fijo = apriori(df, min_support=0.10, use_colnames=True)
+lifts_umbral = np.round(np.arange(0.5, 2.6, 0.1), 1)
+curva_supervivencia = []
+
+for lt in lifts_umbral:
+    r = association_rules(its_fijo, metric="lift", min_threshold=float(lt))
+    curva_supervivencia.append({
+        "Umbral mínimo de lift": lt,
+        "Reglas supervivientes": len(r),
+    })
+
+df_surv = pd.DataFrame(curva_supervivencia)
+
+fig = px.line(
+    df_surv,
+    x="Umbral mínimo de lift",
+    y="Reglas supervivientes",
+    markers=True,
+    color_discrete_sequence=["#2a9d8f"],
+)
+fig.add_vline(
+    x=1.0, line_dash="dash", line_color="crimson",
+    annotation_text="lift = 1 (independencia)",
+    annotation_position="top right",
+    annotation_font_color="crimson",
+)
+fig.update_layout(height=390)
+fig.show()
+```
+
+La forma de la curva en la @fig-curva-supervivencia-lift contiene información sobre la distribución de lifts en el dataset. Una caída pronunciada en el intervalo $[1.0, 1.3]$ indica que muchas reglas tienen lifts apenas superiores a la independencia —son reglas formalmente no-triviales pero de interés marginal. Una caída más gradual sugiere que los lifts están distribuidos de manera más uniforme sobre un rango amplio. En ambos casos, la curva permite identificar el umbral de lift a partir del cual el conjunto de reglas se estabiliza en un tamaño manejable sin perder los patrones más sólidos.
+
+### El Mapa Completo del Espacio de Parámetros
+
+El análisis de sensibilidad más completo consiste en explorar simultáneamente los dos parámetros principales: soporte mínimo y confianza mínima. El resultado es una superficie bidimensional que muestra el número de reglas generadas para cada combinación de valores.
+
+```{python}
+#| label: fig-heatmap-parametros
+#| fig-cap: "Mapa de calor del número de reglas generadas en función del soporte mínimo (eje horizontal) y la confianza mínima (eje vertical). La zona inferior izquierda —umbrales laxos— produce el máximo de reglas con la menor calidad promedio. La zona superior derecha —umbrales exigentes— produce pocas reglas o ninguna, pero de alta confiabilidad. El analista debe elegir conscientemente su posición en este mapa."
+
+grid_support = np.round(np.arange(0.06, 0.22, 0.02), 2)
+grid_conf    = np.round(np.arange(0.20, 1.00, 0.10), 2)
+heatmap_data = []
+
+for s in grid_support:
+    for c in grid_conf:
+        its = apriori(df, min_support=float(s), use_colnames=True)
+        if len(its) == 0:
+            heatmap_data.append({"min_support": s, "min_confidence": c, "n_reglas": 0})
+            continue
+        r = association_rules(its, metric="confidence", min_threshold=float(c))
+        heatmap_data.append({
+            "min_support": s,
+            "min_confidence": c,
+            "n_reglas": len(r),
+        })
+
+df_hm = pd.DataFrame(heatmap_data)
+pivot = df_hm.pivot(index="min_confidence", columns="min_support", values="n_reglas")
+
+fig = px.imshow(
+    pivot,
+    color_continuous_scale="YlOrRd",
+    labels={"x": "Soporte mínimo", "y": "Confianza mínima", "color": "N° reglas"},
+    aspect="auto",
+    text_auto=True,
+)
+fig.update_layout(height=450)
+fig.show()
+```
+
+La @fig-heatmap-parametros es el resumen más completo del espacio de decisión del analista. Cada celda responde a la pregunta: *si elijo estos umbrales, ¿cuántas reglas obtengo?* La zona de alta densidad (esquina inferior izquierda, color rojo intenso) corresponde a umbrales laxos y produce el mayor número de reglas —pero también el mayor número de reglas espurias. La zona de baja densidad (esquina superior derecha, amarillo pálido o blanco) corresponde a umbrales exigentes y produce pocas reglas, pero cada una de ellas está respaldada por alta frecuencia y alto poder predictivo.
+
+La implicación metodológica más importante de este análisis es la siguiente: no existe un punto en este mapa que sea correcto en abstracto. La elección de umbrales es siempre relativa al contexto del problema. En una aplicación de retail con miles de transacciones diarias, un soporte mínimo de 0.01 puede estar justificado porque incluso el 1% de transacciones representa cientos de observaciones. En un dataset médico con 200 pacientes, el mismo umbral correspondería a apenas 2 casos, lo cual es estadísticamente insuficiente para cualquier afirmación. La elección correcta requiere traducir el umbral de soporte a un número absoluto de observaciones y preguntarse si ese número es suficiente para respaldar la afirmación que se quiere hacer.
+
+## La Estructura Global del Espacio de Reglas: Representación como Grafo {#sec-grafo}
+
+### Motivación para una Representación en Red
+
+Los análisis de los capítulos anteriores han representado el conjunto de reglas como tablas y como nubes de puntos en el espacio de métricas. Ambas representaciones son útiles para evaluar reglas individuales o comparar pequeños subconjuntos, pero pierden información sobre la *estructura de relaciones* que existe entre los ítems a nivel global. Un ítem puede participar en muchas reglas, algunas como antecedente y otras como consecuente; dos ítems pueden estar conectados directamente mediante una regla, o indirectamente a través de un ítem intermediario. Esta estructura topológica es invisible en una tabla.
+
+La representación en grafo hace explícita esta estructura. Formalmente, se construye un grafo $G = (V, E)$ donde el conjunto de vértices $V$ es el conjunto de ítems únicos que participan en al menos una regla (con los filtros de calidad aplicados), y el conjunto de aristas $E$ contiene una arista $(A, B)$ por cada regla $A \Rightarrow B$ que supera los umbrales mínimos de lift y soporte. Para evitar la proliferación de aristas y mantener la legibilidad, se consideran solo reglas con antecedentes y consecuentes simples (1-itemsets).
+
+### Centralidad, Hubs y Nodos Puente
+
+En la teoría de grafos, la *centralidad* de un nodo mide su importancia relativa en la red. Existen múltiples definiciones de centralidad; en el contexto de las reglas de asociación, una medida natural es la suma de los lifts de todas las reglas en las que el ítem participa, como antecedente o como consecuente. Este criterio prioriza los ítems que están involucrados en muchas asociaciones *fuertes*, no simplemente en muchas asociaciones.
+
+```{python}
+#| label: fig-grafo-reglas
+#| fig-cap: "Grafo de reglas de asociación para ítems simples con lift > 1.1 y soporte ≥ 0.10. Cada nodo es un ítem; cada arista es una regla que supera los umbrales. El tamaño y el color de cada nodo representan su centralidad, definida como la suma de los lifts de todas las reglas en las que el ítem participa. Los nodos grandes y brillantes son ítems que participan en muchas asociaciones fuertes; los pequeños y oscuros son ítems periféricos."
+
+reglas_grafo = reglas_base[
+    (reglas_base["lift"] > 1.1) &
+    (reglas_base["support"] >= 0.10) &
+    (reglas_base["antecedents"].apply(len) == 1) &
+    (reglas_base["consequents"].apply(len) == 1)
+].copy()
+
+nodos = list(set(
+    reglas_grafo["antecedents_str"].tolist() +
+    reglas_grafo["consequents_str"].tolist()
+))
+n_nodos = len(nodos)
+nodo_idx = {nd: i for i, nd in enumerate(nodos)}
+
+angulos = [2 * math.pi * i / n_nodos for i in range(n_nodos)]
+xs = [math.cos(a) for a in angulos]
+ys = [math.sin(a) for a in angulos]
+
+# Centralidad por suma de lifts
+centralidad = {}
+for nd in nodos:
+    r_sub = reglas_grafo[
+        (reglas_grafo["antecedents_str"] == nd) |
+        (reglas_grafo["consequents_str"] == nd)
+    ]
+    centralidad[nd] = r_sub["lift"].sum()
+
+edge_x, edge_y = [], []
+for _, row in reglas_grafo.iterrows():
+    x0 = xs[nodo_idx[row["antecedents_str"]]]
+    y0 = ys[nodo_idx[row["antecedents_str"]]]
+    x1 = xs[nodo_idx[row["consequents_str"]]]
+    y1 = ys[nodo_idx[row["consequents_str"]]]
+    edge_x += [x0, x1, None]
+    edge_y += [y0, y1, None]
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=edge_x, y=edge_y,
+    mode="lines",
+    line=dict(width=1.2, color="#cccccc"),
+    hoverinfo="none",
+    showlegend=False,
+))
+
+fig.add_trace(go.Scatter(
+    x=xs, y=ys,
+    mode="markers+text",
+    text=nodos,
+    textposition="top center",
+    textfont=dict(size=10),
+    marker=dict(
+        size=[max(12, centralidad.get(nd, 1) * 5) for nd in nodos],
+        color=[centralidad.get(nd, 0) for nd in nodos],
+        colorscale="Plasma",
+        showscale=True,
+        colorbar=dict(title="Centralidad<br>(Σ lifts)"),
+        line=dict(color="white", width=1),
+    ),
+    hovertext=[
+        f"<b>{nd}</b><br>Centralidad: {centralidad.get(nd, 0):.2f}<br>"
+        f"Reglas conectadas: {len(reglas_grafo[(reglas_grafo['antecedents_str']==nd)|(reglas_grafo['consequents_str']==nd)])}"
+        for nd in nodos
+    ],
+    hoverinfo="text",
+    showlegend=False,
+))
+
+fig.update_layout(
+    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    height=540,
+    plot_bgcolor="white",
+    margin=dict(t=30, b=30, l=30, r=30),
+)
+fig.show()
+```
+
+La @fig-grafo-reglas hace visible la topología del espacio de reglas. Los ítems con mayor centralidad son aquellos que participan en múltiples asociaciones fuertes, no simplemente en muchas asociaciones. Un ítem puede ser *hub* por dos razones distintas: porque es genuinamente central en la red de co-compras —sus combinaciones con otros ítems son sorprendentemente frecuentes dado lo que sus frecuencias individuales predecirían— o porque es tan frecuente que aparece en casi todas las transacciones y, por tanto, co-ocurre con casi todo, aunque con lifts bajos.
+
+Esta distinción entre centralidad genuina y centralidad espúrea por frecuencia es directamente análoga al problema de la confianza: igual que una confianza alta puede ser un artefacto de la frecuencia base del consecuente, una alta centralidad en el grafo puede ser un artefacto de la alta frecuencia del ítem. El uso del lift —en lugar del conteo de co-ocurrencias— como peso de la centralidad es precisamente el mecanismo que intenta corregir este sesgo.
+
+Un concepto igualmente importante es el de *nodo puente* o *broker*: un ítem con pocos vecinos en el grafo, pero cuyas aristas conectan grupos de ítems que de otro modo estarían desconectados. En el contexto del análisis de canastas de mercado, un nodo puente puede corresponder a un ítem de nicho que funciona como "gatillo" para una cadena de compras específica. Estos nodos son invisibles en un análisis basado exclusivamente en frecuencias, pero pueden ser muy accionables desde el punto de vista del marketing.
+
+### El "Whole Milk Problem": Un Caso de Estudio
+
+El análisis del ítem *whole milk* en el dataset Groceries ilustra de manera concreta los problemas discutidos en las secciones anteriores. Con un soporte de aproximadamente 0.58 en la muestra utilizada —es decir, presente en más de la mitad de todas las transacciones— *whole milk* es un ítem dominante cuya alta frecuencia distorsiona sistemáticamente las métricas de todas las reglas en las que participa como consecuente.
+
+```{python}
+#| label: analisis-whole-milk
+
+p_wm = df["whole milk"].mean()
+print(f"Soporte de whole milk: {p_wm:.3f}")
+print(f"Aparece en {int(p_wm * len(df))} de {len(df)} transacciones\n")
+
+wm_consecuente = reglas_base[
+    reglas_base["consequents_str"] == "whole milk"
+][["regla", "support", "confidence", "lift", "zhang"]].sort_values("lift", ascending=False)
+
+print("Todas las reglas con whole milk como consecuente:")
+print(wm_consecuente.round(3).to_string(index=False))
+```
+
+```{python}
+#| label: umbral-whole-milk
+
+print(f"P(whole milk) = {p_wm:.3f}\n")
+print(f"Para lift > 1.0:  conf > {p_wm:.3f}")
+print(f"Para lift > 1.2:  conf > {1.2 * p_wm:.3f}")
+print(f"Para lift > 1.5:  conf > {1.5 * p_wm:.3f}")
+print(f"Para lift > 2.0:  conf > {2.0 * p_wm:.3f}\n")
+
+candidatas = reglas_base[
+    (reglas_base["consequents_str"] == "whole milk") &
+    (reglas_base["lift"] > 1.2)
+]
+if len(candidatas) > 0:
+    print("Reglas con whole milk como consecuente y lift > 1.2:")
+    print(candidatas[["regla", "confidence", "lift"]].round(3).to_string(index=False))
+else:
+    print("Ninguna regla con whole milk como consecuente supera lift > 1.2.")
+    print("Conclusión: whole milk no es un consecuente útil en este dataset.")
+```
+
+El análisis confirma una conclusión que la teoría predice: cuando $P(B)$ es muy alto, el espacio para que una regla $A \Rightarrow B$ sea genuinamente no-trivial se estrecha dramáticamente. Para que el lift sea mayor que 1.5, se requiere $\text{conf}(A \Rightarrow B) > 1.5 \times 0.58 \approx 0.87$: prácticamente 9 de cada 10 transacciones que contienen $A$ también contienen leche entera. Esta condición es casi imposible de cumplir en un supermercado general donde la leche ya es omnipresente. La conclusión no es que el dataset sea deficiente, sino que *whole milk* es un mal consecuente para el análisis de reglas de asociación: su ubicuidad impide que ninguna regla hacia él sea informativa.
+
+La generalización es inmediata: para cualquier ítem $B$, el umbral de confianza necesario para que una regla sea no-trivial con factor $k$ es:
+
+$$\text{conf}(A \Rightarrow B) > k \cdot P(B) \qquad \text{equivalentemente,} \qquad \text{lift}(A \Rightarrow B) > k$$ {#eq-umbral-conf}
+
+Esta relación permite construir, de manera sistemática, una tabla de umbrales específicos para cada posible consecuente, que el analista puede consultar antes de interpretar cualquier regla.
+
+```{python}
+#| label: tbl-umbrales-por-item
+#| tbl-cap: "Umbrales mínimos de confianza necesarios para que una regla sea no-trivial (lift > 1.0) o moderadamente interesante (lift > 1.5), calculados para cada ítem como posible consecuente. Ítems con P(ítem) alto requieren confianzas muy elevadas para generar reglas genuinamente informativas."
+
+umbrales = []
+for item in sorted(df.columns):
+    p = df[item].mean()
+    umbrales.append({
+        "Ítem (consecuente)": item,
+        "P(ítem)": round(p, 3),
+        "conf mín (lift > 1.0)": round(p, 3),
+        "conf mín (lift > 1.5)": round(min(1.0, 1.5 * p), 3),
+    })
+
+pd.DataFrame(umbrales).sort_values("P(ítem)", ascending=False)
+```
+
+## Un Marco Integrado de Evaluación {#sec-marco-integrado}
+
+### De la Fragmentación a la Coherencia
+
+Los conceptos desarrollados en este capítulo —limitaciones del lift, métricas complementarias, sensibilidad a parámetros, estructura de grafo— no son independientes entre sí. Forman un marco coherente para responder una única pregunta: *¿cuánta confianza merece una regla particular?*
+
+La respuesta a esa pregunta tiene múltiples dimensiones:
+
+1. **Dimensión relativa**: ¿cuánto se aleja el lift observado de la independencia, en términos del máximo alcanzable dado los soportes de los ítems? El lift relativo responde esta pregunta.
+
+2. **Dimensión absoluta**: ¿cuántas transacciones adicionales, sobre el baseline de independencia, exhiben la co-ocurrencia? El leverage responde esta pregunta.
+
+3. **Dimensión predictiva direccional**: ¿cuán determinista es la regla en su dirección específica? La conviction responde esta pregunta.
+
+4. **Dimensión de robustez normalizada**: ¿es la asociación fuerte en una escala comparable entre ítems de frecuencias distintas? Zhang responde esta pregunta.
+
+5. **Dimensión de estabilidad paramétrica**: ¿la regla sobrevive con cualquier elección razonable de umbrales, o desaparece si se endurece ligeramente $\sigma_{\min}$? El análisis de sensibilidad responde esta pregunta.
+
+Una regla que es sólida en todas estas dimensiones merece alta confianza. Una regla que solo lo es en una o dos puede ser válida pero debe interpretarse con mayor cautela. La siguiente función implementa esta evaluación multidimensional de manera sistemática:
+
+```{python}
+#| label: pipeline-evaluacion-integrada
+
+def evaluar_regla_completa(row, n_transacciones=50, verbose=True):
+    """
+    Evaluación multidimensional de una regla de asociación.
+    Devuelve clasificación: ROBUSTA / CANDIDATA / DESCARTAR
+    """
+    criterios = []
+    puntos = 0
+
+    # Dimensión 1: Lift
+    if row["lift"] > 1.5:
+        criterios.append("Lift fuerte  (> 1.5)")
+        puntos += 3
+    elif row["lift"] > 1.1:
+        criterios.append("Lift moderado  (1.1 – 1.5)")
+        puntos += 1
+    else:
+        criterios.append("Lift débil  (≤ 1.1)  — relación no distinguible del azar")
+
+    # Dimensión 2: Soporte absoluto
+    n_obs = int(row["support"] * n_transacciones)
+    if n_obs >= 10:
+        criterios.append(f"Soporte sólido  ({n_obs} transacciones de {n_transacciones})")
+        puntos += 2
+    elif n_obs >= 5:
+        criterios.append(f"Soporte mínimo  ({n_obs} transacciones de {n_transacciones})")
+        puntos += 1
+    else:
+        criterios.append(f"Soporte insuficiente  ({n_obs} transacciones de {n_transacciones})")
+
+    # Dimensión 3: Zhang (robustez normalizada)
+    if row["zhang"] > 0.3:
+        criterios.append("Zhang robusto  (> 0.3)")
+        puntos += 2
+    elif row["zhang"] > 0.1:
+        criterios.append("Zhang moderado  (0.1 – 0.3)")
+        puntos += 1
+    else:
+        criterios.append("Zhang débil  (≤ 0.1)  — posiblemente artefacto de frecuencia base")
+
+    # Dimensión 4: Conviction (determinismo direccional)
+    if row["conviction"] > 1.5:
+        criterios.append("Conviction alta  (> 1.5)  — regla cuasi-determinista")
+        puntos += 1
+
+    clasificacion = (
+        "ROBUSTA"    if puntos >= 6 else
+        "CANDIDATA"  if puntos >= 3 else
+        "DESCARTAR"
+    )
+
+    if verbose:
+        print(f"{'─'*55}")
+        print(f"Regla:  {row['regla']}")
+        print(f"{'─'*55}")
+        for c in criterios:
+            print(f"  • {c}")
+        print(f"\n  → Clasificación: {clasificacion}  ({puntos}/8 puntos)\n")
+
+    return clasificacion
+
+# Aplicar a las 6 reglas con mayor lift
+print("Evaluación de las 6 reglas con mayor lift:\n")
+for _, row in reglas_base.sort_values("lift", ascending=False).head(6).iterrows():
+    evaluar_regla_completa(row)
+```
+
+### Lo que Cambia con Este Marco
+
+La diferencia entre el análisis de reglas de asociación tratado en los textos introductorios y el análisis desarrollado en estos dos capítulos no reside en el código: las funciones de `mlxtend` son las mismas. La diferencia reside en las preguntas que el analista se hace antes de interpretar los resultados y en los instrumentos conceptuales que usa para responderlas.
+
+La @tbl-comparacion resume esta diferencia de manera esquemática:
+
+| Dimensión | Enfoque elemental | Enfoque crítico |
+|---|---|---|
+| Métricas consideradas | Soporte, confianza | Lift, lift relativo, leverage, conviction, Zhang |
+| Dirección de la regla | Ignorada | Evaluada mediante la asimetría de confianza |
+| Comparabilidad del lift | Asumida universal | Corregida con lift relativo |
+| Umbrales de los parámetros | Fijos por convención | Explorados mediante análisis de sensibilidad |
+| Visualización | Tablas ordenadas | Scatter de métricas + radar + grafo |
+| Criterio de selección final | Confianza o lift únicos | Convergencia entre múltiples métricas |
+
+: Comparación entre enfoque elemental y enfoque crítico del análisis de reglas de asociación. {#tbl-comparacion}
+
+La tabla pone en evidencia que el análisis crítico no es simplemente más trabajo —es un análisis fundamentalmente diferente en su estructura epistémica. El analista que usa el marco crítico genera, en la mayoría de los casos, un conjunto de reglas reportadas más pequeño que el analista que usa el enfoque elemental. Pero ese conjunto más pequeño está respaldado por evidencia más robusta, es más estable ante variaciones en los parámetros, y es más accionable en la práctica.
+
+## Resumen Conceptual {#sec-resumen-cap2}
+
+Este capítulo ha profundizado en el análisis de reglas de asociación más allá de las métricas fundamentales introducidas en el capítulo anterior. Los puntos clave que el lector debe retener son los siguientes:
+
+**Sobre las limitaciones estructurales del lift:**
+
+- El lift es simétrico: $\text{lift}(A \Rightarrow B) = \text{lift}(B \Rightarrow A)$. Para elegir la dirección apropiada de una regla en una aplicación concreta, la confianza —métrica asimétrica— es el criterio relevante.
+- El lift tiene un techo teórico que depende de los soportes individuales: $\text{lift}_{\max} = 1 / \max(P(A), P(B))$. Comparar lifts absolutos entre reglas con distintos soportes puede ser engañoso. El lift relativo —cociente entre lift observado y lift máximo— es una escala más justa para la comparación.
+
+**Sobre las métricas complementarias:**
+
+- El leverage mide la diferencia absoluta entre co-ocurrencia observada e independencia. Es interpretable como el número de transacciones adicionales atribuibles a la asociación, pero es sistemáticamente bajo para ítems raros.
+- La conviction es asimétrica y mide el cuasi-determinismo de la regla en su dirección: valores muy altos indican confianza cercana a 1.
+- La métrica de Zhang tiene rango $[-1, 1]$, es simétrica y robusta ante ítems frecuentes. Es la métrica recomendada para comparaciones entre reglas con distintos niveles de frecuencia.
+- Las métricas no son redundantes: sus correlaciones son imperfectas, y las discrepancias entre ellas son la señal más valiosa para el análisis crítico.
+
+**Sobre la sensibilidad a parámetros:**
+
+- Los umbrales del algoritmo Apriori no tienen justificación estadística intrínseca. El conjunto de reglas obtenido es función conjunta del dataset y de los parámetros elegidos.
+- El análisis de sensibilidad —exploración sistemática del espacio de parámetros— es una práctica metodológica necesaria, no opcional.
+- El mapa soporte-confianza visualiza el espacio completo de decisión y permite al analista elegir conscientemente su posición en el compromiso entre número y calidad de reglas.
+
+**Sobre la representación en grafo:**
+
+- El grafo de reglas hace visible la estructura topológica del espacio de co-ocurrencias: hubs, nodos puente y clústeres de ítems relacionados.
+- La centralidad basada en lift —no en conteo de aristas— permite distinguir ítems genuinamente centrales de ítems centrales por mera frecuencia.
+- El "Whole Milk Problem" ilustra cómo la alta frecuencia de un ítem como consecuente hace prácticamente imposible encontrar reglas genuinamente informativas hacia él, independientemente de los umbrales elegidos.
+
+**Sobre el marco integrado:**
+
+- La evaluación robusta de una regla requiere examinar simultáneamente al menos cuatro dimensiones: lift relativo, leverage, Zhang y conviction.
+- Las reglas robustas son aquellas en las que múltiples métricas convergen en señalarlas como interesantes; las reglas candidatas son aquellas donde hay convergencia parcial; las reglas descartables son aquellas donde las métricas más exigentes las rechazan.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::
