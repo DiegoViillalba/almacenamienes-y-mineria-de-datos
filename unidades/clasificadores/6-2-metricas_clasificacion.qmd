@@ -1,0 +1,1194 @@
+---
+title: "Métricas de Clasificación en Minería de Datos"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: false
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clasificacion.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+## Introducción
+
+La evaluación de modelos de clasificación constituye uno de los problemas más estratégicamente complejos en la Minería de Datos. No es suficiente construir un modelo que "funcione": es necesario cuantificar de manera precisa y contextualmente apropiada qué tan bien funciona, en qué escenarios falla y qué tipo de errores comete. Esta distinción aparentemente académica tiene consecuencias directas en entornos reales: un modelo de diagnóstico médico que confunde "exactitud estadística" con "utilidad clínica" puede dejar pacientes enfermos sin tratamiento; un sistema de detección de fraude que optimiza la métrica equivocada puede bloquear transacciones legítimas y dañar la relación con el cliente.
+
+La literatura especializada ha producido un conjunto robusto de métricas y herramientas de evaluación que van más allá del intuitivo porcentaje de aciertos. Comprender estas métricas —sus fundamentos matemáticos, su interpretación conceptual y sus implicaciones estratégicas— es competencia central del científico de datos (Provost & Fawcett, 2013). Como señala Fawcett (2006), la selección inadecuada de métricas conduce sistemáticamente a conclusiones erróneas sobre el desempeño real de los clasificadores, especialmente en presencia de desbalance de clases.
+
+Este capítulo desarrolla sistemáticamente las métricas más importantes para la evaluación de clasificadores binarios y multiclase, integrándolas con el proceso KDD (Knowledge Discovery in Databases) y con la lógica de la toma de decisiones en contextos de alto impacto. Cada sección combina rigor matemático con ejemplos de código ejecutable en Python, siguiendo el principio de que la comprensión profunda de una métrica requiere tanto su derivación formal como su implementación y visualización sobre datos reales.
+
+
+<!-- 
+## La Evaluación dentro del Proceso KDD
+
+### El Proceso KDD: Una Visión General
+
+El proceso KDD, formalizado por Fayyad et al. (1996), es el marco conceptual que organiza el descubrimiento de conocimiento a partir de datos. Sus etapas son: selección de datos, preprocesamiento, transformación, minería de datos y evaluación. Esta última etapa es frecuentemente subestimada en su complejidad, tratándola como un mero paso de "reporte de resultados". Sin embargo, la evaluación es el mecanismo que determina si el conocimiento descubierto es genuinamente válido y útil, o si es un artefacto estadístico sin sustancia.
+
+La siguiente visualización ilustra el flujo del proceso KDD y destaca la fase de evaluación como punto de retroalimentación hacia todas las etapas anteriores:
+
+```python
+# ── Visualización del proceso KDD ──────────────────────────────────────────
+import plotly.graph_objects as go
+
+etapas = [
+    "Selección\nde Datos",
+    "Preprocesamiento",
+    "Transformación",
+    "Minería\nde Datos",
+    "Evaluación",
+    "Conocimiento",
+]
+x = list(range(1, len(etapas) + 1))
+colores = ["#4a90d9"] * 4 + ["#e74c3c", "#27ae60"]
+
+fig = go.Figure()
+
+for xi, etapa, color in zip(x, etapas, colores):
+    fig.add_trace(go.Scatter(
+        x=[xi], y=[1],
+        mode="markers+text",
+        marker=dict(size=60, color=color, symbol="circle"),
+        text=[etapa],
+        textposition="middle center",
+        textfont=dict(size=9, color="white"),
+        showlegend=False,
+    ))
+
+for i in range(len(x) - 1):
+    fig.add_annotation(
+        x=x[i + 1] - 0.1, y=1,
+        ax=x[i] + 0.1, ay=1,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=2, arrowsize=1.5,
+        arrowwidth=2, arrowcolor="#555",
+    )
+
+fig.add_annotation(
+    x=5, y=0.72,
+    text="← Retroalimentación al proceso completo",
+    showarrow=False,
+    font=dict(size=11, color="#e74c3c"),
+    bgcolor="rgba(231,76,60,0.1)",
+    bordercolor="#e74c3c",
+    borderwidth=1,
+)
+
+fig.update_layout(
+    height=250,
+    xaxis=dict(visible=False, range=[0.5, 6.5]),
+    yaxis=dict(visible=False, range=[0.5, 1.5]),
+    margin=dict(l=10, r=10, t=40, b=50),
+    title="El Proceso KDD y el Rol Central de la Evaluación (Fayyad et al., 1996)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+)
+fig.show()
+```
+
+### La Evaluación como Guardián del Conocimiento
+
+Han et al. (2011) distinguen entre modelos descriptivos y predictivos, y señalan que la evaluación de estos últimos requiere métricas que capturen no solo la precisión estadística sino la relevancia práctica del patrón descubierto. Un clasificador que identifica patrones que no generalizan a nuevos datos (overfitting) puede parecer excelente en métricas superficiales, pero es inútil —o peor, contraproducente— en producción.
+
+La retroalimentación desde la fase de evaluación hacia etapas anteriores del KDD es fundamental. Si las métricas revelan que el modelo tiene muy alto Recall pero muy baja Precision, el científico de datos debe preguntarse: ¿es un problema de la extracción de características? ¿Del preprocesamiento? ¿De los datos de entrenamiento? La evaluación, bien interpretada, es diagnóstico y orientación sobre todo el pipeline de conocimiento.
+
+### Por Qué la Métrica Incorrecta Distorsiona el Conocimiento
+
+Provost y Fawcett (2013) enfatizan que la elección de la métrica de evaluación es, en esencia, una declaración sobre qué tipo de error es más tolerable en el contexto del negocio. Un sistema de aprendizaje automático que se optimiza bajo la métrica equivocada aprende los patrones equivocados. Este fenómeno se manifiesta en minería de datos cuando se entrena un modelo maximizando accuracy en un dataset con clase mayoritaria dominante: el modelo aprende a ignorar la clase minoritaria, que suele ser precisamente la de mayor interés para la organización. -->
+
+
+
+## La Matriz de Confusión y el Costo Diferencial del Error
+
+### Definición Formal
+
+La matriz de confusión es la representación tabular que sintetiza el desempeño de un clasificador binario (Han et al., 2011). Para un clasificador con clases positiva (1) y negativa (0), se define como:
+
+$$
+M = \begin{pmatrix} TN & FP \\ FN & TP \end{pmatrix}
+$$
+
+donde la fila representa la clase real y la columna la clase predicha. Los cuatro elementos son:
+
+- **TP (Verdadero Positivo):** El modelo predijo positivo y el caso real es positivo. Clasificación correcta de la clase de interés.
+- **TN (Verdadero Negativo):** El modelo predijo negativo y el caso real es negativo. Clasificación correcta de la clase mayoritaria.
+- **FP (Falso Positivo):** El modelo predijo positivo pero el caso real es negativo. También llamado Error Tipo I.
+- **FN (Falso Negativo):** El modelo predijo negativo pero el caso real es positivo. También llamado Error Tipo II.
+
+### Generación de los Datasets Sintéticos
+
+A lo largo de este capítulo se utilizan dos datasets sintéticos que replican las características estadísticas de problemas reales. El **Dataset Médico** simula la detección de una condición grave con prevalencia del ~8 %, reflejando el desbalance típico en estudios de screening. El **Dataset Financiero** simula transacciones con una tasa de fraude del ~3 %, consistente con benchmarks de la industria (Pedregosa et al., 2011). Ambos datasets se generan con `sklearn.datasets.make_classification`, que permite controlar el número de características informativas, el nivel de ruido en las etiquetas y el desbalance de clases.
+
+```{python}
+# ── Configuración global e importaciones ───────────────────────────────────
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
+from plotly.subplots import make_subplots
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    confusion_matrix, accuracy_score, precision_score, recall_score,
+    f1_score, fbeta_score, roc_curve, auc, precision_recall_curve,
+    average_precision_score, classification_report,
+)
+
+SEED = 42
+
+# ── Dataset médico: 92 % sanos, 8 % enfermos ───────────────────────────────
+X_med, y_med = make_classification(
+    n_samples=1000, n_features=10, n_informative=5,
+    weights=[0.92, 0.08],   # fuerte desbalance
+    flip_y=0.02,            # 2 % de ruido en las etiquetas
+    random_state=SEED,
+)
+X_tr_m, X_te_m, y_tr_m, y_te_m = train_test_split(
+    X_med, y_med, test_size=0.3, stratify=y_med, random_state=SEED
+)
+
+# ── Dataset financiero: 97 % legítimas, 3 % fraude ─────────────────────────
+X_fin, y_fin = make_classification(
+    n_samples=5000, n_features=15, n_informative=7,
+    weights=[0.97, 0.03],
+    flip_y=0.01,
+    random_state=SEED,
+)
+X_tr_f, X_te_f, y_tr_f, y_te_f = train_test_split(
+    X_fin, y_fin, test_size=0.3, stratify=y_fin, random_state=SEED
+)
+
+# ── Modelo 1: Regresión Logística — dataset médico ─────────────────────────
+modelo_lr = LogisticRegression(random_state=SEED, max_iter=500)
+modelo_lr.fit(X_tr_m, y_tr_m)
+y_pred_lr = modelo_lr.predict(X_te_m)
+y_prob_lr = modelo_lr.predict_proba(X_te_m)[:, 1]
+
+# ── Modelo 2: Random Forest — dataset médico ───────────────────────────────
+modelo_rf = RandomForestClassifier(n_estimators=100, random_state=SEED)
+modelo_rf.fit(X_tr_m, y_tr_m)
+y_pred_rf = modelo_rf.predict(X_te_m)
+y_prob_rf = modelo_rf.predict_proba(X_te_m)[:, 1]
+
+# ── Modelo 3: Regresión Logística — dataset financiero ─────────────────────
+modelo_fin = LogisticRegression(
+    random_state=SEED, max_iter=500, class_weight="balanced"
+)
+modelo_fin.fit(X_tr_f, y_tr_f)
+y_pred_fin = modelo_fin.predict(X_te_f)
+y_prob_fin = modelo_fin.predict_proba(X_te_f)[:, 1]
+
+print("Distribución de clases — test médico    :",
+      dict(zip(*np.unique(y_te_m, return_counts=True))))
+print("Distribución de clases — test financiero:",
+      dict(zip(*np.unique(y_te_f, return_counts=True))))
+```
+
+### Visualización Interactiva de la Matriz de Confusión
+
+La siguiente función genera una visualización interactiva con Plotly que muestra tanto los conteos absolutos como el porcentaje por fila (tasa por clase real), facilitando la interpretación del balance entre los cuatro cuadrantes (Fawcett, 2006):
+
+```{python}
+# ── Función reutilizable: matriz de confusión interactiva ───────────────────
+def plot_confusion_matrix(cm, titulo="Matriz de Confusión",
+                          etiquetas=None):
+    """
+    Visualiza una matriz de confusión 2×2 con Plotly.
+
+    Muestra conteos absolutos y porcentajes por fila
+    (tasa de acierto/error por clase real).
+
+    Parámetros
+    ----------
+    cm        : np.ndarray  — salida de sklearn confusion_matrix
+    titulo    : str         — título del gráfico
+    etiquetas : list[str]   — nombres de las clases [neg, pos]
+    """
+    if etiquetas is None:
+        etiquetas = ["Negativo (0)", "Positivo (1)"]
+
+    cm_pct = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
+    texto = [
+        [f"{cm[i,j]}<br>({cm_pct[i,j]:.1f} %)" for j in range(2)]
+        for i in range(2)
+    ]
+    # Invertir filas para que TP quede arriba-derecha (convención visual habitual)
+    z_plot     = cm[::-1, :]
+    texto_plot = texto[::-1]
+    y_labels   = etiquetas[::-1]
+
+    fig = ff.create_annotated_heatmap(
+        z=z_plot,
+        x=etiquetas,
+        y=y_labels,
+        annotation_text=texto_plot,
+        colorscale=[[0, "#f8f9fa"], [0.5, "#4a90d9"], [1, "#e74c3c"]],
+        showscale=True,
+    )
+    fig.update_layout(
+        title=titulo,
+        xaxis_title="Predicción del modelo",
+        yaxis_title="Valor real",
+        height=430, width=530,
+        font=dict(size=13),
+    )
+    # Etiquetas de cuadrante
+    etq = {(0, 0): ("TN", "gray"),    (0, 1): ("FP", "#e67e22"),
+           (1, 0): ("FN", "#e74c3c"), (1, 1): ("TP", "#27ae60")}
+    for (ri, ci), (label, color) in etq.items():
+        ri_plot = 1 - ri
+        fig.add_annotation(
+            x=etiquetas[ci], y=y_labels[ri_plot],
+            text=f"<b>{label}</b>",
+            showarrow=False,
+            font=dict(size=11, color=color),
+            yshift=-22,
+        )
+    return fig
+
+
+# ── Aplicar al clasificador médico ──────────────────────────────────────────
+cm_lr = confusion_matrix(y_te_m, y_pred_lr)
+TP = int(cm_lr[1, 1]); TN = int(cm_lr[0, 0])
+FP = int(cm_lr[0, 1]); FN = int(cm_lr[1, 0])
+
+print("Matriz de confusión — Regresión Logística (médico):")
+print(cm_lr)
+print(f"\nTP={TP}, TN={TN}, FP={FP}, FN={FN}")
+
+fig_cm = plot_confusion_matrix(
+    cm_lr,
+    titulo="Matriz de Confusión — Clasificador Médico (Reg. Logística)",
+    etiquetas=["Sano", "Enfermo"],
+)
+fig_cm.show()
+```
+
+### El Costo Asimétrico del Error: Contextos Reales
+
+La característica más importante de los errores en clasificación no es su frecuencia absoluta, sino su **costo diferencial**. En la mayoría de los problemas reales de minería de datos, FP y FN no tienen el mismo costo, y optimizar hacia uno implica sacrificar el otro (James et al., 2021).
+
+#### Medicina: El Costo Devastador del Falso Negativo
+
+En un sistema de detección temprana de cáncer de pulmón, un **Falso Negativo** significa que el sistema predice "benigno" para un nódulo que en realidad es canceroso. El paciente no recibe tratamiento. Esta asimetría implica que en medicina diagnóstica se prefieren clasificadores con **alto Recall** (baja tasa de FN), incluso a expensas de menor Precision. Un **Falso Positivo** significa que el sistema predice "maligno" para un nódulo benigno: el paciente es referido para biopsia innecesaria —procedimiento invasivo y costoso—, pero comparado con el costo del FN, el FP es el error tolerable.
+
+#### Finanzas: El Costo Operativo del Falso Positivo
+
+En un sistema de detección de fraude, un **Falso Positivo** bloquea una transacción legítima: el cliente no puede completar su compra, con el riesgo de perder la relación comercial. Un **Falso Negativo** deja pasar un fraude real, pero la pérdida suele ser cubierta por seguro o chargeback. Esta asimetría inversa implica que en detección de fraude se prefieren clasificadores con **alta Precision**, aceptando que algunos fraudes pasen sin detectarse (Provost & Fawcett, 2013).
+
+```{python}
+# ── Visualización del costo asimétrico por contexto ────────────────────────
+contextos = ["Medicina\n(screening)", "Finanzas\n(fraude)"]
+costo_fn  = [10, 3]   # escala relativa normalizada
+costo_fp  = [2,  8]
+
+fig = go.Figure(data=[
+    go.Bar(name="Costo FN (Falso Negativo)", x=contextos, y=costo_fn,
+           marker_color="#e74c3c",
+           text=["Crítico: paciente\nsin tratamiento",
+                 "Moderado: pérdida\ncubierta por seguro"],
+           textposition="auto"),
+    go.Bar(name="Costo FP (Falso Positivo)", x=contextos, y=costo_fp,
+           marker_color="#e67e22",
+           text=["Moderado: biopsia\ninnecesaria",
+                 "Alto: cliente\nabandonado"],
+           textposition="auto"),
+])
+fig.update_layout(
+    barmode="group",
+    title=(
+        "Costo Asimétrico de los Errores por Contexto<br>"
+        "<sup>Escala relativa normalizada — Provost & Fawcett (2013)</sup>"
+    ),
+    yaxis_title="Severidad relativa del error",
+    height=420,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+)
+fig.show()
+```
+
+---
+
+## Accuracy: Definición, Utilidad y Limitaciones
+
+### Definición Formal
+
+$$
+\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}
+$$
+
+La accuracy mide la proporción de instancias correctamente clasificadas sobre el total (Han et al., 2011).
+
+### Cálculo e Interpretación Básica
+
+```{python}
+# ── Accuracy del modelo real vs. clasificador trivial ──────────────────────
+acc_lr      = accuracy_score(y_te_m, y_pred_lr)
+y_trivial   = np.zeros_like(y_te_m)          # siempre predice "sano"
+acc_trivial = accuracy_score(y_te_m, y_trivial)
+
+print(f"Accuracy — Regresión Logística : {acc_lr:.4f}  ({acc_lr*100:.2f} %)")
+print(f"Accuracy — Modelo trivial      : {acc_trivial:.4f}  ({acc_trivial*100:.2f} %)")
+print()
+print("¿El modelo trivial (siempre 'sano') detecta algún enfermo?")
+print(f"  Enfermos detectados: {((y_trivial==1) & (y_te_m==1)).sum()} / {y_te_m.sum()}")
+```
+
+### La Paradoja de la Exactitud (Accuracy Paradox)
+
+La limitación más crítica de la accuracy emerge cuando el dataset presenta **desbalance de clases**, situación extremadamente común en aplicaciones reales de minería de datos (Saito & Rehmsmeier, 2015). En nuestro dataset financiero con 97 % de transacciones legítimas, un clasificador trivial alcanza ~97 % de accuracy sin detectar ningún fraude:
+
+```{python}
+# ── Paradoja de la exactitud — dataset financiero ──────────────────────────
+y_trivial_fin   = np.zeros_like(y_te_f)
+acc_trivial_fin = accuracy_score(y_te_f, y_trivial_fin)
+acc_modelo_fin  = accuracy_score(y_te_f, y_pred_fin)
+recall_trivial  = recall_score(y_te_f, y_trivial_fin, zero_division=0)
+recall_modelo   = recall_score(y_te_f, y_pred_fin)
+
+print("Dataset financiero (97 % legítimas, 3 % fraude)")
+print("─" * 52)
+print(f"Accuracy — modelo trivial : {acc_trivial_fin:.4f}  ({acc_trivial_fin*100:.1f} %)")
+print(f"Accuracy — modelo real    : {acc_modelo_fin:.4f}  ({acc_modelo_fin*100:.1f} %)")
+print()
+print(f"Recall  — modelo trivial  : {recall_trivial:.4f}  → 0 fraudes detectados")
+print(f"Recall  — modelo real     : {recall_modelo:.4f}  → detecta fraudes reales")
+print()
+print("Conclusión: mayor accuracy ≠ mejor modelo en datos desbalanceados.")
+print("(Saito & Rehmsmeier, 2015)")
+```
+
+```{python}
+# ── Visualización: Accuracy vs. Recall ─────────────────────────────────────
+modelos    = ["Modelo Real\n(LR + class_weight)", "Modelo Trivial\n(siempre negativo)"]
+accuracies = [acc_modelo_fin, acc_trivial_fin]
+recalls    = [recall_modelo, recall_trivial]
+
+fig = go.Figure(data=[
+    go.Bar(name="Accuracy", x=modelos, y=accuracies,
+           marker_color=["#4a90d9", "#e74c3c"],
+           text=[f"{v:.2%}" for v in accuracies], textposition="auto"),
+    go.Bar(name="Recall (clase fraude)", x=modelos, y=recalls,
+           marker_color=["#27ae60", "#c0392b"],
+           text=[f"{v:.2%}" for v in recalls], textposition="auto"),
+])
+fig.update_layout(
+    barmode="group",
+    title=(
+        "Paradoja de la Exactitud en el Dataset Financiero<br>"
+        "<sup>Saito & Rehmsmeier (2015): un modelo con mayor accuracy detecta 0 fraudes</sup>"
+    ),
+    yaxis=dict(title="Valor", range=[0, 1.1], tickformat="%"),
+    height=420,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+)
+fig.show()
+```
+
+---
+
+## Precision: Confiabilidad de las Predicciones Positivas
+
+### Definición Formal
+
+$$
+\text{Precision} = \frac{TP}{TP + FP}
+$$
+
+La Precision mide qué proporción de las instancias predichas como positivas son genuinamente positivas (James et al., 2021).
+
+### Cálculo Detallado
+
+```{python}
+# ── Precision: cálculo manual y con sklearn ─────────────────────────────────
+precision_manual = TP / (TP + FP) if (TP + FP) > 0 else 0
+precision_sk     = precision_score(y_te_m, y_pred_lr, zero_division=0)
+
+print(f"Cálculo manual  — Precision = {TP} / ({TP}+{FP}) = {precision_manual:.4f}")
+print(f"sklearn         — Precision = {precision_sk:.4f}")
+print()
+print(f"Interpretación: de cada 10 alarmas de 'enfermo',")
+print(f"  aproximadamente {precision_sk*10:.1f} corresponden a enfermos reales.")
+```
+
+### Limitación: Alta Precision ≠ Buen Clasificador
+
+Un sistema que solo alerta cuando tiene certeza casi absoluta puede tener Precision = 1.0 pero Recall ≈ 0 — detecta muy pocos positivos reales. Fawcett (2006) denomina este efecto **alarm fatigue** cuando la Precision es baja, e identifica ambos extremos como fallas operativas.
+
+```{python}
+# ── Modelo "conservador": alta precision, bajo recall ──────────────────────
+umbral_alto = 0.90
+y_conserv   = (y_prob_lr >= umbral_alto).astype(int)
+
+p_c  = precision_score(y_te_m, y_conserv, zero_division=0)
+r_c  = recall_score(y_te_m, y_conserv, zero_division=0)
+f1_c = f1_score(y_te_m, y_conserv, zero_division=0)
+
+print(f"Umbral = {umbral_alto}  (modelo muy conservador)")
+print(f"  Precision : {p_c:.4f}  (casi nunca se equivoca cuando alerta)")
+print(f"  Recall    : {r_c:.4f}  (pero deja de detectar muchos enfermos)")
+print(f"  F1-Score  : {f1_c:.4f}")
+print(f"  Alertas emitidas: {y_conserv.sum()} de {y_te_m.sum()} enfermos reales")
+```
+
+---
+
+## Recall (Sensibilidad): Cobertura de los Positivos Reales
+
+### Definición Formal
+
+$$
+\text{Recall} = \text{Sensibilidad} = \text{TPR} = \frac{TP}{TP + FN}
+$$
+
+El Recall mide qué proporción de los casos verdaderamente positivos fue correctamente identificada por el clasificador (Fawcett, 2006).
+
+### Cálculo y Relación con la Tasa de Falsos Negativos
+
+```{python}
+# ── Recall: cálculo y relación con FNR ──────────────────────────────────────
+recall_manual = TP / (TP + FN) if (TP + FN) > 0 else 0
+recall_sk     = recall_score(y_te_m, y_pred_lr)
+fnr           = FN / (TP + FN)   # Tasa de Falsos Negativos = 1 − Recall
+
+print(f"Cálculo manual  — Recall = {TP} / ({TP}+{FN}) = {recall_manual:.4f}")
+print(f"sklearn         — Recall = {recall_sk:.4f}")
+print(f"FNR (1 − Recall)          = {fnr:.4f}")
+print()
+print(f"De {y_te_m.sum()} enfermos reales en el conjunto de prueba,")
+print(f"  el modelo detecta {TP} y deja sin detectar {FN}.")
+```
+
+### Trade-off Precision–Recall: Tabla por Umbral
+
+La siguiente tabla es la evidencia empírica del trade-off fundamental entre Recall y Precision que toda decisión de umbral debe considerar (Provost & Fawcett, 2013):
+
+```{python}
+# ── Trade-off P-R según umbral — dataset médico ─────────────────────────────
+rows = []
+for u in [0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80]:
+    y_u  = (y_prob_lr >= u).astype(int)
+    tp_u = int(((y_u==1) & (y_te_m==1)).sum())
+    fp_u = int(((y_u==1) & (y_te_m==0)).sum())
+    fn_u = int(((y_u==0) & (y_te_m==1)).sum())
+    tn_u = int(((y_u==0) & (y_te_m==0)).sum())
+    rows.append({
+        "Umbral θ":   u,
+        "TP": tp_u, "FP": fp_u, "FN": fn_u, "TN": tn_u,
+        "Recall":    round(tp_u/(tp_u+fn_u), 3) if (tp_u+fn_u)>0 else 0,
+        "Precision": round(tp_u/(tp_u+fp_u), 3) if (tp_u+fp_u)>0 else 0,
+        "F1":        round(f1_score(y_te_m, y_u, zero_division=0), 3),
+    })
+
+df_tradeoff = pd.DataFrame(rows)
+print("Trade-off Precision–Recall según el umbral de decisión")
+print("Dataset Médico — Regresión Logística")
+print("(Provost & Fawcett, 2013)\n")
+print(df_tradeoff.to_string(index=False))
+```
+
+### Visualización del Trade-off
+
+```{python}
+# ── Curvas Precision y Recall en función del umbral ─────────────────────────
+umbrales_range = np.arange(0.05, 0.95, 0.01)
+prec_vals, rec_vals = [], []
+
+for u in umbrales_range:
+    y_u = (y_prob_lr >= u).astype(int)
+    prec_vals.append(precision_score(y_te_m, y_u, zero_division=0))
+    rec_vals.append(recall_score(y_te_m, y_u, zero_division=0))
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=umbrales_range, y=prec_vals, name="Precision",
+                          line=dict(color="#4a90d9", width=2.5)))
+fig.add_trace(go.Scatter(x=umbrales_range, y=rec_vals, name="Recall",
+                          line=dict(color="#e74c3c", width=2.5)))
+fig.add_vline(x=0.5, line_dash="dash", line_color="gray",
+              annotation_text="θ = 0.5 (default)")
+fig.update_layout(
+    title=(
+        "Trade-off Precision vs. Recall según el Umbral de Decisión<br>"
+        "<sup>Al subir θ: ↑ Precision, ↓ Recall — Fawcett (2006)</sup>"
+    ),
+    xaxis_title="Umbral de Decisión (θ)",
+    yaxis_title="Valor de la Métrica",
+    yaxis=dict(range=[0, 1.05]),
+    height=400,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+)
+fig.show()
+```
+
+---
+
+## Specificity (Especificidad): Protección de los Negativos
+
+### Definición Formal
+
+$$
+\text{Specificity} = \text{TNR} = \frac{TN}{TN + FP}
+$$
+
+La Especificidad mide qué proporción de los casos verdaderamente negativos fue correctamente identificada como negativa por el clasificador (Han et al., 2011).
+
+### Cálculo y Relación con FPR
+
+```{python}
+# ── Specificity: cálculo y relación con la Tasa de Falsos Positivos ─────────
+specificity = TN / (TN + FP) if (TN + FP) > 0 else 0
+fpr_val     = FP / (TN + FP)   # 1 − Specificity = FPR
+
+print(f"Specificity = {TN} / ({TN}+{FP}) = {specificity:.4f}")
+print(f"FPR (1 − Specificity) = {fpr_val:.4f}")
+print()
+print("Tabla resumen de las tres métricas de relevancia:")
+print(f"  Precision   = {precision_score(y_te_m, y_pred_lr):.4f}  "
+      f"— fiabilidad al predecir positivo")
+print(f"  Recall      = {recall_score(y_te_m, y_pred_lr):.4f}  "
+      f"— cobertura de positivos reales")
+print(f"  Specificity = {specificity:.4f}  "
+      f"— protección de los negativos reales")
+```
+
+### La Regla SnNout / SpPin en Medicina
+
+James et al. (2021) introducen la regla mnemotécnica clínica:
+
+- **SnNout** (alta **Sn**sensibilidad → resultado **N**egativo descarta la enfermedad): las pruebas de **screening** deben tener alta Sensibilidad para no dejar pasar enfermos.
+- **SpPin** (alta **Sp**ecificidad → resultado **Po**sitivo confirma la enfermedad): las pruebas **confirmatorias** deben tener alta Especificidad para no confirmar falsos positivos.
+
+---
+
+## F1-Score y sus Variantes Multiclase
+
+### La Necesidad de una Métrica Compuesta
+
+El dilema entre Precision y Recall genera la necesidad de una métrica que capture ambas dimensiones en un solo número. El F1-Score resuelve esto mediante la media armónica (Han et al., 2011).
+
+### Definición Formal
+
+$$
+F_1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}} = \frac{2 \cdot TP}{2 \cdot TP + FP + FN}
+$$
+
+### Por Qué Media Armónica y No Aritmética
+
+La media aritmética de Precision y Recall puede ocultar valores extremos. La media armónica penaliza asimétricamente a los clasificadores que sacrifican completamente una de las dos métricas:
+
+```{python}
+# ── Demostración: media aritmética vs. armónica ─────────────────────────────
+def f1_manual(p, r):
+    return 2 * p * r / (p + r) if (p + r) > 0 else 0
+
+def media_aritmetica(p, r):
+    return (p + r) / 2
+
+casos = [
+    ("Modelo A — balanceado",           0.90, 0.90),
+    ("Modelo B — solo Precision",        0.99, 0.01),
+    ("Modelo C — solo Recall",           0.01, 0.99),
+    ("Modelo D — umbral alto moderado",  0.85, 0.60),
+]
+
+print(f"{'Modelo':<35}  {'P':>5}  {'R':>5}  {'Aritmética':>11}  {'F1 (armónica)':>14}")
+print("─" * 78)
+for nombre, p, r in casos:
+    print(f"{nombre:<35}  {p:>5.2f}  {r:>5.2f}  "
+          f"{media_aritmetica(p,r):>11.4f}  {f1_manual(p,r):>14.4f}")
+
+print()
+print("La media armónica domina hacia el valor más bajo: castiga los extremos.")
+print("(Han et al., 2011)")
+```
+
+### La Generalización: F-Beta Score
+
+$$
+F_\beta = (1 + \beta^2) \cdot \frac{\text{Precision} \cdot \text{Recall}}{\beta^2 \cdot \text{Precision} + \text{Recall}}
+$$
+
+La elección de $\beta$ es una declaración explícita sobre la preferencia relativa entre minimizar FP o FN (James et al., 2021):
+
+```{python}
+# ── F-beta: el parámetro β como declaración de prioridad ───────────────────
+p_lr = precision_score(y_te_m, y_pred_lr, zero_division=0)
+r_lr = recall_score(y_te_m, y_pred_lr)
+
+print(f"Modelo LR médico — P = {p_lr:.3f}, R = {r_lr:.3f}\n")
+print(f"{'β':>5}  {'Énfasis':<40}  {'F-beta':>8}")
+print("─" * 58)
+for beta, desc in [
+    (0.5, "Precision pesa 2× más  (FP es más costoso)"),
+    (1.0, "Precision = Recall     (F1 estándar)"),
+    (2.0, "Recall pesa 2× más     (FN es más costoso)"),
+    (5.0, "Recall domina          (contexto crítico: FN catastrófico)"),
+]:
+    fb = fbeta_score(y_te_m, y_pred_lr, beta=beta, zero_division=0)
+    print(f"{beta:>5}  {desc:<40}  {fb:>8.4f}")
+```
+
+### Variantes para Clasificación Multiclase
+
+$$F1_{\text{macro}} = \frac{1}{C}\sum_{c=1}^{C} F1_c \qquad F1_{\text{micro}} = \frac{2\sum TP_c}{2\sum TP_c + \sum FP_c + \sum FN_c} \qquad F1_{\text{weighted}} = \sum_{c=1}^{C} w_c \cdot F1_c$$
+
+```{python}
+# ── F1 macro / micro / weighted / binario ───────────────────────────────────
+print("Variantes del F1-Score:")
+for avg in ["macro", "micro", "weighted", "binary"]:
+    val = f1_score(y_te_m, y_pred_lr, average=avg, zero_division=0)
+    print(f"  F1 {avg:<10}: {val:.4f}")
+
+print()
+print("Reporte completo por clase:")
+print(classification_report(
+    y_te_m, y_pred_lr,
+    target_names=["Sano (0)", "Enfermo (1)"],
+))
+```
+
+### Visualización Comparativa de Variantes
+
+```{python}
+# ── Comparación de variantes del F1 ─────────────────────────────────────────
+variantes     = ["macro", "micro", "weighted", "binary\n(clase positiva)"]
+valores_f1    = [
+    f1_score(y_te_m, y_pred_lr, average="macro"),
+    f1_score(y_te_m, y_pred_lr, average="micro"),
+    f1_score(y_te_m, y_pred_lr, average="weighted"),
+    f1_score(y_te_m, y_pred_lr, average="binary"),
+]
+descripciones = [
+    "Todas las clases\npeso igual",
+    "Todas las instancias\npeso igual",
+    "Ponderado por\nfrecuencia de clase",
+    "Solo clase\npositiva (enfermos)",
+]
+
+fig = go.Figure(go.Bar(
+    x=variantes, y=valores_f1,
+    marker_color=["#4a90d9", "#27ae60", "#e67e22", "#e74c3c"],
+    text=[f"{v:.3f}<br><i>{d}</i>" for v, d in zip(valores_f1, descripciones)],
+    textposition="auto",
+))
+fig.update_layout(
+    title=(
+        "Variantes del F1-Score — ¿Qué mide cada una?<br>"
+        "<sup>Han et al. (2011); Pedregosa et al. (2011)</sup>"
+    ),
+    yaxis=dict(title="F1", range=[0, 1.1]),
+    height=420,
+    xaxis_title="Tipo de promedio",
+)
+fig.show()
+```
+
+---
+
+## Curva ROC y el Área bajo la Curva (AUC)
+
+### Motivación
+
+Las métricas anteriores dependen del umbral de decisión elegido. La Curva ROC (Receiver Operating Characteristic) resuelve esto evaluando el clasificador a lo largo de **todos** los umbrales posibles (Fawcett, 2006).
+
+### Definición Formal
+
+$$\text{TPR}(\theta) = \frac{TP(\theta)}{TP(\theta) + FN(\theta)}, \quad \text{FPR}(\theta) = \frac{FP(\theta)}{FP(\theta) + TN(\theta)} = 1 - \text{Specificity}(\theta)$$
+
+### Interpretación Probabilística del AUC
+
+Bamber (1975) demostró que el AUC tiene una interpretación probabilística directa:
+
+$$\text{AUC} = P\!\left(\hat{p}(x^+) > \hat{p}(x^-)\right)$$
+
+donde $x^+$ es una instancia positiva elegida al azar y $x^-$ una negativa. Un AUC de 0.85 significa que hay un 85 % de probabilidad de que el modelo asigne mayor score a un positivo que a un negativo escogidos aleatoriamente.
+
+```{python}
+# ── Curva ROC: Regresión Logística vs. Random Forest ───────────────────────
+fpr_lr, tpr_lr, thresholds_roc = roc_curve(y_te_m, y_prob_lr)
+fpr_rf, tpr_rf, _              = roc_curve(y_te_m, y_prob_rf)
+auc_lr = auc(fpr_lr, tpr_lr)
+auc_rf = auc(fpr_rf, tpr_rf)
+
+print(f"AUC — Regresión Logística : {auc_lr:.4f}")
+print(f"AUC — Random Forest       : {auc_rf:.4f}")
+print()
+print(f"Interpretación LR: P(score(enfermo) > score(sano)) = {auc_lr:.1%}")
+print(f"(Bamber, 1975; Fawcett, 2006)")
+```
+
+### Visualización Interactiva: Curva ROC Comparativa
+
+```{python}
+# ── Curva ROC interactiva con área sombreada ────────────────────────────────
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=[0, 1], y=[0, 1], mode="lines",
+    name="Aleatorio (AUC = 0.50)",
+    line=dict(color="#aaa", width=1.5, dash="dash"),
+))
+fig.add_trace(go.Scatter(
+    x=[0, 0, 1], y=[0, 1, 1], mode="lines",
+    name="Perfecto (AUC = 1.00)",
+    line=dict(color="#27ae60", width=1.5, dash="dot"),
+))
+fig.add_trace(go.Scatter(
+    x=fpr_lr, y=tpr_lr, mode="lines",
+    name=f"Reg. Logística (AUC = {auc_lr:.3f})",
+    line=dict(color="#4a90d9", width=2.5),
+    fill="tozeroy", fillcolor="rgba(74,144,217,0.10)",
+))
+fig.add_trace(go.Scatter(
+    x=fpr_rf, y=tpr_rf, mode="lines",
+    name=f"Random Forest (AUC = {auc_rf:.3f})",
+    line=dict(color="#e74c3c", width=2.5),
+    fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+))
+
+fig.update_layout(
+    title=(
+        "Curva ROC — Comparación de Modelos (Dataset Médico)<br>"
+        "<sup>Fawcett (2006); Bamber (1975)</sup>"
+    ),
+    xaxis_title="Tasa de Falsos Positivos (FPR = 1 − Specificity)",
+    yaxis_title="Tasa de Verdaderos Positivos (Recall)",
+    xaxis=dict(range=[0, 1]), yaxis=dict(range=[0, 1.02]),
+    height=460,
+    legend=dict(x=0.55, y=0.15),
+)
+fig.show()
+```
+
+### Limitaciones del AUC-ROC en Datos Desbalanceados
+
+Saito y Rehmsmeier (2015) demostraron que en datasets con desbalance severo, el AUC-ROC puede sobreestimar el desempeño del clasificador porque incluye los TN en el denominador de la FPR: cuando los negativos son muy numerosos, incluso muchos FP producen una FPR aparentemente pequeña, haciendo que la curva parezca optimista.
+
+---
+
+## Curva Precision-Recall y Average Precision
+
+### Motivación
+
+La Curva Precision-Recall **ignora completamente los TN**, enfocándose exclusivamente en el comportamiento del clasificador sobre la clase positiva (Saito & Rehmsmeier, 2015). Su baseline es la prevalencia de la clase positiva, no 0.5:
+
+$$\text{AP} = \sum_{k} (R_k - R_{k-1}) \cdot P_k, \qquad \text{Baseline PR} = P(\text{positivo}) = \frac{TP + FN}{N}$$
+
+```{python}
+# ── Curva Precision-Recall: LR vs. RF ──────────────────────────────────────
+prec_lr_c, rec_lr_c, _ = precision_recall_curve(y_te_m, y_prob_lr)
+prec_rf_c, rec_rf_c, _ = precision_recall_curve(y_te_m, y_prob_rf)
+ap_lr       = average_precision_score(y_te_m, y_prob_lr)
+ap_rf       = average_precision_score(y_te_m, y_prob_rf)
+prevalencia = y_te_m.mean()
+
+print(f"Average Precision — Reg. Logística: {ap_lr:.4f}")
+print(f"Average Precision — Random Forest  : {ap_rf:.4f}")
+print(f"Baseline (prevalencia clase +)     : {prevalencia:.4f}")
+print()
+print("Un AP mayor que la prevalencia indica que el modelo supera")
+print("una predicción aleatoria proporcional. (Saito & Rehmsmeier, 2015)")
+```
+
+### Visualización Interactiva: Curva PR Comparativa
+
+```{python}
+# ── Curva Precision-Recall interactiva ─────────────────────────────────────
+fig = go.Figure()
+
+fig.add_hline(
+    y=prevalencia, line_dash="dash", line_color="#e74c3c",
+    annotation_text=f"Baseline aleatoria (prevalencia = {prevalencia:.2f})",
+    annotation_position="top right",
+)
+fig.add_trace(go.Scatter(
+    x=rec_lr_c, y=prec_lr_c, mode="lines",
+    name=f"Reg. Logística (AP = {ap_lr:.3f})",
+    line=dict(color="#4a90d9", width=2.5),
+    fill="tozeroy", fillcolor="rgba(74,144,217,0.12)",
+))
+fig.add_trace(go.Scatter(
+    x=rec_rf_c, y=prec_rf_c, mode="lines",
+    name=f"Random Forest (AP = {ap_rf:.3f})",
+    line=dict(color="#e67e22", width=2.5),
+    fill="tozeroy", fillcolor="rgba(230,126,34,0.10)",
+))
+
+fig.update_layout(
+    title=(
+        "Curva Precision-Recall — Comparación de Modelos (Dataset Médico)<br>"
+        "<sup>Preferible a ROC en clases desbalanceadas — Saito & Rehmsmeier (2015)</sup>"
+    ),
+    xaxis_title="Recall",
+    yaxis_title="Precision",
+    xaxis=dict(range=[0, 1]), yaxis=dict(range=[0, 1.05]),
+    height=460,
+    legend=dict(x=0.45, y=0.95),
+)
+fig.show()
+```
+
+### Panel Comparativo ROC vs. Precision-Recall
+
+```{python}
+# ── Panel 1×2: ROC vs. PR para el mismo modelo ─────────────────────────────
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        f"Curva ROC (AUC = {auc_lr:.3f})",
+        f"Curva Precision-Recall (AP = {ap_lr:.3f})",
+    ],
+)
+# ROC
+fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode="lines",
+    line=dict(color="#aaa", dash="dash"), showlegend=False),
+    row=1, col=1)
+fig.add_trace(go.Scatter(x=fpr_lr, y=tpr_lr, mode="lines",
+    line=dict(color="#4a90d9", width=2.2), name="LR (ROC)", showlegend=True),
+    row=1, col=1)
+# PR
+fig.add_hline(y=prevalencia, line_dash="dash", line_color="#e74c3c",
+              row=1, col=2)
+fig.add_trace(go.Scatter(x=rec_lr_c, y=prec_lr_c, mode="lines",
+    line=dict(color="#4a90d9", width=2.2), name="LR (PR)", showlegend=True),
+    row=1, col=2)
+
+fig.update_xaxes(range=[0, 1], row=1, col=1, title_text="FPR")
+fig.update_yaxes(range=[0, 1.02], row=1, col=1, title_text="TPR (Recall)")
+fig.update_xaxes(range=[0, 1], row=1, col=2, title_text="Recall")
+fig.update_yaxes(range=[0, 1.05], row=1, col=2, title_text="Precision")
+fig.update_layout(
+    height=410,
+    title=(
+        "ROC vs. Precision-Recall: el mismo modelo, perspectivas distintas<br>"
+        "<sup>Saito & Rehmsmeier (2015)</sup>"
+    ),
+)
+fig.show()
+```
+
+---
+
+## Optimización del Umbral de Decisión
+
+### El Umbral como Parámetro Estratégico
+
+La mayoría de los clasificadores probabilísticos producen $\hat{p}(x) \in [0, 1]$ antes de asignar una clase. El umbral por defecto $\theta = 0.5$ es una convención, no una elección óptima (Provost & Fawcett, 2013). Si se conocen los costos de cada tipo de error, el umbral óptimo puede derivarse analíticamente (James et al., 2021):
+
+$$\theta^* = \frac{C_{FP}}{C_{FP} + C_{FN}}$$
+
+- **Medicina** con $C_{FN} = 100 \cdot C_{FP}$: $\theta^* = 1/101 \approx 0.01$ (casi cualquier señal positiva debe investigarse)
+- **Finanzas** con $C_{FP} = 10 \cdot C_{FN}$: $\theta^* = 10/11 \approx 0.91$ (se requiere certeza alta antes de bloquear)
+
+### Efecto del Umbral sobre Todas las Métricas
+
+```{python}
+# ── Efecto del umbral sobre accuracy, precision, recall y F1 ───────────────
+umbrales_demo  = np.arange(0.05, 0.95, 0.02)
+metricas_umbral = []
+
+for u in umbrales_demo:
+    y_u  = (y_prob_lr >= u).astype(int)
+    tp_u = int(((y_u==1) & (y_te_m==1)).sum())
+    tn_u = int(((y_u==0) & (y_te_m==0)).sum())
+    fp_u = int(((y_u==1) & (y_te_m==0)).sum())
+    fn_u = int(((y_u==0) & (y_te_m==1)).sum())
+    n    = tp_u + tn_u + fp_u + fn_u
+    metricas_umbral.append({
+        "umbral":    u,
+        "accuracy":  (tp_u + tn_u) / n if n > 0 else 0,
+        "precision": tp_u / (tp_u + fp_u) if (tp_u + fp_u) > 0 else 0,
+        "recall":    tp_u / (tp_u + fn_u) if (tp_u + fn_u) > 0 else 0,
+        "f1":        2*tp_u / (2*tp_u+fp_u+fn_u) if (2*tp_u+fp_u+fn_u)>0 else 0,
+    })
+
+df_umb = pd.DataFrame(metricas_umbral)
+
+fig = go.Figure()
+for col, color, name in [
+    ("accuracy",  "#4a90d9", "Accuracy"),
+    ("precision", "#27ae60", "Precision"),
+    ("recall",    "#e74c3c", "Recall"),
+    ("f1",        "#e67e22", "F1-Score"),
+]:
+    fig.add_trace(go.Scatter(
+        x=df_umb["umbral"], y=df_umb[col],
+        name=name, line=dict(color=color, width=2.2), mode="lines",
+    ))
+
+idx_best = df_umb["f1"].idxmax()
+best_u   = df_umb.loc[idx_best, "umbral"]
+fig.add_vline(x=0.5, line_dash="dash", line_color="gray",
+              annotation_text="θ=0.5 (default)")
+fig.add_vline(x=best_u, line_dash="dot", line_color="#e67e22",
+              annotation_text=f"θ*_F1 = {best_u:.2f}")
+
+fig.update_layout(
+    title=(
+        "Efecto del Umbral de Decisión sobre las Métricas<br>"
+        "<sup>Provost & Fawcett (2013)</sup>"
+    ),
+    xaxis_title="Umbral de Decisión (θ)",
+    yaxis_title="Valor",
+    yaxis=dict(range=[0, 1.05]),
+    height=430,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+)
+fig.show()
+```
+
+### Búsqueda del Umbral Óptimo según el Criterio
+
+```{python}
+# ── Tres estrategias de selección del umbral ───────────────────────────────
+print("Estrategia 1: Maximizar F1-Score")
+f1_arr = [f1_score(y_te_m, (y_prob_lr >= u).astype(int), zero_division=0)
+          for u in np.arange(0.01, 0.99, 0.01)]
+u_best_f1  = np.arange(0.01, 0.99, 0.01)[np.argmax(f1_arr)]
+y_best_f1  = (y_prob_lr >= u_best_f1).astype(int)
+print(f"  θ* = {u_best_f1:.2f}  →  F1={max(f1_arr):.4f}, "
+      f"P={precision_score(y_te_m, y_best_f1, zero_division=0):.4f}, "
+      f"R={recall_score(y_te_m, y_best_f1):.4f}\n")
+
+print("Estrategia 2 (médica): mayor θ con Recall ≥ 0.90")
+best_med_u = None
+for u in np.arange(0.01, 0.99, 0.01):
+    if recall_score(y_te_m, (y_prob_lr >= u).astype(int), zero_division=0) >= 0.90:
+        best_med_u = u
+if best_med_u is not None:
+    y_med_u = (y_prob_lr >= best_med_u).astype(int)
+    print(f"  θ* = {best_med_u:.2f}  →  "
+          f"P={precision_score(y_te_m, y_med_u, zero_division=0):.4f}, "
+          f"R={recall_score(y_te_m, y_med_u):.4f}\n")
+
+print("Estrategia 3: Punto de Youden (max TPR − FPR)")
+J        = tpr_lr - fpr_lr
+idx_yo   = np.argmax(J)
+u_youden = thresholds_roc[idx_yo]
+y_yo     = (y_prob_lr >= u_youden).astype(int)
+print(f"  θ* = {u_youden:.2f}  →  J={J[idx_yo]:.4f}, "
+      f"P={precision_score(y_te_m, y_yo, zero_division=0):.4f}, "
+      f"R={recall_score(y_te_m, y_yo):.4f}")
+print("  (James et al., 2021)")
+```
+
+---
+
+## Comparación Final de Modelos
+
+Esta sección demuestra que un modelo con **menor accuracy puede ser estratégicamente superior** cuando el contexto así lo demanda (Provost & Fawcett, 2013). Se comparan tres configuraciones del clasificador médico:
+
+```{python}
+# ── Tres configuraciones del clasificador médico ───────────────────────────
+y_base   = y_pred_lr                                      # LR θ=0.50
+y_medico = (y_prob_lr >= 0.25).astype(int)                # LR θ=0.25 (médico)
+y_rf_b   = y_pred_rf                                      # RF θ=0.50
+
+modelos_cmp = {
+    "LR θ=0.50\n(base)":   y_base,
+    "LR θ=0.25\n(médico)": y_medico,
+    "RF θ=0.50\n(base)":   y_rf_b,
+}
+
+resultados = []
+for nombre, y_c in modelos_cmp.items():
+    resultados.append({
+        "Modelo":    nombre,
+        "Accuracy":  round(accuracy_score(y_te_m, y_c), 4),
+        "Precision": round(precision_score(y_te_m, y_c, zero_division=0), 4),
+        "Recall":    round(recall_score(y_te_m, y_c, zero_division=0), 4),
+        "F1":        round(f1_score(y_te_m, y_c, zero_division=0), 4),
+    })
+
+df_cmp = pd.DataFrame(resultados)
+print("Comparación de modelos — Dataset Médico")
+print("(Provost & Fawcett, 2013)\n")
+print(df_cmp.to_string(index=False))
+print()
+print("⚠  El modelo 'LR θ=0.25' tiene menor Accuracy que el base,")
+print("   pero detecta más enfermos reales (mayor Recall).")
+print("   Para un médico, ese es el modelo correcto.")
+```
+
+```{python}
+# ── Visualización comparativa ────────────────────────────────────────────────
+metricas_plot = ["Accuracy", "Precision", "Recall", "F1"]
+colores_plot  = ["#4a90d9", "#27ae60", "#e74c3c", "#e67e22"]
+
+fig = go.Figure()
+for metrica, color in zip(metricas_plot, colores_plot):
+    fig.add_trace(go.Bar(
+        name=metrica,
+        x=df_cmp["Modelo"],
+        y=df_cmp[metrica],
+        marker_color=color,
+        text=[f"{v:.3f}" for v in df_cmp[metrica]],
+        textposition="auto",
+    ))
+
+fig.update_layout(
+    barmode="group",
+    title=(
+        "Comparación de Modelos: ¿Más Accuracy = Mejor Modelo?<br>"
+        "<sup>La métrica correcta depende del costo del error — Provost & Fawcett (2013)</sup>"
+    ),
+    yaxis=dict(title="Valor", range=[0, 1.1]),
+    height=450,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+)
+fig.show()
+```
+
+### Tabla-Resumen: ¿Qué Métrica Usar y Cuándo?
+
+| Situación | Métrica recomendada | Referencia clave |
+| :--- | :--- | :--- |
+| Dataset balanceado | Accuracy, F1 macro | Han et al. (2011) |
+| Clase positiva rara (< 10 %) | F1 clase positiva, PR-AUC | Saito & Rehmsmeier (2015) |
+| FN muy costoso (medicina, seguridad) | Recall / Sensibilidad | James et al. (2021) |
+| FP muy costoso (spam, fraude leve) | Precision | Fawcett (2006) |
+| FP y FN con costo similar | F1-Score | Han et al. (2011) |
+| Comparar modelos sin fijar umbral | ROC-AUC | Fawcett (2006); Bamber (1975) |
+| Clase escasa + interés en ranking | Precision-Recall AUC | Saito & Rehmsmeier (2015) |
+| Multiclase, todas las clases importan igual | F1 macro | Pedregosa et al. (2011) |
+
+---
+
+## Errores Comunes en la Interpretación de Métricas
+
+### Reportar Solo Accuracy en Datos Desbalanceados
+
+El error más frecuente y más dañino (Saito & Rehmsmeier, 2015). La paradoja de la exactitud demostrada en la Sección 4.3 hace que la accuracy sea engañosamente alta en datos desbalanceados. **Regla práctica:** siempre reportar Precision, Recall y F1 cuando la proporción entre clases supera 80/20.
+
+### Confundir Precision con Recall
+
+Precision mide la fiabilidad de las predicciones positivas; Recall mide la cobertura de los positivos reales. Son métricas ortogonales y complementarias, no intercambiables. Confundirlas lleva a interpretar que un modelo con alta Precision "no falla con los enfermos" cuando en realidad puede estar dejando sin detectar a la mayoría (Fawcett, 2006).
+
+### Asumir que Mayor AUC = Mejor Modelo en Producción
+
+```{python}
+# ── AUC alto pero F1 bajo en el umbral operativo ───────────────────────────
+# Modelo bien rankeado pero con probabilidades mal calibradas
+np.random.seed(99)
+y_fake_prob = np.where(
+    y_te_m == 1,
+    np.random.beta(3, 1, size=y_te_m.shape),
+    np.random.beta(1, 2, size=y_te_m.shape),
+)
+y_fake_pred = (y_fake_prob >= 0.50).astype(int)
+
+fpr_fk, tpr_fk, _ = roc_curve(y_te_m, y_fake_prob)
+auc_fk = auc(fpr_fk, tpr_fk)
+
+print("Modelo con AUC alto pero mal calibrado (F1 bajo al umbral default):")
+print(f"  AUC             : {auc_fk:.4f}")
+print(f"  F1  (θ = 0.50)  : {f1_score(y_te_m, y_fake_pred, zero_division=0):.4f}")
+print(f"  Recall          : {recall_score(y_te_m, y_fake_pred, zero_division=0):.4f}")
+print()
+print("Conclusión: el AUC mide capacidad de ranking, no desempeño operativo.")
+print("Validar siempre las métricas en el umbral de producción.")
+print("(Fawcett, 2006)")
+```
+
+### Optimizar el Umbral en el Conjunto de Prueba (Data Leakage)
+
+Ajustar el umbral sobre los mismos datos con los que se evalúa constituye *data leakage* y produce estimaciones optimistas del desempeño real (James et al., 2021). El umbral debe seleccionarse en el **conjunto de validación** y evaluarse únicamente en el **conjunto de prueba**.
+
+### Usar F1 Macro Ocultando el Desempeño en la Clase Minoritaria
+
+```{python}
+# ── F1 macro oculta mal desempeño en clase positiva ─────────────────────────
+y_casi_trivial       = np.zeros_like(y_te_m)
+idx_top2             = np.argsort(y_prob_lr)[-2:]
+y_casi_trivial[idx_top2] = 1
+
+f1_macro_mal = f1_score(y_te_m, y_casi_trivial, average="macro")
+f1_pos_mal   = f1_score(y_te_m, y_casi_trivial, average="binary")
+
+print("Modelo que casi nunca detecta enfermos (solo 2 predicciones positivas):")
+print(f"  F1 macro    = {f1_macro_mal:.4f}  ← parece 'aceptable'")
+print(f"  F1 clase +  = {f1_pos_mal:.4f}  ← revela el verdadero problema")
+print()
+print("Siempre revisar el F1 por clase, no solo el promedio.")
+print("(Han et al., 2011)")
+```
+
+---
+
+## Guía de Selección de Métricas
+
+La selección de la métrica adecuada debe seguir un proceso de análisis del contexto antes de calcular cualquier número (Provost & Fawcett, 2013):
+
+**Paso 1 — Caracterizar el desbalance:** Si la proporción entre clases supera 80/20, descartar la accuracy como métrica principal (Saito & Rehmsmeier, 2015).
+
+**Paso 2 — Identificar el costo diferencial del error:** FN catastróficos → Recall/Sensibilidad. FP muy costosos → Precision. Ambos similares → F1-Score (James et al., 2021).
+
+**Paso 3 — Determinar si se comparan modelos o se elige un umbral:** Comparación global → ROC-AUC o PR-AUC. Configuración en producción → métricas en el umbral operativo (Fawcett, 2006).
+
+**Paso 4 — Naturaleza multiclase:** Todas las clases con igual importancia de negocio → F1 Macro. Volumen total de errores → F1 Micro. Ponderación por prevalencia → F1 Weighted (Han et al., 2011; Pedregosa et al., 2011).
+
+**Paso 5 — Traducción a impacto de negocio:** Las métricas estadísticas deben conectar con decisiones reales: ¿cuántos pacientes se salvan?, ¿cuánto fraude se evita?, ¿cuántos clientes se retienen? (Provost & Fawcett, 2013).
+
+---
+
+## Conclusiones
+
+La evaluación de clasificadores en Minería de Datos no es un paso mecánico al final del proceso KDD (Fayyad et al., 1996): es una actividad de análisis estratégico que conecta la calidad estadística del modelo con la utilidad práctica del conocimiento descubierto.
+
+Las métricas presentadas en este capítulo forman un sistema complementario (Han et al., 2011). La accuracy provee contexto general pero falla en datos desbalanceados (Saito & Rehmsmeier, 2015). Precision y Recall cuantifican el balance entre los dos tipos de error con implicaciones radicalmente diferentes según el costo asimétrico del dominio (Provost & Fawcett, 2013). El F1-Score sintetiza ese balance mediante la media armónica, penalizando asimétricamente los extremos (James et al., 2021). La curva ROC y el AUC, con su interpretación probabilística directa (Bamber, 1975; Fawcett, 2006), caracterizan la capacidad discriminativa independiente del umbral, pero deben complementarse con la curva Precision-Recall cuando la clase positiva es minoritaria (Saito & Rehmsmeier, 2015). El umbral de decisión, finalmente, es una palanca estratégica derivable del costo diferencial del error (Provost & Fawcett, 2013).
+
+La competencia central del científico de datos en este dominio no es memorizar fórmulas, sino comprender qué declara cada métrica sobre el modelo y el problema, y elegir la que mejor alinea la optimización estadística con el objetivo de negocio.
+
+---
+
+## Referencias
+
+Bamber, D. (1975). The area above the ordinal dominance graph and the area below the receiver operating characteristic graph. *Journal of Mathematical Psychology, 12*(4), 387–415. https://doi.org/10.1016/0022-2496(75)90001-2
+
+Fawcett, T. (2006). An introduction to ROC analysis. *Pattern Recognition Letters, 27*(8), 861–874. https://doi.org/10.1016/j.patrec.2005.10.010
+
+Fayyad, U., Piatetsky-Shapiro, G., & Smyth, P. (1996). From data mining to knowledge discovery in databases. *AI Magazine, 17*(3), 37–54. https://doi.org/10.1609/aimag.v17i3.1230
+
+Han, J., Kamber, M., & Pei, J. (2011). *Data Mining: Concepts and Techniques* (3rd ed.). Morgan Kaufmann. https://doi.org/10.1016/B978-0-12-381479-1.00001-0
+
+James, G., Witten, D., Hastie, T., & Tibshirani, R. (2021). *An Introduction to Statistical Learning with Applications in R* (2nd ed.). Springer. https://doi.org/10.1007/978-1-0716-1418-1
+
+Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., & Duchesnay, É. (2011). Scikit-learn: Machine learning in Python. *Journal of Machine Learning Research, 12*, 2825–2830.
+
+Provost, F., & Fawcett, T. (2013). *Data Science for Business: What You Need to Know about Data Mining and Data-Analytic Thinking*. O'Reilly Media.
+
+Saito, T., & Rehmsmeier, M. (2015). The precision-recall plot is more informative than the ROC plot when evaluating binary classifiers on imbalanced datasets. *PLOS ONE, 10*(3), e0118432. https://doi.org/10.1371/journal.pone.0118432
+
+---
+
+*Fin del Capítulo 7 — Métricas de Clasificación en Minería de Datos*
