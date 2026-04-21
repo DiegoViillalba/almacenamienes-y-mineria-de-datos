@@ -1,0 +1,935 @@
+---
+title: "Métricas de Clasificación en Minería de Datos"
+subtitle: "Evaluación estratégica de modelos en el proceso KDD"
+author: "Diego Villalba"
+date: today
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    chalkboard: false
+    preview-links: auto
+    footer: "Métricas de Clasificación — Minería de Datos"
+    transition: slide
+    highlight-style: github
+    logo: "Logo_FC_Color.png"
+execute:
+  echo: true
+  warning: false
+  message: false
+jupyter: python3
+---
+
+# Métricas de Clasificación {background-color="#0b4a6f"}
+
+## Evaluación estratégica de modelos en el proceso KDD
+
+
+> *"No se puede mejorar lo que no se puede medir — pero medir mal puede ser peor que no medir."*
+
+::: {.notes}
+Bienvenida al grupo. Esta clase conecta directamente con la fase de Evaluación del KDD. Antes de empezar, preguntar: ¿Alguien ha tomado una decisión basada en un porcentaje de exactitud? ¿Qué tan confiable era ese número?
+:::
+
+---
+
+## Objetivos de Aprendizaje
+
+
+
+1. Situar la evaluación dentro del proceso **KDD**
+2. Interpretar la **matriz de confusión** y el costo diferencial de los errores
+3. Calcular e interpretar **Accuracy, Precision, Recall, F1, ROC-AUC**
+4. Seleccionar la métrica **adecuada** según el contexto y el desbalance
+5. Analizar el efecto del **umbral de decisión** sobre el clasificador
+6. Tomar decisiones informadas en contextos de **medicina y finanzas**
+
+::: {.notes}
+Revisar brevemente los objetivos. Enfatizar que el objetivo final no es saber fórmulas, sino saber CUÁNDO y POR QUÉ usar cada métrica.
+:::
+
+---
+
+
+
+# Bloque 1: Evaluación en el KDD {background-color="#0b4a6f"}
+
+---
+
+## El Proceso KDD
+
+```{python}
+#| echo: false
+import plotly.graph_objects as go
+
+etapas = ["Selección\nde Datos", "Preprocesamiento", "Transformación",
+          "Minería\nde Datos", "Evaluación", "Conocimiento"]
+x = [1, 2, 3, 4, 5, 6]
+colores = ["#4a90d9", "#4a90d9", "#4a90d9", "#4a90d9", "#e74c3c", "#27ae60"]
+
+fig = go.Figure()
+
+for i, (xi, etapa, color) in enumerate(zip(x, etapas, colores)):
+    fig.add_trace(go.Scatter(
+        x=[xi], y=[1],
+        mode='markers+text',
+        marker=dict(size=60, color=color, symbol='circle'),
+        text=[etapa],
+        textposition='middle center',
+        textfont=dict(size=9, color='white'),
+        showlegend=False
+    ))
+    if i < len(x) - 1:
+        fig.add_annotation(
+            x=xi + 0.5, y=1,
+            ax=xi + 0.1, ay=1,
+            xref='x', yref='y', axref='x', ayref='y',
+            showarrow=True, arrowhead=2, arrowsize=1.5,
+            arrowwidth=2, arrowcolor='#555'
+        )
+
+fig.add_annotation(
+    x=5, y=0.7,
+    text="← Retroalimentación al proceso",
+    showarrow=False,
+    font=dict(size=11, color='#e74c3c'),
+    bgcolor='rgba(231,76,60,0.1)',
+    bordercolor='#e74c3c',
+    borderwidth=1
+)
+
+fig.update_layout(
+    height=220,
+    xaxis=dict(visible=False, range=[0.5, 6.5]),
+    yaxis=dict(visible=False, range=[0.5, 1.5]),
+    margin=dict(l=10, r=10, t=10, b=40),
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)'
+)
+fig.show()
+```
+
+> La **Evaluación** no es el paso final — es el guardián del conocimiento descubierto.
+
+---
+
+## ¿Por qué importa la métrica correcta?
+
+**Escenario:** Un modelo predice si un paciente tiene cáncer.
+
+- Dataset: 950 sanos, 50 enfermos (1000 total)
+- Modelo "inteligente": predice **siempre "sano"**
+
+. . .
+
+**Resultado:**
+$$\text{Accuracy} = \frac{950}{1000} = 95\%$$
+
+. . .
+
+::: {.callout-warning}
+## Paradoja de la Exactitud
+**Un modelo con 95% de accuracy detecta 0 de los 50 enfermos.**  
+Elegir la métrica incorrecta puede matar conocimiento valioso — y en medicina, pacientes.
+:::
+
+::: {.notes}
+Este ejemplo es el gancho de la clase. Pedir a los estudiantes que levanten la mano si considerarían bueno un modelo con 95% de accuracy. Luego revelar el contexto. La sorpresa pedagógica es intencional.
+:::
+
+---
+
+# Bloque 2: Matriz de Confusión {background-color="#0b4a6f"}
+
+---
+
+## Estadistica de un clasificador 
+
+![Diagrama de resultados de un clasificador](https://miro.medium.com/1*cnjT8z5szs9Voukp5ituvw.png)
+
+---
+
+## Distribucion de clasificacion
+
+![Diagrama de distribucion de clasificacion](https://upload.wikimedia.org/wikipedia/commons/1/17/PPV%2C_NPV%2C_Sensitivity_and_Specificity.svg)
+
+
+---
+
+## Anatomía de la Matriz de Confusión
+
+$$
+\begin{array}{c|cc}
+ & \textbf{Predicho +} & \textbf{Predicho -} \\
+\hline
+\textbf{Real +} & TP & FN \\
+\textbf{Real -} & FP & TN
+\end{array}
+$$
+
+| Símbolo | Nombre | Significado |
+|---------|--------|-------------|
+| **TP** | Verdadero Positivo | Enfermo → predicho Enfermo ✓ |
+| **TN** | Verdadero Negativo | Sano → predicho Sano ✓ |
+| **FP** | Falso Positivo | Sano → predicho Enfermo ✗ |
+| **FN** | Falso Negativo | Enfermo → predicho Sano ✗ |
+
+::: {.notes}
+Usar el acrónimo "TPTN / FPFN" y la regla: la primera letra indica si el modelo ACERTÓ (T=true) o SE EQUIVOCÓ (F=false); la segunda letra indica qué PREDIJO (P=positivo, N=negativo).
+:::
+
+---
+
+## El Costo Diferencial del Error
+
+::: {.columns}
+
+::: {.column width="50%"}
+### Medicina
+**FN es el peor error**
+
+- Paciente enfermo → diagnosticado sano
+- Consecuencia: sin tratamiento, progresión de la enfermedad
+- Costo: **mortalidad, daño irreversible**
+
+*Preferimos más FP (alarmas falsas) antes que perder un caso real.*
+:::
+
+::: {.column width="50%"}
+### Finanzas
+**FP es el peor error**
+
+- Transacción legítima → marcada como fraude
+- Consecuencia: bloqueo de cuenta, fricción con el cliente
+- Costo: **pérdida del cliente, reputación**
+
+*Preferimos más FN (fraudes no detectados) antes que bloquear clientes reales.*
+:::
+
+:::
+
+
+
+---
+
+## Visualizando la Matriz de Confusión
+
+Para esta clase emplearemos un dataset sintético de diagnóstico médico desbalanceado (92% sanos, 8% enfermos) para ilustrar la importancia de las métricas más allá del accuracy.
+```{python}
+#| echo: false
+import numpy as np
+import plotly.figure_factory as ff
+import plotly.graph_objects as go
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+
+# Dataset médico sintético (desbalanceado)
+np.random.seed(42)
+X, y = make_classification(
+    n_samples=1000, n_features=10,
+    n_informative=5, weights=[0.92, 0.08],  # 92% sanos, 8% enfermos
+    random_state=42
+)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+modelo = LogisticRegression(random_state=42, max_iter=500)
+modelo.fit(X_train, y_train)
+y_pred = modelo.predict(X_test)
+cm = confusion_matrix(y_test, y_pred)
+print(f"Matriz de confusión:\n{cm}")
+print(f"\nTP={cm[1,1]}, TN={cm[0,0]}, FP={cm[0,1]}, FN={cm[1,0]}")
+```
+
+::: {.callout-important}
+No existe una métrica universalmente "correcta". La elección depende del **costo asimétrico del error**.
+:::
+
+
+---
+
+## Visualización de la Matriz
+
+```{python}
+#| echo: false
+etiquetas = ['Sano (Neg)', 'Enfermo (Pos)']
+z = cm[::-1]
+anotaciones = [[str(val) for val in fila] for fila in z]
+
+fig = ff.create_annotated_heatmap(
+    z=z,
+    x=etiquetas,
+    y=etiquetas[::-1],
+    annotation_text=anotaciones,
+    colorscale=[[0, '#f8f9fa'], [0.5, '#4a90d9'], [1, '#e74c3c']],
+    showscale=True
+)
+fig.update_layout(
+    title='Matriz de Confusión — Clasificador Médico',
+    xaxis_title='Predicción',
+    yaxis_title='Valor Real',
+    height=400,
+    width=500
+)
+fig.add_annotation(x=1, y=1, text="TP", showarrow=False,
+                   font=dict(size=10, color='white'), yshift=-25)
+fig.add_annotation(x=0, y=0, text="TN", showarrow=False,
+                   font=dict(size=10, color='gray'), yshift=-25)
+fig.add_annotation(x=1, y=0, text="FP", showarrow=False,
+                   font=dict(size=10, color='orange'), yshift=-25)
+fig.add_annotation(x=0, y=1, text="FN", showarrow=False,
+                   font=dict(size=10, color='red'), yshift=-25)
+fig.show()
+```
+
+---
+
+# Bloque 3: Accuracy y Sus Trampas {background-color="#0b4a6f"}
+
+---
+
+## Definición Formal de Accuracy
+
+$$
+\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}
+$$
+
+**Interpretación:** Proporción de predicciones correctas sobre el total.
+
+```{python}
+#| echo: true
+from sklearn.metrics import accuracy_score
+
+acc = accuracy_score(y_test, y_pred)
+print(f"Accuracy del modelo: {acc:.4f} ({acc*100:.2f}%)")
+
+# El modelo "trivial" que siempre dice "sano"
+y_trivial = np.zeros_like(y_test)  # Siempre predice clase 0 (sano)
+acc_trivial = accuracy_score(y_test, y_trivial)
+print(f"Accuracy modelo trivial: {acc_trivial:.4f} ({acc_trivial*100:.2f}%)")
+```
+
+. . .
+
+::: {.callout-warning}
+## Trampa del Accuracy
+El modelo trivial puede tener **accuracy igual o mayor** que el modelo real, en datasets desbalanceados. ¿Cuál usarías en producción?
+:::
+
+---
+
+## La Paradoja Visualizada
+
+```{python}
+#| echo: false
+from sklearn.metrics import recall_score, precision_score
+
+categorias = ['Modelo Real', 'Modelo Trivial']
+accuracies = [acc, acc_trivial]
+recalls = [
+    recall_score(y_test, y_pred),
+    recall_score(y_test, y_trivial)
+]
+
+fig = go.Figure(data=[
+    go.Bar(name='Accuracy', x=categorias, y=accuracies,
+           marker_color=['#4a90d9', '#e74c3c'],
+           text=[f'{v:.2%}' for v in accuracies],
+           textposition='auto'),
+    go.Bar(name='Recall (Enfermos)', x=categorias, y=recalls,
+           marker_color=['#27ae60', '#c0392b'],
+           text=[f'{v:.2%}' for v in recalls],
+           textposition='auto')
+])
+fig.update_layout(
+    barmode='group',
+    title='Accuracy vs. Recall: ¿Qué modelo es realmente mejor?',
+    yaxis=dict(title='Valor', range=[0, 1.1], tickformat='%'),
+    height=380,
+)
+fig.show()
+```
+
+> El modelo trivial tiene **Recall = 0%** en la clase positiva. No detecta ningún enfermo.
+
+---
+
+# Bloque 4: Métricas de Relevancia {background-color="#0b4a6f"}
+
+---
+
+## Precision — ¿Qué tan confiables son mis alarmas?
+
+$$
+\text{Precision} = \frac{TP}{TP + FP}
+$$
+
+**Intuición:** De todos los casos que el modelo dijo "positivo", ¿cuántos realmente lo eran?
+
+::: {.columns}
+
+::: {.column width="50%"}
+**Alta Precision:**
+- Pocas alarmas falsas
+- Cuando el modelo alerta, hay que hacerle caso
+- Importante cuando los **FP son costosos**
+
+*Ej: Spam → mejor no bloquear email legítimo*
+:::
+
+::: {.column width="50%"}
+**Baja Precision:**
+- Muchas alarmas falsas
+- Modelo "gritador de lobo"
+- Pérdida de confianza del usuario
+
+*Ej: Fraude → muchos clientes bloqueados por error*
+:::
+
+:::
+
+---
+
+## Recall (Sensibilidad) — ¿Cuántos enfermos detecté?
+
+$$
+\text{Recall} = \text{Sensibilidad} = \frac{TP}{TP + FN}
+$$
+
+**Intuición:** De todos los casos que **realmente** eran positivos, ¿cuántos encontré?
+
+::: {.callout-tip}
+## Recall es crítico cuando los FN son costosos
+- **Medicina:** No detectar cáncer (FN) → tratamiento tardío
+- **Seguridad:** No detectar intrusión (FN) → brecha de seguridad
+- **Terremotos:** No detectar sismo (FN) → víctimas
+:::
+
+---
+
+**Limitación:** Un modelo que predice siempre positivo tiene Recall = 100%
+
+$$\text{Si } \hat{y} = 1 \text{ siempre}: \quad \text{Recall} = \frac{TP}{TP + 0} = 1.0$$
+
+---
+
+## Specificity (Especificidad) — Protegiendo a los sanos
+
+$$
+\text{Specificity} = \frac{TN}{TN + FP}
+$$
+
+**Intuición:** De todos los **verdaderamente negativos**, ¿cuántos identifiqué correctamente?
+
+| Métrica | Denominator | ¿Qué protege? |
+|---------|-------------|---------------|
+| Recall | TP + FN (todos los positivos reales) | Detectar los positivos |
+| Specificity | TN + FP (todos los negativos reales) | Proteger a los negativos |
+
+---
+
+**Complemento:**
+$$\text{Tasa de Falsos Positivos} = 1 - \text{Specificity} = \frac{FP}{TN + FP}$$
+
+> En medicina: *Sensibilidad = no perder enfermos, Especificidad = no alarmar sanos*.
+
+---
+
+## Calculando las Tres Métricas
+
+```{python}
+#| echo: true
+from sklearn.metrics import classification_report, precision_score, recall_score
+
+cm_vals = confusion_matrix(y_test, y_pred)
+TP = cm_vals[1, 1]
+TN = cm_vals[0, 0]
+FP = cm_vals[0, 1]
+FN = cm_vals[1, 0]
+
+precision = TP / (TP + FP)
+recall    = TP / (TP + FN)
+specificity = TN / (TN + FP)
+
+print(f"TP={TP}, TN={TN}, FP={FP}, FN={FN}")
+print(f"\nPrecision:    {precision:.4f} ({precision*100:.1f}%)")
+print(f"Recall:       {recall:.4f} ({recall*100:.1f}%)")
+print(f"Specificity:  {specificity:.4f} ({specificity*100:.1f}%)")
+```
+
+::: {.notes}
+Pedir a los estudiantes que calculen a mano con los valores de la matriz antes de ejecutar el código. El cálculo manual refuerza la comprensión intuitiva.
+:::
+
+---
+
+## El Dilema Precision-Recall
+
+```{python}
+#| echo: false
+umbrales = np.linspace(0.1, 0.9, 100)
+precisiones, recalls_vals = [], []
+y_prob = modelo.predict_proba(X_test)[:, 1]
+
+for u in umbrales:
+    y_u = (y_prob >= u).astype(int)
+    if y_u.sum() > 0:
+        precisiones.append(precision_score(y_test, y_u, zero_division=0))
+        recalls_vals.append(recall_score(y_test, y_u, zero_division=0))
+    else:
+        precisiones.append(1.0)
+        recalls_vals.append(0.0)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=umbrales, y=precisiones, name='Precision',
+                          line=dict(color='#4a90d9', width=2.5)))
+fig.add_trace(go.Scatter(x=umbrales, y=recalls_vals, name='Recall',
+                          line=dict(color='#e74c3c', width=2.5)))
+fig.add_vline(x=0.5, line_dash='dash', line_color='gray',
+              annotation_text='Umbral default (0.5)')
+fig.update_layout(
+    title='Trade-off Precision vs. Recall según el Umbral',
+    xaxis_title='Umbral de Decisión',
+    yaxis_title='Valor de la Métrica',
+    yaxis=dict(range=[0, 1.05]),
+    height=380,
+)
+fig.show()
+```
+
+> A medida que sube el umbral: **↑ Precision, ↓ Recall**. No hay umbral "correcto" — depende del costo del error.
+
+---
+
+# Bloque 5: F1-Score y Variantes {background-color="#0b4a6f"}
+
+---
+
+## F1-Score — La Media Armónica
+
+$$
+F1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}
+$$
+
+**¿Por qué media armónica y no aritmética?**
+
+La media armónica penaliza más los valores extremos:
+
+$$\text{Si P=1.0, R=0.01}: \quad \bar{x} = 0.505 \quad \text{vs} \quad F1 = 0.0198$$
+
+. . .
+
+::: {.callout-tip}
+## Cuándo usar F1
+- Dataset **desbalanceado**
+- Los dos tipos de error (FP y FN) tienen **peso similar**
+- Necesitas **una sola métrica** para comparar modelos
+:::
+
+---
+
+## Variantes para Clasificación Multiclase
+
+$$F1_{\text{macro}} = \frac{1}{C}\sum_{c=1}^{C} F1_c \qquad \text{(cada clase pesa igual)}$$
+
+$$F1_{\text{micro}} = \frac{2 \cdot \sum TP_c}{2 \cdot \sum TP_c + \sum FP_c + \sum FN_c} \qquad \text{(cada instancia pesa igual)}$$
+
+$$F1_{\text{weighted}} = \sum_{c=1}^{C} w_c \cdot F1_c, \quad w_c = \frac{|c|}{N} \qquad \text{(pondera por frecuencia)}$$
+
+---
+
+| Variante | Favorece | Usar cuando |
+|---------|---------|-------------|
+| Macro | Clases minoritarias | Todas las clases importan igual |
+| Micro | Clases mayoritarias | Las instancias importan más que las clases |
+| Weighted | Clases más frecuentes | Importancia proporcional a la frecuencia |
+
+---
+
+```{python}
+#| echo: true
+from sklearn.metrics import f1_score
+
+f1_bin = f1_score(y_test, y_pred)
+print(f"F1-Score (binario):  {f1_bin:.4f}")
+
+# Reporte completo
+print("\n" + classification_report(y_test, y_pred,
+      target_names=['Sano', 'Enfermo']))
+```
+
+::: {.notes}
+Destacar en el reporte el soporte (support) de cada clase. Los estudiantes deben notar la diferencia entre el F1 de la clase mayoritaria vs la minoritaria, y cómo el weighted average puede "esconder" el mal desempeño en la clase de interés.
+:::
+
+---
+
+# Bloque 6: ROC-AUC y Precision-Recall {background-color="#0b4a6f"}
+
+---
+
+## Curva ROC — Capacidad Discriminativa Global
+
+$$\text{Eje X: FPR} = \frac{FP}{FP + TN} = 1 - \text{Specificity}$$
+$$\text{Eje Y: TPR} = \frac{TP}{TP + FN} = \text{Recall}$$
+
+```{python}
+#| echo: true
+from sklearn.metrics import roc_curve, auc
+
+fpr, tpr, thresholds_roc = roc_curve(y_test, y_prob)
+roc_auc = auc(fpr, tpr)
+print(f"AUC-ROC: {roc_auc:.4f}")
+```
+
+---
+
+**Interpretación probabilística del AUC:**
+
+$$P(\hat{p}(x^+) > \hat{p}(x^-))= \text{AUC}$$
+
+> Si AUC = 0.85, hay un **85% de probabilidad** de que el modelo asigne mayor score a una instancia positiva que a una negativa escogida al azar.
+
+---
+
+## Visualización Interactiva: Curva ROC
+
+```{python}
+#| echo: false
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=fpr, y=tpr,
+    mode='lines',
+    name=f'Clasificador (AUC = {roc_auc:.3f})',
+    line=dict(color='#4a90d9', width=2.5),
+    fill='tozeroy',
+    fillcolor='rgba(74, 144, 217, 0.15)'
+))
+fig.add_trace(go.Scatter(
+    x=[0, 1], y=[0, 1],
+    mode='lines',
+    name='Clasificador Aleatorio (AUC = 0.50)',
+    line=dict(color='#e74c3c', width=1.5, dash='dash')
+))
+fig.add_trace(go.Scatter(
+    x=[0, 0, 1], y=[0, 1, 1],
+    mode='lines',
+    name='Clasificador Perfecto (AUC = 1.00)',
+    line=dict(color='#27ae60', width=1.5, dash='dot')
+))
+
+fig.update_layout(
+    title='Curva ROC — Clasificador Médico',
+    xaxis_title='Tasa de Falsos Positivos (1 - Specificity)',
+    yaxis_title='Tasa de Verdaderos Positivos (Recall)',
+    height=420,
+    xaxis=dict(range=[0, 1]),
+    yaxis=dict(range=[0, 1.02])
+)
+fig.add_annotation(
+    x=0.6, y=0.55,
+    text=f"AUC = {roc_auc:.3f}",
+    showarrow=False,
+    font=dict(size=16, color='#4a90d9'),
+    bgcolor='rgba(255,255,255,0.8)'
+)
+fig.show()
+```
+
+---
+
+## Curva Precision-Recall
+
+```{python}
+#| echo: false
+from sklearn.metrics import precision_recall_curve, average_precision_score
+
+precision_c, recall_c, thresholds_pr = precision_recall_curve(y_test, y_prob)
+ap = average_precision_score(y_test, y_prob)
+baseline = y_test.mean()
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=recall_c, y=precision_c,
+    mode='lines',
+    name=f'Clasificador (AP = {ap:.3f})',
+    line=dict(color='#e67e22', width=2.5),
+    fill='tozeroy',
+    fillcolor='rgba(230, 126, 34, 0.15)'
+))
+fig.add_hline(y=baseline, line_dash='dash', line_color='#e74c3c',
+              annotation_text=f'Baseline (prevalencia = {baseline:.2f})',
+              annotation_position='bottom right')
+
+fig.update_layout(
+    title='Curva Precision-Recall — Clasificador Médico',
+    xaxis_title='Recall',
+    yaxis_title='Precision',
+    height=400,
+    xaxis=dict(range=[0, 1]),
+    yaxis=dict(range=[0, 1.05])
+)
+fig.show()
+```
+
+::: {.callout-important}
+## ¿Por qué Precision-Recall para clases desbalanceadas?
+La curva ROC incluye TN en su denominador (especificidad). Con **millones de TN**, el FPR parece pequeño aunque haya muchos FP. La curva PR **ignora los TN** y se enfoca solo en la clase positiva (minoritaria).
+:::
+
+---
+
+## ROC vs. Precision-Recall: ¿Cuándo usar cada una?
+
+| Criterio | ROC-AUC | Precision-Recall |
+|---------|---------|-----------------|
+| Dataset balanceado | ✅ Ideal | ✅ Válida |
+| Clase minoritaria importa | ⚠️ Puede ser optimista | ✅ Más informativa |
+| Comparación general | ✅ Estándar | ✅ Más rigurosa |
+| Interpretación intuitiva | ✅ Fácil (prob.) | ⚠️ Área promedio |
+| Cuando TN son irrelevantes | ❌ Los incluye | ✅ Los ignora |
+
+
+---
+
+# Bloque 7: Optimización de Umbrales {background-color="#0b4a6f"}
+
+---
+
+## El Umbral de Decisión
+
+La mayoría de los clasificadores producen una **probabilidad**, no una clase directa:
+
+$$\hat{y} = \begin{cases} 1 & \text{si } \hat{p}(x) \geq \theta \\ 0 & \text{si } \hat{p}(x) < \theta \end{cases}$$
+
+. . .
+
+**El umbral $\theta = 0.5$ es una convención, no una verdad absoluta.**
+
+. . .
+
+::: {.columns}
+
+::: {.column width="50%"}
+**Bajar el umbral ($\theta < 0.5$):**
+- ↑ Recall (más positivos detectados)
+- ↓ Precision (más falsos positivos)
+- Modelo más "alarmista"
+:::
+
+::: {.column width="50%"}
+**Subir el umbral ($\theta > 0.5$):**
+- ↓ Recall (menos positivos detectados)
+- ↑ Precision (más confiable cuando alerta)
+- Modelo más "conservador"
+:::
+
+:::
+
+---
+
+## Exploración Interactiva del Umbral
+
+```{python}
+#| echo: false
+umbrales_demo = np.arange(0.1, 0.95, 0.05)
+metricas = []
+
+for u in umbrales_demo:
+    y_u = (y_prob >= u).astype(int)
+    tp_u = ((y_u == 1) & (y_test == 1)).sum()
+    tn_u = ((y_u == 0) & (y_test == 0)).sum()
+    fp_u = ((y_u == 1) & (y_test == 0)).sum()
+    fn_u = ((y_u == 0) & (y_test == 1)).sum()
+    n = tp_u + tn_u + fp_u + fn_u
+    metricas.append({
+        'umbral': u,
+        'accuracy': (tp_u + tn_u) / n if n > 0 else 0,
+        'precision': tp_u / (tp_u + fp_u) if (tp_u + fp_u) > 0 else 0,
+        'recall': tp_u / (tp_u + fn_u) if (tp_u + fn_u) > 0 else 0,
+        'f1': 2 * tp_u / (2 * tp_u + fp_u + fn_u) if (2 * tp_u + fp_u + fn_u) > 0 else 0
+    })
+
+import pandas as pd
+df_m = pd.DataFrame(metricas)
+
+fig = go.Figure()
+for col, color, name in [
+    ('accuracy', '#4a90d9', 'Accuracy'),
+    ('precision', '#27ae60', 'Precision'),
+    ('recall', '#e74c3c', 'Recall'),
+    ('f1', '#e67e22', 'F1-Score')
+]:
+    fig.add_trace(go.Scatter(
+        x=df_m['umbral'], y=df_m[col],
+        name=name, line=dict(color=color, width=2),
+        mode='lines+markers', marker=dict(size=5)
+    ))
+
+fig.add_vline(x=0.5, line_dash='dash', line_color='gray',
+              annotation_text='θ=0.5 (default)')
+fig.update_layout(
+    title='Efecto del Umbral de Decisión sobre las Métricas',
+    xaxis_title='Umbral de Decisión (θ)',
+    yaxis_title='Valor',
+    yaxis=dict(range=[0, 1.05]),
+    height=400,
+)
+fig.show()
+```
+
+---
+
+## Selección de Umbral según el Contexto
+
+```{python}
+#| echo: true
+# Encontrar el umbral que maximiza el F1-Score
+f1_scores = []
+for u in np.arange(0.05, 0.95, 0.01):
+    y_u = (y_prob >= u).astype(int)
+    f1_scores.append(f1_score(y_test, y_u, zero_division=0))
+
+umbral_optimo_f1 = np.arange(0.05, 0.95, 0.01)[np.argmax(f1_scores)]
+print(f"Umbral óptimo (max F1): θ = {umbral_optimo_f1:.2f}")
+
+# Para medicina: priorizar Recall >= 0.90
+for u in np.arange(0.05, 0.95, 0.01):
+    y_u = (y_prob >= u).astype(int)
+    r = recall_score(y_test, y_u, zero_division=0)
+    p = precision_score(y_test, y_u, zero_division=0)
+    if r >= 0.90:
+        print(f"Umbral médico (Recall≥90%): θ={u:.2f} → P={p:.3f}, R={r:.3f}")
+        break
+```
+
+::: {.notes}
+Preguntar: ¿En un sistema de detección de fraude bancario, qué umbral preferirían? ¿Y en un sistema de alerta de tsunami? La respuesta debe llevar a la discusión sobre el costo asimétrico.
+:::
+
+---
+
+# Síntesis Comparativa {background-color="#0b4a6f"}
+
+---
+
+## ¿Qué métrica usar y cuándo?
+
+| Situación | Métrica recomendada | Referencia clave |
+| :--- | :--- | :--- |
+| Dataset balanceado | Accuracy, F1 macro | Han et al. (2011) |
+| Clase positiva rara (< 10 %) | F1 clase positiva, PR-AUC | Saito & Rehmsmeier (2015) |
+| FN muy costoso (medicina, seguridad) | Recall / Sensibilidad | James et al. (2021) |
+| FP muy costoso (spam, fraude leve) | Precision | Fawcett (2006) |
+| FP y FN con costo similar | F1-Score | Han et al. (2011) |
+| Comparar modelos sin fijar umbral | ROC-AUC | Fawcett (2006); Bamber (1975) |
+| Clase escasa + interés en ranking | Precision-Recall AUC | Saito & Rehmsmeier (2015) |
+| Multiclase, todas las clases importan igual | F1 macro | Pedregosa et al. (2011) |
+
+
+---
+
+## Comparación Final de los Dos Modelos
+
+```{python}
+#| echo: false
+# Modelo alternativo con umbral ajustado para medicina
+umbral_medico = 0.25
+y_medico = (y_prob >= umbral_medico).astype(int)
+
+modelos_comp = ['Modelo Base\n(θ=0.50)', 'Modelo Médico\n(θ=0.25)']
+metricas_comp = {
+    'Accuracy': [accuracy_score(y_test, y_pred), accuracy_score(y_test, y_medico)],
+    'Precision': [precision_score(y_test, y_pred), precision_score(y_test, y_medico)],
+    'Recall': [recall_score(y_test, y_pred), recall_score(y_test, y_medico)],
+    'F1-Score': [f1_score(y_test, y_pred), f1_score(y_test, y_medico)]
+}
+
+colores_m = ['#4a90d9', '#e74c3c', '#27ae60', '#e67e22']
+fig = go.Figure()
+for (metrica, valores), color in zip(metricas_comp.items(), colores_m):
+    fig.add_trace(go.Bar(
+        name=metrica, x=modelos_comp, y=valores,
+        marker_color=color,
+        text=[f'{v:.3f}' for v in valores],
+        textposition='auto'
+    ))
+
+fig.update_layout(
+    barmode='group',
+    title='Comparación de Modelos: Base vs. Ajustado para Medicina',
+    yaxis=dict(title='Valor', range=[0, 1.1]),
+    height=400,
+)
+fig.show()
+```
+
+> El modelo médico tiene **menor accuracy pero mayor recall**. ¿Cuál es mejor para el médico?
+
+---
+
+## Preguntas de Reflexión
+
+::: {.incremental}
+1. **Un banco detecta fraudes con 99.9% de accuracy.** El dataset tiene 0.1% de fraudes reales. ¿Confiarías en ese modelo?
+
+2. **Un modelo A tiene ROC-AUC = 0.95 y otro modelo B tiene ROC-AUC = 0.80.** Para detectar una enfermedad rara (1 en 10,000), ¿cuál es "mejor"?
+
+3. **Si el costo de un FN es 100 veces mayor que el costo de un FP**, ¿cómo ajustarías el umbral de decisión?
+
+4. **¿Por qué un F1-Score macro puede ser peor métrica que el F1-Score de la clase positiva** en un problema de detección de anomalías?
+
+5. **¿Puede un modelo tener AUC-ROC = 0.95 pero ser inútil en producción?** Explica el escenario.
+:::
+
+::: {.notes}
+Estas preguntas pueden usarse como actividad de salida (exit ticket), discusión en parejas o tarea. La pregunta 5 es la más desafiante y conecta con el sesgo de clases.
+:::
+
+---
+
+## Conclusiones Clave
+
+::: {.incremental}
+- **Accuracy miente** en datasets desbalanceados — siempre reportar métricas adicionales
+- **No hay métrica universal** — la elección depende del costo asimétrico del error
+- **Recall protege de FN; Precision protege de FP** — el contexto dicta cuál priorizar
+- **F1-Score equilibra** ambos errores con una sola cifra — ideal para comparar modelos
+- **ROC-AUC mide capacidad discriminativa** independiente del umbral
+- **PR-AUC es más informativa** cuando la clase positiva es minoritaria
+- **El umbral de decisión es una palanca estratégica** — no un parámetro fijo
+- **Las métricas son conocimiento sobre el modelo** — en KDD, la evaluación retroalimenta todo el proceso
+:::
+
+---
+
+## Bibliografía
+
+::: {.smaller}
+- Han, J., Kamber, M., & Pei, J. (2011). *Data Mining: Concepts and Techniques* (3rd ed.). Morgan Kaufmann.
+
+- Fawcett, T. (2006). An introduction to ROC analysis. *Pattern Recognition Letters, 27*(8), 861–874.
+
+- Saito, T., & Rehmsmeier, M. (2015). The precision-recall plot is more informative than the ROC plot when evaluating binary classifiers on imbalanced datasets. *PLOS ONE, 10*(3), e0118432.
+
+- Provost, F., & Fawcett, T. (2013). *Data Science for Business*. O'Reilly Media.
+
+- James, G., Witten, D., Hastie, T., & Tibshirani, R. (2021). *An Introduction to Statistical Learning* (2nd ed.). Springer.
+
+- Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. *Journal of Machine Learning Research, 12*, 2825–2830.
+:::
+
+---
+
+# ¡Gracias! {background-color="#0b4a6f"}
+
+## Resumen en una Frase
+
+> *"Elige la métrica que penalice el error que más te cuesta — y desconfía de cualquier número que parezca demasiado bueno."*
+
+**Material disponible:** slides + código Python ejecutable
+
+*¿Preguntas?*
