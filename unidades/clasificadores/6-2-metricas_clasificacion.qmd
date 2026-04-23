@@ -1,5 +1,5 @@
 ---
-title: "Métricas de Clasificación en Minería de Datos"
+title: "Evaluación de Clasificadores: Métricas Esenciales y su Interpretación"
 author: "Diego Villalba"
 date: today
 lang: es
@@ -10,7 +10,7 @@ format:
     toc-title: "Contenido"
     number-sections: false
     code-fold: true
-    code-tools: true
+    code-tools: false
     code-summary: "Mostrar código"
     fig-align: center
     theme: cosmo
@@ -39,9 +39,11 @@ crossref:
 
 ## Introducción
 
-La evaluación de modelos de clasificación constituye uno de los problemas más estratégicamente complejos en la Minería de Datos. No es suficiente construir un modelo que "funcione": es necesario cuantificar de manera precisa y contextualmente apropiada qué tan bien funciona, en qué escenarios falla y qué tipo de errores comete. Esta distinción aparentemente académica tiene consecuencias directas en entornos reales: un modelo de diagnóstico médico que confunde "exactitud estadística" con "utilidad clínica" puede dejar pacientes enfermos sin tratamiento; un sistema de detección de fraude que optimiza la métrica equivocada puede bloquear transacciones legítimas y dañar la relación con el cliente.
+La evaluación de modelos de clasificación constituye uno de los problemas más estratégicamente complejos en la Minería de Datos. No es suficiente construir un modelo que "funcione": es necesario cuantificar de manera precisa y contextualmente apropiada qué tan bien funciona, en qué escenarios falla y qué tipo de errores comete, ya que como veremos mas adelante la calidad de un clasificador esta completamente determiada por el objetivo del modelo y el contexto de aplicación [@han2011].
 
-La literatura especializada ha producido un conjunto robusto de métricas y herramientas de evaluación que van más allá del intuitivo porcentaje de aciertos. Comprender estas métricas —sus fundamentos matemáticos, su interpretación conceptual y sus implicaciones estratégicas— es competencia central del científico de datos (Provost & Fawcett, 2013). Como señala Fawcett (2006), la selección inadecuada de métricas conduce sistemáticamente a conclusiones erróneas sobre el desempeño real de los clasificadores, especialmente en presencia de desbalance de clases.
+Esta distinción tiene consecuencias directas en entornos reales: un modelo de diagnóstico médico que confunde "exactitud estadística" con "utilidad clínica" puede dejar pacientes enfermos sin tratamiento; un sistema de detección de fraude que optimiza la métrica equivocada puede bloquear transacciones legítimas y dañar la relación con el cliente.
+
+De esta manera la literatura especializada ha producido un conjunto robusto de métricas y herramientas de evaluación que van más allá del intuitivo porcentaje de aciertos. Con lo cual comprender estas métricas es competencia central del científico de datos [@provost2013].
 
 Este capítulo desarrolla sistemáticamente las métricas más importantes para la evaluación de clasificadores binarios y multiclase, integrándolas con el proceso KDD (Knowledge Discovery in Databases) y con la lógica de la toma de decisiones en contextos de alto impacto. Cada sección combina rigor matemático con ejemplos de código ejecutable en Python, siguiendo el principio de que la comprensión profunda de una métrica requiere tanto su derivación formal como su implementación y visualización sobre datos reales.
 
@@ -124,28 +126,62 @@ La retroalimentación desde la fase de evaluación hacia etapas anteriores del K
 
 Provost y Fawcett (2013) enfatizan que la elección de la métrica de evaluación es, en esencia, una declaración sobre qué tipo de error es más tolerable en el contexto del negocio. Un sistema de aprendizaje automático que se optimiza bajo la métrica equivocada aprende los patrones equivocados. Este fenómeno se manifiesta en minería de datos cuando se entrena un modelo maximizando accuracy en un dataset con clase mayoritaria dominante: el modelo aprende a ignorar la clase minoritaria, que suele ser precisamente la de mayor interés para la organización. -->
 
+## Errores
+
+En este capitulo definiremos un **error** como la situación en la que el modelo de clasificación asigna una etiqueta incorrecta a una instancia. 
+
+Mientras que definiremos el ratio de error como la proporción de instancias clasificadas incorrectamente sobre el total de instancias evaluadas.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** El *ratio de error* de un clasificador con $k$ errores en un conjunto de prueba de $n$ instancias se define como:
+
+$$
+\epsilon = \frac{k}{n}
+$$ {#eq-err-rate}
+:::
+
+En primera instnacia esta definición puede parecer suficiente para los propositos de cualquier clasificador, ya que en la mayoria de los casos el objetivo e minimizar el numero de errores que comete el modelo. Sin embargo como veremos a lo largo del capitulo, no todos los errores son iguales, ya que dependiendo del contexto una equivocación puede tener diferentes consecuencias que exploraremos a continuación.
 
 
-## La Matriz de Confusión y el Costo Diferencial del Error
 
-### Definición Formal
+## Tipo de errores y su costo 
 
-La matriz de confusión es la representación tabular que sintetiza el desempeño de un clasificador binario (Han et al., 2011). Para un clasificador con clases positiva (1) y negativa (0), se define como:
+### La matriz de confusión: la base de toda evaluación de clasificadores
+
+En terminos generales decimos que una una clase es **positiva** (1) cuando es la clase de interés, y **negativa** (0) cuando es la clase complementaria. Por ejemplo, en un sistema de detección de fraude, la clase positiva sería "fraude" y la negativa "transacción legítima". En un sistema de diagnóstico médico, la clase positiva sería "enfermo" y la negativa "sano".
+
+De esta manera podemos clasificar los errores de un clasificador binario por medio de la matriz de confusión, que es la representación tabular que sintetiza el desempeño de un clasificador binario [@han2011]. Formalmente se define como:
+
+::: {.callout-note appearance="minimal"}
+**Definición.** Para un clasificador con clases positiva (1) y negativa (0), la matriz de confusión se define como:
 
 $$
 M = \begin{pmatrix} TN & FP \\ FN & TP \end{pmatrix}
-$$
+$${#eq-conf-matrix}
 
 donde la fila representa la clase real y la columna la clase predicha. Los cuatro elementos son:
 
 - **TP (Verdadero Positivo):** El modelo predijo positivo y el caso real es positivo. Clasificación correcta de la clase de interés.
 - **TN (Verdadero Negativo):** El modelo predijo negativo y el caso real es negativo. Clasificación correcta de la clase mayoritaria.
 - **FP (Falso Positivo):** El modelo predijo positivo pero el caso real es negativo. También llamado Error Tipo I.
-- **FN (Falso Negativo):** El modelo predijo negativo pero el caso real es positivo. También llamado Error Tipo II.
+- **FN (Falso Negativo):** El modelo predijo negativo pero el caso real es positivo. También llamado Error Tipo II. 
+:::
+
+Visualmente podemos visualizar los tipos de errores en la siguiente figura:
+
+![Representación visual de una matriz de confusión y métricas de clasificación binaria. El diagrama ilustra la relación entre la realidad (columnas Positivo/Negativo) y las predicciones del modelo (círculo central). Se identifican los Verdaderos Positivos (TP) y Falsos Positivos (FP) dentro del área de predicción, mientras que los Falsos Negativos (FN) y Verdaderos Negativos (TN) se ubican en el área de exclusión.](https://miro.medium.com/1*cnjT8z5szs9Voukp5ituvw.png){width="60%" }
+
+Como veremos mas adelante, la matriz de confusión es la base de toda evaluación de clasificadores, ya que a partir de ella se derivan todas las métricas de desempeño. Además, la interpretación de cada elemento de la matriz tiene implicaciones estratégicas directas en la toma de decisiones basada en el modelo.
 
 ### Generación de los Datasets Sintéticos
 
-A lo largo de este capítulo se utilizan dos datasets sintéticos que replican las características estadísticas de problemas reales. El **Dataset Médico** simula la detección de una condición grave con prevalencia del ~8 %, reflejando el desbalance típico en estudios de screening. El **Dataset Financiero** simula transacciones con una tasa de fraude del ~3 %, consistente con benchmarks de la industria (Pedregosa et al., 2011). Ambos datasets se generan con `sklearn.datasets.make_classification`, que permite controlar el número de características informativas, el nivel de ruido en las etiquetas y el desbalance de clases.
+A lo largo de este capítulo se utilizan dos datasets sintéticos que replican las características estadísticas de problemas reales. 
+
+- El **Dataset Médico** simula la detección de una condición grave con prevalencia del ~8 %, reflejando el desbalance típico en estudios de screening. 
+
+- El **Dataset Financiero** simula transacciones con una tasa de fraude del ~3 %, consistente con benchmarks de la industria (Pedregosa et al., 2011). 
+
+Ambos datasets se generan con `sklearn.datasets.make_classification`, que permite controlar el número de características informativas, el nivel de ruido en las etiquetas y el desbalance de clases.
 
 ```{python}
 # ── Configuración global e importaciones ───────────────────────────────────
@@ -214,13 +250,14 @@ print("Distribución de clases — test financiero:",
       dict(zip(*np.unique(y_te_f, return_counts=True))))
 ```
 
-### Visualización Interactiva de la Matriz de Confusión
+Para evaluar a lo largo del capitulo diferentes modelos empleamos tres modelos de clasificación binaria: una **regresión logística** y un **random forest** para el dataset médico, y una **regresión logística con ajuste de clase** para el dataset financiero.
 
-La siguiente función genera una visualización interactiva con Plotly que muestra tanto los conteos absolutos como el porcentaje por fila (tasa por clase real), facilitando la interpretación del balance entre los cuatro cuadrantes (Fawcett, 2006):
+Así como primer ejemplo mostramos la matriz de confusión del modelo de regresión logística sobre el dataset médico:
 
 ```{python}
 # ── Función reutilizable: matriz de confusión interactiva ───────────────────
-def plot_confusion_matrix(cm, titulo="Matriz de Confusión",
+def plot_confusion_matrix(cm,
+titulo=" ",
                           etiquetas=None):
     """
     Visualiza una matriz de confusión 2×2 con Plotly.
@@ -288,11 +325,13 @@ print(f"\nTP={TP}, TN={TN}, FP={FP}, FN={FN}")
 
 fig_cm = plot_confusion_matrix(
     cm_lr,
-    titulo="Matriz de Confusión — Clasificador Médico (Reg. Logística)",
+    # titulo="Matriz de Confusión — Clasificador Médico (Reg. Logística)",
     etiquetas=["Sano", "Enfermo"],
 )
 fig_cm.show()
 ```
+
+A partir de esta matriz de confusión se derivan todas las métricas de desempeño que analizaremos a lo largo del capítulo. Además, la interpretación de cada elemento de la matriz tiene implicaciones estratégicas directas en la toma de decisiones basada en el modelo.
 
 ### El Costo Asimétrico del Error: Contextos Reales
 
@@ -332,16 +371,18 @@ fig.update_layout(
     ),
     yaxis_title="Severidad relativa del error",
     height=420,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    # legend=dict(orientation="h", yanchor="bottom", y=1.02),
 )
 fig.show()
 ```
 
----
+## Métricas de desempeño: más allá del error rate
 
-## Accuracy: Definición, Utilidad y Limitaciones
+Como mencionamos anteriormente, siq ueremos evaluar de manera adecuada un clasificador es necesario considerar no solo el número de errores, sino también su tipo y costo. Para esto se han desarrollado un conjunto de métricas que se derivan de la matriz de confusión y que permiten cuantificar diferentes aspectos del desempeño del modelo. Estas métricas no son mutuamente excluyentes, sino complementarias, y su interpretación debe hacerse en conjunto para obtener una visión completa del modelo. A continuación se presentan las métricas más importantes para la evaluación de clasificadores binarios, con su definición formal, cálculo detallado e interpretación contextualizada.
 
-### Definición Formal
+### Accuracy: Definición, Utilidad y Limitaciones
+
+#### Definición Formal
 
 $$
 \text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}
@@ -349,7 +390,7 @@ $$
 
 La accuracy mide la proporción de instancias correctamente clasificadas sobre el total (Han et al., 2011).
 
-### Cálculo e Interpretación Básica
+#### Cálculo e Interpretación Básica
 
 ```{python}
 # ── Accuracy del modelo real vs. clasificador trivial ──────────────────────
@@ -364,7 +405,7 @@ print("¿El modelo trivial (siempre 'sano') detecta algún enfermo?")
 print(f"  Enfermos detectados: {((y_trivial==1) & (y_te_m==1)).sum()} / {y_te_m.sum()}")
 ```
 
-### La Paradoja de la Exactitud (Accuracy Paradox)
+#### La Paradoja de la Exactitud (Accuracy Paradox)
 
 La limitación más crítica de la accuracy emerge cuando el dataset presenta **desbalance de clases**, situación extremadamente común en aplicaciones reales de minería de datos (Saito & Rehmsmeier, 2015). En nuestro dataset financiero con 97 % de transacciones legítimas, un clasificador trivial alcanza ~97 % de accuracy sin detectar ningún fraude:
 
@@ -410,16 +451,15 @@ fig.update_layout(
     ),
     yaxis=dict(title="Valor", range=[0, 1.1], tickformat="%"),
     height=420,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    # legend=dict(orientation="h", yanchor="bottom", y=1.02),
 )
 fig.show()
 ```
 
----
 
-## Precision: Confiabilidad de las Predicciones Positivas
+### Precision: Confiabilidad de las Predicciones Positivas
 
-### Definición Formal
+#### Definición Formal
 
 $$
 \text{Precision} = \frac{TP}{TP + FP}
@@ -427,7 +467,7 @@ $$
 
 La Precision mide qué proporción de las instancias predichas como positivas son genuinamente positivas (James et al., 2021).
 
-### Cálculo Detallado
+#### Cálculo Detallado
 
 ```{python}
 # ── Precision: cálculo manual y con sklearn ─────────────────────────────────
@@ -441,9 +481,18 @@ print(f"Interpretación: de cada 10 alarmas de 'enfermo',")
 print(f"  aproximadamente {precision_sk*10:.1f} corresponden a enfermos reales.")
 ```
 
-### Limitación: Alta Precision ≠ Buen Clasificador
+#### Limitación: Alta Precision ≠ Buen Clasificador
 
-Un sistema que solo alerta cuando tiene certeza casi absoluta puede tener Precision = 1.0 pero Recall ≈ 0 — detecta muy pocos positivos reales. Fawcett (2006) denomina este efecto **alarm fatigue** cuando la Precision es baja, e identifica ambos extremos como fallas operativas.
+Para entenderlo mejor, imagina que la **Precisión** es la "puntería" o calidad de lo que el sistema detecta. 
+
+Si un sistema es extremadamente tímido y solo lanza una alerta cuando tiene una certeza absoluta, su **Precisión será perfecta (1.0)**: cada vez que hable, tendrá razón. Sin embargo, el costo de esa perfección es el silencio; el sistema ignorará muchísimos casos reales por miedo a equivocarse. En la práctica, un sistema que casi nunca se atreve a alertar no es útil, aunque nunca mienta.
+
+Por el contrario, si el sistema es demasiado "sensible" y alerta por cualquier cosa, su precisión cae. Fawcett (2006) identifica que cuando la precisión es muy baja, ocurre la **fatiga de alarmas**: el usuario recibe tantos avisos falsos que deja de confiar en el sistema y termina ignorándolo por completo.
+
+#### Ejemplo: El filtro de correos "Spam"
+
+* **Alta Precisión (Certeza absoluta):** Configuras tu correo para que solo marque como Spam los mensajes que digan explícitamente "ESTO ES UNA ESTAFA". Tendrás una precisión de 1.0 (nunca se equivocará con un correo importante), pero tu bandeja de entrada principal se llenará de basura que el filtro no se atrevió a marcar.
+* **Baja Precisión (Fatiga de alarmas):** Configuras el filtro para que marque como Spam cualquier correo que tenga un signo de exclamación o una palabra en mayúsculas. El filtro atrapará todo el spam, pero también enviará a la basura facturas importantes y mensajes de tus amigos. Al final, tendrás que revisar la carpeta de Spam todos los días, anulando la utilidad del filtro.
 
 ```{python}
 # ── Modelo "conservador": alta precision, bajo recall ──────────────────────
@@ -461,11 +510,11 @@ print(f"  F1-Score  : {f1_c:.4f}")
 print(f"  Alertas emitidas: {y_conserv.sum()} de {y_te_m.sum()} enfermos reales")
 ```
 
----
 
-## Recall (Sensibilidad): Cobertura de los Positivos Reales
 
-### Definición Formal
+### Recall (Sensibilidad): Cobertura de los Positivos Reales
+
+#### Definición Formal
 
 $$
 \text{Recall} = \text{Sensibilidad} = \text{TPR} = \frac{TP}{TP + FN}
@@ -473,7 +522,7 @@ $$
 
 El Recall mide qué proporción de los casos verdaderamente positivos fue correctamente identificada por el clasificador (Fawcett, 2006).
 
-### Cálculo y Relación con la Tasa de Falsos Negativos
+#### Cálculo y Relación con la Tasa de Falsos Negativos
 
 ```{python}
 # ── Recall: cálculo y relación con FNR ──────────────────────────────────────
@@ -489,7 +538,22 @@ print(f"De {y_te_m.sum()} enfermos reales en el conjunto de prueba,")
 print(f"  el modelo detecta {TP} y deja sin detectar {FN}.")
 ```
 
+#### Limitación: Alto Recall ≠ Buen Clasificador
+
+Si la Precisión se enfocaba en la "calidad" de las alertas (no mentir), el **Recall** se enfoca en la "cantidad" o cobertura: qué tan buena es la red del sistema para atrapar todos los casos reales.
+
+Un sistema con **Recall = 1.0** es como una red de pesca sin agujeros: atrapa absolutamente todos los peces. Sin embargo, el problema es que, para lograrlo, esa red suele ser tan pesada o grande que termina arrastrando también basura, piedras y algas. En términos operativos, buscar un Recall perfecto suele obligar al sistema a ser menos selectivo, lo que termina dañando la Precisión.
+
+
+
+#### Ejemplo: El detector de incendios
+
+* **Recall Alto (Sensibilidad total):** Imagina un detector de humo tan sensible que se activa incluso con el vapor de una ducha caliente o el humo de un cigarrillo a diez metros. Su Recall es de 1.0 porque es imposible que ocurra un incendio real sin que la alarma suene. El problema es que vivirás evacuando el edificio por errores (baja precisión).
+* **Recall Bajo (Filtro exigente):** Ahora imagina que el detector solo se activa cuando las llamas tocan directamente el sensor. Su precisión será alta (si suena, es que hay fuego de verdad), pero su Recall será muy bajo: para cuando el sistema avise, el incendio ya habrá consumido media habitación. El sistema fue "preciso" pero llegó demasiado tarde porque no tuvo la capacidad de detectar el problema a tiempo.
+
 ### Trade-off Precision–Recall: Tabla por Umbral
+
+Como mencionaba Fawcett (2006), ambos extremos son fallas: un sistema con Recall bajo es "ciego" ante la realidad, mientras que uno con Recall alto pero baja precisión genera la ya mencionada fatiga de alarmas. En la práctica, el científico de datos debe encontrar un equilibrio entre ambos, lo que se conoce como el **trade-off Precision–Recall**. Este equilibrio se controla principalmente a través del **umbral de decisión**: el punto de corte sobre la probabilidad predicha que determina cuándo el modelo clasifica una instancia como positiva.
 
 La siguiente tabla es la evidencia empírica del trade-off fundamental entre Recall y Precision que toda decisión de umbral debe considerar (Provost & Fawcett, 2013):
 
@@ -517,7 +581,7 @@ print("(Provost & Fawcett, 2013)\n")
 print(df_tradeoff.to_string(index=False))
 ```
 
-### Visualización del Trade-off
+#### Visualización del Trade-off
 
 ```{python}
 # ── Curvas Precision y Recall en función del umbral ─────────────────────────
@@ -545,16 +609,16 @@ fig.update_layout(
     yaxis_title="Valor de la Métrica",
     yaxis=dict(range=[0, 1.05]),
     height=400,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    # legend=dict(orientation="h", yanchor="bottom", y=1.02),
 )
 fig.show()
 ```
 
----
 
-## Specificity (Especificidad): Protección de los Negativos
 
-### Definición Formal
+### Specificity (Especificidad): Protección de los Negativos
+
+#### Definición Formal
 
 $$
 \text{Specificity} = \text{TNR} = \frac{TN}{TN + FP}
@@ -562,7 +626,7 @@ $$
 
 La Especificidad mide qué proporción de los casos verdaderamente negativos fue correctamente identificada como negativa por el clasificador (Han et al., 2011).
 
-### Cálculo y Relación con FPR
+#### Cálculo y Relación con FPR
 
 ```{python}
 # ── Specificity: cálculo y relación con la Tasa de Falsos Positivos ─────────
@@ -580,6 +644,39 @@ print(f"  Recall      = {recall_score(y_te_m, y_pred_lr):.4f}  "
 print(f"  Specificity = {specificity:.4f}  "
       f"— protección de los negativos reales")
 ```
+
+### Valor Predictivo Negativo (VPN): La fiabilidad del silencio
+
+Mientras que la Precisión se enfoca en la confianza de una alerta ("¡Positivo!"), el **Valor Predictivo Negativo (VPN)** mide qué tanto podemos confiar en el "silencio" del sistema. Responde a la pregunta crucial: *Si el modelo dice que el caso es negativo, ¿qué tan seguro es que realmente lo sea?*
+
+#### Definición Formal
+
+$$
+\text{NPV} = \frac{TN}{TN + FN}
+$$
+
+Un VPN alto permite que el usuario tome una decisión basada en el resultado negativo con total tranquilidad. Si el VPN es bajo, un resultado negativo no es confiable, pues existe un riesgo alto de que se trate de un positivo que el sistema no logró identificar.
+
+#### Cálculo en Código
+
+```{python}
+# ── Valor Predictivo Negativo (VPN) ─────────
+vpn = TN / (TN + FN) if (TN + FN) > 0 else 0
+
+print(f"VPN = {TN} / ({TN}+{FN}) = {vpn:.4f}")
+print("Indica la probabilidad de que un caso sea realmente negativo tras una predicción negativa.")
+```
+
+### Resumen de las "Cuatro Clásicas" de Confianza
+
+Para que no te confundas, piensa en esto como un espejo:
+
+| Realidad del Modelo | Nombre de la Métrica | Lo que el usuario siente |
+| :--- | :--- | :--- |
+| El modelo dice **"¡Positivo!"** | **Precisión** (VPP) | "¿Será verdad o es una falsa alarma?" |
+| El modelo dice **"Negativo"** | **VPN** | "¿Puedo estar tranquilo o me estaré confiando?" |
+| El dato es **Positivo** | **Sensibilidad** (Recall) | "¿Tendrá el modelo la capacidad de verme?" |
+| El dato es **Negativo** | **Especificidad** | "¿Sabrá el modelo dejarme en paz si no pasa nada?" |
 
 ### La Regla SnNout / SpPin en Medicina
 
@@ -713,30 +810,115 @@ fig.update_layout(
 fig.show()
 ```
 
----
 
-## Curva ROC y el Área bajo la Curva (AUC)
+## Curva ROC y el Área Bajo la Curva (AUC)
 
 ### Motivación
 
-Las métricas anteriores dependen del umbral de decisión elegido. La Curva ROC (Receiver Operating Characteristic) resuelve esto evaluando el clasificador a lo largo de **todos** los umbrales posibles (Fawcett, 2006).
+Muchas métricas de clasificación binaria dependen del **umbral de decisión** $\theta$. Por ejemplo, un mismo modelo puede tener alta sensibilidad con un umbral bajo, pero también producir más falsos positivos. La **curva ROC** (*Receiver Operating Characteristic*) permite analizar este intercambio sin fijar un único umbral, evaluando el comportamiento del clasificador a lo largo de **todos los umbrales posibles** (Fawcett, 2006).
 
-### Definición Formal
+### Definición formal
 
-$$\text{TPR}(\theta) = \frac{TP(\theta)}{TP(\theta) + FN(\theta)}, \quad \text{FPR}(\theta) = \frac{FP(\theta)}{FP(\theta) + TN(\theta)} = 1 - \text{Specificity}(\theta)$$
+Sea $\hat{p}(x)$ el *score* o probabilidad estimada de que la observación $x$ pertenezca a la clase positiva. Para cada umbral $\theta$, el modelo predice:
 
-### Interpretación Probabilística del AUC
+- clase positiva si $\hat{p}(x) \ge \theta$,
+- clase negativa si $\hat{p}(x) < \theta$.
 
-Bamber (1975) demostró que el AUC tiene una interpretación probabilística directa:
+A partir de ello se definen:
 
-$$\text{AUC} = P\!\left(\hat{p}(x^+) > \hat{p}(x^-)\right)$$
+$$
+\text{TPR}(\theta) = \frac{TP(\theta)}{TP(\theta) + FN(\theta)},
+\qquad
+\text{FPR}(\theta) = \frac{FP(\theta)}{FP(\theta) + TN(\theta)} = 1 - \text{Specificity}(\theta)
+$$
 
-donde $x^+$ es una instancia positiva elegida al azar y $x^-$ una negativa. Un AUC de 0.85 significa que hay un 85 % de probabilidad de que el modelo asigne mayor score a un positivo que a un negativo escogidos aleatoriamente.
+donde:
+
+- $\text{TPR}(\theta)$ es la **tasa de verdaderos positivos**,
+- $\text{FPR}(\theta)$ es la **tasa de falsos positivos**.
+
+La **curva ROC** es el conjunto de puntos
+
+$$
+\big(\text{FPR}(\theta), \text{TPR}(\theta)\big)
+$$
+
+obtenidos al variar $\theta$ desde los valores más estrictos hasta los más flexibles.
+
+### Interpretación de sus ejes
+
+#### 1. Tasa de Verdaderos Positivos (TPR)
+
+La TPR coincide con el **Recall** o la **Sensibilidad**. Indica qué proporción de los casos realmente positivos es identificada correctamente por el modelo.
+
+- **Nombre común:** Sensibilidad o Exhaustividad.
+- **En lenguaje sencillo:** Si un caso realmente es positivo, ¿qué tan probable es que el modelo lo detecte?
+
+#### 2. Tasa de Falsos Positivos (FPR)
+
+La FPR es el complemento de la **Especificidad**. Indica qué proporción de los casos realmente negativos es clasificada incorrectamente como positiva.
+
+- **Nombre común:** Tasa de falsos positivos o *fall-out*.
+- **En lenguaje sencillo:** Si un caso realmente es negativo, ¿qué tan probable es que el modelo genere una falsa alarma?
+
+### ¿Qué representa la curva ROC?
+
+La curva ROC muestra el compromiso entre:
+
+- **detectar más positivos** (aumentar TPR),
+- **evitar falsas alarmas** (mantener baja FPR).
+
+Un clasificador deseable es aquel cuya curva se acerca a la esquina superior izquierda del plano ROC, pues allí se combina una **alta sensibilidad** con una **baja tasa de falsos positivos**.
+
+Como referencia:
+
+- la diagonal $\text{TPR} = \text{FPR}$ representa un clasificador sin capacidad discriminativa, equivalente a adivinar al azar;
+- cuanto más por encima de esa diagonal se encuentre la curva, mejor será la capacidad del modelo para separar ambas clases.
+
+### Área Bajo la Curva (AUC)
+
+El **AUC** (*Area Under the Curve*) resume la curva ROC en un solo número:
+
+$$
+\text{AUC} = \int_0^1 \text{TPR}(u)\,du
+\quad \text{con } u = \text{FPR}
+$$
+
+En términos prácticos, el AUC mide la capacidad global del modelo para **ordenar correctamente** a los positivos por encima de los negativos, sin depender de un umbral específico.
+
+Sus valores suelen interpretarse así:
+
+- $\text{AUC} \approx 0.5$: discriminación aleatoria,
+- $\text{AUC} > 0.5$: mejor que el azar,
+- $\text{AUC} \to 1$: excelente capacidad de discriminación.
+
+### Interpretación probabilística del AUC
+
+Bamber (1975) mostró que el AUC tiene una interpretación probabilística muy natural:
+
+$$
+\text{AUC} = P\!\left(\hat{p}(x^+) > \hat{p}(x^-)\right)
+$$
+
+donde $x^+$ es una instancia positiva elegida al azar y $x^-$ una negativa, también elegida al azar.
+
+Esto significa que el AUC puede entenderse como la probabilidad de que el modelo asigne un *score* mayor a un caso positivo que a uno negativo. Por ejemplo, un valor de $\text{AUC} = 0.85$ indica que, en promedio, existe un **85 % de probabilidad** de que el modelo puntúe más alto a un positivo que a un negativo seleccionados aleatoriamente.
+
+### Ventajas de la curva ROC y del AUC
+
+- No dependen de un único umbral de decisión.
+- Permiten comparar clasificadores de forma global.
+- Son especialmente útiles cuando interesa evaluar la **capacidad de discriminación** del modelo más allá de una configuración específica.
+
+### Limitación importante
+
+Aunque la curva ROC y el AUC son muy útiles, no siempre reflejan adecuadamente el desempeño en problemas con clases muy desbalanceadas. En esos casos, puede ser más informativa la **curva Precision--Recall**, porque penaliza de forma más directa los falsos positivos en contextos donde la clase positiva es rara.
 
 ```{python}
 # ── Curva ROC: Regresión Logística vs. Random Forest ───────────────────────
 fpr_lr, tpr_lr, thresholds_roc = roc_curve(y_te_m, y_prob_lr)
 fpr_rf, tpr_rf, _              = roc_curve(y_te_m, y_prob_rf)
+
 auc_lr = auc(fpr_lr, tpr_lr)
 auc_rf = auc(fpr_rf, tpr_rf)
 
@@ -794,22 +976,111 @@ fig.show()
 
 Saito y Rehmsmeier (2015) demostraron que en datasets con desbalance severo, el AUC-ROC puede sobreestimar el desempeño del clasificador porque incluye los TN en el denominador de la FPR: cuando los negativos son muy numerosos, incluso muchos FP producen una FPR aparentemente pequeña, haciendo que la curva parezca optimista.
 
----
 
-## Curva Precision-Recall y Average Precision
+## Curva Precision--Recall y Average Precision
 
 ### Motivación
 
-La Curva Precision-Recall **ignora completamente los TN**, enfocándose exclusivamente en el comportamiento del clasificador sobre la clase positiva (Saito & Rehmsmeier, 2015). Su baseline es la prevalencia de la clase positiva, no 0.5:
+En muchos problemas de clasificación, especialmente cuando la clase positiva es poco frecuente, no basta con saber cuántos aciertos globales tiene el modelo. En estos contextos suele ser más importante responder dos preguntas:
 
-$$\text{AP} = \sum_{k} (R_k - R_{k-1}) \cdot P_k, \qquad \text{Baseline PR} = P(\text{positivo}) = \frac{TP + FN}{N}$$
+- cuando el modelo predice un positivo, ¿qué tan confiable es esa predicción?;
+- de todos los positivos reales, ¿cuántos está logrando recuperar?
+
+La **curva Precision--Recall (PR)** se construye precisamente para estudiar este compromiso. A diferencia de la curva ROC, aquí los **verdaderos negativos (TN)** no intervienen de forma explícita. Por ello, esta curva se enfoca en el desempeño del modelo sobre la **clase positiva**, lo cual resulta particularmente útil en escenarios con clases desbalanceadas (Saito & Rehmsmeier, 2015).
+
+### Definición formal
+
+Sea $\hat{p}(x)$ el *score* o probabilidad estimada para la clase positiva, y sea $\theta$ un umbral de decisión. Para cada valor de $\theta$, se definen:
+
+$$
+\text{Precision}(\theta) = \frac{TP(\theta)}{TP(\theta) + FP(\theta)},
+\qquad
+\text{Recall}(\theta) = \frac{TP(\theta)}{TP(\theta) + FN(\theta)}
+$$
+
+donde:
+
+- **Precision** mide la proporción de predicciones positivas que realmente son correctas;
+- **Recall** mide la proporción de positivos reales que el modelo logra recuperar.
+
+La **curva Precision--Recall** es el conjunto de puntos
+
+$$
+\big(\text{Recall}(\theta), \text{Precision}(\theta)\big)
+$$
+
+obtenidos al variar el umbral $\theta$.
+
+### Interpretación de sus ejes
+
+#### 1. Precision
+
+La **Precision** evalúa la pureza de las predicciones positivas. Es alta cuando, entre los casos señalados como positivos por el modelo, predominan los verdaderos positivos.
+
+- **Nombre común:** Precisión.
+- **En lenguaje sencillo:** Si el modelo dice “positivo”, ¿qué tan probable es que tenga razón?
+
+#### 2. Recall
+
+El **Recall** o **Sensibilidad** mide la capacidad del modelo para no dejar escapar positivos reales.
+
+- **Nombre común:** Sensibilidad o Exhaustividad.
+- **En lenguaje sencillo:** De todos los positivos reales, ¿cuántos logra detectar el modelo?
+
+### ¿Qué representa la curva Precision--Recall?
+
+La curva PR muestra el compromiso entre:
+
+- **recuperar más positivos** (aumentar Recall),
+- **mantener confiables las alertas positivas** (conservar alta Precision).
+
+En general, al hacer el umbral más flexible, el modelo detecta más positivos y el Recall aumenta, pero también tiende a cometer más falsos positivos, por lo que la Precision puede disminuir. La curva permite visualizar este intercambio de manera completa.
+
+Un modelo deseable es aquel cuya curva se mantiene lo más arriba posible, pues eso indica que conserva una **alta precisión** incluso cuando incrementa su cobertura de positivos.
+
+### Baseline de la curva PR
+
+A diferencia de la curva ROC, cuya referencia natural es la diagonal aleatoria, en la curva PR la línea de referencia depende de la **prevalencia** de la clase positiva en el conjunto de datos:
+
+$$
+\text{Baseline PR} = P(\text{positivo}) = \frac{TP + FN}{N}
+$$
+
+Esto significa que, si la clase positiva representa por ejemplo el 10 % de los datos, entonces un clasificador sin capacidad real de discriminación tenderá a tener una Precision cercana a 0.10.
+
+Por ello, en problemas desbalanceados, una curva PR y un valor de AP por encima de la prevalencia indican que el modelo está haciendo algo mejor que una asignación aleatoria proporcional.
+
+### Average Precision (AP)
+
+El **Average Precision (AP)** resume la curva Precision--Recall en un solo número. Puede entenderse como un promedio ponderado de la precisión a lo largo de distintos niveles de recall:
+
+$$
+\text{AP} = \sum_k (R_k - R_{k-1})\, P_k
+$$
+
+donde $R_k$ representa el Recall en el punto $k$ y $P_k$ la Precision correspondiente.
+
+En términos prácticos, el AP asigna mayor valor a los modelos que no solo recuperan positivos, sino que lo hacen manteniendo una buena precisión a medida que aumenta la cobertura.
+
+### Interpretación del AP
+
+- Un valor de **AP** cercano a 1 indica que el modelo logra identificar positivos con alta precisión a lo largo de casi todo el rango de recall.
+- Un valor de **AP** cercano a la prevalencia sugiere un comportamiento cercano al azar bajo esta métrica.
+- Cuanto mayor sea el AP respecto a la prevalencia, mejor será la capacidad del modelo para priorizar correctamente la clase positiva.
+
+### ¿Por qué es útil en clases desbalanceadas?
+
+Cuando la clase positiva es rara, puede ocurrir que un modelo tenga una curva ROC aparentemente buena y, sin embargo, produzca demasiados falsos positivos para que sus predicciones sean útiles en la práctica. La curva PR evita que los TN dominen la evaluación y se concentra en lo que muchas veces realmente importa: la capacidad de encontrar positivos sin generar demasiadas falsas alarmas.
+
+Por esta razón, en aplicaciones médicas, detección de fraude, mantenimiento predictivo o búsqueda de eventos raros, la curva PR y el AP suelen ser más informativos que la curva ROC.
 
 ```{python}
 # ── Curva Precision-Recall: LR vs. RF ──────────────────────────────────────
 prec_lr_c, rec_lr_c, _ = precision_recall_curve(y_te_m, y_prob_lr)
 prec_rf_c, rec_rf_c, _ = precision_recall_curve(y_te_m, y_prob_rf)
-ap_lr       = average_precision_score(y_te_m, y_prob_lr)
-ap_rf       = average_precision_score(y_te_m, y_prob_rf)
+
+ap_lr = average_precision_score(y_te_m, y_prob_lr)
+ap_rf = average_precision_score(y_te_m, y_prob_rf)
 prevalencia = y_te_m.mean()
 
 print(f"Average Precision — Reg. Logística: {ap_lr:.4f}")
@@ -888,7 +1159,7 @@ fig.update_yaxes(range=[0, 1.02], row=1, col=1, title_text="TPR (Recall)")
 fig.update_xaxes(range=[0, 1], row=1, col=2, title_text="Recall")
 fig.update_yaxes(range=[0, 1.05], row=1, col=2, title_text="Precision")
 fig.update_layout(
-    height=410,
+    height=500,
     title=(
         "ROC vs. Precision-Recall: el mismo modelo, perspectivas distintas<br>"
         "<sup>Saito & Rehmsmeier (2015)</sup>"
