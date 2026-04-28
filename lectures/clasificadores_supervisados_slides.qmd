@@ -1,0 +1,696 @@
+---
+title: "Clasificadores Supervisados en la Práctica"
+subtitle: "Experimentos reales con múltiples modelos"
+author: "Diego Villalba"
+date: today
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    code-fold: true
+    code-tools: true
+    code-line-numbers: true
+    highlight-style: github
+    fig-align: center
+    fig-width: 7
+    fig-height: 4
+    logo: "Logo_FC_Color.png"
+    execute:
+      echo: true
+      warning: false
+      message: false
+    self-contained: false
+bibliography: references_classification.bib
+---
+
+```{python}
+#| echo: false
+#| label: setup-global
+
+import numpy as np
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore")
+
+# Semilla global
+SEED = 42
+np.random.seed(SEED)
+
+matplotlib.rcParams.update({
+    "figure.dpi": 100,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "font.size": 11,
+})
+```
+
+# Objetivos de aprendizaje {background-color="#1e3a5f"}
+
+---
+
+## ¿Qué vamos a hacer hoy?
+
+
+- Diseñar y ejecutar un experimento de clasificación completo
+- Comparar múltiples clasificadores con la misma partición de datos
+- Identificar qué modelos requieren preprocesamiento específico
+- Interpretar métricas de forma comparativa, no aislada
+- Ajustar thresholds de decisión y observar su efecto
+- Reconocer errores comunes y retos reales del flujo de clasificación
+
+::: {.callout-note}
+**Nota** Esta clase asume que ya se exploraron árboles de decisión (CART, ID3), Random Forest, métricas básicas (accuracy, precision, recall, F1) y la matriz de confusión. El énfasis está en la experimentación práctica, no en la teoría.
+:::
+
+---
+
+## El flujo de un experimento real
+
+![](clasificadores_material/data_process.png)
+
+Hoy seguiremos este flujo **en código**, paso a paso.
+
+# El dataset {background-color="#1e3a5f"}
+
+---
+
+## Breast Cancer Wisconsin
+
+```{python}
+#| label: carga-dataset
+
+from sklearn.datasets import load_breast_cancer
+
+data = load_breast_cancer()
+X = pd.DataFrame(data.data, columns=data.feature_names)
+y = pd.Series(data.target, name="target")
+
+print(f"Muestras: {X.shape[0]}  |  Variables: {X.shape[1]}")
+print(f"\nClases: {data.target_names}")
+print(f"Distribución:\n{y.value_counts().rename({0:'maligno', 1:'benigno'})}")
+```
+
+::: {.callout-important}
+**Primer reto práctico:**  
+¿Cuál es la variable objetivo? ¿Cuál es la clase positiva?  
+En scikit-learn, `target=1` es *benigno* y `target=0` es *maligno*.  
+**¿Esto es lo que queremos?** Si nos interesa detectar tumores malignos, quizá deberíamos invertir la convención.
+:::
+
+---
+
+## Variables predictoras
+
+```{python}
+#| label: exploracion-rapida
+
+X.iloc[:, :6].describe().round(2)
+```
+
+::: {.fragment}
+**Observación:** Las escalas son muy distintas entre variables.  
+→ Modelos sensibles al escalamiento (MLP, Regresión Logística, KNN) lo notarán.  
+→ Árboles y Random Forest son invariantes al escalamiento.
+:::
+
+---
+
+## Balance de clases
+
+```{python}
+#| label: balance-clases
+#| fig-height: 3
+
+fig, ax = plt.subplots(figsize=(5, 3))
+counts = y.value_counts().rename({0: "Maligno (0)", 1: "Benigno (1)"})
+counts.plot(kind="bar", ax=ax, color=["#e74c3c", "#2ecc71"], edgecolor="white")
+ax.set_title("Distribución de clases")
+ax.set_xlabel("")
+ax.set_ylabel("Frecuencia")
+ax.set_xticklabels(counts.index, rotation=0)
+for i, v in enumerate(counts):
+    ax.text(i, v + 5, f"{v} ({v/len(y)*100:.1f}%)", ha="center")
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Preguntas para discusión
+
+::: {.callout-tip title="Discusión (2 minutos)"}
+1. ¿El dataset está balanceado?  
+2. ¿Qué error sería más costoso en este problema: un falso positivo o un falso negativo?  
+3. ¿Qué métrica principal elegiríamos para comparar modelos aquí?
+:::
+
+# Preparación de datos {background-color="#1e3a5f"}
+
+---
+
+## Separación train/test
+
+```{python}
+#| label: split
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y,
+    test_size=0.2,
+    random_state=SEED,
+    stratify=y      # mantiene proporciones de clase
+)
+
+print(f"Entrenamiento: {X_train.shape[0]} muestras")
+print(f"Prueba:        {X_test.shape[0]} muestras")
+print(f"\nClase maligno en train: {(y_train==0).mean():.2%}")
+print(f"Clase maligno en test:  {(y_test==0).mean():.2%}")
+```
+
+::: {.callout-warning}
+**Regla de oro:** El conjunto de prueba no se toca hasta la evaluación final.  
+Escalar, imputar o transformar usando información de test → **data leakage**.
+:::
+
+---
+
+## Pipelines: la forma correcta
+
+```{python}
+#| label: pipeline-demo
+
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+
+# Scaler ajustado SOLO sobre train, aplicado a test automáticamente
+pipe_lr = Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf",    LogisticRegression(max_iter=1000, random_state=SEED))
+])
+
+pipe_lr.fit(X_train, y_train)
+print(f"Accuracy en test: {pipe_lr.score(X_test, y_test):.4f}")
+```
+
+::: {.fragment}
+```{python}
+# Sin pipeline: error clásico (no hacer esto)
+# scaler = StandardScaler()
+# X_scaled = scaler.fit_transform(X)        # ← leakage
+# X_train_s, X_test_s = train_test_split(X_scaled, ...)
+```
+:::
+
+# Entrenamiento de modelos {background-color="#1e3a5f"}
+
+---
+
+## Los modelos del experimento
+
+| Modelo | Requiere escalamiento | Nota |
+|---|:---:|---|
+| Regresión Logística | ✓ | Baseline lineal |
+| CART (Gini) | ✗ | Árbol binario |
+| ID3-proxy (Entropy) | ✗ | Mismo árbol, distinto criterio |
+| Random Forest | ✗ | Ensamble por bagging |
+| Gradient Boosting | ✗ | Ensamble secuencial |
+| MLP (red neuronal) | ✓ | Modelo flexible |
+
+---
+
+## Definición de todos los pipelines
+
+```{python}
+#| label: todos-los-modelos
+
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.neural_network import MLPClassifier
+
+modelos = {
+    "Logistic Regression": Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(max_iter=1000, random_state=SEED))
+    ]),
+    "CART (Gini)": Pipeline([
+        ("clf", DecisionTreeClassifier(criterion="gini",
+                                       max_depth=5, random_state=SEED))
+    ]),
+    "ID3-proxy (Entropy)": Pipeline([
+        ("clf", DecisionTreeClassifier(criterion="entropy",
+                                       max_depth=5, random_state=SEED))
+    ]),
+    "Random Forest": Pipeline([
+        ("clf", RandomForestClassifier(n_estimators=100,
+                                       max_depth=None, random_state=SEED))
+    ]),
+    "Gradient Boosting": Pipeline([
+        ("clf", GradientBoostingClassifier(n_estimators=100,
+                                            learning_rate=0.1,
+                                            max_depth=3, random_state=SEED))
+    ]),
+    "MLP": Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", MLPClassifier(hidden_layer_sizes=(64, 32),
+                              max_iter=300, random_state=SEED))
+    ]),
+}
+```
+
+---
+
+## Entrenamiento en un bucle
+
+```{python}
+#| label: entrenamiento
+
+resultados = {}
+
+for nombre, pipe in modelos.items():
+    pipe.fit(X_train, y_train)
+    resultados[nombre] = pipe
+    print(f"✓ {nombre}")
+
+print("\nTodos los modelos entrenados.")
+```
+
+# Evaluación: recordatorio operativo {background-color="#1e3a5f"}
+
+---
+
+## Métricas: recordatorio compacto
+
+$$\text{Accuracy} = \frac{TP+TN}{TP+TN+FP+FN}$$
+
+$$\text{Precision} = \frac{TP}{TP+FP} \qquad \text{Recall} = \frac{TP}{TP+FN}$$
+
+$$F_1 = \frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$$
+
+::: {.callout-note}
+Ya los conocen. Hoy los usamos como **herramienta de comparación**, no como tema de exposición.
+:::
+
+---
+
+## Evaluación con classification_report
+
+```{python}
+#| label: eval-ejemplo
+
+from sklearn.metrics import classification_report
+
+y_pred = resultados["Random Forest"].predict(X_test)
+print(classification_report(y_test, y_pred,
+      target_names=["Maligno (0)", "Benigno (1)"]))
+```
+
+---
+
+## Tabla comparativa de todos los modelos
+
+```{python}
+#| label: tabla-comparativa
+
+from sklearn.metrics import f1_score, roc_auc_score, accuracy_score, precision_score, recall_score
+
+filas = []
+for nombre, pipe in resultados.items():
+    y_pred = pipe.predict(X_test)
+    y_prob = pipe.predict_proba(X_test)[:, 1]
+    filas.append({
+        "Modelo": nombre,
+        "Accuracy": accuracy_score(y_test, y_pred),
+        "Precision": precision_score(y_test, y_pred),
+        "Recall": recall_score(y_test, y_pred),
+        "F1": f1_score(y_test, y_pred),
+        "ROC-AUC": roc_auc_score(y_test, y_prob),
+    })
+
+df_resultados = pd.DataFrame(filas).set_index("Modelo")
+print(df_resultados.round(4).to_string())
+```
+
+---
+
+## Visualización de métricas
+
+```{python}
+#| label: viz-metricas
+#| fig-height: 4
+
+fig, ax = plt.subplots(figsize=(9, 4))
+df_resultados[["F1", "ROC-AUC"]].plot(kind="bar", ax=ax,
+    color=["#3498db", "#e67e22"], edgecolor="white")
+ax.set_xticklabels(df_resultados.index, rotation=25, ha="right")
+ax.set_ylim(0.85, 1.0)
+ax.set_title("F1-score y ROC-AUC por modelo (conjunto de prueba)")
+ax.legend(loc="lower right")
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Matrices de confusión: comparación visual
+
+```{python}
+#| label: confusion-matrices
+#| fig-height: 4.5
+
+from sklearn.metrics import ConfusionMatrixDisplay
+import matplotlib.gridspec as gridspec
+
+fig = plt.figure(figsize=(14, 5))
+nombres = list(resultados.keys())
+for i, nombre in enumerate(nombres):
+    ax = fig.add_subplot(2, 3, i+1)
+    y_pred = resultados[nombre].predict(X_test)
+    ConfusionMatrixDisplay.from_predictions(
+        y_test, y_pred,
+        display_labels=["Maligno", "Benigno"],
+        ax=ax, colorbar=False, cmap="Blues"
+    )
+    ax.set_title(nombre, fontsize=9)
+plt.suptitle("Matrices de confusión — todos los modelos", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+# Ajuste de thresholds {background-color="#1e3a5f"}
+
+---
+
+## ¿Por qué cambiar el threshold?
+
+Por defecto, `predict()` usa threshold = **0.50**.
+
+Pero en diagnóstico médico:
+- **Falso negativo** = no detectar un tumor maligno → consecuencia grave
+- **Falso positivo** = alarma innecesaria → consecuencia menor
+
+→ Queremos **maximizar recall** para la clase maligno  
+→ Eso significa **bajar** el threshold
+
+---
+
+## predict_proba: el fundamento
+
+```{python}
+#| label: proba-demo
+
+pipe_rf = resultados["Random Forest"]
+probs = pipe_rf.predict_proba(X_test)
+
+print("Primeras 5 filas de probabilidades:")
+df_probs = pd.DataFrame(probs, columns=["P(maligno)", "P(benigno)"])
+print(df_probs.head())
+print(f"\nPredicción con threshold=0.5:")
+print(pipe_rf.predict(X_test[:5]))
+```
+
+---
+
+## Efecto de distintos thresholds
+
+```{python}
+#| label: threshold-tabla
+
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+probs_maligno = pipe_rf.predict_proba(X_test)[:, 0]  # P(maligno=clase 0)
+
+filas_th = []
+for th in [0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80]:
+    y_pred_th = (probs_maligno >= th).astype(int)
+    # recodificar: 1 si predicción es maligno (0 original)
+    y_pred_bin = np.where(y_pred_th == 1, 0, 1)
+    filas_th.append({
+        "Threshold": th,
+        "Precision (maligno)": precision_score(y_test, y_pred_bin, pos_label=0, zero_division=0),
+        "Recall (maligno)":    recall_score(y_test, y_pred_bin, pos_label=0, zero_division=0),
+        "F1 (maligno)":        f1_score(y_test, y_pred_bin, pos_label=0, zero_division=0),
+    })
+
+df_th = pd.DataFrame(filas_th).set_index("Threshold")
+print(df_th.round(4).to_string())
+```
+
+---
+
+## Visualización del efecto del threshold
+
+```{python}
+#| label: viz-threshold
+#| fig-height: 3.8
+
+fig, ax = plt.subplots(figsize=(8, 3.8))
+df_th.plot(ax=ax, marker="o")
+ax.axvline(0.5, color="gray", linestyle="--", alpha=0.6, label="Default (0.5)")
+ax.set_xlabel("Threshold de decisión")
+ax.set_ylabel("Métrica")
+ax.set_title("Efecto del threshold sobre Precision, Recall y F1 (clase maligno)")
+ax.legend(fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Curva ROC
+
+```{python}
+#| label: curva-roc
+#| fig-height: 4
+
+from sklearn.metrics import roc_curve, auc
+
+fig, ax = plt.subplots(figsize=(6, 4))
+
+for nombre, pipe in resultados.items():
+    y_prob = pipe.predict_proba(X_test)[:, 1]
+    fpr, tpr, _ = roc_curve(y_test, y_prob)
+    roc_auc = auc(fpr, tpr)
+    ax.plot(fpr, tpr, label=f"{nombre} (AUC={roc_auc:.3f})", linewidth=1.5)
+
+ax.plot([0,1],[0,1], "k--", alpha=0.4, label="Aleatorio")
+ax.set_xlabel("Tasa de Falsos Positivos")
+ax.set_ylabel("Tasa de Verdaderos Positivos (Recall)")
+ax.set_title("Curvas ROC — todos los modelos")
+ax.legend(fontsize=7.5, loc="lower right")
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Curva Precision-Recall
+
+```{python}
+#| label: curva-pr
+#| fig-height: 4
+
+from sklearn.metrics import precision_recall_curve, average_precision_score
+
+fig, ax = plt.subplots(figsize=(6, 4))
+
+for nombre, pipe in resultados.items():
+    y_prob = pipe.predict_proba(X_test)[:, 1]
+    prec, rec, _ = precision_recall_curve(y_test, y_prob)
+    ap = average_precision_score(y_test, y_prob)
+    ax.plot(rec, prec, label=f"{nombre} (AP={ap:.3f})", linewidth=1.5)
+
+ax.set_xlabel("Recall")
+ax.set_ylabel("Precision")
+ax.set_title("Curvas Precision-Recall — todos los modelos")
+ax.legend(fontsize=7.5, loc="lower left")
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Preguntas de discusión 
+
+::: {.callout-tip title="Discusión (3 minutos)"}
+1. ¿Qué threshold elegiríamos para este problema médico?  
+2. ¿Cómo cambia la matriz de confusión si bajamos el threshold de 0.5 a 0.3?  
+3. ¿El "mejor" modelo cambia según la métrica que usemos?  
+4. ¿Por qué la curva PR puede ser más informativa que ROC en problemas con desbalance?
+:::
+
+# Comparación final e interpretación {background-color="#1e3a5f"}
+
+---
+
+## ¿Qué modelo elegirías?
+
+```{python}
+#| label: tabla-final
+#| echo: false
+
+df_display = df_resultados.round(4).sort_values("ROC-AUC", ascending=False)
+print(df_display.to_string())
+```
+
+::: {.fragment}
+**Depende del contexto:**
+
+- Si priorizamos detectar malignos → **Recall**
+- Si priorizamos no alarmar innecesariamente → **Precision**  
+- Si queremos balance → **F1**
+- Si queremos analizar todos los thresholds → **ROC-AUC**
+:::
+
+---
+
+## CART vs ID3: ¿hace diferencia el criterio?
+
+```{python}
+#| label: cart-vs-id3
+
+for nombre in ["CART (Gini)", "ID3-proxy (Entropy)"]:
+    y_pred = resultados[nombre].predict(X_test)
+    f1 = f1_score(y_test, y_pred)
+    auc_val = roc_auc_score(y_test, resultados[nombre].predict_proba(X_test)[:,1])
+    print(f"{nombre:25s}  F1={f1:.4f}  AUC={auc_val:.4f}")
+```
+
+::: {.callout-note}
+**Observación esperada:** En datasets bien limpios como este, la diferencia entre Gini y Entropy suele ser pequeña. La elección del criterio importa más en datasets con muchas categorías nominales.
+:::
+
+---
+
+## Random Forest vs Gradient Boosting
+
+```{python}
+#| label: rf-vs-gb
+
+for nombre in ["Random Forest", "Gradient Boosting"]:
+    y_pred = resultados[nombre].predict(X_test)
+    f1 = f1_score(y_test, y_pred)
+    auc_val = roc_auc_score(y_test, resultados[nombre].predict_proba(X_test)[:,1])
+    n_mal = (y_pred[y_test == 0] == 1).sum()
+    print(f"{nombre:22s}  F1={f1:.4f}  AUC={auc_val:.4f}  FN(maligno)={n_mal}")
+```
+
+::: {.callout-note}
+- **Random Forest:** paralelizable, menos hiperparámetros que ajustar  
+- **Gradient Boosting:** secuencial, más sensible a `learning_rate` y `max_depth`, pero suele ganar en rendimiento con ajuste fino
+:::
+
+# Retos comunes y buenas prácticas {background-color="#1e3a5f"}
+
+---
+
+## Errores frecuentes en experimentos de clasificación
+
+::: {.incremental}
+- ✗ Escalar **antes** del train/test split → data leakage
+- ✗ Evaluar solo con **accuracy** cuando hay desbalance
+- ✗ Comparar modelos con **particiones distintas**
+- ✗ No fijar **`random_state`** → resultados no reproducibles
+- ✗ Ajustar hiperparámetros mirando repetidamente **el test set**
+- ✗ Entrenar una red neuronal **sin escalar** las entradas
+- ✗ Comparar modelos con **preprocesamientos inconsistentes**
+- ✗ Modificar thresholds usando el **test set como validación**
+:::
+
+---
+
+## Buenas prácticas
+
+::: {.incremental}
+- ✓ Usar **pipelines** para garantizar preprocesamiento consistente
+- ✓ Usar **stratify** al dividir datos
+- ✓ Evaluar siempre en datos no vistos durante entrenamiento
+- ✓ Reportar **varias métricas**, no solo accuracy
+- ✓ Analizar la **matriz de confusión** junto con las métricas
+- ✓ Considerar el **costo relativo** de FP y FN según el contexto
+- ✓ Documentar semillas, versiones y parámetros usados
+- ✓ Usar **validación cruzada** cuando el dataset es pequeño
+:::
+
+# Ejercicio guiado {background-color="#1e3a5f"}
+
+---
+
+## Ejercicio: modificar hiperparámetros
+
+```{python}
+#| label: ejercicio-guiado
+
+# ¿Qué pasa si aumentamos la profundidad máxima de CART?
+for depth in [2, 5, 10, None]:
+    pipe = Pipeline([
+        ("clf", DecisionTreeClassifier(criterion="gini",
+                                       max_depth=depth, random_state=SEED))
+    ])
+    pipe.fit(X_train, y_train)
+    train_f1 = f1_score(y_train, pipe.predict(X_train))
+    test_f1  = f1_score(y_test,  pipe.predict(X_test))
+    print(f"max_depth={str(depth):5s}  Train F1={train_f1:.4f}  Test F1={test_f1:.4f}")
+```
+
+::: {.callout-tip title="Pregunta"}
+¿Qué observas al pasar de max_depth=2 a None?  
+¿Qué significa cuando Train F1 >> Test F1?
+:::
+
+# Ejercicio para estudiantes {background-color="#1e3a5f"}
+
+---
+
+## Tu turno
+
+::: {.callout-tip title="Ejercicios (15 minutos)"}
+1. **Hiperparámetros RF:** Entrena Random Forest con `n_estimators` ∈ {10, 50, 200}. ¿Cuándo se estabiliza el F1?
+
+2. **Learning rate en GB:** Prueba `learning_rate` ∈ {0.01, 0.1, 0.3} con `n_estimators=100`. ¿Cómo afecta al rendimiento?
+
+3. **MLP sin escalamiento:** Entrena un MLPClassifier *sin* StandardScaler. ¿Qué pasa con las métricas?
+
+4. **Threshold óptimo:** ¿Qué threshold maximiza el recall para la clase maligno manteniendo precision > 0.85?
+
+5. **Bonus:** Usa `cross_val_score` con `cv=5` para comparar modelos. ¿Cambia el ranking?
+:::
+
+# Cierre {background-color="#1e3a5f"}
+
+---
+
+## Lo que hicimos hoy
+
+::: {.incremental}
+1. Identificamos correctamente la variable objetivo y su convención
+2. Separamos datos con `stratify` para preservar proporciones
+3. Construimos **pipelines** para evitar leakage
+4. Entrenamos 6 clasificadores con la **misma partición**
+5. Comparamos con múltiples métricas, no solo accuracy
+6. Exploramos el efecto de cambiar **thresholds** de decisión
+7. Visualizamos curvas **ROC y Precision-Recall**
+8. Discutimos retos reales del flujo de clasificación
+:::
+
+---
+
+## La idea más importante
+
+> Entrenar un clasificador es fácil.  
+> **Diseñar bien el experimento es lo difícil.**
+
+- La elección de métricas depende del **contexto del problema**
+- El threshold por defecto (0.5) **no siempre es el mejor**
+- Los pipelines no son opcionales: son **obligatorios** para reproducibilidad
+- El conjunto de prueba es **sagrado**: no lo uses para tomar decisiones de diseño
+
+---
+
+## Referencias
+
+::: {#refs}
+:::
