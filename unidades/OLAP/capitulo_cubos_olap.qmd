@@ -1,0 +1,426 @@
+---
+title: "Computación de cubos de datos OLAP"
+subtitle: "Un enfoque técnico y reproducible"
+author: "Diego Villalba"
+date: today
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    code-fold: true
+    code-tools: true
+    code-line-numbers: true
+    highlight-style: github
+    fig-align: center
+    fig-width: 7
+    fig-height: 4
+    logo: "Logo_FC_Color.png"
+    execute:
+      echo: true
+      warning: false
+      message: false
+    self-contained: false
+bibliography: referencias_cubos_olap.bib
+---
+
+
+
+Los cubos de datos son una forma de organizar información multidimensional para análisis resumido, exploración interactiva y toma de decisiones. En una arquitectura típica de *data warehouse*, los datos se extraen de sistemas transaccionales, pasan por procesos de limpieza e integración, se almacenan en un repositorio analítico y se presentan mediante reportes, minería de datos o cubos OLAP. Esta secuencia aparece en la presentación base, donde se recuerda el flujo general desde fuentes de datos hasta almacenamiento, *data marts* y presentación analítica [@santizo2026cubos].
+
+El objetivo de este capítulo es convertir esa idea en una formulación técnica y reproducible. Se presentará el concepto de procesamiento analítico en línea, la estructura matemática de un cubo de datos, sus principales operaciones y una implementación práctica en Python. La discusión se apoya en la tradición de almacenes de datos [@inmon2005building; @kimball2013data], en la literatura clásica sobre OLAP y cubos de datos [@chaudhuri1997overview; @gray1997data], y en herramientas modernas de análisis tabular como `pandas` [@mckinney2010data; @pandas2024docs].
+
+Un cubo OLAP no debe entenderse únicamente como una figura tridimensional. En realidad, es una abstracción para representar medidas agregadas sobre varias dimensiones. Por ejemplo, una empresa puede analizar ventas por tiempo, región y producto. Cada combinación específica de esas dimensiones define una celda del cubo, y esa celda contiene una medida, como ventas totales, unidades vendidas, costo promedio o margen de ganancia.
+
+## Del almacén de datos al análisis OLAP
+
+Un sistema transaccional u OLTP (*Online Transaction Processing*) está optimizado para registrar operaciones individuales: compras, pagos, inventarios, altas de clientes o movimientos bancarios. En contraste, un sistema OLAP (*Online Analytical Processing*) está optimizado para consultar datos agregados y responder preguntas de negocio. Esta distinción es importante porque el análisis multidimensional requiere estructuras distintas a las de una base de datos operacional.
+
+::: {.callout-note appearance=“minimal”}
+Definición. Un sistema OLAP es una estructura analítica que organiza medidas cuantitativas mediante dimensiones categóricas o jerárquicas para permitir consultas agregadas desde distintas perspectivas.
+$$
+C : D_1 \times D_2 \times \cdots \times D_k \longrightarrow \mathbb{R}^m
+$$
+:::
+
+En esta definición, $D_1,\ldots,D_k$ representan dimensiones como tiempo, región, producto o sucursal. El valor $C(d_1,\ldots,d_k)$ contiene una o varias medidas agregadas. Por ejemplo, si $D_1$ es tiempo, $D_2$ es región y $D_3$ es producto, entonces una celda puede representar las ventas de computadoras en la región Centro durante el trimestre T1.
+
+La presentación original destaca que en un *data warehouse* los datos se organizan en una estructura multidimensional, que puede implementarse como un cubo OLAP y analizarse desde diferentes perspectivas [@santizo2026cubos]. Esta idea se puede conectar con tres componentes esenciales:
+
+1. **Dimensiones:** ejes de análisis, como tiempo, región o producto.
+2. **Jerarquías:** niveles dentro de una dimensión, como día $\rightarrow$ mes $\rightarrow$ trimestre $\rightarrow$ año.
+3. **Medidas:** variables numéricas agregables, como ventas, unidades, utilidad o presupuesto.
+
+Una ventaja central de OLAP es que permite adaptar el nivel de detalle a cada usuario. Un gerente general puede consultar ventas totales por país; una dirección regional puede revisar ventas por estado; y un supervisor puede analizar ventas por tienda. La misma base de datos analítica soporta múltiples perspectivas mediante operaciones de navegación sobre el cubo.
+
+## Modelo multidimensional
+
+Supongamos un conjunto de transacciones $\mathcal{T}$ donde cada registro contiene atributos de dimensión y una medida de ventas. Una transacción puede escribirse como
+
+$$
+t_i = (r_i, \tau_i, p_i, v_i),
+$$
+
+donde $r_i$ indica la región, $\tau_i$ el periodo, $p_i$ el producto y $v_i$ el valor de venta. El cubo agregado por suma se obtiene agrupando transacciones que comparten las mismas coordenadas dimensionales.
+
+::: {.callout-note appearance=“minimal”}
+Definición. Dado un conjunto de transacciones $\mathcal{T}$, el valor de una celda de un cubo de ventas se define como la suma de las ventas de todas las transacciones que coinciden con una combinación de dimensiones:
+$$
+C(r,\tau,p)=\sum_{i:\; r_i=r,\; \tau_i=\tau,\; p_i=p} v_i
+$$
+:::
+
+Esta formulación deja claro que un cubo es una función agregada. La representación visual tridimensional es útil para enseñar el concepto, pero en la práctica pueden existir muchas más dimensiones. Un cubo de ventas real puede incluir canal de venta, tipo de cliente, vendedor, tienda, campaña publicitaria y categoría fiscal.
+
+### Dimensiones, medidas y granularidad
+
+La **granularidad** indica el nivel de detalle con que se almacenan o consultan los datos. Una tabla con ventas diarias por tienda y producto tiene mayor granularidad que una tabla con ventas mensuales por región y categoría. Diseñar correctamente la granularidad es una decisión crítica en un almacén de datos, porque afecta el almacenamiento, la velocidad de consulta y la flexibilidad analítica [@kimball2013data].
+
+::: {.callout-note appearance=“minimal”}
+Definición. La granularidad de un cubo es el nivel mínimo de detalle con el que se representan sus dimensiones.
+$$
+G(C)=\{\ell_1,\ell_2,\ldots,\ell_k\}
+$$
+:::
+
+Aquí $\ell_j$ representa el nivel usado en la dimensión $D_j$. Por ejemplo, $G(C)=\{\text{mes},\text{estado},\text{producto}\}$ indica que el cubo se consulta por mes, estado y producto. Si se cambia de mes a semana, la granularidad aumenta; si se cambia de estado a país, la granularidad disminuye.
+
+## Operaciones fundamentales en cubos OLAP
+
+Las operaciones OLAP permiten navegar entre distintos niveles y subconjuntos del cubo. La presentación base introduce cinco operaciones principales: *drill-down*, *roll-up*, *slice*, *dice* y *pivot* o *rotate* [@santizo2026cubos]. A continuación se formalizan y se muestran ejemplos reproducibles.
+
+### Drill-down
+
+El *drill-down* permite pasar de datos resumidos a datos más detallados. Por ejemplo, si una empresa observa que en 2025 vendió 1,000 productos, puede preguntar cuánto se vendió por trimestre, por mes, por estado o por producto. En términos de jerarquías, el *drill-down* se mueve hacia niveles más específicos.
+
+::: {.callout-note appearance=“minimal”}
+Definición. Una operación de drill-down reemplaza un nivel agregado $\ell$ de una dimensión por un nivel más detallado $\ell'$ dentro de la misma jerarquía.
+$$
+\ell' \prec \ell
+$$
+:::
+
+Por ejemplo, en la jerarquía temporal
+
+$$
+\text{año} \rightarrow \text{trimestre} \rightarrow \text{mes} \rightarrow \text{semana} \rightarrow \text{día},
+$$
+
+pasar de año a trimestre o de mes a semana es una operación de *drill-down*. En la presentación, esta operación se ilustra al pasar de una vista mensual a una vista semanal para el mes de enero [@santizo2026cubos].
+
+### Roll-up
+
+El *roll-up* es la operación inversa. Permite agrupar datos detallados para obtener resúmenes de mayor nivel. Por ejemplo, las ventas diarias pueden agregarse como ventas mensuales, trimestrales o anuales; las ventas por tienda pueden agregarse como ventas por estado o por país.
+
+::: {.callout-note appearance=“minimal”}
+Definición. Una operación de roll-up reemplaza un nivel detallado $\ell'$ de una dimensión por un nivel más agregado $\ell$ y combina las celdas mediante una función de agregación $A$.
+$$
+C_{\ell}(d)=A\left(\{C_{\ell'}(d'):\; d' \mapsto d\}\right)
+$$
+:::
+
+La función $A$ puede ser una suma, un promedio, un máximo, un conteo o una medida derivada. En ventas suele usarse la suma; en precios puede ser más adecuado usar promedio ponderado; en inventarios puede usarse el valor final de periodo.
+
+### Slice
+
+La operación *slice* fija un valor específico en una dimensión y devuelve un subcubo con una dimensión menos. Si el cubo original tiene dimensiones Región, Tiempo y Producto, fijar Producto = Tablets produce una vista Región $\times$ Tiempo.
+
+::: {.callout-note appearance=“minimal”}
+Definición. Dado un cubo $C:D_1\times\cdots\times D_k\rightarrow\mathbb{R}$, una operación slice fija una dimensión $D_j$ en un valor $a\in D_j$.
+$$
+C_{D_j=a}(d_1,\ldots,d_{j-1},d_{j+1},\ldots,d_k)=C(d_1,\ldots,a,\ldots,d_k)
+$$
+:::
+
+La presentación ejemplifica esta operación al seleccionar un solo estado, un solo producto o un solo mes [@santizo2026cubos].
+
+### Dice
+
+La operación *dice* selecciona subconjuntos en dos o más dimensiones al mismo tiempo. A diferencia de *slice*, que fija un único valor en una dimensión, *dice* puede conservar varios valores por dimensión.
+
+::: {.callout-note appearance=“minimal”}
+Definición. Una operación dice restringe el cubo a subconjuntos $S_j\subseteq D_j$ en una o varias dimensiones.
+$$
+C_{S_1,\ldots,S_k}=C\big|_{S_1\times\cdots\times S_k}
+$$
+:::
+
+Por ejemplo, se puede seleccionar Tiempo $\in \{\text{Enero},\text{Febrero}\}$ y Producto $\in \{\text{Smartphones},\text{Tablets}\}$. También se puede restringir Región $\in \{\text{Jalisco},\text{Estado de México}\}$ y Tiempo $\in \{\text{Enero},\text{Febrero}\}$.
+
+### Pivot o rotate
+
+La operación *pivot* cambia la orientación de la vista sin alterar los datos subyacentes. En una tabla, esto equivale a intercambiar filas y columnas o a reordenar dimensiones para responder otra pregunta. Por ejemplo, una tabla con semanas en filas y productos en columnas responde: “¿cuánto se vendió de cada producto en cada semana?”. Al pivotar, una tabla con productos en filas y semanas en columnas responde: “¿cómo se comportó cada producto a lo largo de las semanas?” [@santizo2026cubos].
+
+::: {.callout-note appearance=“minimal”}
+Definición. Una operación pivot aplica una permutación $\pi$ al orden de las dimensiones de un cubo.
+$$
+C^{\pi}(d_{\pi(1)},\ldots,d_{\pi(k)})=C(d_1,\ldots,d_k)
+$$
+:::
+
+Esta operación es especialmente útil para visualización. No cambia la granularidad ni los valores agregados; cambia la forma en que se presentan los ejes.
+
+## Ejemplo reproducible en Python
+
+La presentación propone un ejercicio con ventas trimestrales de una empresa mexicana de electrónica. Las dimensiones son Región, Tiempo y Producto, y la medida son ventas expresadas en cientos de miles de pesos mexicanos [@santizo2026cubos]. A continuación se construye el cubo de datos en Python.
+
+```{python}
+import pandas as pd
+
+records = [
+    # Norte
+    ("Norte", "T1", "Televisores", 35), ("Norte", "T1", "Computadoras", 22),
+    ("Norte", "T1", "Lavadoras", 10), ("Norte", "T1", "Cámaras", 14),
+    ("Norte", "T2", "Televisores", 28), ("Norte", "T2", "Computadoras", 26),
+    ("Norte", "T2", "Lavadoras", 13), ("Norte", "T2", "Cámaras", 17),
+    ("Norte", "T3", "Televisores", 18), ("Norte", "T3", "Computadoras", 15),
+    ("Norte", "T3", "Lavadoras", 8), ("Norte", "T3", "Cámaras", 12),
+    ("Norte", "T4", "Televisores", 30), ("Norte", "T4", "Computadoras", 33),
+    ("Norte", "T4", "Lavadoras", 16), ("Norte", "T4", "Cámaras", 15),
+
+    # Centro
+    ("Centro", "T1", "Televisores", 40), ("Centro", "T1", "Computadoras", 30),
+    ("Centro", "T1", "Lavadoras", 18), ("Centro", "T1", "Cámaras", 11),
+    ("Centro", "T2", "Televisores", 32), ("Centro", "T2", "Computadoras", 28),
+    ("Centro", "T2", "Lavadoras", 20), ("Centro", "T2", "Cámaras", 14),
+    ("Centro", "T3", "Televisores", 25), ("Centro", "T3", "Computadoras", 19),
+    ("Centro", "T3", "Lavadoras", 15), ("Centro", "T3", "Cámaras", 10),
+    ("Centro", "T4", "Televisores", 38), ("Centro", "T4", "Computadoras", 35),
+    ("Centro", "T4", "Lavadoras", 22), ("Centro", "T4", "Cámaras", 16),
+
+    # Occidente
+    ("Occidente", "T1", "Televisores", 20), ("Occidente", "T1", "Computadoras", 27),
+    ("Occidente", "T1", "Lavadoras", 9), ("Occidente", "T1", "Cámaras", 6),
+    ("Occidente", "T2", "Televisores", 24), ("Occidente", "T2", "Computadoras", 31),
+    ("Occidente", "T2", "Lavadoras", 11), ("Occidente", "T2", "Cámaras", 8),
+    ("Occidente", "T3", "Televisores", 29), ("Occidente", "T3", "Computadoras", 36),
+    ("Occidente", "T3", "Lavadoras", 7), ("Occidente", "T3", "Cámaras", 9),
+    ("Occidente", "T4", "Televisores", 19), ("Occidente", "T4", "Computadoras", 34),
+    ("Occidente", "T4", "Lavadoras", 10), ("Occidente", "T4", "Cámaras", 5),
+
+    # Sureste
+    ("Sureste", "T1", "Televisores", 26), ("Sureste", "T1", "Computadoras", 17),
+    ("Sureste", "T1", "Lavadoras", 12), ("Sureste", "T1", "Cámaras", 9),
+    ("Sureste", "T2", "Televisores", 21), ("Sureste", "T2", "Computadoras", 20),
+    ("Sureste", "T2", "Lavadoras", 16), ("Sureste", "T2", "Cámaras", 11),
+    ("Sureste", "T3", "Televisores", 23), ("Sureste", "T3", "Computadoras", 18),
+    ("Sureste", "T3", "Lavadoras", 14), ("Sureste", "T3", "Cámaras", 10),
+    ("Sureste", "T4", "Televisores", 27), ("Sureste", "T4", "Computadoras", 24),
+    ("Sureste", "T4", "Lavadoras", 19), ("Sureste", "T4", "Cámaras", 12),
+]
+
+df = pd.DataFrame(records, columns=["region", "tiempo", "producto", "ventas"])
+df.head()
+```
+
+### Representación como cubo
+
+En `pandas`, una forma natural de representar el cubo es usar un índice múltiple. Cada celda queda identificada por una tupla `(region, tiempo, producto)`.
+
+```{python}
+cubo = df.set_index(["region", "tiempo", "producto"]).sort_index()
+cubo.head(10)
+```
+
+También se puede construir una vista tabular con productos como columnas. Esta vista es conveniente para reportes, aunque internamente sigue representando el mismo cubo.
+
+```{python}
+vista = df.pivot_table(
+    index=["region", "tiempo"],
+    columns="producto",
+    values="ventas",
+    aggfunc="sum",
+    fill_value=0,
+)
+vista
+```
+
+## Implementación de operaciones OLAP
+
+### Slice: fijar un trimestre
+
+El ejercicio pide realizar una operación *slice* fijando Tiempo = T2. El resultado conserva las dimensiones Región y Producto.
+
+```{python}
+slice_t2 = df[df["tiempo"] == "T2"]
+slice_t2.pivot_table(
+    index="region",
+    columns="producto",
+    values="ventas",
+    aggfunc="sum",
+    fill_value=0,
+)
+```
+
+Esta salida permite comparar las ventas del segundo trimestre entre regiones y productos.
+
+### Dice: seleccionar regiones, tiempos y productos
+
+El ejercicio también solicita una operación *dice* con Región = Norte o Centro, Tiempo = T1 o T4 y Producto = Televisores o Cámaras.
+
+```{python}
+dice = df[
+    df["region"].isin(["Norte", "Centro"])
+    & df["tiempo"].isin(["T1", "T4"])
+    & df["producto"].isin(["Televisores", "Cámaras"])
+]
+
+dice.pivot_table(
+    index=["region", "tiempo"],
+    columns="producto",
+    values="ventas",
+    aggfunc="sum",
+    fill_value=0,
+)
+```
+
+La operación reduce el cubo original a un subcubo con dos regiones, dos periodos y dos productos. El resultado es más pequeño, pero conserva la estructura multidimensional.
+
+### Roll-up: agrupar regiones en zonas
+
+El ejercicio pide crear dos categorías regionales: Zona Norte-Centro y Zona Occidente-Sureste. Esto es un *roll-up* sobre la dimensión Región.
+
+```{python}
+mapa_zonas = {
+    "Norte": "Zona Norte-Centro",
+    "Centro": "Zona Norte-Centro",
+    "Occidente": "Zona Occidente-Sureste",
+    "Sureste": "Zona Occidente-Sureste",
+}
+
+df_zonas = df.assign(zona=df["region"].map(mapa_zonas))
+
+rollup_zonas = df_zonas.pivot_table(
+    index=["zona", "tiempo"],
+    columns="producto",
+    values="ventas",
+    aggfunc="sum",
+    fill_value=0,
+)
+
+rollup_zonas
+```
+
+En este caso la función de agregación es la suma. Por ejemplo, las ventas de Televisores en T1 para Zona Norte-Centro se obtienen como Norte-T1-Televisores más Centro-T1-Televisores.
+
+### Pivot: cambiar la orientación de la consulta
+
+Para estudiar la evolución temporal de cada producto, se puede pivotar la tabla y colocar productos en filas y trimestres en columnas.
+
+```{python}
+pivot_producto_tiempo = df.pivot_table(
+    index="producto",
+    columns="tiempo",
+    values="ventas",
+    aggfunc="sum",
+    fill_value=0,
+)
+
+pivot_producto_tiempo
+```
+
+Esta vista responde una pregunta distinta: ya no se enfatiza la región, sino el comportamiento temporal agregado de cada producto.
+
+## Agregaciones y medidas derivadas
+
+Las medidas de un cubo pueden ser simples o derivadas. Una medida simple es la suma de ventas; una medida derivada puede ser participación porcentual, crecimiento trimestral o margen. En OLAP conviene distinguir entre medidas aditivas, semi-aditivas y no aditivas [@kimball2013data].
+
+::: {.callout-note appearance=“minimal”}
+Definición. Una medida aditiva puede agregarse mediante suma a lo largo de todas las dimensiones relevantes del cubo.
+$$
+M(A\cup B)=M(A)+M(B),\qquad A\cap B=\varnothing
+$$
+:::
+
+Las ventas son usualmente aditivas: se pueden sumar por producto, región y tiempo. En cambio, una tasa de conversión no debe agregarse sumando porcentajes; debe recalcularse a partir de numeradores y denominadores.
+
+El siguiente ejemplo calcula ventas totales por producto y participación porcentual dentro del total.
+
+```{python}
+ventas_producto = (
+    df.groupby("producto", as_index=False)["ventas"]
+    .sum()
+    .assign(participacion=lambda x: x["ventas"] / x["ventas"].sum())
+)
+
+ventas_producto
+```
+
+También se puede calcular el crecimiento entre trimestres para cada producto. En este caso, el cubo se reorganiza por producto y tiempo.
+
+```{python}
+ventas_tiempo = (
+    df.groupby(["producto", "tiempo"], as_index=False)["ventas"]
+    .sum()
+    .sort_values(["producto", "tiempo"])
+)
+
+ventas_tiempo["crecimiento"] = ventas_tiempo.groupby("producto")["ventas"].pct_change()
+ventas_tiempo
+```
+
+## Ventajas, limitaciones y criterios de diseño
+
+La presentación enumera como ventajas de OLAP el análisis rápido de grandes datos, la visión multidimensional, la identificación de patrones y tendencias, el soporte para decisiones y la comparación entre periodos, regiones o productos [@santizo2026cubos]. Estas ventajas se explican por la preagregación, el modelado dimensional y la separación entre cargas transaccionales y cargas analíticas.
+
+Sin embargo, OLAP también tiene limitaciones. Puede requerir mucho almacenamiento, no siempre se actualiza en tiempo real, el diseño del cubo puede ser complejo y depende de una buena calidad de datos [@santizo2026cubos]. En un entorno profesional, estas limitaciones se traducen en decisiones concretas:
+
+- Definir qué dimensiones realmente aportan valor analítico.
+- Elegir la granularidad mínima necesaria.
+- Evitar jerarquías ambiguas o inconsistentes.
+- Validar calidad de datos antes de construir agregados.
+- Documentar las reglas de negocio usadas en cada medida.
+
+Un error común consiste en pensar que un cubo OLAP resuelve automáticamente la calidad de los datos. En realidad, el cubo amplifica los problemas de integración: categorías mal escritas, fechas incompletas, productos duplicados o regiones inconsistentes pueden producir agregaciones incorrectas.
+
+## Buenas prácticas para documentación reproducible
+
+Cuando un cubo se usa en un reporte técnico o curso de ciencia de datos, conviene documentar el proceso completo: fuente de datos, transformaciones, reglas de agregación y consultas realizadas. Quarto permite combinar explicación, matemáticas, código ejecutable y resultados en un mismo documento. Para que el análisis sea reproducible, se recomienda:
+
+1. Cargar los datos desde una fuente controlada.
+2. Construir el cubo mediante código, no manualmente.
+3. Separar definiciones conceptuales de operaciones computacionales.
+4. Mostrar consultas representativas: *slice*, *dice*, *roll-up*, *drill-down* y *pivot*.
+5. Verificar que las agregaciones coincidan con las reglas de negocio.
+
+El siguiente bloque resume una función reutilizable para construir vistas OLAP simples a partir de una tabla larga.
+
+```{python}
+def vista_olap(datos, filas, columnas, medida="ventas", agregacion="sum"):
+    """Construye una vista tabular tipo OLAP con pandas.
+
+    Parameters
+    ----------
+    datos : pandas.DataFrame
+        Tabla en formato largo.
+    filas : str or list[str]
+        Dimensiones colocadas en las filas.
+    columnas : str or list[str]
+        Dimensiones colocadas en las columnas.
+    medida : str
+        Variable numérica que se agregará.
+    agregacion : str or callable
+        Función de agregación, por ejemplo "sum", "mean" o "count".
+    """
+    return datos.pivot_table(
+        index=filas,
+        columns=columnas,
+        values=medida,
+        aggfunc=agregacion,
+        fill_value=0,
+    )
+
+vista_olap(df, filas=["region", "tiempo"], columnas="producto")
+```
+
+## Conclusiones
+
+Los cubos de datos OLAP son una herramienta central para organizar, resumir y explorar información multidimensional. Su valor no está solo en la representación visual de un cubo, sino en el modelo conceptual que conecta dimensiones, jerarquías, medidas y operaciones de navegación. A partir de una tabla transaccional, un cubo permite responder preguntas como: cuánto se vendió, dónde se vendió, cuándo ocurrió, qué productos dominaron y cómo cambian los patrones al modificar el nivel de agregación.
+
+Las operaciones *drill-down*, *roll-up*, *slice*, *dice* y *pivot* constituyen el lenguaje básico para interactuar con un cubo. En conjunto, permiten pasar de resúmenes ejecutivos a análisis detallados, restringir subconjuntos relevantes y reorientar la información según la pregunta de negocio. Implementarlas en Python con `pandas` facilita la reproducibilidad y ayuda a conectar la teoría de OLAP con prácticas modernas de ciencia de datos.
+
+Finalmente, el diseño de un cubo exige decisiones cuidadosas sobre granularidad, calidad de datos, jerarquías y medidas. Un cubo bien diseñado mejora la interpretación y la toma de decisiones; un cubo mal diseñado puede producir conclusiones engañosas aunque las consultas sean técnicamente correctas.
+
+## Referencias
+
+::: {#refs}
+:::
