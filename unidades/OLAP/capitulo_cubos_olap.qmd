@@ -24,7 +24,6 @@ bibliography: referencias_cubos_olap.bib
 ---
 
 
-
 Los cubos de datos son una forma de organizar información multidimensional para análisis resumido, exploración interactiva y toma de decisiones. En una arquitectura típica de *data warehouse*, los datos se extraen de sistemas transaccionales, pasan por procesos de limpieza e integración, se almacenan en un repositorio analítico y se presentan mediante reportes, minería de datos o cubos OLAP. Esta secuencia aparece en la presentación base, donde se recuerda el flujo general desde fuentes de datos hasta almacenamiento, *data marts* y presentación analítica [@santizo2026cubos].
 
 El objetivo de este capítulo es convertir esa idea en una formulación técnica y reproducible. Se presentará el concepto de procesamiento analítico en línea, la estructura matemática de un cubo de datos, sus principales operaciones y una implementación práctica en Python. La discusión se apoya en la tradición de almacenes de datos [@inmon2005building; @kimball2013data], en la literatura clásica sobre OLAP y cubos de datos [@chaudhuri1997overview; @gray1997data], y en herramientas modernas de análisis tabular como `pandas` [@mckinney2010data; @pandas2024docs].
@@ -158,6 +157,304 @@ $$
 :::
 
 Esta operación es especialmente útil para visualización. No cambia la granularidad ni los valores agregados; cambia la forma en que se presentan los ejes.
+
+
+## Cálculo manual de un cubo OLAP en un dataset pequeño
+
+Antes de implementar operaciones OLAP con Python, conviene resolver un ejemplo pequeño a mano. El objetivo didáctico es que el estudiante pueda reconocer las dimensiones, identificar las celdas del cubo, calcular totales y ejecutar operaciones básicas como *slice* y *roll-up* sin depender todavía de una biblioteca computacional.
+
+Consideremos una empresa con ventas trimestrales por **tiempo**, **ubicación** y **departamento**. Los departamentos son
+
+$$
+(M,P,D,E)=(\text{Madera},\text{Plomería},\text{Decoración},\text{Eléctrico}).
+$$
+
+La medida del cubo será el valor de ventas. Las dimensiones son:
+
+- $D_1=\text{Ubicación}=\{\text{CDMX},\text{Guadalajara},\text{Monterrey},\text{Mérida}\}$.
+- $D_2=\text{Tiempo}=\{T1,T2\}$.
+- $D_3=\text{Departamento}=\{M,P,D,E\}$.
+
+Por tanto, el cubo puede representarse como una función
+
+$$
+C:\text{Ubicación}\times \text{Tiempo}\times \text{Departamento}\longrightarrow \mathbb{R}.
+$$
+
+La siguiente tabla contiene los datos originales.
+
+| Tiempo | CDMX $(M,P,D,E)$ | Guadalajara $(M,P,D,E)$ |
+|---|---:|---:|
+| T1 | $(70,40,20,30)$ | $(60,35,25,40)$ |
+| T2 | $(50,60,22,28)$ | $(45,50,30,35)$ |
+
+| Tiempo | Monterrey $(M,P,D,E)$ | Mérida $(M,P,D,E)$ |
+|---|---:|---:|
+| T1 | $(48,38,18,26)$ | $(52,42,15,37)$ |
+| T2 | $(36,55,25,30)$ | $(44,33,20,28)$ |
+
+### Paso 1: representar las celdas del cubo
+
+Cada número de la tabla corresponde a una celda del cubo. Por ejemplo,
+
+$$
+C(\text{CDMX},T1,\text{Madera})=70,
+$$
+
+$$
+C(\text{CDMX},T1,\text{Eléctrico})=30,
+$$
+
+$$
+C(\text{Mérida},T2,\text{Plomería})=33.
+$$
+
+En este caso hay
+
+$$
+4\;\text{ubicaciones}\times 2\;\text{trimestres}\times 4\;\text{departamentos}=32
+$$
+
+celdas elementales. La representación del cubo consiste en organizar esas 32 celdas de forma que puedan consultarse por cualquiera de sus dimensiones.
+
+### Paso 2: calcular totales por ubicación
+
+El total por ubicación se obtiene sumando todos los trimestres y todos los departamentos de una misma ubicación:
+
+$$
+\text{Total}(u)=\sum_{t\in\{T1,T2\}}\sum_{d\in\{M,P,D,E\}} C(u,t,d).
+$$
+
+Para CDMX:
+
+$$
+\begin{aligned}
+\text{Total}(\text{CDMX})
+&=(70+40+20+30)+(50+60+22+28)\\
+&=160+160\\
+&=320.
+\end{aligned}
+$$
+
+Para Guadalajara:
+
+$$
+\begin{aligned}
+\text{Total}(\text{Guadalajara})
+&=(60+35+25+40)+(45+50+30+35)\\
+&=160+160\\
+&=320.
+\end{aligned}
+$$
+
+Para Monterrey:
+
+$$
+\begin{aligned}
+\text{Total}(\text{Monterrey})
+&=(48+38+18+26)+(36+55+25+30)\\
+&=130+146\\
+&=276.
+\end{aligned}
+$$
+
+Para Mérida:
+
+$$
+\begin{aligned}
+\text{Total}(\text{Mérida})
+&=(52+42+15+37)+(44+33+20+28)\\
+&=146+125\\
+&=271.
+\end{aligned}
+$$
+
+La tabla de totales por ubicación queda:
+
+| Ubicación | Total |
+|---|---:|
+| CDMX | 320 |
+| Guadalajara | 320 |
+| Monterrey | 276 |
+| Mérida | 271 |
+| **Total general** | **1187** |
+
+### Paso 3: calcular totales por tiempo
+
+El total por tiempo se obtiene sumando todas las ubicaciones y departamentos para cada trimestre:
+
+$$
+\text{Total}(t)=\sum_u\sum_d C(u,t,d).
+$$
+
+Para $T1$:
+
+$$
+\begin{aligned}
+\text{Total}(T1)&=(160)+(160)+(130)+(146)\\
+&=596.
+\end{aligned}
+$$
+
+Para $T2$:
+
+$$
+\begin{aligned}
+\text{Total}(T2)&=(160)+(160)+(146)+(125)\\
+&=591.
+\end{aligned}
+$$
+
+| Tiempo | Total |
+|---|---:|
+| T1 | 596 |
+| T2 | 591 |
+| **Total general** | **1187** |
+
+### Paso 4: calcular totales por departamento
+
+Ahora se suman todas las ubicaciones y tiempos para cada departamento:
+
+$$
+\text{Total}(d)=\sum_u\sum_t C(u,t,d).
+$$
+
+Para Madera:
+
+$$
+70+50+60+45+48+36+52+44=405.
+$$
+
+Para Plomería:
+
+$$
+40+60+35+50+38+55+42+33=353.
+$$
+
+Para Decoración:
+
+$$
+20+22+25+30+18+25+15+20=175.
+$$
+
+Para Eléctrico:
+
+$$
+30+28+40+35+26+30+37+28=254.
+$$
+
+| Departamento | Total |
+|---|---:|
+| Madera | 405 |
+| Plomería | 353 |
+| Decoración | 175 |
+| Eléctrico | 254 |
+| **Total general** | **1187** |
+
+### Paso 5: operación slice a mano
+
+Supongamos que se pide aplicar un *slice* con las siguientes condiciones:
+
+$$
+\text{ubicación}\in\{\text{CDMX},\text{Mérida}\},\qquad
+\text{tiempo}=T1,
+$$
+
+$$
+\text{departamento}\in\{\text{Madera},\text{Eléctrico}\}.
+$$
+
+Aunque en sentido estricto un *slice* fija una dimensión en un valor, en ejercicios introductorios suele combinarse con una selección de subconjuntos. En una terminología más precisa, fijar $T1$ es un *slice*, mientras que seleccionar varias ubicaciones y varios departamentos es una restricción tipo *dice* sobre el subcubo resultante.
+
+Se buscan únicamente las celdas:
+
+$$
+C(\text{CDMX},T1,\text{Madera})=70,
+$$
+
+$$
+C(\text{CDMX},T1,\text{Eléctrico})=30,
+$$
+
+$$
+C(\text{Mérida},T1,\text{Madera})=52,
+$$
+
+$$
+C(\text{Mérida},T1,\text{Eléctrico})=37.
+$$
+
+Por tanto, el resultado del subcubo es:
+
+| Ubicación | Tiempo | Madera | Eléctrico | Total |
+|---|---|---:|---:|---:|
+| CDMX | T1 | 70 | 30 | 100 |
+| Mérida | T1 | 52 | 37 | 89 |
+| **Total** |  | **122** | **67** | **189** |
+
+### Paso 6: operación roll-up a mano
+
+Ahora agrupemos las ubicaciones en regiones. Una posible correspondencia es:
+
+| Ubicación | Región |
+|---|---|
+| Monterrey | Norte |
+| CDMX | Centro |
+| Guadalajara | Occidente |
+| Mérida | Sureste |
+
+El *roll-up* por región se calcula reemplazando la dimensión ubicación por una dimensión más agregada llamada región:
+
+$$
+C_{\text{región}}(r,t,d)=\sum_{u:\;g(u)=r} C(u,t,d),
+$$
+
+donde $g(u)$ asigna cada ubicación a su región. In this example, each region has only one location, so the numerical values are the same as the original values, but the conceptual operation is important: the cube changes from the level *ubicación* to the level *región*.
+
+| Región | Tiempo | Madera | Plomería | Decoración | Eléctrico | Total |
+|---|---|---:|---:|---:|---:|---:|
+| Centro | T1 | 70 | 40 | 20 | 30 | 160 |
+| Centro | T2 | 50 | 60 | 22 | 28 | 160 |
+| Norte | T1 | 48 | 38 | 18 | 26 | 130 |
+| Norte | T2 | 36 | 55 | 25 | 30 | 146 |
+| Occidente | T1 | 60 | 35 | 25 | 40 | 160 |
+| Occidente | T2 | 45 | 50 | 30 | 35 | 160 |
+| Sureste | T1 | 52 | 42 | 15 | 37 | 146 |
+| Sureste | T2 | 44 | 33 | 20 | 28 | 125 |
+| **Total** |  | **405** | **353** | **175** | **254** | **1187** |
+
+Si se desea un *roll-up* regional más agregado, también se pueden definir zonas. Por ejemplo,
+
+$$
+\text{Zona Norte-Centro}=\{\text{Monterrey},\text{CDMX}\},
+$$
+
+$$
+\text{Zona Occidente-Sureste}=\{\text{Guadalajara},\text{Mérida}\}.
+$$
+
+Entonces, para la Zona Norte-Centro en $T1$:
+
+$$
+\begin{aligned}
+C(\text{Zona Norte-Centro},T1,M)&=48+70=118,\\
+C(\text{Zona Norte-Centro},T1,P)&=38+40=78,\\
+C(\text{Zona Norte-Centro},T1,D)&=18+20=38,\\
+C(\text{Zona Norte-Centro},T1,E)&=26+30=56.
+\end{aligned}
+$$
+
+El resultado completo por zonas es:
+
+| Zona | Tiempo | Madera | Plomería | Decoración | Eléctrico | Total |
+|---|---|---:|---:|---:|---:|---:|
+| Norte-Centro | T1 | 118 | 78 | 38 | 56 | 290 |
+| Norte-Centro | T2 | 86 | 115 | 47 | 58 | 306 |
+| Occidente-Sureste | T1 | 112 | 77 | 40 | 77 | 306 |
+| Occidente-Sureste | T2 | 89 | 83 | 50 | 63 | 285 |
+| **Total** |  | **405** | **353** | **175** | **254** | **1187** |
+
+Este ejemplo muestra que calcular un cubo a mano consiste en tres acciones básicas: identificar coordenadas dimensionales, sumar celdas según la agregación solicitada y conservar claramente el nivel de granularidad usado en cada resultado.
 
 ## Ejemplo reproducible en Python
 
@@ -319,6 +616,202 @@ pivot_producto_tiempo
 ```
 
 Esta vista responde una pregunta distinta: ya no se enfatiza la región, sino el comportamiento temporal agregado de cada producto.
+
+## Exploración interactiva del cubo
+
+Los bloques siguientes permiten explorar las cinco operaciones OLAP directamente en el navegador. Los controles están conectados al mismo conjunto de datos construido en Python. El código OJS se ejecuta en el cliente, por lo que no requiere un servidor activo: funciona en el sitio estático de GitHub Pages.
+
+```{python}
+#| echo: false
+ojs_define(datos_olap = df.to_dict(orient="list"))
+```
+
+```{ojs}
+//| echo: false
+datos    = transpose(datos_olap)
+regiones = [...new Set(datos.map(d => d.region))].sort()
+tiempos  = [...new Set(datos.map(d => d.tiempo))].sort()
+productos = [...new Set(datos.map(d => d.producto))].sort()
+```
+
+### Slice
+
+Fija una dimensión en un valor único. El subcubo resultante conserva las dos dimensiones restantes y muestra su distribución de ventas.
+
+```{ojs}
+viewof slice_dim = Inputs.radio(
+  ["tiempo", "region", "producto"],
+  {label: "Dimensión fija", value: "tiempo"}
+)
+
+viewof slice_val = Inputs.select(
+  slice_dim === "tiempo"   ? tiempos   :
+  slice_dim === "region"   ? regiones  : productos,
+  {label: "Valor"}
+)
+```
+
+```{ojs}
+//| echo: false
+slice_resto    = ["region", "tiempo", "producto"].filter(d => d !== slice_dim)
+slice_filtrado = datos.filter(d => d[slice_dim] === slice_val)
+
+slice_agg = Array.from(
+  d3.rollup(
+    slice_filtrado,
+    v  => d3.sum(v, d => d.ventas),
+    d  => d[slice_resto[0]],
+    d  => d[slice_resto[1]]
+  ),
+  ([a, m]) => Array.from(m, ([b, ventas]) => ({
+    [slice_resto[0]]: a,
+    [slice_resto[1]]: b,
+    ventas
+  }))
+).flat()
+
+Plot.plot({
+  title:  `Slice — ${slice_dim} = "${slice_val}"`,
+  color:  {legend: true, label: slice_resto[0]},
+  x:      {label: slice_resto[1]},
+  y:      {label: "Ventas (100K MXN)", grid: true},
+  fx:     {label: slice_resto[0]},
+  width:  680,
+  height: 280,
+  marks: [
+    Plot.barY(slice_agg, {
+      x:    slice_resto[1],
+      y:    "ventas",
+      fill: slice_resto[0],
+      fx:   slice_resto[0],
+      tip:  true
+    }),
+    Plot.ruleY([0])
+  ]
+})
+```
+
+```{ojs}
+//| echo: false
+Inputs.table(slice_agg, {sort: "ventas", reverse: true})
+```
+
+### Roll-up y Drill-down
+
+Cambia el nivel de agregación de la dimensión geográfica. Seleccionar *Zona* aplica un **roll-up** que agrupa regiones; volver a *Región* aplica un **drill-down** que recupera el detalle.
+
+```{ojs}
+viewof nivel_geo = Inputs.radio(
+  ["Región  (drill-down)", "Zona  (roll-up)"],
+  {label: "Nivel geográfico", value: "Región  (drill-down)"}
+)
+```
+
+```{ojs}
+//| echo: false
+zona_map = new Map([
+  ["Norte",     "Zona Norte-Centro"],
+  ["Centro",    "Zona Norte-Centro"],
+  ["Occidente", "Zona Occidente-Sureste"],
+  ["Sureste",   "Zona Occidente-Sureste"]
+])
+
+datos_geo = nivel_geo.startsWith("Zona")
+  ? datos.map(d => ({...d, region: zona_map.get(d.region)}))
+  : datos
+
+geo_agg = Array.from(
+  d3.rollup(
+    datos_geo,
+    v  => d3.sum(v, d => d.ventas),
+    d  => d.region,
+    d  => d.tiempo
+  ),
+  ([region, m]) => Array.from(m, ([tiempo, ventas]) => ({region, tiempo, ventas}))
+).flat()
+
+Plot.plot({
+  title:  nivel_geo.startsWith("Zona")
+            ? "Roll-up — ventas por zona geográfica y trimestre"
+            : "Drill-down — ventas por región y trimestre",
+  color:  {legend: true, label: "Región / Zona"},
+  x:      {label: "Trimestre"},
+  y:      {label: "Ventas (100K MXN)", grid: true},
+  fx:     {label: nivel_geo.startsWith("Zona") ? "Zona" : "Región"},
+  width:  680,
+  height: 280,
+  marks: [
+    Plot.barY(geo_agg, {
+      x:    "tiempo",
+      y:    "ventas",
+      fill: "region",
+      fx:   "region",
+      tip:  true
+    }),
+    Plot.ruleY([0])
+  ]
+})
+```
+
+### Dice
+
+Selecciona subconjuntos en dos o más dimensiones al mismo tiempo. Desmarcar opciones reduce el subcubo; la gráfica y la tabla se actualizan en tiempo real.
+
+```{ojs}
+viewof dice_reg  = Inputs.checkbox(regiones,  {label: "Regiones",    value: regiones})
+viewof dice_tpo  = Inputs.checkbox(tiempos,   {label: "Trimestres",  value: tiempos})
+viewof dice_prod = Inputs.checkbox(productos, {label: "Productos",   value: productos})
+```
+
+```{ojs}
+//| echo: false
+dice_filtrado = datos.filter(d =>
+  dice_reg.includes(d.region)   &&
+  dice_tpo.includes(d.tiempo)   &&
+  dice_prod.includes(d.producto)
+)
+
+dice_agg = Array.from(
+  d3.rollup(
+    dice_filtrado,
+    v  => d3.sum(v, d => d.ventas),
+    d  => d.region,
+    d  => d.producto
+  ),
+  ([region, m]) => Array.from(m, ([producto, ventas]) => ({region, producto, ventas}))
+).flat()
+
+dice_agg.length > 0
+  ? Plot.plot({
+      title:  "Dice — subcubo seleccionado",
+      color:  {legend: true, label: "Producto"},
+      x:      {label: "Producto", axis: null},
+      y:      {label: "Ventas (100K MXN)", grid: true},
+      fx:     {label: "Región"},
+      width:  680,
+      height: 280,
+      marks: [
+        Plot.barY(dice_agg, {
+          x:    "producto",
+          y:    "ventas",
+          fill: "producto",
+          fx:   "region",
+          tip:  true
+        }),
+        Plot.ruleY([0])
+      ]
+    })
+  : html`<p style="color:gray;font-style:italic">
+      Selecciona al menos un valor en cada dimensión para ver resultados.
+    </p>`
+```
+
+```{ojs}
+//| echo: false
+dice_agg.length > 0
+  ? Inputs.table(dice_agg, {sort: "ventas", reverse: true})
+  : html``
+```
 
 ## Agregaciones y medidas derivadas
 
