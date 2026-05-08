@@ -234,6 +234,248 @@ El algoritmo Apriori, propuesto en @agrawal1994fast, fue el primero en resolver 
 
 El funcionamiento a alto nivel es el siguiente: en cada iteración $k$, el algoritmo genera candidatos de tamaño $k$ a partir de los itemsets frecuentes de tamaño $k-1$ (fase de unión), descarta aquellos que contienen subconjuntos infrecuentes (fase de poda) y escanea el dataset para calcular el soporte de los candidatos restantes. El proceso termina cuando no se pueden generar nuevos candidatos frecuentes.
 
+```{=html}
+<div id="apriori-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+
+  <div style="text-align:center;margin-bottom:6px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Algoritmo Apriori — visualizador paso a paso</span><br>
+    <span style="font-size:0.82em;color:#666;">Dataset: 5 transacciones · 4 ítems · ajusta el soporte mínimo y observa cómo cambia la poda</span>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin:14px 0 18px;flex-wrap:wrap;">
+    <label style="font-size:0.88em;font-weight:bold;color:#1a3a5c;">
+      Soporte mínimo &sigma;<sub>min</sub>:
+      <span id="ap-sval" style="color:#e05800;font-size:1.1em;">0.40</span>
+    </label>
+    <input id="ap-slider" type="range" min="1" max="5" step="1" value="2"
+      style="width:180px;accent-color:#1a3a5c;"
+      oninput="aprioriUpdate(this.value)">
+    <span style="font-size:0.78em;color:#888;">0.20 &nbsp;·&nbsp; 0.40 &nbsp;·&nbsp; 0.60 &nbsp;·&nbsp; 0.80</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+
+    <!-- Left: transaction database -->
+    <div>
+      <div style="font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:6px;letter-spacing:.03em;">BASE DE TRANSACCIONES</div>
+      <table id="ap-db" style="width:100%;border-collapse:collapse;font-size:0.82em;">
+        <thead>
+          <tr style="background:#e8edf3;">
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccd;">Trans.</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccd;">Ítems</th>
+          </tr>
+        </thead>
+        <tbody id="ap-db-body"></tbody>
+      </table>
+      <div style="margin-top:14px;font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:6px;letter-spacing:.03em;">FRECUENCIAS BASE</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.81em;">
+        <thead>
+          <tr style="background:#e8edf3;">
+            <th style="padding:4px 8px;text-align:left;border:1px solid #ccd;">Ítem</th>
+            <th style="padding:4px 8px;text-align:right;border:1px solid #ccd;">Conteo</th>
+            <th style="padding:4px 8px;text-align:right;border:1px solid #ccd;">Soporte</th>
+          </tr>
+        </thead>
+        <tbody id="ap-freq-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Right: Apriori iterations -->
+    <div id="ap-iterations"></div>
+  </div>
+
+  <!-- Legend -->
+  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:0.79em;color:#555;justify-content:center;">
+    <span><span style="display:inline-block;width:12px;height:12px;background:#c8efc8;border:1px solid #5a9;border-radius:2px;vertical-align:middle;"></span> Frecuente (&ge; &sigma;<sub>min</sub>)</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#fde8d8;border:1px solid #d97;border-radius:2px;vertical-align:middle;"></span> Infrecuente (&lt; &sigma;<sub>min</sub>)</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#f0e0f0;border:1px solid #a8a;border-radius:2px;vertical-align:middle;"></span> Podado (antimonotonía)</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#eeeeee;border:1px solid #bbb;border-radius:2px;vertical-align:middle;"></span> No generado</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* ── dataset ─────────────────────────────────────────── */
+  const TXS = [
+    {id:"T1", items:["leche","pan","mantequilla"]},
+    {id:"T2", items:["leche","pan"]},
+    {id:"T3", items:["leche","mantequilla"]},
+    {id:"T4", items:["pan","mantequilla"]},
+    {id:"T5", items:["leche","pan","queso"]},
+  ];
+  const N = TXS.length;
+  const ALL_ITEMS = ["leche","pan","mantequilla","queso"];
+
+  /* ── populate transaction table ──────────────────────── */
+  const dbBody = document.getElementById('ap-db-body');
+  TXS.forEach(t => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="padding:4px 8px;border:1px solid #dde;font-weight:bold;">${t.id}</td>
+      <td style="padding:4px 8px;border:1px solid #dde;">${t.items.join(', ')}</td>`;
+    dbBody.appendChild(tr);
+  });
+
+  /* ── support helper ──────────────────────────────────── */
+  function countSupport(itemset) {
+    return TXS.filter(t => itemset.every(x => t.items.includes(x))).length;
+  }
+
+  /* ── populate base frequency table ──────────────────── */
+  const freqBody = document.getElementById('ap-freq-body');
+  ALL_ITEMS.forEach(item => {
+    const cnt = countSupport([item]);
+    const sup = (cnt/N).toFixed(2);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="padding:3px 8px;border:1px solid #dde;">${item}</td>
+      <td style="padding:3px 8px;border:1px solid #dde;text-align:right;">${cnt}/${N}</td>
+      <td style="padding:3px 8px;border:1px solid #dde;text-align:right;">${sup}</td>`;
+    freqBody.appendChild(tr);
+  });
+
+  /* ── generate combinations ───────────────────────────── */
+  function combinations(arr, k) {
+    if (k === 1) return arr.map(x => [x]);
+    const result = [];
+    for (let i = 0; i < arr.length; i++)
+      for (const rest of combinations(arr.slice(i+1), k-1))
+        result.push([arr[i], ...rest]);
+    return result;
+  }
+
+  function subsetsOfSize(set, k) {
+    return combinations(set, k);
+  }
+
+  function setKey(set) { return [...set].sort().join(','); }
+
+  /* ── run Apriori ─────────────────────────────────────── */
+  function runApriori(sigmaMin) {
+    const iterations = [];
+    let prevFrequent = null;    // L_{k-1}
+    let prevFreqSet  = null;    // Set of keys of L_{k-1}
+
+    for (let k = 1; k <= 3; k++) {
+      let candidates;
+      let prunedByAntimonotony = new Set();
+
+      if (k === 1) {
+        candidates = ALL_ITEMS.map(x => [x]);
+      } else {
+        // Generate C_k from L_{k-1}: join step
+        const items = [...new Set(prevFrequent.flat())].sort();
+        candidates = combinations(items, k);
+
+        // Prune step: remove candidates with any infrequent (k-1)-subset
+        const filtered = [];
+        for (const cand of candidates) {
+          const subs = subsetsOfSize(cand, k-1);
+          const anyInfrequent = subs.some(s => !prevFreqSet.has(setKey(s)));
+          if (anyInfrequent) {
+            prunedByAntimonotony.add(setKey(cand));
+          } else {
+            filtered.push(cand);
+          }
+        }
+        // We still want to display pruned ones, so keep full candidate list
+        // but track which are pruned
+      }
+
+      const rows = candidates.map(cand => {
+        const key = setKey(cand);
+        if (k > 1 && prunedByAntimonotony.has(key)) {
+          return { itemset: cand, count: '—', support: '—', status: 'pruned' };
+        }
+        const cnt = countSupport(cand);
+        const sup = cnt / N;
+        return {
+          itemset: cand,
+          count: cnt,
+          support: sup,
+          status: sup >= sigmaMin ? 'frequent' : 'infrequent'
+        };
+      });
+
+      const frequentRows = rows.filter(r => r.status === 'frequent');
+      iterations.push({ k, rows, prunedByAntimonotony });
+
+      if (frequentRows.length === 0) break;
+
+      prevFrequent = frequentRows.map(r => r.itemset);
+      prevFreqSet  = new Set(frequentRows.map(r => setKey(r.itemset)));
+    }
+    return iterations;
+  }
+
+  /* ── render ──────────────────────────────────────────── */
+  const STEP_LABELS = {
+    frequent:   { bg:'#c8efc8', bd:'#5a9', label:'frecuente' },
+    infrequent: { bg:'#fde8d8', bd:'#d97', label:'infrecuente' },
+    pruned:     { bg:'#f0e0f0', bd:'#a8a', label:'podado (antimonotonía)' },
+  };
+
+  function renderIterations(sigmaMin) {
+    const container = document.getElementById('ap-iterations');
+    container.innerHTML = '';
+    const iterations = runApriori(sigmaMin);
+
+    iterations.forEach(({k, rows}) => {
+      const nFreq = rows.filter(r=>r.status==='frequent').length;
+      const section = document.createElement('div');
+      section.style.cssText = 'margin-bottom:14px;';
+
+      section.innerHTML = `<div style="font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:5px;letter-spacing:.03em;">
+        ITERACIÓN k = ${k}
+        <span style="font-weight:normal;color:#666;">— ${nFreq} itemset${nFreq!==1?'s':''} frecuente${nFreq!==1?'s':''}</span>
+      </div>`;
+
+      const tbl = document.createElement('table');
+      tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.80em;';
+      tbl.innerHTML = `<thead><tr style="background:#e8edf3;">
+        <th style="padding:4px 7px;text-align:left;border:1px solid #ccd;">${k}-itemset</th>
+        <th style="padding:4px 7px;text-align:right;border:1px solid #ccd;">Conteo</th>
+        <th style="padding:4px 7px;text-align:right;border:1px solid #ccd;">Soporte</th>
+        <th style="padding:4px 7px;text-align:left;border:1px solid #ccd;">Estado</th>
+      </tr></thead>`;
+
+      const tbody = document.createElement('tbody');
+      rows.forEach(r => {
+        const s = STEP_LABELS[r.status] || {bg:'#eee',bd:'#bbb',label:r.status};
+        const tr = document.createElement('tr');
+        tr.style.background = s.bg;
+        tr.innerHTML = `<td style="padding:3px 7px;border:1px solid #dde;font-weight:bold;">{${r.itemset.join(', ')}}</td>
+          <td style="padding:3px 7px;border:1px solid #dde;text-align:right;">${r.count !== '—' ? r.count+'/'+N : '—'}</td>
+          <td style="padding:3px 7px;border:1px solid #dde;text-align:right;">${typeof r.support==='number' ? r.support.toFixed(2) : '—'}</td>
+          <td style="padding:3px 7px;border:1px solid #dde;color:#444;">${s.label}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      section.appendChild(tbl);
+      container.appendChild(section);
+    });
+
+    // Show termination message if no k=3
+    if (iterations.length < 3) {
+      const msg = document.createElement('div');
+      msg.style.cssText = 'font-size:0.81em;color:#888;font-style:italic;margin-top:6px;';
+      msg.textContent = 'No se generan candidatos para k = ' + (iterations.length+1) + '. El algoritmo termina.';
+      container.appendChild(msg);
+    }
+  }
+
+  const SIGMA_VALUES = [0.20, 0.40, 0.60, 0.80];
+
+  window.aprioriUpdate = function(v) {
+    const s = SIGMA_VALUES[parseInt(v)-1];
+    document.getElementById('ap-sval').textContent = s.toFixed(2);
+    renderIterations(s);
+  };
+
+  /* ── init ────────────────────────────────────────────── */
+  renderIterations(0.40);
+})();
+</script>
+```
+
 No es objetivo de este capítulo detallar la implementación del algoritmo — para ello puede consultarse @han2011data, capítulo 6, o @tan2006introduction, capítulo 5. Lo que sí importa aquí es comprender sus parámetros y sus consecuencias sobre los resultados.
 
 ### Los Parámetros como Decisiones del Analista
