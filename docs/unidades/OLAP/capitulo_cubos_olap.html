@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Diego Villalba">
-<meta name="dcterms.date" content="2026-05-07">
+<meta name="dcterms.date" content="2026-05-08">
 
 <title>20&nbsp; Computación de cubos de datos OLAP – Almacenes y Minería de Datos</title>
 <style>
@@ -799,7 +799,7 @@ window.Quarto = {
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">May 7, 2026</p>
+      <p class="date">May 8, 2026</p>
     </div>
   </div>
   
@@ -840,6 +840,258 @@ C : D_1 \times D_2 \times \cdots \times D_k \longrightarrow \mathbb{R}^m
 <li><strong>Medidas:</strong> variables numéricas agregables, como ventas, unidades, utilidad o presupuesto.</li>
 </ol>
 <p>Una ventaja central de OLAP es que permite adaptar el nivel de detalle a cada usuario. Un gerente general puede consultar ventas totales por país; una dirección regional puede revisar ventas por estado; y un supervisor puede analizar ventas por tienda. La misma base de datos analítica soporta múltiples perspectivas mediante operaciones de navegación sobre el cubo.</p>
+<div id="olap-viz-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+
+  <div style="text-align:center;margin-bottom:4px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Cubo OLAP — visualizador interactivo</span><br>
+    <span style="font-size:0.82em;color:#666;">Dimensiones: Región × Tiempo × Producto &nbsp;·&nbsp; Medida: Ventas (100K MXN)</span>
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:center;margin:14px 0 4px;flex-wrap:wrap;">
+    <button id="obtn-all" onclick="olapOp('all')" class="obtn active">Cubo completo</button>
+    <button id="obtn-slice" onclick="olapOp('slice')" class="obtn">Slice &nbsp;<code style="font-size:0.9em;">tiempo = T2</code></button>
+    <button id="obtn-rollup" onclick="olapOp('rollup')" class="obtn">Roll-up &nbsp;<code style="font-size:0.9em;">región → zona</code></button>
+    <button id="obtn-dice" onclick="olapOp('dice')" class="obtn">Dice &nbsp;<code style="font-size:0.9em;">{N,C}×{T1,T4}×{TV,CAM}</code></button>
+  </div>
+
+  <canvas id="olapCanvas" style="display:block;margin:0 auto;cursor:default;"></canvas>
+
+  <div id="olapTip" style="text-align:center;min-height:28px;font-size:0.83em;color:#555;margin-top:6px;padding:0 8px;"></div>
+
+  <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-top:10px;font-size:0.78em;color:#555;">
+    <span>Ventas bajas</span>
+    <span style="display:inline-block;width:80px;height:10px;background:linear-gradient(to right,#cfe8ff,#0d4f8c);border-radius:2px;vertical-align:middle;"></span>
+    <span>altas</span>
+    <span style="margin-left:16px;color:#bbb;">■</span>
+    <span style="color:#aaa;">celda fuera del subcubo</span>
+  </div>
+</div>
+
+<style>
+.obtn {
+  padding:5px 14px;border:1px solid #aab;background:#fff;
+  border-radius:4px;cursor:pointer;font-size:0.82em;
+  font-family:Georgia,serif;transition:background .15s,color .15s;
+}
+.obtn:hover  { background:#eef2f7; }
+.obtn.active { background:#1a3a5c;color:#fff;border-color:#1a3a5c; }
+</style>
+
+<script>
+(function(){
+  /* ── dataset ─────────────────────────────────────────── */
+  const regiones  = ["Norte","Centro","Occidente","Sureste"];
+  const tiempos   = ["T1","T2","T3","T4"];
+  const productos = ["Televisores","Computadoras","Lavadoras","Cámaras"];
+
+  // raw[ri][ti*4 + pi]
+  const raw = [
+    [35,22,10,14, 28,26,13,17, 18,15,8,12, 30,33,16,15],
+    [40,30,18,11, 32,28,20,14, 25,19,15,10, 38,35,22,16],
+    [20,27, 9, 6, 24,31,11, 8, 29,36, 7, 9, 19,34,10, 5],
+    [26,17,12, 9, 21,20,16,11, 23,18,14,10, 27,24,19,12]
+  ];
+
+  const DATA = [];
+  for (let ri=0;ri<4;ri++)
+    for (let ti=0;ti<4;ti++)
+      for (let pi=0;pi<4;pi++)
+        DATA.push({ri,ti,pi,
+          region:regiones[ri], tiempo:tiempos[ti], producto:productos[pi],
+          ventas:raw[ri][ti*4+pi]});
+
+  /* ── canvas setup ────────────────────────────────────── */
+  const cv  = document.getElementById('olapCanvas');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=680, H=500;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  /* ── isometric helpers ───────────────────────────────── */
+  // xi = tiempo (→right), yi = producto (→left), zi = región (↑)
+  const TW=52, TH=26, TZ=30;
+  const OX=335, OY=400;
+
+  function proj(xi,yi,zi){
+    return { x: OX+(xi-yi)*TW/2, y: OY-(xi+yi)*TH/2-zi*TZ };
+  }
+
+  function vColor(v, active){
+    if(!active) return {top:'#dde',right:'#ccd',left:'#bbc'};
+    const mn=5,mx=40, t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));
+    const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
+    const r=lerp(207, 13,t), g=lerp(232, 79,t), b=lerp(255,140,t);
+    return {
+      top:   `rgb(${r},${g},${b})`,
+      right: `rgb(${lerp(160,10,t)},${lerp(190,62,t)},${lerp(220,110,t)})`,
+      left:  `rgb(${lerp(130, 8,t)},${lerp(160,50,t)},${lerp(195, 90,t)})`
+    };
+  }
+
+  function drawCell(xi,yi,zi,ventas,active,hl){
+    const p   = proj(xi,  yi,  zi);
+    const pr  = proj(xi+1,yi,  zi);
+    const pf  = proj(xi,  yi+1,zi);
+    const pt  = proj(xi,  yi,  zi+1);
+    const ptr = proj(xi+1,yi,  zi+1);
+    const ptf = proj(xi,  yi+1,zi+1);
+    const prf = proj(xi+1,yi+1,zi);
+    const prt = proj(xi+1,yi+1,zi+1);
+
+    const c   = vColor(ventas,active);
+    const sw  = hl?2:0.7;
+    const sc  = hl?'#e05800':(active?'rgba(60,80,100,0.35)':'rgba(160,160,180,0.25)');
+
+    function face(pts, fill){
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x,pts[0].y);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+      ctx.closePath();
+      ctx.fillStyle=fill; ctx.fill();
+      ctx.strokeStyle=sc; ctx.lineWidth=sw; ctx.stroke();
+    }
+    face([pt,ptr,prt,ptf], c.top);   // top
+    face([p, pr, ptr, pt], c.right); // right (tiempo direction)
+    face([p, pf, ptf, pt], c.left);  // left  (producto direction)
+  }
+
+  /* ── state ───────────────────────────────────────────── */
+  let filter   = null;   // null = all active
+  let hlCell   = null;
+  let curMode  = 'all';
+
+  const FILTERS = {
+    all:    null,
+    slice:  d => d.tiempo==='T2',
+    rollup: d => d.region==='Norte'||d.region==='Centro',
+    dice:   d => (d.region==='Norte'||d.region==='Centro')&&
+                 (d.tiempo==='T1'||d.tiempo==='T4')&&
+                 (d.producto==='Televisores'||d.producto==='Cámaras')
+  };
+
+  const OP_LABEL = {
+    all:    '',
+    slice:  'Slice: Tiempo = T2   →   subcubo Región × Producto',
+    rollup: 'Roll-up: Región  →  Zona (Norte+Centro agrupados)',
+    dice:   'Dice: {Norte,Centro} × {T1,T4} × {Televisores,Cámaras}'
+  };
+
+  /* ── draw ────────────────────────────────────────────── */
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawGrid();
+
+    // Painter's sort: back to front
+    const sorted=[...DATA].sort((a,b)=>{
+      const da=a.ti+a.pi, db=b.ti+b.pi;
+      if(db!==da) return db-da;
+      return a.ri-b.ri;
+    });
+
+    for(const d of sorted){
+      const active = filter?filter(d):true;
+      const hl = hlCell&&hlCell.ri===d.ri&&hlCell.ti===d.ti&&hlCell.pi===d.pi;
+      drawCell(d.ti, d.pi, d.ri, d.ventas, active, hl);
+    }
+
+    drawLabels();
+
+    if(curMode!=='all'){
+      ctx.fillStyle='rgba(26,58,92,0.9)';
+      ctx.font='bold 12.5px Georgia';
+      ctx.textAlign='left';
+      ctx.fillText(OP_LABEL[curMode], 20, 26);
+    }
+  }
+
+  function drawGrid(){
+    ctx.strokeStyle='rgba(180,190,205,0.5)';
+    ctx.lineWidth=0.8;
+    for(let i=0;i<=4;i++){
+      const a=proj(i,0,0),b=proj(i,4,0);
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      const c=proj(0,i,0),d=proj(4,i,0);
+      ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(d.x,d.y);ctx.stroke();
+    }
+  }
+
+  function drawLabels(){
+    // Tiempo (X axis)
+    ctx.font='11px Georgia'; ctx.textAlign='center'; ctx.fillStyle='#444';
+    tiempos.forEach((t,i)=>{
+      const p=proj(i+0.5,4.5,-0.15); ctx.fillText(t,p.x,p.y+4);
+    });
+    { const p=proj(2,5.5,-0.15);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Tiempo',p.x,p.y+4); }
+
+    // Producto (Y axis)
+    ctx.textAlign='right'; ctx.font='11px Georgia'; ctx.fillStyle='#444';
+    productos.forEach((pr,i)=>{
+      const p=proj(-0.25,i+0.5,-0.15);
+      const label=pr.length>9?pr.slice(0,8)+'…':pr;
+      ctx.fillText(label,p.x-3,p.y+4);
+    });
+    { const p=proj(-1.1,2,-0.15);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Producto',p.x-3,p.y+4); }
+
+    // Región (Z axis)
+    ctx.textAlign='left'; ctx.font='11px Georgia'; ctx.fillStyle='#444';
+    regiones.forEach((r,i)=>{
+      const p=proj(4.2,0,i+0.5); ctx.fillText(r,p.x+5,p.y+4);
+    });
+    { const p=proj(4.5,-0.5,2);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Región',p.x+5,p.y+4); }
+  }
+
+  /* ── interaction ─────────────────────────────────────── */
+  cv.addEventListener('mousemove',function(e){
+    const r=cv.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    let best=null,bd=22;
+    for(const d of DATA){
+      const p=proj(d.ti+0.5,d.pi+0.5,d.ri+0.5);
+      const dist=Math.hypot(p.x-mx,p.y-my);
+      if(dist<bd){bd=dist;best=d;}
+    }
+    hlCell=best;
+    const tip=document.getElementById('olapTip');
+    if(best){
+      const active=filter?filter(best):true;
+      tip.innerHTML=active
+        ?`<strong>C(${best.region}, ${best.tiempo}, ${best.producto})</strong> = ${best.ventas} (100K MXN)`
+        :`<span style="color:#bbb">C(${best.region}, ${best.tiempo}, ${best.producto}) — fuera del subcubo activo</span>`;
+    } else {
+      tip.innerHTML='<span style="color:#aaa">Pasa el cursor sobre una celda del cubo</span>';
+    }
+    draw();
+  });
+
+  cv.addEventListener('mouseleave',function(){
+    hlCell=null;
+    document.getElementById('olapTip').innerHTML=
+      '<span style="color:#aaa">Pasa el cursor sobre una celda del cubo</span>';
+    draw();
+  });
+
+  /* ── button callbacks ────────────────────────────────── */
+  window.olapOp=function(mode){
+    curMode=mode; filter=FILTERS[mode];
+    document.querySelectorAll('.obtn').forEach(b=>b.classList.remove('active'));
+    document.getElementById('obtn-'+mode).classList.add('active');
+    draw();
+  };
+
+  /* ── init ────────────────────────────────────────────── */
+  document.getElementById('olapTip').innerHTML=
+    '<span style="color:#aaa">Pasa el cursor sobre una celda del cubo</span>';
+  draw();
+})();
+</script>
 </section>
 <section id="modelo-multidimensional" class="level2" data-number="20.2">
 <h2 data-number="20.2" class="anchored" data-anchor-id="modelo-multidimensional"><span class="header-section-number">20.2</span> Modelo multidimensional</h2>
@@ -1514,7 +1766,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="ejemplo-reproducible-en-python" class="level2" data-number="20.5">
 <h2 data-number="20.5" class="anchored" data-anchor-id="ejemplo-reproducible-en-python"><span class="header-section-number">20.5</span> Ejemplo reproducible en Python</h2>
 <p>La presentación propone un ejercicio con ventas trimestrales de una empresa mexicana de electrónica. Las dimensiones son Región, Tiempo y Producto, y la medida son ventas expresadas en cientos de miles de pesos mexicanos <span class="citation" data-cites="santizo2026cubos">(<a href="capitulo_cubos_olap.html#ref-santizo2026cubos" role="doc-biblioref">Santizo Galicia 2026</a>)</span>. A continuación se construye el cubo de datos en Python.</p>
-<div id="0dd2a240" class="cell" data-execution_count="1">
+<div id="e2668eaf" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>records <span class="op">=</span> [</span>
@@ -1620,7 +1872,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="representación-como-cubo" class="level3" data-number="20.5.1">
 <h3 data-number="20.5.1" class="anchored" data-anchor-id="representación-como-cubo"><span class="header-section-number">20.5.1</span> Representación como cubo</h3>
 <p>En <code>pandas</code>, una forma natural de representar el cubo es usar un índice múltiple. Cada celda queda identificada por una tupla <code>(region, tiempo, producto)</code>.</p>
-<div id="78697893" class="cell" data-execution_count="2">
+<div id="0ae37384" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cubo <span class="op">=</span> df.set_index([<span class="st">"region"</span>, <span class="st">"tiempo"</span>, <span class="st">"producto"</span>]).sort_index()</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>cubo.head(<span class="dv">10</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="2">
@@ -1694,7 +1946,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 </div>
 </div>
 <p>También se puede construir una vista tabular con productos como columnas. Esta vista es conveniente para reportes, aunque internamente sigue representando el mismo cubo.</p>
-<div id="5753628d" class="cell" data-execution_count="3">
+<div id="836ff4f3" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>vista <span class="op">=</span> df.pivot_table(</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    index<span class="op">=</span>[<span class="st">"region"</span>, <span class="st">"tiempo"</span>],</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    columns<span class="op">=</span><span class="st">"producto"</span>,</span>
@@ -1856,7 +2108,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="slice-fijar-un-trimestre" class="level3" data-number="20.6.1">
 <h3 data-number="20.6.1" class="anchored" data-anchor-id="slice-fijar-un-trimestre"><span class="header-section-number">20.6.1</span> Slice: fijar un trimestre</h3>
 <p>El ejercicio pide realizar una operación <em>slice</em> fijando Tiempo = T2. El resultado conserva las dimensiones Región y Producto.</p>
-<div id="17ec3388" class="cell" data-execution_count="4">
+<div id="8ea43904" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>slice_t2 <span class="op">=</span> df[df[<span class="st">"tiempo"</span>] <span class="op">==</span> <span class="st">"T2"</span>]</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>slice_t2.pivot_table(</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    index<span class="op">=</span><span class="st">"region"</span>,</span>
@@ -1926,7 +2178,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="dice-seleccionar-regiones-tiempos-y-productos" class="level3" data-number="20.6.2">
 <h3 data-number="20.6.2" class="anchored" data-anchor-id="dice-seleccionar-regiones-tiempos-y-productos"><span class="header-section-number">20.6.2</span> Dice: seleccionar regiones, tiempos y productos</h3>
 <p>El ejercicio también solicita una operación <em>dice</em> con Región = Norte o Centro, Tiempo = T1 o T4 y Producto = Televisores o Cámaras.</p>
-<div id="b98f7dcb" class="cell" data-execution_count="5">
+<div id="ea24ab7e" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>dice <span class="op">=</span> df[</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    df[<span class="st">"region"</span>].isin([<span class="st">"Norte"</span>, <span class="st">"Centro"</span>])</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="op">&amp;</span> df[<span class="st">"tiempo"</span>].isin([<span class="st">"T1"</span>, <span class="st">"T4"</span>])</span>
@@ -1993,7 +2245,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="roll-up-agrupar-regiones-en-zonas" class="level3" data-number="20.6.3">
 <h3 data-number="20.6.3" class="anchored" data-anchor-id="roll-up-agrupar-regiones-en-zonas"><span class="header-section-number">20.6.3</span> Roll-up: agrupar regiones en zonas</h3>
 <p>El ejercicio pide crear dos categorías regionales: Zona Norte-Centro y Zona Occidente-Sureste. Esto es un <em>roll-up</em> sobre la dimensión Región.</p>
-<div id="497000bd" class="cell" data-execution_count="6">
+<div id="c89f450d" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>mapa_zonas <span class="op">=</span> {</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Norte"</span>: <span class="st">"Zona Norte-Centro"</span>,</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Centro"</span>: <span class="st">"Zona Norte-Centro"</span>,</span>
@@ -2105,7 +2357,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="pivot-cambiar-la-orientación-de-la-consulta" class="level3" data-number="20.6.4">
 <h3 data-number="20.6.4" class="anchored" data-anchor-id="pivot-cambiar-la-orientación-de-la-consulta"><span class="header-section-number">20.6.4</span> Pivot: cambiar la orientación de la consulta</h3>
 <p>Para estudiar la evolución temporal de cada producto, se puede pivotar la tabla y colocar productos en filas y trimestres en columnas.</p>
-<div id="7246fa0f" class="cell" data-execution_count="7">
+<div id="f444b339" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>pivot_producto_tiempo <span class="op">=</span> df.pivot_table(</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    index<span class="op">=</span><span class="st">"producto"</span>,</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    columns<span class="op">=</span><span class="st">"tiempo"</span>,</span>
@@ -2177,16 +2429,16 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <section id="exploración-interactiva-del-cubo" class="level2" data-number="20.7">
 <h2 data-number="20.7" class="anchored" data-anchor-id="exploración-interactiva-del-cubo"><span class="header-section-number">20.7</span> Exploración interactiva del cubo</h2>
 <p>Los bloques siguientes permiten explorar las cinco operaciones OLAP directamente en el navegador. Los controles están conectados al mismo conjunto de datos construido en Python. El código OJS se ejecuta en el cliente, por lo que no requiere un servidor activo: funciona en el sitio estático de GitHub Pages.</p>
-<div id="1566713b" class="cell" data-execution_count="8">
+<div id="ec1dd450" class="cell" data-execution_count="8">
 <div class="cell-output cell-output-display">
 <script type="ojs-define">{"contents": [{"name": "datos_olap", "value": {"region": ["Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Norte", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Centro", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Occidente", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste", "Sureste"], "tiempo": ["T1", "T1", "T1", "T1", "T2", "T2", "T2", "T2", "T3", "T3", "T3", "T3", "T4", "T4", "T4", "T4", "T1", "T1", "T1", "T1", "T2", "T2", "T2", "T2", "T3", "T3", "T3", "T3", "T4", "T4", "T4", "T4", "T1", "T1", "T1", "T1", "T2", "T2", "T2", "T2", "T3", "T3", "T3", "T3", "T4", "T4", "T4", "T4", "T1", "T1", "T1", "T1", "T2", "T2", "T2", "T2", "T3", "T3", "T3", "T3", "T4", "T4", "T4", "T4"], "producto": ["Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras", "Televisores", "Computadoras", "Lavadoras", "C\u00e1maras"], "ventas": [35, 22, 10, 14, 28, 26, 13, 17, 18, 15, 8, 12, 30, 33, 16, 15, 40, 30, 18, 11, 32, 28, 20, 14, 25, 19, 15, 10, 38, 35, 22, 16, 20, 27, 9, 6, 24, 31, 11, 8, 29, 36, 7, 9, 19, 34, 10, 5, 26, 17, 12, 9, 21, 20, 16, 11, 23, 18, 14, 10, 27, 24, 19, 12]}}]}</script>
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb8" data-startfrom="631" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 630;"><span id="cb8-631"><a href="#cb8-631" aria-hidden="true" tabindex="-1"></a>datos    <span class="op">=</span> <span class="fu">transpose</span>(datos_olap)</span>
-<span id="cb8-632"><a href="#cb8-632" aria-hidden="true" tabindex="-1"></a>regiones <span class="op">=</span> [<span class="op">...</span><span class="kw">new</span> <span class="bu">Set</span>(datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">region</span>))]<span class="op">.</span><span class="fu">sort</span>()</span>
-<span id="cb8-633"><a href="#cb8-633" aria-hidden="true" tabindex="-1"></a>tiempos  <span class="op">=</span> [<span class="op">...</span><span class="kw">new</span> <span class="bu">Set</span>(datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">tiempo</span>))]<span class="op">.</span><span class="fu">sort</span>()</span>
-<span id="cb8-634"><a href="#cb8-634" aria-hidden="true" tabindex="-1"></a>productos <span class="op">=</span> [<span class="op">...</span><span class="kw">new</span> <span class="bu">Set</span>(datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">producto</span>))]<span class="op">.</span><span class="fu">sort</span>()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb8" data-startfrom="886" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 885;"><span id="cb8-886"><a href="#cb8-886" aria-hidden="true" tabindex="-1"></a>datos    <span class="op">=</span> <span class="fu">transpose</span>(datos_olap)</span>
+<span id="cb8-887"><a href="#cb8-887" aria-hidden="true" tabindex="-1"></a>regiones <span class="op">=</span> [<span class="op">...</span><span class="kw">new</span> <span class="bu">Set</span>(datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">region</span>))]<span class="op">.</span><span class="fu">sort</span>()</span>
+<span id="cb8-888"><a href="#cb8-888" aria-hidden="true" tabindex="-1"></a>tiempos  <span class="op">=</span> [<span class="op">...</span><span class="kw">new</span> <span class="bu">Set</span>(datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">tiempo</span>))]<span class="op">.</span><span class="fu">sort</span>()</span>
+<span id="cb8-889"><a href="#cb8-889" aria-hidden="true" tabindex="-1"></a>productos <span class="op">=</span> [<span class="op">...</span><span class="kw">new</span> <span class="bu">Set</span>(datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">producto</span>))]<span class="op">.</span><span class="fu">sort</span>()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div>
 <div id="ojs-cell-1-1" data-nodetype="declaration">
@@ -2220,16 +2472,16 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <h3 data-number="20.7.1" class="anchored" data-anchor-id="slice-1"><span class="header-section-number">20.7.1</span> Slice</h3>
 <p>Fija una dimensión en un valor único. El subcubo resultante conserva las dos dimensiones restantes y muestra su distribución de ventas.</p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9" data-startfrom="642" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 641;"><span id="cb9-642"><a href="#cb9-642" aria-hidden="true" tabindex="-1"></a>viewof slice_dim <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">radio</span>(</span>
-<span id="cb9-643"><a href="#cb9-643" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"tiempo"</span><span class="op">,</span> <span class="st">"region"</span><span class="op">,</span> <span class="st">"producto"</span>]<span class="op">,</span></span>
-<span id="cb9-644"><a href="#cb9-644" aria-hidden="true" tabindex="-1"></a>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Dimensión fija"</span><span class="op">,</span> <span class="dt">value</span><span class="op">:</span> <span class="st">"tiempo"</span>}</span>
-<span id="cb9-645"><a href="#cb9-645" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb9-646"><a href="#cb9-646" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-647"><a href="#cb9-647" aria-hidden="true" tabindex="-1"></a>viewof slice_val <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">select</span>(</span>
-<span id="cb9-648"><a href="#cb9-648" aria-hidden="true" tabindex="-1"></a>  slice_dim <span class="op">===</span> <span class="st">"tiempo"</span>   <span class="op">?</span> tiempos   <span class="op">:</span></span>
-<span id="cb9-649"><a href="#cb9-649" aria-hidden="true" tabindex="-1"></a>  slice_dim <span class="op">===</span> <span class="st">"region"</span>   <span class="op">?</span> regiones  <span class="op">:</span> productos<span class="op">,</span></span>
-<span id="cb9-650"><a href="#cb9-650" aria-hidden="true" tabindex="-1"></a>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Valor"</span>}</span>
-<span id="cb9-651"><a href="#cb9-651" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9" data-startfrom="897" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 896;"><span id="cb9-897"><a href="#cb9-897" aria-hidden="true" tabindex="-1"></a>viewof slice_dim <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">radio</span>(</span>
+<span id="cb9-898"><a href="#cb9-898" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"tiempo"</span><span class="op">,</span> <span class="st">"region"</span><span class="op">,</span> <span class="st">"producto"</span>]<span class="op">,</span></span>
+<span id="cb9-899"><a href="#cb9-899" aria-hidden="true" tabindex="-1"></a>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Dimensión fija"</span><span class="op">,</span> <span class="dt">value</span><span class="op">:</span> <span class="st">"tiempo"</span>}</span>
+<span id="cb9-900"><a href="#cb9-900" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb9-901"><a href="#cb9-901" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-902"><a href="#cb9-902" aria-hidden="true" tabindex="-1"></a>viewof slice_val <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">select</span>(</span>
+<span id="cb9-903"><a href="#cb9-903" aria-hidden="true" tabindex="-1"></a>  slice_dim <span class="op">===</span> <span class="st">"tiempo"</span>   <span class="op">?</span> tiempos   <span class="op">:</span></span>
+<span id="cb9-904"><a href="#cb9-904" aria-hidden="true" tabindex="-1"></a>  slice_dim <span class="op">===</span> <span class="st">"region"</span>   <span class="op">?</span> regiones  <span class="op">:</span> productos<span class="op">,</span></span>
+<span id="cb9-905"><a href="#cb9-905" aria-hidden="true" tabindex="-1"></a>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Valor"</span>}</span>
+<span id="cb9-906"><a href="#cb9-906" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div>
 <div id="ojs-cell-2-1" data-nodetype="declaration">
@@ -2246,42 +2498,42 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb10" data-startfrom="656" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 655;"><span id="cb10-656"><a href="#cb10-656" aria-hidden="true" tabindex="-1"></a>slice_resto    <span class="op">=</span> [<span class="st">"region"</span><span class="op">,</span> <span class="st">"tiempo"</span><span class="op">,</span> <span class="st">"producto"</span>]<span class="op">.</span><span class="fu">filter</span>(d <span class="kw">=&gt;</span> d <span class="op">!==</span> slice_dim)</span>
-<span id="cb10-657"><a href="#cb10-657" aria-hidden="true" tabindex="-1"></a>slice_filtrado <span class="op">=</span> datos<span class="op">.</span><span class="fu">filter</span>(d <span class="kw">=&gt;</span> d[slice_dim] <span class="op">===</span> slice_val)</span>
-<span id="cb10-658"><a href="#cb10-658" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb10-659"><a href="#cb10-659" aria-hidden="true" tabindex="-1"></a>slice_agg <span class="op">=</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(</span>
-<span id="cb10-660"><a href="#cb10-660" aria-hidden="true" tabindex="-1"></a>  d3<span class="op">.</span><span class="fu">rollup</span>(</span>
-<span id="cb10-661"><a href="#cb10-661" aria-hidden="true" tabindex="-1"></a>    slice_filtrado<span class="op">,</span></span>
-<span id="cb10-662"><a href="#cb10-662" aria-hidden="true" tabindex="-1"></a>    v  <span class="kw">=&gt;</span> d3<span class="op">.</span><span class="fu">sum</span>(v<span class="op">,</span> d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">ventas</span>)<span class="op">,</span></span>
-<span id="cb10-663"><a href="#cb10-663" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d[slice_resto[<span class="dv">0</span>]]<span class="op">,</span></span>
-<span id="cb10-664"><a href="#cb10-664" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d[slice_resto[<span class="dv">1</span>]]</span>
-<span id="cb10-665"><a href="#cb10-665" aria-hidden="true" tabindex="-1"></a>  )<span class="op">,</span></span>
-<span id="cb10-666"><a href="#cb10-666" aria-hidden="true" tabindex="-1"></a>  ([a<span class="op">,</span> m]) <span class="kw">=&gt;</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(m<span class="op">,</span> ([b<span class="op">,</span> ventas]) <span class="kw">=&gt;</span> ({</span>
-<span id="cb10-667"><a href="#cb10-667" aria-hidden="true" tabindex="-1"></a>    [slice_resto[<span class="dv">0</span>]]<span class="op">:</span> a<span class="op">,</span></span>
-<span id="cb10-668"><a href="#cb10-668" aria-hidden="true" tabindex="-1"></a>    [slice_resto[<span class="dv">1</span>]]<span class="op">:</span> b<span class="op">,</span></span>
-<span id="cb10-669"><a href="#cb10-669" aria-hidden="true" tabindex="-1"></a>    ventas</span>
-<span id="cb10-670"><a href="#cb10-670" aria-hidden="true" tabindex="-1"></a>  }))</span>
-<span id="cb10-671"><a href="#cb10-671" aria-hidden="true" tabindex="-1"></a>)<span class="op">.</span><span class="fu">flat</span>()</span>
-<span id="cb10-672"><a href="#cb10-672" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb10-673"><a href="#cb10-673" aria-hidden="true" tabindex="-1"></a>Plot<span class="op">.</span><span class="fu">plot</span>({</span>
-<span id="cb10-674"><a href="#cb10-674" aria-hidden="true" tabindex="-1"></a>  <span class="dt">title</span><span class="op">:</span>  <span class="vs">`Slice — </span><span class="sc">${</span>slice_dim<span class="sc">}</span><span class="vs"> = "</span><span class="sc">${</span>slice_val<span class="sc">}</span><span class="vs">"`</span><span class="op">,</span></span>
-<span id="cb10-675"><a href="#cb10-675" aria-hidden="true" tabindex="-1"></a>  <span class="dt">color</span><span class="op">:</span>  {<span class="dt">legend</span><span class="op">:</span> <span class="kw">true</span><span class="op">,</span> <span class="dt">label</span><span class="op">:</span> slice_resto[<span class="dv">0</span>]}<span class="op">,</span></span>
-<span id="cb10-676"><a href="#cb10-676" aria-hidden="true" tabindex="-1"></a>  <span class="dt">x</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> slice_resto[<span class="dv">1</span>]}<span class="op">,</span></span>
-<span id="cb10-677"><a href="#cb10-677" aria-hidden="true" tabindex="-1"></a>  <span class="dt">y</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Ventas (100K MXN)"</span><span class="op">,</span> <span class="dt">grid</span><span class="op">:</span> <span class="kw">true</span>}<span class="op">,</span></span>
-<span id="cb10-678"><a href="#cb10-678" aria-hidden="true" tabindex="-1"></a>  <span class="dt">fx</span><span class="op">:</span>     {<span class="dt">label</span><span class="op">:</span> slice_resto[<span class="dv">0</span>]}<span class="op">,</span></span>
-<span id="cb10-679"><a href="#cb10-679" aria-hidden="true" tabindex="-1"></a>  <span class="dt">width</span><span class="op">:</span>  <span class="dv">680</span><span class="op">,</span></span>
-<span id="cb10-680"><a href="#cb10-680" aria-hidden="true" tabindex="-1"></a>  <span class="dt">height</span><span class="op">:</span> <span class="dv">280</span><span class="op">,</span></span>
-<span id="cb10-681"><a href="#cb10-681" aria-hidden="true" tabindex="-1"></a>  <span class="dt">marks</span><span class="op">:</span> [</span>
-<span id="cb10-682"><a href="#cb10-682" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">barY</span>(slice_agg<span class="op">,</span> {</span>
-<span id="cb10-683"><a href="#cb10-683" aria-hidden="true" tabindex="-1"></a>      <span class="dt">x</span><span class="op">:</span>    slice_resto[<span class="dv">1</span>]<span class="op">,</span></span>
-<span id="cb10-684"><a href="#cb10-684" aria-hidden="true" tabindex="-1"></a>      <span class="dt">y</span><span class="op">:</span>    <span class="st">"ventas"</span><span class="op">,</span></span>
-<span id="cb10-685"><a href="#cb10-685" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fill</span><span class="op">:</span> slice_resto[<span class="dv">0</span>]<span class="op">,</span></span>
-<span id="cb10-686"><a href="#cb10-686" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fx</span><span class="op">:</span>   slice_resto[<span class="dv">0</span>]<span class="op">,</span></span>
-<span id="cb10-687"><a href="#cb10-687" aria-hidden="true" tabindex="-1"></a>      <span class="dt">tip</span><span class="op">:</span>  <span class="kw">true</span></span>
-<span id="cb10-688"><a href="#cb10-688" aria-hidden="true" tabindex="-1"></a>    })<span class="op">,</span></span>
-<span id="cb10-689"><a href="#cb10-689" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">ruleY</span>([<span class="dv">0</span>])</span>
-<span id="cb10-690"><a href="#cb10-690" aria-hidden="true" tabindex="-1"></a>  ]</span>
-<span id="cb10-691"><a href="#cb10-691" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb10" data-startfrom="911" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 910;"><span id="cb10-911"><a href="#cb10-911" aria-hidden="true" tabindex="-1"></a>slice_resto    <span class="op">=</span> [<span class="st">"region"</span><span class="op">,</span> <span class="st">"tiempo"</span><span class="op">,</span> <span class="st">"producto"</span>]<span class="op">.</span><span class="fu">filter</span>(d <span class="kw">=&gt;</span> d <span class="op">!==</span> slice_dim)</span>
+<span id="cb10-912"><a href="#cb10-912" aria-hidden="true" tabindex="-1"></a>slice_filtrado <span class="op">=</span> datos<span class="op">.</span><span class="fu">filter</span>(d <span class="kw">=&gt;</span> d[slice_dim] <span class="op">===</span> slice_val)</span>
+<span id="cb10-913"><a href="#cb10-913" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-914"><a href="#cb10-914" aria-hidden="true" tabindex="-1"></a>slice_agg <span class="op">=</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(</span>
+<span id="cb10-915"><a href="#cb10-915" aria-hidden="true" tabindex="-1"></a>  d3<span class="op">.</span><span class="fu">rollup</span>(</span>
+<span id="cb10-916"><a href="#cb10-916" aria-hidden="true" tabindex="-1"></a>    slice_filtrado<span class="op">,</span></span>
+<span id="cb10-917"><a href="#cb10-917" aria-hidden="true" tabindex="-1"></a>    v  <span class="kw">=&gt;</span> d3<span class="op">.</span><span class="fu">sum</span>(v<span class="op">,</span> d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">ventas</span>)<span class="op">,</span></span>
+<span id="cb10-918"><a href="#cb10-918" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d[slice_resto[<span class="dv">0</span>]]<span class="op">,</span></span>
+<span id="cb10-919"><a href="#cb10-919" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d[slice_resto[<span class="dv">1</span>]]</span>
+<span id="cb10-920"><a href="#cb10-920" aria-hidden="true" tabindex="-1"></a>  )<span class="op">,</span></span>
+<span id="cb10-921"><a href="#cb10-921" aria-hidden="true" tabindex="-1"></a>  ([a<span class="op">,</span> m]) <span class="kw">=&gt;</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(m<span class="op">,</span> ([b<span class="op">,</span> ventas]) <span class="kw">=&gt;</span> ({</span>
+<span id="cb10-922"><a href="#cb10-922" aria-hidden="true" tabindex="-1"></a>    [slice_resto[<span class="dv">0</span>]]<span class="op">:</span> a<span class="op">,</span></span>
+<span id="cb10-923"><a href="#cb10-923" aria-hidden="true" tabindex="-1"></a>    [slice_resto[<span class="dv">1</span>]]<span class="op">:</span> b<span class="op">,</span></span>
+<span id="cb10-924"><a href="#cb10-924" aria-hidden="true" tabindex="-1"></a>    ventas</span>
+<span id="cb10-925"><a href="#cb10-925" aria-hidden="true" tabindex="-1"></a>  }))</span>
+<span id="cb10-926"><a href="#cb10-926" aria-hidden="true" tabindex="-1"></a>)<span class="op">.</span><span class="fu">flat</span>()</span>
+<span id="cb10-927"><a href="#cb10-927" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-928"><a href="#cb10-928" aria-hidden="true" tabindex="-1"></a>Plot<span class="op">.</span><span class="fu">plot</span>({</span>
+<span id="cb10-929"><a href="#cb10-929" aria-hidden="true" tabindex="-1"></a>  <span class="dt">title</span><span class="op">:</span>  <span class="vs">`Slice — </span><span class="sc">${</span>slice_dim<span class="sc">}</span><span class="vs"> = "</span><span class="sc">${</span>slice_val<span class="sc">}</span><span class="vs">"`</span><span class="op">,</span></span>
+<span id="cb10-930"><a href="#cb10-930" aria-hidden="true" tabindex="-1"></a>  <span class="dt">color</span><span class="op">:</span>  {<span class="dt">legend</span><span class="op">:</span> <span class="kw">true</span><span class="op">,</span> <span class="dt">label</span><span class="op">:</span> slice_resto[<span class="dv">0</span>]}<span class="op">,</span></span>
+<span id="cb10-931"><a href="#cb10-931" aria-hidden="true" tabindex="-1"></a>  <span class="dt">x</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> slice_resto[<span class="dv">1</span>]}<span class="op">,</span></span>
+<span id="cb10-932"><a href="#cb10-932" aria-hidden="true" tabindex="-1"></a>  <span class="dt">y</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Ventas (100K MXN)"</span><span class="op">,</span> <span class="dt">grid</span><span class="op">:</span> <span class="kw">true</span>}<span class="op">,</span></span>
+<span id="cb10-933"><a href="#cb10-933" aria-hidden="true" tabindex="-1"></a>  <span class="dt">fx</span><span class="op">:</span>     {<span class="dt">label</span><span class="op">:</span> slice_resto[<span class="dv">0</span>]}<span class="op">,</span></span>
+<span id="cb10-934"><a href="#cb10-934" aria-hidden="true" tabindex="-1"></a>  <span class="dt">width</span><span class="op">:</span>  <span class="dv">680</span><span class="op">,</span></span>
+<span id="cb10-935"><a href="#cb10-935" aria-hidden="true" tabindex="-1"></a>  <span class="dt">height</span><span class="op">:</span> <span class="dv">280</span><span class="op">,</span></span>
+<span id="cb10-936"><a href="#cb10-936" aria-hidden="true" tabindex="-1"></a>  <span class="dt">marks</span><span class="op">:</span> [</span>
+<span id="cb10-937"><a href="#cb10-937" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">barY</span>(slice_agg<span class="op">,</span> {</span>
+<span id="cb10-938"><a href="#cb10-938" aria-hidden="true" tabindex="-1"></a>      <span class="dt">x</span><span class="op">:</span>    slice_resto[<span class="dv">1</span>]<span class="op">,</span></span>
+<span id="cb10-939"><a href="#cb10-939" aria-hidden="true" tabindex="-1"></a>      <span class="dt">y</span><span class="op">:</span>    <span class="st">"ventas"</span><span class="op">,</span></span>
+<span id="cb10-940"><a href="#cb10-940" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fill</span><span class="op">:</span> slice_resto[<span class="dv">0</span>]<span class="op">,</span></span>
+<span id="cb10-941"><a href="#cb10-941" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fx</span><span class="op">:</span>   slice_resto[<span class="dv">0</span>]<span class="op">,</span></span>
+<span id="cb10-942"><a href="#cb10-942" aria-hidden="true" tabindex="-1"></a>      <span class="dt">tip</span><span class="op">:</span>  <span class="kw">true</span></span>
+<span id="cb10-943"><a href="#cb10-943" aria-hidden="true" tabindex="-1"></a>    })<span class="op">,</span></span>
+<span id="cb10-944"><a href="#cb10-944" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">ruleY</span>([<span class="dv">0</span>])</span>
+<span id="cb10-945"><a href="#cb10-945" aria-hidden="true" tabindex="-1"></a>  ]</span>
+<span id="cb10-946"><a href="#cb10-946" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div>
 <div id="ojs-cell-3-1" data-nodetype="declaration">
@@ -2312,7 +2564,7 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb11" data-startfrom="695" data-source-offset="0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 694;"><span id="cb11-695"><a href="#cb11-695" aria-hidden="true" tabindex="-1"></a>Inputs<span class="op">.</span><span class="fu">table</span>(slice_agg<span class="op">,</span> {<span class="dt">sort</span><span class="op">:</span> <span class="st">"ventas"</span><span class="op">,</span> <span class="dt">reverse</span><span class="op">:</span> <span class="kw">true</span>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb11" data-startfrom="950" data-source-offset="0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 949;"><span id="cb11-950"><a href="#cb11-950" aria-hidden="true" tabindex="-1"></a>Inputs<span class="op">.</span><span class="fu">table</span>(slice_agg<span class="op">,</span> {<span class="dt">sort</span><span class="op">:</span> <span class="st">"ventas"</span><span class="op">,</span> <span class="dt">reverse</span><span class="op">:</span> <span class="kw">true</span>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div id="ojs-cell-4" data-nodetype="expression">
 
@@ -2324,10 +2576,10 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <h3 data-number="20.7.2" class="anchored" data-anchor-id="roll-up-y-drill-down"><span class="header-section-number">20.7.2</span> Roll-up y Drill-down</h3>
 <p>Cambia el nivel de agregación de la dimensión geográfica. Seleccionar <em>Zona</em> aplica un <strong>roll-up</strong> que agrupa regiones; volver a <em>Región</em> aplica un <strong>drill-down</strong> que recupera el detalle.</p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12" data-startfrom="703" data-source-offset="0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 702;"><span id="cb12-703"><a href="#cb12-703" aria-hidden="true" tabindex="-1"></a>viewof nivel_geo <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">radio</span>(</span>
-<span id="cb12-704"><a href="#cb12-704" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Región  (drill-down)"</span><span class="op">,</span> <span class="st">"Zona  (roll-up)"</span>]<span class="op">,</span></span>
-<span id="cb12-705"><a href="#cb12-705" aria-hidden="true" tabindex="-1"></a>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Nivel geográfico"</span><span class="op">,</span> <span class="dt">value</span><span class="op">:</span> <span class="st">"Región  (drill-down)"</span>}</span>
-<span id="cb12-706"><a href="#cb12-706" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12" data-startfrom="958" data-source-offset="0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 957;"><span id="cb12-958"><a href="#cb12-958" aria-hidden="true" tabindex="-1"></a>viewof nivel_geo <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">radio</span>(</span>
+<span id="cb12-959"><a href="#cb12-959" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Región  (drill-down)"</span><span class="op">,</span> <span class="st">"Zona  (roll-up)"</span>]<span class="op">,</span></span>
+<span id="cb12-960"><a href="#cb12-960" aria-hidden="true" tabindex="-1"></a>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Nivel geográfico"</span><span class="op">,</span> <span class="dt">value</span><span class="op">:</span> <span class="st">"Región  (drill-down)"</span>}</span>
+<span id="cb12-961"><a href="#cb12-961" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div id="ojs-cell-5" data-nodetype="declaration">
 
@@ -2335,48 +2587,48 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb13" data-startfrom="712" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 711;"><span id="cb13-712"><a href="#cb13-712" aria-hidden="true" tabindex="-1"></a>zona_map <span class="op">=</span> <span class="kw">new</span> <span class="bu">Map</span>([</span>
-<span id="cb13-713"><a href="#cb13-713" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Norte"</span><span class="op">,</span>     <span class="st">"Zona Norte-Centro"</span>]<span class="op">,</span></span>
-<span id="cb13-714"><a href="#cb13-714" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Centro"</span><span class="op">,</span>    <span class="st">"Zona Norte-Centro"</span>]<span class="op">,</span></span>
-<span id="cb13-715"><a href="#cb13-715" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Occidente"</span><span class="op">,</span> <span class="st">"Zona Occidente-Sureste"</span>]<span class="op">,</span></span>
-<span id="cb13-716"><a href="#cb13-716" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Sureste"</span><span class="op">,</span>   <span class="st">"Zona Occidente-Sureste"</span>]</span>
-<span id="cb13-717"><a href="#cb13-717" aria-hidden="true" tabindex="-1"></a>])</span>
-<span id="cb13-718"><a href="#cb13-718" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-719"><a href="#cb13-719" aria-hidden="true" tabindex="-1"></a>datos_geo <span class="op">=</span> nivel_geo<span class="op">.</span><span class="fu">startsWith</span>(<span class="st">"Zona"</span>)</span>
-<span id="cb13-720"><a href="#cb13-720" aria-hidden="true" tabindex="-1"></a>  <span class="op">?</span> datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> ({<span class="op">...</span>d<span class="op">,</span> <span class="dt">region</span><span class="op">:</span> zona_map<span class="op">.</span><span class="fu">get</span>(d<span class="op">.</span><span class="at">region</span>)}))</span>
-<span id="cb13-721"><a href="#cb13-721" aria-hidden="true" tabindex="-1"></a>  <span class="op">:</span> datos</span>
-<span id="cb13-722"><a href="#cb13-722" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-723"><a href="#cb13-723" aria-hidden="true" tabindex="-1"></a>geo_agg <span class="op">=</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(</span>
-<span id="cb13-724"><a href="#cb13-724" aria-hidden="true" tabindex="-1"></a>  d3<span class="op">.</span><span class="fu">rollup</span>(</span>
-<span id="cb13-725"><a href="#cb13-725" aria-hidden="true" tabindex="-1"></a>    datos_geo<span class="op">,</span></span>
-<span id="cb13-726"><a href="#cb13-726" aria-hidden="true" tabindex="-1"></a>    v  <span class="kw">=&gt;</span> d3<span class="op">.</span><span class="fu">sum</span>(v<span class="op">,</span> d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">ventas</span>)<span class="op">,</span></span>
-<span id="cb13-727"><a href="#cb13-727" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">region</span><span class="op">,</span></span>
-<span id="cb13-728"><a href="#cb13-728" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">tiempo</span></span>
-<span id="cb13-729"><a href="#cb13-729" aria-hidden="true" tabindex="-1"></a>  )<span class="op">,</span></span>
-<span id="cb13-730"><a href="#cb13-730" aria-hidden="true" tabindex="-1"></a>  ([region<span class="op">,</span> m]) <span class="kw">=&gt;</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(m<span class="op">,</span> ([tiempo<span class="op">,</span> ventas]) <span class="kw">=&gt;</span> ({region<span class="op">,</span> tiempo<span class="op">,</span> ventas}))</span>
-<span id="cb13-731"><a href="#cb13-731" aria-hidden="true" tabindex="-1"></a>)<span class="op">.</span><span class="fu">flat</span>()</span>
-<span id="cb13-732"><a href="#cb13-732" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-733"><a href="#cb13-733" aria-hidden="true" tabindex="-1"></a>Plot<span class="op">.</span><span class="fu">plot</span>({</span>
-<span id="cb13-734"><a href="#cb13-734" aria-hidden="true" tabindex="-1"></a>  <span class="dt">title</span><span class="op">:</span>  nivel_geo<span class="op">.</span><span class="fu">startsWith</span>(<span class="st">"Zona"</span>)</span>
-<span id="cb13-735"><a href="#cb13-735" aria-hidden="true" tabindex="-1"></a>            <span class="op">?</span> <span class="st">"Roll-up — ventas por zona geográfica y trimestre"</span></span>
-<span id="cb13-736"><a href="#cb13-736" aria-hidden="true" tabindex="-1"></a>            <span class="op">:</span> <span class="st">"Drill-down — ventas por región y trimestre"</span><span class="op">,</span></span>
-<span id="cb13-737"><a href="#cb13-737" aria-hidden="true" tabindex="-1"></a>  <span class="dt">color</span><span class="op">:</span>  {<span class="dt">legend</span><span class="op">:</span> <span class="kw">true</span><span class="op">,</span> <span class="dt">label</span><span class="op">:</span> <span class="st">"Región / Zona"</span>}<span class="op">,</span></span>
-<span id="cb13-738"><a href="#cb13-738" aria-hidden="true" tabindex="-1"></a>  <span class="dt">x</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Trimestre"</span>}<span class="op">,</span></span>
-<span id="cb13-739"><a href="#cb13-739" aria-hidden="true" tabindex="-1"></a>  <span class="dt">y</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Ventas (100K MXN)"</span><span class="op">,</span> <span class="dt">grid</span><span class="op">:</span> <span class="kw">true</span>}<span class="op">,</span></span>
-<span id="cb13-740"><a href="#cb13-740" aria-hidden="true" tabindex="-1"></a>  <span class="dt">fx</span><span class="op">:</span>     {<span class="dt">label</span><span class="op">:</span> nivel_geo<span class="op">.</span><span class="fu">startsWith</span>(<span class="st">"Zona"</span>) <span class="op">?</span> <span class="st">"Zona"</span> <span class="op">:</span> <span class="st">"Región"</span>}<span class="op">,</span></span>
-<span id="cb13-741"><a href="#cb13-741" aria-hidden="true" tabindex="-1"></a>  <span class="dt">width</span><span class="op">:</span>  <span class="dv">680</span><span class="op">,</span></span>
-<span id="cb13-742"><a href="#cb13-742" aria-hidden="true" tabindex="-1"></a>  <span class="dt">height</span><span class="op">:</span> <span class="dv">280</span><span class="op">,</span></span>
-<span id="cb13-743"><a href="#cb13-743" aria-hidden="true" tabindex="-1"></a>  <span class="dt">marks</span><span class="op">:</span> [</span>
-<span id="cb13-744"><a href="#cb13-744" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">barY</span>(geo_agg<span class="op">,</span> {</span>
-<span id="cb13-745"><a href="#cb13-745" aria-hidden="true" tabindex="-1"></a>      <span class="dt">x</span><span class="op">:</span>    <span class="st">"tiempo"</span><span class="op">,</span></span>
-<span id="cb13-746"><a href="#cb13-746" aria-hidden="true" tabindex="-1"></a>      <span class="dt">y</span><span class="op">:</span>    <span class="st">"ventas"</span><span class="op">,</span></span>
-<span id="cb13-747"><a href="#cb13-747" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fill</span><span class="op">:</span> <span class="st">"region"</span><span class="op">,</span></span>
-<span id="cb13-748"><a href="#cb13-748" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fx</span><span class="op">:</span>   <span class="st">"region"</span><span class="op">,</span></span>
-<span id="cb13-749"><a href="#cb13-749" aria-hidden="true" tabindex="-1"></a>      <span class="dt">tip</span><span class="op">:</span>  <span class="kw">true</span></span>
-<span id="cb13-750"><a href="#cb13-750" aria-hidden="true" tabindex="-1"></a>    })<span class="op">,</span></span>
-<span id="cb13-751"><a href="#cb13-751" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">ruleY</span>([<span class="dv">0</span>])</span>
-<span id="cb13-752"><a href="#cb13-752" aria-hidden="true" tabindex="-1"></a>  ]</span>
-<span id="cb13-753"><a href="#cb13-753" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb13" data-startfrom="967" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 966;"><span id="cb13-967"><a href="#cb13-967" aria-hidden="true" tabindex="-1"></a>zona_map <span class="op">=</span> <span class="kw">new</span> <span class="bu">Map</span>([</span>
+<span id="cb13-968"><a href="#cb13-968" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Norte"</span><span class="op">,</span>     <span class="st">"Zona Norte-Centro"</span>]<span class="op">,</span></span>
+<span id="cb13-969"><a href="#cb13-969" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Centro"</span><span class="op">,</span>    <span class="st">"Zona Norte-Centro"</span>]<span class="op">,</span></span>
+<span id="cb13-970"><a href="#cb13-970" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Occidente"</span><span class="op">,</span> <span class="st">"Zona Occidente-Sureste"</span>]<span class="op">,</span></span>
+<span id="cb13-971"><a href="#cb13-971" aria-hidden="true" tabindex="-1"></a>  [<span class="st">"Sureste"</span><span class="op">,</span>   <span class="st">"Zona Occidente-Sureste"</span>]</span>
+<span id="cb13-972"><a href="#cb13-972" aria-hidden="true" tabindex="-1"></a>])</span>
+<span id="cb13-973"><a href="#cb13-973" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-974"><a href="#cb13-974" aria-hidden="true" tabindex="-1"></a>datos_geo <span class="op">=</span> nivel_geo<span class="op">.</span><span class="fu">startsWith</span>(<span class="st">"Zona"</span>)</span>
+<span id="cb13-975"><a href="#cb13-975" aria-hidden="true" tabindex="-1"></a>  <span class="op">?</span> datos<span class="op">.</span><span class="fu">map</span>(d <span class="kw">=&gt;</span> ({<span class="op">...</span>d<span class="op">,</span> <span class="dt">region</span><span class="op">:</span> zona_map<span class="op">.</span><span class="fu">get</span>(d<span class="op">.</span><span class="at">region</span>)}))</span>
+<span id="cb13-976"><a href="#cb13-976" aria-hidden="true" tabindex="-1"></a>  <span class="op">:</span> datos</span>
+<span id="cb13-977"><a href="#cb13-977" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-978"><a href="#cb13-978" aria-hidden="true" tabindex="-1"></a>geo_agg <span class="op">=</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(</span>
+<span id="cb13-979"><a href="#cb13-979" aria-hidden="true" tabindex="-1"></a>  d3<span class="op">.</span><span class="fu">rollup</span>(</span>
+<span id="cb13-980"><a href="#cb13-980" aria-hidden="true" tabindex="-1"></a>    datos_geo<span class="op">,</span></span>
+<span id="cb13-981"><a href="#cb13-981" aria-hidden="true" tabindex="-1"></a>    v  <span class="kw">=&gt;</span> d3<span class="op">.</span><span class="fu">sum</span>(v<span class="op">,</span> d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">ventas</span>)<span class="op">,</span></span>
+<span id="cb13-982"><a href="#cb13-982" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">region</span><span class="op">,</span></span>
+<span id="cb13-983"><a href="#cb13-983" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">tiempo</span></span>
+<span id="cb13-984"><a href="#cb13-984" aria-hidden="true" tabindex="-1"></a>  )<span class="op">,</span></span>
+<span id="cb13-985"><a href="#cb13-985" aria-hidden="true" tabindex="-1"></a>  ([region<span class="op">,</span> m]) <span class="kw">=&gt;</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(m<span class="op">,</span> ([tiempo<span class="op">,</span> ventas]) <span class="kw">=&gt;</span> ({region<span class="op">,</span> tiempo<span class="op">,</span> ventas}))</span>
+<span id="cb13-986"><a href="#cb13-986" aria-hidden="true" tabindex="-1"></a>)<span class="op">.</span><span class="fu">flat</span>()</span>
+<span id="cb13-987"><a href="#cb13-987" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-988"><a href="#cb13-988" aria-hidden="true" tabindex="-1"></a>Plot<span class="op">.</span><span class="fu">plot</span>({</span>
+<span id="cb13-989"><a href="#cb13-989" aria-hidden="true" tabindex="-1"></a>  <span class="dt">title</span><span class="op">:</span>  nivel_geo<span class="op">.</span><span class="fu">startsWith</span>(<span class="st">"Zona"</span>)</span>
+<span id="cb13-990"><a href="#cb13-990" aria-hidden="true" tabindex="-1"></a>            <span class="op">?</span> <span class="st">"Roll-up — ventas por zona geográfica y trimestre"</span></span>
+<span id="cb13-991"><a href="#cb13-991" aria-hidden="true" tabindex="-1"></a>            <span class="op">:</span> <span class="st">"Drill-down — ventas por región y trimestre"</span><span class="op">,</span></span>
+<span id="cb13-992"><a href="#cb13-992" aria-hidden="true" tabindex="-1"></a>  <span class="dt">color</span><span class="op">:</span>  {<span class="dt">legend</span><span class="op">:</span> <span class="kw">true</span><span class="op">,</span> <span class="dt">label</span><span class="op">:</span> <span class="st">"Región / Zona"</span>}<span class="op">,</span></span>
+<span id="cb13-993"><a href="#cb13-993" aria-hidden="true" tabindex="-1"></a>  <span class="dt">x</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Trimestre"</span>}<span class="op">,</span></span>
+<span id="cb13-994"><a href="#cb13-994" aria-hidden="true" tabindex="-1"></a>  <span class="dt">y</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Ventas (100K MXN)"</span><span class="op">,</span> <span class="dt">grid</span><span class="op">:</span> <span class="kw">true</span>}<span class="op">,</span></span>
+<span id="cb13-995"><a href="#cb13-995" aria-hidden="true" tabindex="-1"></a>  <span class="dt">fx</span><span class="op">:</span>     {<span class="dt">label</span><span class="op">:</span> nivel_geo<span class="op">.</span><span class="fu">startsWith</span>(<span class="st">"Zona"</span>) <span class="op">?</span> <span class="st">"Zona"</span> <span class="op">:</span> <span class="st">"Región"</span>}<span class="op">,</span></span>
+<span id="cb13-996"><a href="#cb13-996" aria-hidden="true" tabindex="-1"></a>  <span class="dt">width</span><span class="op">:</span>  <span class="dv">680</span><span class="op">,</span></span>
+<span id="cb13-997"><a href="#cb13-997" aria-hidden="true" tabindex="-1"></a>  <span class="dt">height</span><span class="op">:</span> <span class="dv">280</span><span class="op">,</span></span>
+<span id="cb13-998"><a href="#cb13-998" aria-hidden="true" tabindex="-1"></a>  <span class="dt">marks</span><span class="op">:</span> [</span>
+<span id="cb13-999"><a href="#cb13-999" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">barY</span>(geo_agg<span class="op">,</span> {</span>
+<span id="cb13-1000"><a href="#cb13-1000" aria-hidden="true" tabindex="-1"></a>      <span class="dt">x</span><span class="op">:</span>    <span class="st">"tiempo"</span><span class="op">,</span></span>
+<span id="cb13-1001"><a href="#cb13-1001" aria-hidden="true" tabindex="-1"></a>      <span class="dt">y</span><span class="op">:</span>    <span class="st">"ventas"</span><span class="op">,</span></span>
+<span id="cb13-1002"><a href="#cb13-1002" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fill</span><span class="op">:</span> <span class="st">"region"</span><span class="op">,</span></span>
+<span id="cb13-1003"><a href="#cb13-1003" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fx</span><span class="op">:</span>   <span class="st">"region"</span><span class="op">,</span></span>
+<span id="cb13-1004"><a href="#cb13-1004" aria-hidden="true" tabindex="-1"></a>      <span class="dt">tip</span><span class="op">:</span>  <span class="kw">true</span></span>
+<span id="cb13-1005"><a href="#cb13-1005" aria-hidden="true" tabindex="-1"></a>    })<span class="op">,</span></span>
+<span id="cb13-1006"><a href="#cb13-1006" aria-hidden="true" tabindex="-1"></a>    Plot<span class="op">.</span><span class="fu">ruleY</span>([<span class="dv">0</span>])</span>
+<span id="cb13-1007"><a href="#cb13-1007" aria-hidden="true" tabindex="-1"></a>  ]</span>
+<span id="cb13-1008"><a href="#cb13-1008" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div>
 <div id="ojs-cell-6-1" data-nodetype="declaration">
@@ -2411,9 +2663,9 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 <h3 data-number="20.7.3" class="anchored" data-anchor-id="dice-1"><span class="header-section-number">20.7.3</span> Dice</h3>
 <p>Selecciona subconjuntos en dos o más dimensiones al mismo tiempo. Desmarcar opciones reduce el subcubo; la gráfica y la tabla se actualizan en tiempo real.</p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14" data-startfrom="761" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 760;"><span id="cb14-761"><a href="#cb14-761" aria-hidden="true" tabindex="-1"></a>viewof dice_reg  <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">checkbox</span>(regiones<span class="op">,</span>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Regiones"</span><span class="op">,</span>    <span class="dt">value</span><span class="op">:</span> regiones})</span>
-<span id="cb14-762"><a href="#cb14-762" aria-hidden="true" tabindex="-1"></a>viewof dice_tpo  <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">checkbox</span>(tiempos<span class="op">,</span>   {<span class="dt">label</span><span class="op">:</span> <span class="st">"Trimestres"</span><span class="op">,</span>  <span class="dt">value</span><span class="op">:</span> tiempos})</span>
-<span id="cb14-763"><a href="#cb14-763" aria-hidden="true" tabindex="-1"></a>viewof dice_prod <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">checkbox</span>(productos<span class="op">,</span> {<span class="dt">label</span><span class="op">:</span> <span class="st">"Productos"</span><span class="op">,</span>   <span class="dt">value</span><span class="op">:</span> productos})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14" data-startfrom="1016" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 1015;"><span id="cb14-1016"><a href="#cb14-1016" aria-hidden="true" tabindex="-1"></a>viewof dice_reg  <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">checkbox</span>(regiones<span class="op">,</span>  {<span class="dt">label</span><span class="op">:</span> <span class="st">"Regiones"</span><span class="op">,</span>    <span class="dt">value</span><span class="op">:</span> regiones})</span>
+<span id="cb14-1017"><a href="#cb14-1017" aria-hidden="true" tabindex="-1"></a>viewof dice_tpo  <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">checkbox</span>(tiempos<span class="op">,</span>   {<span class="dt">label</span><span class="op">:</span> <span class="st">"Trimestres"</span><span class="op">,</span>  <span class="dt">value</span><span class="op">:</span> tiempos})</span>
+<span id="cb14-1018"><a href="#cb14-1018" aria-hidden="true" tabindex="-1"></a>viewof dice_prod <span class="op">=</span> Inputs<span class="op">.</span><span class="fu">checkbox</span>(productos<span class="op">,</span> {<span class="dt">label</span><span class="op">:</span> <span class="st">"Productos"</span><span class="op">,</span>   <span class="dt">value</span><span class="op">:</span> productos})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div>
 <div id="ojs-cell-7-1" data-nodetype="declaration">
@@ -2437,45 +2689,45 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb15" data-startfrom="768" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 767;"><span id="cb15-768"><a href="#cb15-768" aria-hidden="true" tabindex="-1"></a>dice_filtrado <span class="op">=</span> datos<span class="op">.</span><span class="fu">filter</span>(d <span class="kw">=&gt;</span></span>
-<span id="cb15-769"><a href="#cb15-769" aria-hidden="true" tabindex="-1"></a>  dice_reg<span class="op">.</span><span class="fu">includes</span>(d<span class="op">.</span><span class="at">region</span>)   <span class="op">&amp;&amp;</span></span>
-<span id="cb15-770"><a href="#cb15-770" aria-hidden="true" tabindex="-1"></a>  dice_tpo<span class="op">.</span><span class="fu">includes</span>(d<span class="op">.</span><span class="at">tiempo</span>)   <span class="op">&amp;&amp;</span></span>
-<span id="cb15-771"><a href="#cb15-771" aria-hidden="true" tabindex="-1"></a>  dice_prod<span class="op">.</span><span class="fu">includes</span>(d<span class="op">.</span><span class="at">producto</span>)</span>
-<span id="cb15-772"><a href="#cb15-772" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb15-773"><a href="#cb15-773" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-774"><a href="#cb15-774" aria-hidden="true" tabindex="-1"></a>dice_agg <span class="op">=</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(</span>
-<span id="cb15-775"><a href="#cb15-775" aria-hidden="true" tabindex="-1"></a>  d3<span class="op">.</span><span class="fu">rollup</span>(</span>
-<span id="cb15-776"><a href="#cb15-776" aria-hidden="true" tabindex="-1"></a>    dice_filtrado<span class="op">,</span></span>
-<span id="cb15-777"><a href="#cb15-777" aria-hidden="true" tabindex="-1"></a>    v  <span class="kw">=&gt;</span> d3<span class="op">.</span><span class="fu">sum</span>(v<span class="op">,</span> d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">ventas</span>)<span class="op">,</span></span>
-<span id="cb15-778"><a href="#cb15-778" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">region</span><span class="op">,</span></span>
-<span id="cb15-779"><a href="#cb15-779" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">producto</span></span>
-<span id="cb15-780"><a href="#cb15-780" aria-hidden="true" tabindex="-1"></a>  )<span class="op">,</span></span>
-<span id="cb15-781"><a href="#cb15-781" aria-hidden="true" tabindex="-1"></a>  ([region<span class="op">,</span> m]) <span class="kw">=&gt;</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(m<span class="op">,</span> ([producto<span class="op">,</span> ventas]) <span class="kw">=&gt;</span> ({region<span class="op">,</span> producto<span class="op">,</span> ventas}))</span>
-<span id="cb15-782"><a href="#cb15-782" aria-hidden="true" tabindex="-1"></a>)<span class="op">.</span><span class="fu">flat</span>()</span>
-<span id="cb15-783"><a href="#cb15-783" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-784"><a href="#cb15-784" aria-hidden="true" tabindex="-1"></a>dice_agg<span class="op">.</span><span class="at">length</span> <span class="op">&gt;</span> <span class="dv">0</span></span>
-<span id="cb15-785"><a href="#cb15-785" aria-hidden="true" tabindex="-1"></a>  <span class="op">?</span> Plot<span class="op">.</span><span class="fu">plot</span>({</span>
-<span id="cb15-786"><a href="#cb15-786" aria-hidden="true" tabindex="-1"></a>      <span class="dt">title</span><span class="op">:</span>  <span class="st">"Dice — subcubo seleccionado"</span><span class="op">,</span></span>
-<span id="cb15-787"><a href="#cb15-787" aria-hidden="true" tabindex="-1"></a>      <span class="dt">color</span><span class="op">:</span>  {<span class="dt">legend</span><span class="op">:</span> <span class="kw">true</span><span class="op">,</span> <span class="dt">label</span><span class="op">:</span> <span class="st">"Producto"</span>}<span class="op">,</span></span>
-<span id="cb15-788"><a href="#cb15-788" aria-hidden="true" tabindex="-1"></a>      <span class="dt">x</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Producto"</span><span class="op">,</span> <span class="dt">axis</span><span class="op">:</span> <span class="kw">null</span>}<span class="op">,</span></span>
-<span id="cb15-789"><a href="#cb15-789" aria-hidden="true" tabindex="-1"></a>      <span class="dt">y</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Ventas (100K MXN)"</span><span class="op">,</span> <span class="dt">grid</span><span class="op">:</span> <span class="kw">true</span>}<span class="op">,</span></span>
-<span id="cb15-790"><a href="#cb15-790" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fx</span><span class="op">:</span>     {<span class="dt">label</span><span class="op">:</span> <span class="st">"Región"</span>}<span class="op">,</span></span>
-<span id="cb15-791"><a href="#cb15-791" aria-hidden="true" tabindex="-1"></a>      <span class="dt">width</span><span class="op">:</span>  <span class="dv">680</span><span class="op">,</span></span>
-<span id="cb15-792"><a href="#cb15-792" aria-hidden="true" tabindex="-1"></a>      <span class="dt">height</span><span class="op">:</span> <span class="dv">280</span><span class="op">,</span></span>
-<span id="cb15-793"><a href="#cb15-793" aria-hidden="true" tabindex="-1"></a>      <span class="dt">marks</span><span class="op">:</span> [</span>
-<span id="cb15-794"><a href="#cb15-794" aria-hidden="true" tabindex="-1"></a>        Plot<span class="op">.</span><span class="fu">barY</span>(dice_agg<span class="op">,</span> {</span>
-<span id="cb15-795"><a href="#cb15-795" aria-hidden="true" tabindex="-1"></a>          <span class="dt">x</span><span class="op">:</span>    <span class="st">"producto"</span><span class="op">,</span></span>
-<span id="cb15-796"><a href="#cb15-796" aria-hidden="true" tabindex="-1"></a>          <span class="dt">y</span><span class="op">:</span>    <span class="st">"ventas"</span><span class="op">,</span></span>
-<span id="cb15-797"><a href="#cb15-797" aria-hidden="true" tabindex="-1"></a>          <span class="dt">fill</span><span class="op">:</span> <span class="st">"producto"</span><span class="op">,</span></span>
-<span id="cb15-798"><a href="#cb15-798" aria-hidden="true" tabindex="-1"></a>          <span class="dt">fx</span><span class="op">:</span>   <span class="st">"region"</span><span class="op">,</span></span>
-<span id="cb15-799"><a href="#cb15-799" aria-hidden="true" tabindex="-1"></a>          <span class="dt">tip</span><span class="op">:</span>  <span class="kw">true</span></span>
-<span id="cb15-800"><a href="#cb15-800" aria-hidden="true" tabindex="-1"></a>        })<span class="op">,</span></span>
-<span id="cb15-801"><a href="#cb15-801" aria-hidden="true" tabindex="-1"></a>        Plot<span class="op">.</span><span class="fu">ruleY</span>([<span class="dv">0</span>])</span>
-<span id="cb15-802"><a href="#cb15-802" aria-hidden="true" tabindex="-1"></a>      ]</span>
-<span id="cb15-803"><a href="#cb15-803" aria-hidden="true" tabindex="-1"></a>    })</span>
-<span id="cb15-804"><a href="#cb15-804" aria-hidden="true" tabindex="-1"></a>  <span class="op">:</span> <span class="fu">html</span><span class="vs">`&lt;p style="color:gray;font-style:italic"&gt;</span></span>
-<span id="cb15-805"><a href="#cb15-805" aria-hidden="true" tabindex="-1"></a><span class="vs">      Selecciona al menos un valor en cada dimensión para ver resultados.</span></span>
-<span id="cb15-806"><a href="#cb15-806" aria-hidden="true" tabindex="-1"></a><span class="vs">    &lt;/p&gt;`</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb15" data-startfrom="1023" data-source-offset="-0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 1022;"><span id="cb15-1023"><a href="#cb15-1023" aria-hidden="true" tabindex="-1"></a>dice_filtrado <span class="op">=</span> datos<span class="op">.</span><span class="fu">filter</span>(d <span class="kw">=&gt;</span></span>
+<span id="cb15-1024"><a href="#cb15-1024" aria-hidden="true" tabindex="-1"></a>  dice_reg<span class="op">.</span><span class="fu">includes</span>(d<span class="op">.</span><span class="at">region</span>)   <span class="op">&amp;&amp;</span></span>
+<span id="cb15-1025"><a href="#cb15-1025" aria-hidden="true" tabindex="-1"></a>  dice_tpo<span class="op">.</span><span class="fu">includes</span>(d<span class="op">.</span><span class="at">tiempo</span>)   <span class="op">&amp;&amp;</span></span>
+<span id="cb15-1026"><a href="#cb15-1026" aria-hidden="true" tabindex="-1"></a>  dice_prod<span class="op">.</span><span class="fu">includes</span>(d<span class="op">.</span><span class="at">producto</span>)</span>
+<span id="cb15-1027"><a href="#cb15-1027" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb15-1028"><a href="#cb15-1028" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-1029"><a href="#cb15-1029" aria-hidden="true" tabindex="-1"></a>dice_agg <span class="op">=</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(</span>
+<span id="cb15-1030"><a href="#cb15-1030" aria-hidden="true" tabindex="-1"></a>  d3<span class="op">.</span><span class="fu">rollup</span>(</span>
+<span id="cb15-1031"><a href="#cb15-1031" aria-hidden="true" tabindex="-1"></a>    dice_filtrado<span class="op">,</span></span>
+<span id="cb15-1032"><a href="#cb15-1032" aria-hidden="true" tabindex="-1"></a>    v  <span class="kw">=&gt;</span> d3<span class="op">.</span><span class="fu">sum</span>(v<span class="op">,</span> d <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">ventas</span>)<span class="op">,</span></span>
+<span id="cb15-1033"><a href="#cb15-1033" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">region</span><span class="op">,</span></span>
+<span id="cb15-1034"><a href="#cb15-1034" aria-hidden="true" tabindex="-1"></a>    d  <span class="kw">=&gt;</span> d<span class="op">.</span><span class="at">producto</span></span>
+<span id="cb15-1035"><a href="#cb15-1035" aria-hidden="true" tabindex="-1"></a>  )<span class="op">,</span></span>
+<span id="cb15-1036"><a href="#cb15-1036" aria-hidden="true" tabindex="-1"></a>  ([region<span class="op">,</span> m]) <span class="kw">=&gt;</span> <span class="bu">Array</span><span class="op">.</span><span class="fu">from</span>(m<span class="op">,</span> ([producto<span class="op">,</span> ventas]) <span class="kw">=&gt;</span> ({region<span class="op">,</span> producto<span class="op">,</span> ventas}))</span>
+<span id="cb15-1037"><a href="#cb15-1037" aria-hidden="true" tabindex="-1"></a>)<span class="op">.</span><span class="fu">flat</span>()</span>
+<span id="cb15-1038"><a href="#cb15-1038" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-1039"><a href="#cb15-1039" aria-hidden="true" tabindex="-1"></a>dice_agg<span class="op">.</span><span class="at">length</span> <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb15-1040"><a href="#cb15-1040" aria-hidden="true" tabindex="-1"></a>  <span class="op">?</span> Plot<span class="op">.</span><span class="fu">plot</span>({</span>
+<span id="cb15-1041"><a href="#cb15-1041" aria-hidden="true" tabindex="-1"></a>      <span class="dt">title</span><span class="op">:</span>  <span class="st">"Dice — subcubo seleccionado"</span><span class="op">,</span></span>
+<span id="cb15-1042"><a href="#cb15-1042" aria-hidden="true" tabindex="-1"></a>      <span class="dt">color</span><span class="op">:</span>  {<span class="dt">legend</span><span class="op">:</span> <span class="kw">true</span><span class="op">,</span> <span class="dt">label</span><span class="op">:</span> <span class="st">"Producto"</span>}<span class="op">,</span></span>
+<span id="cb15-1043"><a href="#cb15-1043" aria-hidden="true" tabindex="-1"></a>      <span class="dt">x</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Producto"</span><span class="op">,</span> <span class="dt">axis</span><span class="op">:</span> <span class="kw">null</span>}<span class="op">,</span></span>
+<span id="cb15-1044"><a href="#cb15-1044" aria-hidden="true" tabindex="-1"></a>      <span class="dt">y</span><span class="op">:</span>      {<span class="dt">label</span><span class="op">:</span> <span class="st">"Ventas (100K MXN)"</span><span class="op">,</span> <span class="dt">grid</span><span class="op">:</span> <span class="kw">true</span>}<span class="op">,</span></span>
+<span id="cb15-1045"><a href="#cb15-1045" aria-hidden="true" tabindex="-1"></a>      <span class="dt">fx</span><span class="op">:</span>     {<span class="dt">label</span><span class="op">:</span> <span class="st">"Región"</span>}<span class="op">,</span></span>
+<span id="cb15-1046"><a href="#cb15-1046" aria-hidden="true" tabindex="-1"></a>      <span class="dt">width</span><span class="op">:</span>  <span class="dv">680</span><span class="op">,</span></span>
+<span id="cb15-1047"><a href="#cb15-1047" aria-hidden="true" tabindex="-1"></a>      <span class="dt">height</span><span class="op">:</span> <span class="dv">280</span><span class="op">,</span></span>
+<span id="cb15-1048"><a href="#cb15-1048" aria-hidden="true" tabindex="-1"></a>      <span class="dt">marks</span><span class="op">:</span> [</span>
+<span id="cb15-1049"><a href="#cb15-1049" aria-hidden="true" tabindex="-1"></a>        Plot<span class="op">.</span><span class="fu">barY</span>(dice_agg<span class="op">,</span> {</span>
+<span id="cb15-1050"><a href="#cb15-1050" aria-hidden="true" tabindex="-1"></a>          <span class="dt">x</span><span class="op">:</span>    <span class="st">"producto"</span><span class="op">,</span></span>
+<span id="cb15-1051"><a href="#cb15-1051" aria-hidden="true" tabindex="-1"></a>          <span class="dt">y</span><span class="op">:</span>    <span class="st">"ventas"</span><span class="op">,</span></span>
+<span id="cb15-1052"><a href="#cb15-1052" aria-hidden="true" tabindex="-1"></a>          <span class="dt">fill</span><span class="op">:</span> <span class="st">"producto"</span><span class="op">,</span></span>
+<span id="cb15-1053"><a href="#cb15-1053" aria-hidden="true" tabindex="-1"></a>          <span class="dt">fx</span><span class="op">:</span>   <span class="st">"region"</span><span class="op">,</span></span>
+<span id="cb15-1054"><a href="#cb15-1054" aria-hidden="true" tabindex="-1"></a>          <span class="dt">tip</span><span class="op">:</span>  <span class="kw">true</span></span>
+<span id="cb15-1055"><a href="#cb15-1055" aria-hidden="true" tabindex="-1"></a>        })<span class="op">,</span></span>
+<span id="cb15-1056"><a href="#cb15-1056" aria-hidden="true" tabindex="-1"></a>        Plot<span class="op">.</span><span class="fu">ruleY</span>([<span class="dv">0</span>])</span>
+<span id="cb15-1057"><a href="#cb15-1057" aria-hidden="true" tabindex="-1"></a>      ]</span>
+<span id="cb15-1058"><a href="#cb15-1058" aria-hidden="true" tabindex="-1"></a>    })</span>
+<span id="cb15-1059"><a href="#cb15-1059" aria-hidden="true" tabindex="-1"></a>  <span class="op">:</span> <span class="fu">html</span><span class="vs">`&lt;p style="color:gray;font-style:italic"&gt;</span></span>
+<span id="cb15-1060"><a href="#cb15-1060" aria-hidden="true" tabindex="-1"></a><span class="vs">      Selecciona al menos un valor en cada dimensión para ver resultados.</span></span>
+<span id="cb15-1061"><a href="#cb15-1061" aria-hidden="true" tabindex="-1"></a><span class="vs">    &lt;/p&gt;`</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div>
 <div id="ojs-cell-8-1" data-nodetype="declaration">
@@ -2499,9 +2751,9 @@ C(\text{Zona Norte-Centro},T1,E)&amp;=26+30=56.
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb16" data-startfrom="810" data-source-offset="0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 809;"><span id="cb16-810"><a href="#cb16-810" aria-hidden="true" tabindex="-1"></a>dice_agg<span class="op">.</span><span class="at">length</span> <span class="op">&gt;</span> <span class="dv">0</span></span>
-<span id="cb16-811"><a href="#cb16-811" aria-hidden="true" tabindex="-1"></a>  <span class="op">?</span> Inputs<span class="op">.</span><span class="fu">table</span>(dice_agg<span class="op">,</span> {<span class="dt">sort</span><span class="op">:</span> <span class="st">"ventas"</span><span class="op">,</span> <span class="dt">reverse</span><span class="op">:</span> <span class="kw">true</span>})</span>
-<span id="cb16-812"><a href="#cb16-812" aria-hidden="true" tabindex="-1"></a>  <span class="op">:</span> <span class="fu">html</span><span class="vs">``</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code hidden" id="cb16" data-startfrom="1065" data-source-offset="0"><pre class="sourceCode js code-with-copy"><code class="sourceCode javascript" style="counter-reset: source-line 1064;"><span id="cb16-1065"><a href="#cb16-1065" aria-hidden="true" tabindex="-1"></a>dice_agg<span class="op">.</span><span class="at">length</span> <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb16-1066"><a href="#cb16-1066" aria-hidden="true" tabindex="-1"></a>  <span class="op">?</span> Inputs<span class="op">.</span><span class="fu">table</span>(dice_agg<span class="op">,</span> {<span class="dt">sort</span><span class="op">:</span> <span class="st">"ventas"</span><span class="op">,</span> <span class="dt">reverse</span><span class="op">:</span> <span class="kw">true</span>})</span>
+<span id="cb16-1067"><a href="#cb16-1067" aria-hidden="true" tabindex="-1"></a>  <span class="op">:</span> <span class="fu">html</span><span class="vs">``</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display">
 <div id="ojs-cell-9" data-nodetype="expression">
 
@@ -2530,7 +2782,7 @@ M(A\cup B)=M(A)+M(B),\qquad A\cap B=\varnothing
 </div>
 <p>Las ventas son usualmente aditivas: se pueden sumar por producto, región y tiempo. En cambio, una tasa de conversión no debe agregarse sumando porcentajes; debe recalcularse a partir de numeradores y denominadores.</p>
 <p>El siguiente ejemplo calcula ventas totales por producto y participación porcentual dentro del total.</p>
-<div id="023369a6" class="cell" data-execution_count="9">
+<div id="22cf6256" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>ventas_producto <span class="op">=</span> (</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    df.groupby(<span class="st">"producto"</span>, as_index<span class="op">=</span><span class="va">False</span>)[<span class="st">"ventas"</span>]</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    .<span class="bu">sum</span>()</span>
@@ -2583,7 +2835,7 @@ M(A\cup B)=M(A)+M(B),\qquad A\cap B=\varnothing
 </div>
 </div>
 <p>También se puede calcular el crecimiento entre trimestres para cada producto. En este caso, el cubo se reorganiza por producto y tiempo.</p>
-<div id="5e07131d" class="cell" data-execution_count="10">
+<div id="c71fe6c3" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>ventas_tiempo <span class="op">=</span> (</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    df.groupby([<span class="st">"producto"</span>, <span class="st">"tiempo"</span>], as_index<span class="op">=</span><span class="va">False</span>)[<span class="st">"ventas"</span>]</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    .<span class="bu">sum</span>()</span>
@@ -2750,7 +3002,7 @@ M(A\cup B)=M(A)+M(B),\qquad A\cap B=\varnothing
 <li>Verificar que las agregaciones coincidan con las reglas de negocio.</li>
 </ol>
 <p>El siguiente bloque resume una función reutilizable para construir vistas OLAP simples a partir de una tabla larga.</p>
-<div id="c3008b71" class="cell" data-execution_count="11">
+<div id="dd5c53d7" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> vista_olap(datos, filas, columnas, medida<span class="op">=</span><span class="st">"ventas"</span>, agregacion<span class="op">=</span><span class="st">"sum"</span>):</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Construye una vista tabular tipo OLAP con pandas.</span></span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -2932,14 +3184,49 @@ M(A\cup B)=M(A)+M(B),\qquad A\cap B=\varnothing
 <section id="referencias" class="level2" data-number="20.12">
 <h2 data-number="20.12" class="anchored" data-anchor-id="referencias"><span class="header-section-number">20.12</span> Referencias</h2>
 <div id="refs" class="references csl-bib-body hanging-indent" data-entry-spacing="0" role="list">
+<div id="ref-chaudhuri1997overview" class="csl-entry" role="listitem">
+Chaudhuri, Surajit, and Umeshwar Dayal. 1997. <span>“An Overview of Data
+Warehousing and OLAP Technology.”</span> <em>ACM SIGMOD Record</em> 26
+(1): 65–74. <a href="https://doi.org/10.1145/248603.248616">https://doi.org/10.1145/248603.248616</a>.
+</div>
+<div id="ref-gray1997data" class="csl-entry" role="listitem">
+Gray, Jim, Adam Bosworth, Andrew Layman, and Hamid Pirahesh. 1996.
+<span>“Data Cube: A Relational Aggregation Operator Generalizing
+Group-by, Cross-Tab, and Sub-Totals.”</span> In <em>Proceedings of the
+Twelfth International Conference on Data Engineering</em>, 152–59. IEEE
+Computer Society. <a href="https://doi.org/10.1109/ICDE.1996.492099">https://doi.org/10.1109/ICDE.1996.492099</a>.
+</div>
 <div id="ref-han2011" class="csl-entry" role="listitem">
 Han, Jiawei, Micheline Kamber, and Jian Pei. 2011. <em>Data Mining:
 Concepts and Techniques</em>. 3rd ed. Waltham, MA: Morgan Kaufmann. <a href="https://doi.org/10.1016/B978-0-12-381479-1.00001-0">https://doi.org/10.1016/B978-0-12-381479-1.00001-0</a>.
+</div>
+<div id="ref-inmon2005building" class="csl-entry" role="listitem">
+Inmon, William H. 2005. <em>Building the Data Warehouse</em>. 4th ed.
+Indianapolis, IN: Wiley.
+</div>
+<div id="ref-kimball2013data" class="csl-entry" role="listitem">
+Kimball, Ralph, and Margy Ross. 2013. <em>The Data Warehouse Toolkit:
+The Definitive Guide to Dimensional Modeling</em>. 3rd ed. Indianapolis,
+IN: Wiley.
+</div>
+<div id="ref-mckinney2010data" class="csl-entry" role="listitem">
+McKinney, Wes. 2010. <span>“Data Structures for Statistical Computing in
+Python.”</span> <em>Proceedings of the 9th Python in Science
+Conference</em>, 56–61. <a href="https://doi.org/10.25080/Majora-92bf1922-00a">https://doi.org/10.25080/Majora-92bf1922-00a</a>.
 </div>
 <div id="ref-provost2013" class="csl-entry" role="listitem">
 Provost, Foster, and Tom Fawcett. 2013. <em>Data Science for Business:
 What You Need to Know about Data Mining and Data-Analytic Thinking</em>.
 Sebastopol, CA: O’Reilly Media.
+</div>
+<div id="ref-santizo2026cubos" class="csl-entry" role="listitem">
+Santizo Galicia, Jessica. 2026. <span>“Computación de Cubos de
+Datos.”</span> Presentación de clase, Facultad de Ciencias, Universidad
+Nacional Autónoma de México.
+</div>
+<div id="ref-pandas2024docs" class="csl-entry" role="listitem">
+The pandas development team. 2024. <em>Pandas Documentation</em>.
+pandas. <a href="https://pandas.pydata.org/docs/">https://pandas.pydata.org/docs/</a>.
 </div>
 </div>
 
