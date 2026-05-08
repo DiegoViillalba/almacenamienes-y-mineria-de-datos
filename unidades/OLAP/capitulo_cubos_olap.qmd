@@ -51,6 +51,261 @@ La presentación original destaca que en un *data warehouse* los datos se organi
 
 Una ventaja central de OLAP es que permite adaptar el nivel de detalle a cada usuario. Un gerente general puede consultar ventas totales por país; una dirección regional puede revisar ventas por estado; y un supervisor puede analizar ventas por tienda. La misma base de datos analítica soporta múltiples perspectivas mediante operaciones de navegación sobre el cubo.
 
+```{=html}
+<div id="olap-viz-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+
+  <div style="text-align:center;margin-bottom:4px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Cubo OLAP — visualizador interactivo</span><br>
+    <span style="font-size:0.82em;color:#666;">Dimensiones: Región × Tiempo × Producto &nbsp;·&nbsp; Medida: Ventas (100K MXN)</span>
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:center;margin:14px 0 4px;flex-wrap:wrap;">
+    <button id="obtn-all"    onclick="olapOp('all')"    class="obtn active">Cubo completo</button>
+    <button id="obtn-slice"  onclick="olapOp('slice')"  class="obtn">Slice &nbsp;<code style="font-size:0.9em;">tiempo = T2</code></button>
+    <button id="obtn-rollup" onclick="olapOp('rollup')" class="obtn">Roll-up &nbsp;<code style="font-size:0.9em;">región → zona</code></button>
+    <button id="obtn-dice"   onclick="olapOp('dice')"   class="obtn">Dice &nbsp;<code style="font-size:0.9em;">{N,C}×{T1,T4}×{TV,CAM}</code></button>
+  </div>
+
+  <canvas id="olapCanvas" style="display:block;margin:0 auto;cursor:default;"></canvas>
+
+  <div id="olapTip" style="text-align:center;min-height:28px;font-size:0.83em;color:#555;margin-top:6px;padding:0 8px;"></div>
+
+  <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-top:10px;font-size:0.78em;color:#555;">
+    <span>Ventas bajas</span>
+    <span style="display:inline-block;width:80px;height:10px;background:linear-gradient(to right,#cfe8ff,#0d4f8c);border-radius:2px;vertical-align:middle;"></span>
+    <span>altas</span>
+    <span style="margin-left:16px;color:#bbb;">&#9632;</span>
+    <span style="color:#aaa;">celda fuera del subcubo</span>
+  </div>
+</div>
+
+<style>
+.obtn {
+  padding:5px 14px;border:1px solid #aab;background:#fff;
+  border-radius:4px;cursor:pointer;font-size:0.82em;
+  font-family:Georgia,serif;transition:background .15s,color .15s;
+}
+.obtn:hover  { background:#eef2f7; }
+.obtn.active { background:#1a3a5c;color:#fff;border-color:#1a3a5c; }
+</style>
+
+<script>
+(function(){
+  /* ── dataset ─────────────────────────────────────────── */
+  const regiones  = ["Norte","Centro","Occidente","Sureste"];
+  const tiempos   = ["T1","T2","T3","T4"];
+  const productos = ["Televisores","Computadoras","Lavadoras","Cámaras"];
+
+  // raw[ri][ti*4 + pi]
+  const raw = [
+    [35,22,10,14, 28,26,13,17, 18,15,8,12, 30,33,16,15],
+    [40,30,18,11, 32,28,20,14, 25,19,15,10, 38,35,22,16],
+    [20,27, 9, 6, 24,31,11, 8, 29,36, 7, 9, 19,34,10, 5],
+    [26,17,12, 9, 21,20,16,11, 23,18,14,10, 27,24,19,12]
+  ];
+
+  const DATA = [];
+  for (let ri=0;ri<4;ri++)
+    for (let ti=0;ti<4;ti++)
+      for (let pi=0;pi<4;pi++)
+        DATA.push({ri,ti,pi,
+          region:regiones[ri], tiempo:tiempos[ti], producto:productos[pi],
+          ventas:raw[ri][ti*4+pi]});
+
+  /* ── canvas setup ────────────────────────────────────── */
+  const cv  = document.getElementById('olapCanvas');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=680, H=500;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  /* ── isometric helpers ───────────────────────────────── */
+  // xi = tiempo (→right), yi = producto (→left), zi = región (↑)
+  const TW=52, TH=26, TZ=30;
+  const OX=335, OY=400;
+
+  function proj(xi,yi,zi){
+    return { x: OX+(xi-yi)*TW/2, y: OY-(xi+yi)*TH/2-zi*TZ };
+  }
+
+  function vColor(v, active){
+    if(!active) return {top:'#dde',right:'#ccd',left:'#bbc'};
+    const mn=5,mx=40, t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));
+    const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
+    const r=lerp(207, 13,t), g=lerp(232, 79,t), b=lerp(255,140,t);
+    return {
+      top:   `rgb(${r},${g},${b})`,
+      right: `rgb(${lerp(160,10,t)},${lerp(190,62,t)},${lerp(220,110,t)})`,
+      left:  `rgb(${lerp(130, 8,t)},${lerp(160,50,t)},${lerp(195, 90,t)})`
+    };
+  }
+
+  function drawCell(xi,yi,zi,ventas,active,hl){
+    const p   = proj(xi,  yi,  zi);
+    const pr  = proj(xi+1,yi,  zi);
+    const pf  = proj(xi,  yi+1,zi);
+    const pt  = proj(xi,  yi,  zi+1);
+    const ptr = proj(xi+1,yi,  zi+1);
+    const ptf = proj(xi,  yi+1,zi+1);
+    const prf = proj(xi+1,yi+1,zi);
+    const prt = proj(xi+1,yi+1,zi+1);
+
+    const c   = vColor(ventas,active);
+    const sw  = hl?2:0.7;
+    const sc  = hl?'#e05800':(active?'rgba(60,80,100,0.35)':'rgba(160,160,180,0.25)');
+
+    function face(pts, fill){
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x,pts[0].y);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+      ctx.closePath();
+      ctx.fillStyle=fill; ctx.fill();
+      ctx.strokeStyle=sc; ctx.lineWidth=sw; ctx.stroke();
+    }
+    face([pt,ptr,prt,ptf], c.top);   // top
+    face([p, pr, ptr, pt], c.right); // right (tiempo direction)
+    face([p, pf, ptf, pt], c.left);  // left  (producto direction)
+  }
+
+  /* ── state ───────────────────────────────────────────── */
+  let filter   = null;   // null = all active
+  let hlCell   = null;
+  let curMode  = 'all';
+
+  const FILTERS = {
+    all:    null,
+    slice:  d => d.tiempo==='T2',
+    rollup: d => d.region==='Norte'||d.region==='Centro',
+    dice:   d => (d.region==='Norte'||d.region==='Centro')&&
+                 (d.tiempo==='T1'||d.tiempo==='T4')&&
+                 (d.producto==='Televisores'||d.producto==='Cámaras')
+  };
+
+  const OP_LABEL = {
+    all:    '',
+    slice:  'Slice: Tiempo = T2   →   subcubo Región × Producto',
+    rollup: 'Roll-up: Región  →  Zona (Norte+Centro agrupados)',
+    dice:   'Dice: {Norte,Centro} × {T1,T4} × {Televisores,Cámaras}'
+  };
+
+  /* ── draw ────────────────────────────────────────────── */
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawGrid();
+
+    // Painter's sort: back to front
+    const sorted=[...DATA].sort((a,b)=>{
+      const da=a.ti+a.pi, db=b.ti+b.pi;
+      if(db!==da) return db-da;
+      return a.ri-b.ri;
+    });
+
+    for(const d of sorted){
+      const active = filter?filter(d):true;
+      const hl = hlCell&&hlCell.ri===d.ri&&hlCell.ti===d.ti&&hlCell.pi===d.pi;
+      drawCell(d.ti, d.pi, d.ri, d.ventas, active, hl);
+    }
+
+    drawLabels();
+
+    if(curMode!=='all'){
+      ctx.fillStyle='rgba(26,58,92,0.9)';
+      ctx.font='bold 12.5px Georgia';
+      ctx.textAlign='left';
+      ctx.fillText(OP_LABEL[curMode], 20, 26);
+    }
+  }
+
+  function drawGrid(){
+    ctx.strokeStyle='rgba(180,190,205,0.5)';
+    ctx.lineWidth=0.8;
+    for(let i=0;i<=4;i++){
+      const a=proj(i,0,0),b=proj(i,4,0);
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      const c=proj(0,i,0),d=proj(4,i,0);
+      ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(d.x,d.y);ctx.stroke();
+    }
+  }
+
+  function drawLabels(){
+    // Tiempo (X axis)
+    ctx.font='11px Georgia'; ctx.textAlign='center'; ctx.fillStyle='#444';
+    tiempos.forEach((t,i)=>{
+      const p=proj(i+0.5,4.5,-0.15); ctx.fillText(t,p.x,p.y+4);
+    });
+    { const p=proj(2,5.5,-0.15);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Tiempo',p.x,p.y+4); }
+
+    // Producto (Y axis)
+    ctx.textAlign='right'; ctx.font='11px Georgia'; ctx.fillStyle='#444';
+    productos.forEach((pr,i)=>{
+      const p=proj(-0.25,i+0.5,-0.15);
+      const label=pr.length>9?pr.slice(0,8)+'…':pr;
+      ctx.fillText(label,p.x-3,p.y+4);
+    });
+    { const p=proj(-1.1,2,-0.15);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Producto',p.x-3,p.y+4); }
+
+    // Región (Z axis)
+    ctx.textAlign='left'; ctx.font='11px Georgia'; ctx.fillStyle='#444';
+    regiones.forEach((r,i)=>{
+      const p=proj(4.2,0,i+0.5); ctx.fillText(r,p.x+5,p.y+4);
+    });
+    { const p=proj(4.5,-0.5,2);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Región',p.x+5,p.y+4); }
+  }
+
+  /* ── interaction ─────────────────────────────────────── */
+  cv.addEventListener('mousemove',function(e){
+    const r=cv.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    let best=null,bd=22;
+    for(const d of DATA){
+      const p=proj(d.ti+0.5,d.pi+0.5,d.ri+0.5);
+      const dist=Math.hypot(p.x-mx,p.y-my);
+      if(dist<bd){bd=dist;best=d;}
+    }
+    hlCell=best;
+    const tip=document.getElementById('olapTip');
+    if(best){
+      const active=filter?filter(best):true;
+      tip.innerHTML=active
+        ?`<strong>C(${best.region}, ${best.tiempo}, ${best.producto})</strong> = ${best.ventas} (100K MXN)`
+        :`<span style="color:#bbb">C(${best.region}, ${best.tiempo}, ${best.producto}) — fuera del subcubo activo</span>`;
+    } else {
+      tip.innerHTML='<span style="color:#aaa">Pasa el cursor sobre una celda del cubo</span>';
+    }
+    draw();
+  });
+
+  cv.addEventListener('mouseleave',function(){
+    hlCell=null;
+    document.getElementById('olapTip').innerHTML=
+      '<span style="color:#aaa">Pasa el cursor sobre una celda del cubo</span>';
+    draw();
+  });
+
+  /* ── button callbacks ────────────────────────────────── */
+  window.olapOp=function(mode){
+    curMode=mode; filter=FILTERS[mode];
+    document.querySelectorAll('.obtn').forEach(b=>b.classList.remove('active'));
+    document.getElementById('obtn-'+mode).classList.add('active');
+    draw();
+  };
+
+  /* ── init ────────────────────────────────────────────── */
+  document.getElementById('olapTip').innerHTML=
+    '<span style="color:#aaa">Pasa el cursor sobre una celda del cubo</span>';
+  draw();
+})();
+</script>
+```
+
 ## Modelo multidimensional
 
 Supongamos un conjunto de transacciones $\mathcal{T}$ donde cada registro contiene atributos de dimensión y una medida de ventas. Una transacción puede escribirse como
