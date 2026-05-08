@@ -1,5 +1,9 @@
 <div align="center">
 
+<picture>
+  <img src="images/Logo_FC_Blanco.png" alt="Logo Facultad" style="height:80px;">
+</picture>
+
 # Almacenes y Minería de Datos
 ### Data Warehousing & Data Mining
 
