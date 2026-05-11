@@ -1,0 +1,1001 @@
+---
+title: "Regresión y clasificadores lineales"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: references_example.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+
+El aprendizaje supervisado estudia problemas en los que se dispone de observaciones de entrada y de una variable objetivo asociada. A partir de un conjunto de entrenamiento, el objetivo es aprender una función capaz de predecir la respuesta de nuevas observaciones. En términos generales, se parte de datos de la forma
+$$
+\mathcal{D}=\{(\mathbf{x}_i,y_i)\}_{i=1}^n,
+$$
+donde $\mathbf{x}_i\in\mathbb{R}^p$ representa un vector de características y $y_i$ representa la respuesta observada. Cuando $y_i$ es una magnitud continua, el problema se formula como **regresión**; cuando $y_i$ representa una clase discreta, se formula como **clasificación** [@hastie2009elements; @bishop2006pattern].
+
+Las presentaciones base introducen dos familias de modelos deterministas centrales en aprendizaje supervisado: la regresión lineal, usada para predecir variables numéricas, y los clasificadores lineales, usados para separar clases mediante hiperplanos de decisión. En este capítulo se reorganizan y amplían esas ideas para construir una exposición autocontenida: primero se estudia la regresión lineal simple y múltiple; después se revisan métricas de evaluación para modelos de regresión; finalmente se introducen el discriminante lineal de Fisher y el perceptrón como ejemplos fundamentales de clasificadores lineales.
+
+La importancia pedagógica de estos modelos no se limita a su simplicidad. La regresión lineal permite discutir estimación, residuos, error cuadrático, interpretación de coeficientes y problemas de colinealidad. Los clasificadores lineales permiten introducir funciones discriminantes, fronteras de decisión, separabilidad lineal, márgenes y aprendizaje iterativo. Muchas técnicas modernas, incluyendo redes neuronales profundas, máquinas de soporte vectorial y modelos generalizados, conservan ideas estructurales que aparecen por primera vez en estos modelos [@goodfellow2016deep; @vapnik1998statistical].
+
+## Regresión: predicción de variables continuas
+
+En un problema de regresión, la variable objetivo toma valores reales. Ejemplos típicos son el precio de una casa, la temperatura de una ciudad, el ingreso mensual de una persona o el número esperado de citas médicas. La tarea consiste en aprender una función $f$ tal que
+$$
+\widehat{y}=f(\mathbf{x})
+$$
+sea una aproximación razonable del valor observado $y$.
+
+::: {.callout-note appearance="minimal"}
+Definición. Un problema de regresión supervisada consiste en estimar una función $f:\mathcal{X}\to\mathbb{R}$ a partir de un conjunto de pares entrada--salida $\mathcal{D}=\{(\mathbf{x}_i,y_i)\}_{i=1}^n$, de modo que las predicciones $\widehat{y}_i=f(\mathbf{x}_i)$ aproximen los valores observados $y_i$:
+$$
+\widehat{y}_i=f(\mathbf{x}_i),\qquad y_i\in\mathbb{R}.
+$$ {#eq-regression-problem}
+:::
+
+La regresión puede abordarse con modelos de distinta complejidad. Entre los más frecuentes se encuentran la regresión lineal, la regresión polinómica, los árboles de regresión, los bosques aleatorios y los métodos de boosting como XGBoost [@breiman2001random; @chen2016xgboost]. Sin embargo, la regresión lineal ocupa un lugar especial porque es interpretable, tiene una solución analítica bajo ciertas condiciones y permite estudiar con claridad la relación entre variables explicativas y variable dependiente.
+
+### Regresión simple y regresión múltiple
+
+La **regresión lineal simple** usa una sola variable explicativa. Su forma básica es
+$$
+\widehat{y}=\beta_0+\beta_1 x,
+$$
+donde $\beta_0$ es el intercepto y $\beta_1$ es la pendiente. La pendiente indica el cambio esperado en $y$ cuando $x$ aumenta una unidad, manteniendo fijo todo lo demás. En el caso simple no hay más variables que controlar.
+
+La **regresión lineal múltiple** generaliza esta idea a varias variables explicativas:
+$$
+y=\beta_0+\beta_1x_1+\beta_2x_2+\cdots+\beta_px_p+\varepsilon.
+$$
+Aquí $\varepsilon$ representa el término de error, es decir, la parte de la respuesta que no es explicada por la combinación lineal de variables. Esta formulación permite modelar situaciones como el precio de una casa a partir de su tamaño, número de habitaciones y antigüedad.
+
+::: {.callout-note appearance="minimal"}
+Definición. El modelo de regresión lineal múltiple expresa la respuesta $y_i$ como una combinación lineal de $p$ variables explicativas más un término de error:
+$$
+y_i=\beta_0+\sum_{j=1}^{p}\beta_jx_{ij}+\varepsilon_i,
+\qquad i=1,\ldots,n.
+$$ {#eq-multiple-linear-regression}
+:::
+
+Por ejemplo, si se desea predecir la nota final de un estudiante usando horas de estudio, asistencia y tareas entregadas, un modelo posible es
+$$
+\widehat{\text{nota}}=20+5(\text{horas})+0.3(\text{asistencia})+2(\text{tareas}).
+$$
+Esta expresión no debe leerse como una ley universal, sino como un modelo estimado o propuesto. El coeficiente de horas, por ejemplo, sugiere que cada hora adicional de estudio se asocia con un aumento esperado de cinco puntos en la nota, manteniendo constantes la asistencia y las tareas.
+
+```{=html}
+<div id="lr-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:18px 22px;margin:2em 0;">
+  <div style="text-align:center;margin-bottom:10px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Regresión lineal simple — explorador interactivo</span><br>
+    <span style="font-size:0.81em;color:#666;">Ajusta β₀ y β₁ y observa cómo cambian los residuos y las métricas en tiempo real</span>
+  </div>
+
+  <canvas id="lr-cv" style="display:block;margin:0 auto;border:1px solid #dde;border-radius:4px;"></canvas>
+
+  <div style="display:flex;gap:20px;margin:12px 0 8px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:200px;">
+      <label style="font-size:0.83em;color:#444;">β₀ (intercepto) = <strong id="lr-b0v">5.00</strong></label>
+      <input type="range" id="lr-b0" min="-6" max="22" step="0.1" value="5.0"
+             style="width:100%;accent-color:#1a3a5c;" oninput="lrDraw()">
+    </div>
+    <div style="flex:1;min-width:200px;">
+      <label style="font-size:0.83em;color:#444;">β₁ (pendiente) = <strong id="lr-b1v">0.50</strong></label>
+      <input type="range" id="lr-b1" min="-1" max="5" step="0.05" value="0.5"
+             style="width:100%;accent-color:#1a3a5c;" oninput="lrDraw()">
+    </div>
+  </div>
+
+  <div id="lr-metrics" style="text-align:center;font-size:0.83em;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:28px;"></div>
+
+  <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+    <button class="lrbtn" onclick="lrOLS()">Solución OLS optima</button>
+    <button class="lrbtn" onclick="lrToggleRes()">Mostrar / ocultar residuos</button>
+    <button class="lrbtn" onclick="lrReset()">Reiniciar</button>
+  </div>
+</div>
+
+<style>
+.lrbtn{padding:5px 14px;border:1px solid #aab;background:#fff;border-radius:4px;cursor:pointer;
+       font-family:Georgia,serif;font-size:0.81em;}.lrbtn:hover{background:#eef2f7;}
+</style>
+
+<script>
+(function(){
+const XD=[1,2,3,4,5,6,7,8,9,10];
+const YD=[2.1,4.3,5.8,7.9,10.2,11.8,14.0,16.1,17.9,20.2];
+const N=XD.length;
+const xbar=XD.reduce((a,b)=>a+b,0)/N;
+const ybar=YD.reduce((a,b)=>a+b,0)/N;
+const sxy=XD.reduce((s,x,i)=>s+(x-xbar)*(YD[i]-ybar),0);
+const sxx=XD.reduce((s,x)=>s+(x-xbar)**2,0);
+const OB1=sxy/sxx, OB0=ybar-OB1*xbar;  // OLS solution
+
+let showRes=true;
+
+const cv=document.getElementById('lr-cv');
+const ctx=cv.getContext('2d');
+const DPR=window.devicePixelRatio||1;
+const W=640, H=275;
+cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+ctx.scale(DPR,DPR);
+
+const PL=56,PR=14,PT=14,PB=36;
+const PW=W-PL-PR, PH=H-PT-PB;
+const xMn=0,xMx=11,yMn=-3,yMx=23;
+const px=x=>PL+(x-xMn)/(xMx-xMn)*PW;
+const py=y=>PT+PH-(y-yMn)/(yMx-yMn)*PH;
+
+function mets(b0,b1){
+  const yh=XD.map(x=>b0+b1*x);
+  const sse=yh.reduce((s,v,i)=>s+(YD[i]-v)**2,0);
+  const sst=YD.reduce((s,v)=>s+(v-ybar)**2,0);
+  return{yh, mse:sse/N, rmse:Math.sqrt(sse/N), r2:1-sse/sst};
+}
+
+window.lrDraw=function(){
+  const b0=+document.getElementById('lr-b0').value;
+  const b1=+document.getElementById('lr-b1').value;
+  document.getElementById('lr-b0v').textContent=b0.toFixed(2);
+  document.getElementById('lr-b1v').textContent=b1.toFixed(2);
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+
+  // Grid
+  ctx.strokeStyle='#eaecf0'; ctx.lineWidth=0.8;
+  for(let x=1;x<=10;x++){ctx.beginPath();ctx.moveTo(px(x),PT);ctx.lineTo(px(x),PT+PH);ctx.stroke();}
+  for(let y=0;y<=20;y+=4){ctx.beginPath();ctx.moveTo(PL,py(y));ctx.lineTo(PL+PW,py(y));ctx.stroke();}
+
+  // Axes
+  ctx.strokeStyle='#aaa'; ctx.lineWidth=1.1;
+  ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(PL,py(0));ctx.lineTo(PL+PW,py(0));ctx.stroke();
+
+  // Tick labels
+  ctx.fillStyle='#888'; ctx.font='11px Georgia'; ctx.textAlign='center';
+  for(let x=2;x<=10;x+=2) ctx.fillText(x,px(x),PT+PH+16);
+  ctx.textAlign='right';
+  for(let y=0;y<=20;y+=4) ctx.fillText(y,PL-6,py(y)+4);
+
+  // Axis titles
+  ctx.fillStyle='#666'; ctx.font='12px Georgia'; ctx.textAlign='center';
+  ctx.fillText('x (horas de estudio)', PL+PW/2, H-2);
+  ctx.save(); ctx.translate(13,PT+PH/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('y (nota)', 0, 0); ctx.restore();
+
+  const m=mets(b0,b1);
+
+  // Residuals
+  if(showRes){
+    XD.forEach((xi,i)=>{
+      const yh=m.yh[i];
+      // Shaded residual rectangle
+      const x0=px(xi), y0=py(YD[i]), y1=py(yh);
+      const h=y1-y0, side=Math.min(Math.abs(h)*0.4,14);
+      ctx.fillStyle='rgba(180,30,30,0.08)';
+      ctx.fillRect(x0-side,Math.min(y0,y1),side,Math.abs(h));
+      // Residual line
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x0,y1);
+      ctx.strokeStyle='rgba(180,30,30,0.65)'; ctx.lineWidth=1.8;
+      ctx.setLineDash([]); ctx.stroke();
+    });
+  }
+
+  // Ghost OLS line when not at solution
+  const atOLS = Math.abs(b0-OB0)<0.08 && Math.abs(b1-OB1)<0.04;
+  if(!atOLS){
+    ctx.beginPath();
+    ctx.moveTo(px(0.4),py(OB0+OB1*0.4));
+    ctx.lineTo(px(10.6),py(OB0+OB1*10.6));
+    ctx.strokeStyle='rgba(30,140,80,0.3)'; ctx.lineWidth=1.8;
+    ctx.setLineDash([7,4]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='rgba(30,140,80,0.55)'; ctx.font='10px Georgia'; ctx.textAlign='left';
+    ctx.fillText('OLS óptima', px(10.6)+4, py(OB0+OB1*10.6)+4);
+  }
+
+  // User's regression line
+  ctx.beginPath();
+  ctx.moveTo(px(0.3),py(b0+b1*0.3));
+  ctx.lineTo(px(10.7),py(b0+b1*10.7));
+  ctx.strokeStyle='#1a3a5c'; ctx.lineWidth=2.3; ctx.setLineDash([]); ctx.stroke();
+
+  // Line equation label
+  const labY=b0+b1*6;
+  if(labY>yMn+1&&labY<yMx-1){
+    ctx.fillStyle='#1a3a5c'; ctx.font='bold 11px Georgia'; ctx.textAlign='left';
+    ctx.fillText(`ŷ = ${b0>=0?'':'-'}${Math.abs(b0).toFixed(2)} ${b1>=0?'+':'-'} ${Math.abs(b1).toFixed(2)}·x`, px(6.2), py(labY)-7);
+  }
+
+  // Data points
+  XD.forEach((xi,i)=>{
+    ctx.beginPath(); ctx.arc(px(xi),py(YD[i]),5.5,0,Math.PI*2);
+    ctx.fillStyle='#c0392b'; ctx.fill();
+    ctx.strokeStyle='#922b21'; ctx.lineWidth=1; ctx.stroke();
+  });
+
+  // Metrics bar
+  const r2c=m.r2>0.96?'#1a7a3a':m.r2>0.70?'#b7770d':'#c0392b';
+  document.getElementById('lr-metrics').innerHTML=
+    `MSE = <strong>${m.mse.toFixed(3)}</strong>
+     &nbsp;&nbsp;·&nbsp;&nbsp;
+     RMSE = <strong>${m.rmse.toFixed(3)}</strong>
+     &nbsp;&nbsp;·&nbsp;&nbsp;
+     R² = <strong style="color:${r2c};">${m.r2.toFixed(4)}</strong>
+     ${atOLS?'&nbsp;&nbsp;<span style="color:#1a7a3a;">← mínimo global OLS ✓</span>':''}`;
+};
+
+window.lrOLS=function(){
+  document.getElementById('lr-b0').value=OB0.toFixed(2);
+  document.getElementById('lr-b1').value=OB1.toFixed(2);
+  lrDraw();
+};
+window.lrToggleRes=function(){ showRes=!showRes; lrDraw(); };
+window.lrReset=function(){
+  document.getElementById('lr-b0').value='5.0';
+  document.getElementById('lr-b1').value='0.5';
+  showRes=true; lrDraw();
+};
+lrDraw();
+})();
+</script>
+```
+
+## Representación matricial de la regresión lineal
+
+La notación matricial simplifica la estimación y permite conectar la regresión lineal con álgebra lineal, optimización y aprendizaje automático. Para $n$ observaciones y $p$ variables explicativas, se define
+$$
+\mathbf{y}=\begin{bmatrix}y_1\\y_2\\\vdots\\y_n\end{bmatrix},
+\qquad
+\mathbf{X}=\begin{bmatrix}
+1 & x_{11} & x_{12} & \cdots & x_{1p}\\
+1 & x_{21} & x_{22} & \cdots & x_{2p}\\
+\vdots & \vdots & \vdots & \ddots & \vdots\\
+1 & x_{n1} & x_{n2} & \cdots & x_{np}
+\end{bmatrix},
+\qquad
+\boldsymbol{\beta}=\begin{bmatrix}\beta_0\\\beta_1\\\vdots\\\beta_p\end{bmatrix}.
+$$
+La primera columna de unos permite incorporar el intercepto. Con esta notación, el modelo se escribe como
+$$
+\mathbf{y}=\mathbf{X}\boldsymbol{\beta}+\boldsymbol{\varepsilon}.
+$$
+
+::: {.callout-note appearance="minimal"}
+Definición. La matriz de diseño $\mathbf{X}\in\mathbb{R}^{n\times(p+1)}$ contiene una fila por observación y una columna por término del modelo, incluyendo una columna inicial de unos para el intercepto:
+$$
+\mathbf{y}=\mathbf{X}\boldsymbol{\beta}+\boldsymbol{\varepsilon}.
+$$ {#eq-matrix-linear-model}
+:::
+
+La estimación por mínimos cuadrados ordinarios busca el vector $\boldsymbol{\beta}$ que minimiza la suma de errores cuadráticos entre los valores observados y los valores predichos [@legendre1805nouvelles; @gauss1809theoria]:
+$$
+\min_{\boldsymbol{\beta}}\;\|\mathbf{y}-\mathbf{X}\boldsymbol{\beta}\|_2^2.
+$$
+Si $\mathbf{X}^\top\mathbf{X}$ es invertible, la solución analítica es
+$$
+\widehat{\boldsymbol{\beta}}=(\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{X}^\top\mathbf{y}.
+$$
+
+::: {.callout-note appearance="minimal"}
+Definición. El estimador de mínimos cuadrados ordinarios es el vector de coeficientes que minimiza la norma cuadrática de los residuos:
+$$
+\widehat{\boldsymbol{\beta}}
+=\arg\min_{\boldsymbol{\beta}}\|\mathbf{y}-\mathbf{X}\boldsymbol{\beta}\|_2^2.
+$$ {#eq-ols-definition}
+:::
+
+Una vez estimado el modelo, los valores predichos y los residuos se calculan como
+$$
+\widehat{\mathbf{y}}=\mathbf{X}\widehat{\boldsymbol{\beta}},
+\qquad
+\widehat{\boldsymbol{\varepsilon}}=\mathbf{y}-\widehat{\mathbf{y}}.
+$$
+Los residuos son esenciales para evaluar el ajuste: un buen modelo no solo tiene errores pequeños, sino errores sin patrones sistemáticos evidentes.
+
+### Condición de invertibilidad y colinealidad
+
+La fórmula cerrada de mínimos cuadrados requiere que $\mathbf{X}^\top\mathbf{X}$ sea invertible. Esto ocurre cuando las columnas de $\mathbf{X}$ son linealmente independientes. Si una variable explicativa puede escribirse como combinación lineal exacta de otras, la matriz pierde rango y la solución deja de ser única. Este problema se conoce como colinealidad perfecta. En la práctica, también puede aparecer multicolinealidad aproximada, que no impide calcular una solución pero puede hacer que los coeficientes sean inestables.
+
+Cuando $\mathbf{X}^\top\mathbf{X}$ no es invertible, existen varias estrategias: eliminar variables redundantes, transformar variables, usar la pseudoinversa de Moore--Penrose o introducir regularización, como en regresión ridge [@hoerl1970ridge; @golub2013matrix].
+
+## Ejemplo práctico: regresión lineal múltiple en Python
+
+Consideremos el ejemplo de estudiantes con tres variables explicativas: horas de estudio, porcentaje de asistencia y número de tareas entregadas. El objetivo es predecir la nota final.
+
+```{python}
+import numpy as np
+import pandas as pd
+
+# Datos de ejemplo
+datos = pd.DataFrame({
+    "horas": [2, 4, 6, 8],
+    "asistencia": [60, 70, 80, 90],
+    "tareas": [4, 5, 6, 7],
+    "nota": [56, 71, 86, 101]
+})
+
+X = datos[["horas", "asistencia", "tareas"]].to_numpy(dtype=float)
+y = datos["nota"].to_numpy(dtype=float)
+
+# Agregamos la columna de unos para el intercepto
+X_design = np.column_stack([np.ones(len(X)), X])
+
+# Estimación por mínimos cuadrados usando la pseudoinversa
+beta_hat = np.linalg.pinv(X_design) @ y
+beta_hat
+```
+
+El uso de `np.linalg.pinv` es deliberado: en ejemplos pequeños o con variables altamente correlacionadas, la pseudoinversa es más estable que invertir directamente $\mathbf{X}^\top\mathbf{X}$. Para obtener predicciones y residuos:
+
+```{python}
+y_hat = X_design @ beta_hat
+residuos = y - y_hat
+
+resultado = datos.copy()
+resultado["prediccion"] = y_hat
+resultado["residuo"] = residuos
+resultado
+```
+
+En este ejemplo, las variables están construidas de modo que el ajuste puede ser prácticamente exacto. En datos reales, esto rara vez ocurre. Un error de entrenamiento igual a cero puede ser señal de una relación determinista, de un conjunto demasiado pequeño o de sobreajuste.
+
+## Métricas de evaluación para regresión
+
+Evaluar un modelo de regresión implica comparar valores observados $y_i$ con predicciones $\widehat{y}_i$. Las métricas más comunes resumen los residuos $e_i=y_i-\widehat{y}_i$.
+
+::: {.callout-note appearance="minimal"}
+Definición. La suma de errores cuadráticos mide la discrepancia total entre observaciones y predicciones elevando cada residuo al cuadrado:
+$$
+\mathrm{SSE}=\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2.
+$$ {#eq-sse}
+:::
+
+El **error cuadrático medio** o MSE promedia la suma de errores cuadráticos:
+$$
+\mathrm{MSE}=\frac{1}{n}\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2.
+$$
+Su raíz cuadrada es el **RMSE**:
+$$
+\mathrm{RMSE}=\sqrt{\frac{1}{n}\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2}.
+$$
+El RMSE está en las mismas unidades que la variable objetivo y penaliza fuertemente los errores grandes debido al cuadrado.
+
+::: {.callout-note appearance="minimal"}
+Definición. El error absoluto medio mide la magnitud promedio del error sin considerar su signo:
+$$
+\mathrm{MAE}=\frac{1}{n}\sum_{i=1}^{n}|y_i-\widehat{y}_i|.
+$$ {#eq-mae}
+:::
+
+El MAE suele ser más interpretable que el RMSE, porque indica cuánto se equivoca el modelo en promedio. Además, es menos sensible a errores extremos. En general se cumple que $\mathrm{RMSE}\geq \mathrm{MAE}$; si la diferencia entre ambos es grande, esto sugiere que existen algunos errores de magnitud considerable.
+
+Otra métrica importante es el coeficiente de determinación:
+$$
+R^2=1-\frac{\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2}{\sum_{i=1}^{n}(y_i-\bar{y})^2},
+\qquad
+\bar{y}=\frac{1}{n}\sum_{i=1}^n y_i.
+$$
+En mínimos cuadrados ordinarios con intercepto, $R^2$ suele interpretarse como la proporción de variabilidad de la variable dependiente explicada por el modelo. Un valor cercano a 1 indica alto ajuste; un valor cercano a 0 indica que el modelo no mejora sustancialmente a la predicción constante $\bar{y}$ [@hastie2009elements].
+
+::: {.callout-note appearance="minimal"}
+Definición. El coeficiente de determinación compara la variación no explicada por el modelo contra la variación total respecto a la media:
+$$
+R^2=1-\frac{\mathrm{SSE}}{\mathrm{SST}}
+=1-\frac{\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2}{\sum_{i=1}^{n}(y_i-\bar{y})^2}.
+$$ {#eq-r2}
+:::
+
+### Cálculo de métricas en Python
+
+```{python}
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+mae = mean_absolute_error(y, y_hat)
+rmse = np.sqrt(mean_squared_error(y, y_hat))
+r2 = r2_score(y, y_hat)
+sse = np.sum((y - y_hat) ** 2)
+
+pd.DataFrame({
+    "metrica": ["SSE", "MAE", "RMSE", "R2"],
+    "valor": [sse, mae, rmse, r2]
+})
+```
+
+En una evaluación rigurosa, estas métricas deben calcularse sobre datos no usados para entrenar el modelo. Separar entrenamiento y prueba permite estimar la capacidad de generalización. También es recomendable inspeccionar gráficamente los residuos.
+
+```{python}
+import matplotlib.pyplot as plt
+
+plt.scatter(y_hat, residuos)
+plt.axhline(0, linestyle="--")
+plt.xlabel("Predicción")
+plt.ylabel("Residuo")
+plt.title("Residuos vs predicciones")
+plt.show()
+```
+
+Un patrón curvo en esta gráfica puede indicar que la relación entre variables no es lineal. Una dispersión creciente puede sugerir heterocedasticidad. Residuos con valores extremos pueden revelar observaciones atípicas o problemas de medición.
+
+## Ventajas y limitaciones de la regresión lineal
+
+La regresión lineal tiene varias ventajas. Es un método común para modelar datos numéricos, es computacionalmente eficiente, permite interpretar coeficientes y ofrece una base sólida para entender modelos más complejos. Además, cuando los supuestos estadísticos son razonables, permite construir intervalos de confianza y pruebas de significancia para los coeficientes [@montgomery2012introduction].
+
+Sin embargo, también tiene limitaciones. Supone que la relación entre características y respuesta puede aproximarse mediante una combinación lineal. No maneja datos faltantes automáticamente. Las variables categóricas requieren codificación previa, por ejemplo mediante variables indicadoras. Además, los coeficientes pueden volverse inestables cuando hay multicolinealidad o cuando el número de variables se acerca al número de observaciones.
+
+En aplicaciones predictivas, el modelo debe evaluarse con datos externos al entrenamiento. En aplicaciones explicativas, además deben revisarse supuestos como independencia de errores, varianza constante, ausencia de colinealidad severa y especificación adecuada de la forma funcional.
+
+## Más allá de la linealidad: árboles de regresión
+
+Un árbol de regresión predice valores numéricos dividiendo recursivamente el espacio de características en regiones más pequeñas. En cada región, asigna como predicción un valor constante, típicamente el promedio de los valores observados en esa región [@breiman1984classification]. Esta idea contrasta con la regresión lineal: en lugar de una sola fórmula global, el árbol aprende reglas locales.
+
+::: {.callout-note appearance="minimal"}
+Definición. Un árbol de regresión particiona el espacio de entrada en regiones disjuntas $R_1,\ldots,R_M$ y predice en cada región el promedio de las respuestas de entrenamiento que caen en ella:
+$$
+\widehat{f}(\mathbf{x})=\sum_{m=1}^{M}c_m\mathbf{1}\{\mathbf{x}\in R_m\},
+\qquad
+c_m=\frac{1}{|R_m|}\sum_{i:\mathbf{x}_i\in R_m}y_i.
+$$ {#eq-regression-tree}
+:::
+
+Los árboles capturan relaciones no lineales e interacciones entre variables, pero pueden sobreajustar si crecen demasiado. Por ello, se suelen combinar en métodos de ensamble, como random forests o gradient boosting [@breiman2001random; @friedman2001greedy].
+
+```{python}
+from sklearn.tree import DecisionTreeRegressor
+
+arbol = DecisionTreeRegressor(max_depth=2, random_state=42)
+arbol.fit(X, y)
+
+pred_arbol = arbol.predict(X)
+pd.DataFrame({
+    "nota_real": y,
+    "pred_arbol": pred_arbol
+})
+```
+
+## De regresión a clasificación lineal
+
+En clasificación, la variable objetivo no es continua sino categórica. En el caso binario, suele codificarse como $y\in\{-1,+1\}$ o $y\in\{0,1\}$. Un clasificador lineal decide la clase de una observación usando una función discriminante de la forma
+$$
+g(\mathbf{x})=\mathbf{w}^\top\mathbf{x}+w_0.
+$$
+La frontera de decisión es el conjunto de puntos para los cuales $g(\mathbf{x})=0$. En dos dimensiones, esta frontera es una recta; en más dimensiones, es un hiperplano.
+
+::: {.callout-note appearance="minimal"}
+Definición. Un clasificador lineal binario asigna una etiqueta a partir del signo de una función afín:
+$$
+\widehat{y}=\operatorname{sign}(\mathbf{w}^\top\mathbf{x}+w_0),
+\qquad \widehat{y}\in\{-1,+1\}.
+$$ {#eq-linear-classifier}
+:::
+
+Geométricamente, $\mathbf{w}$ es perpendicular a la frontera de decisión. Cambiar $w_0$ desplaza el hiperplano sin cambiar su orientación. Esta interpretación permite conectar clasificadores lineales con proyecciones, márgenes y separación de clases.
+
+## Discriminante lineal de Fisher
+
+El discriminante lineal de Fisher busca una dirección de proyección que separe bien dos clases. La idea central es proyectar los datos sobre una recta y elegir la dirección en la que las medias de las clases queden lejos entre sí, mientras que los puntos de cada clase queden compactos [@fisher1936use].
+
+Sean dos clases $\omega_1$ y $\omega_2$ con conjuntos de muestras $\mathcal{X}_1$ y $\mathcal{X}_2$. Sus medias son
+$$
+\mathbf{m}_1=\frac{1}{n_1}\sum_{\mathbf{x}\in\mathcal{X}_1}\mathbf{x},
+\qquad
+\mathbf{m}_2=\frac{1}{n_2}\sum_{\mathbf{x}\in\mathcal{X}_2}\mathbf{x}.
+$$
+Las matrices de dispersión intra-clase son
+$$
+\mathbf{S}_1=\sum_{\mathbf{x}\in\mathcal{X}_1}(\mathbf{x}-\mathbf{m}_1)(\mathbf{x}-\mathbf{m}_1)^\top,
+\qquad
+\mathbf{S}_2=\sum_{\mathbf{x}\in\mathcal{X}_2}(\mathbf{x}-\mathbf{m}_2)(\mathbf{x}-\mathbf{m}_2)^\top.
+$$
+La dispersión intra-clase total es
+$$
+\mathbf{S}_W=\mathbf{S}_1+\mathbf{S}_2,
+$$
+y la dispersión entre clases puede escribirse como
+$$
+\mathbf{S}_B=(\mathbf{m}_1-\mathbf{m}_2)(\mathbf{m}_1-\mathbf{m}_2)^\top.
+$$
+
+::: {.callout-note appearance="minimal"}
+Definición. El criterio de Fisher mide la razón entre separación entre clases y dispersión dentro de las clases después de proyectar por una dirección $\mathbf{w}$:
+$$
+J_F(\mathbf{w})=\frac{\mathbf{w}^\top\mathbf{S}_B\mathbf{w}}{\mathbf{w}^\top\mathbf{S}_W\mathbf{w}}.
+$$ {#eq-fisher-criterion}
+:::
+
+Maximizar este cociente produce una dirección proporcional a
+$$
+\mathbf{w}^*\propto \mathbf{S}_W^{-1}(\mathbf{m}_1-\mathbf{m}_2),
+$$
+cuando $\mathbf{S}_W$ es invertible. Si no lo es, se puede usar pseudoinversa o regularización. El resultado no fija por sí solo el umbral de clasificación; solo determina la dirección de proyección. Una vez proyectado un punto como $z=\mathbf{w}^{*\top}\mathbf{x}$, se elige un umbral $t$ y se clasifica según si $z>t$ o $z\leq t$.
+
+```{=html}
+<div id="lda-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:22px 26px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:14px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Discriminante Lineal de Fisher — explorador interactivo</span><br>
+    <span style="font-size:0.81em;color:#666;">Rota la dirección de proyección y observa cómo cambia la separación entre clases</span>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">Ángulo de proyección θ = <strong id="lda-angv">0°</strong></label>
+    <input id="lda-ang" type="range" min="0" max="180" value="0" step="1"
+           style="flex:1;min-width:140px;accent-color:#2563eb;">
+    <button id="lda-opt-btn" onclick="ldaOptimal()"
+            style="padding:5px 13px;background:#1a2e45;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:0.82em;">
+      Dirección óptima de Fisher
+    </button>
+  </div>
+
+  <div id="lda-jval" style="text-align:center;font-size:0.83em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:26px;"></div>
+
+  <canvas id="lda-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+
+  <div style="margin-top:8px;display:flex;gap:18px;justify-content:center;font-size:0.79em;color:#555;">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#2563eb;margin-right:4px;vertical-align:middle;"></span>Clase 1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#e05c2a;margin-right:4px;vertical-align:middle;"></span>Clase 2</span>
+    <span><span style="display:inline-block;width:18px;height:3px;background:#16a34a;margin-right:4px;vertical-align:middle;"></span>Dirección w</span>
+    <span><span style="display:inline-block;width:18px;height:3px;background:#9333ea;margin-right:4px;vertical-align:middle;border-top:2px dashed #9333ea;"></span>Dirección óptima</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* ── datos ─────────────────────────────────────────────── */
+  const C1=[[-0.11,1.68],[0.68,2.39],[1.29,1.52],[1.54,2.71],[2.18,1.94],
+             [0.91,1.14],[1.82,2.55],[0.42,2.10],[1.66,1.38],[2.37,2.13],
+             [1.12,2.88],[0.75,1.81],[1.41,2.02],[2.09,1.59],[0.58,2.44],
+             [1.94,2.25],[1.23,1.72],[0.87,2.63],[1.57,1.95],[2.24,1.46]];
+  const C2=[[3.12,2.54],[4.36,3.71],[3.87,2.92],[4.68,3.45],[3.55,4.12],
+             [4.91,2.83],[3.29,3.58],[4.14,4.27],[4.52,3.18],[3.76,2.71],
+             [5.08,3.89],[3.43,3.25],[4.79,2.64],[3.98,4.04],[4.23,3.37],
+             [5.31,3.52],[3.61,2.89],[4.47,4.18],[3.84,3.06],[4.12,3.73]];
+
+  /* ── within-class scatter SW ────────────────────────────── */
+  function mean(pts){ const n=pts.length; let mx=0,my=0; pts.forEach(p=>{mx+=p[0];my+=p[1];}); return [mx/n,my/n]; }
+  function scatter(pts,m){ let s00=0,s01=0,s11=0; pts.forEach(p=>{const dx=p[0]-m[0],dy=p[1]-m[1];s00+=dx*dx;s01+=dx*dy;s11+=dy*dy;}); return [[s00,s01],[s01,s11]]; }
+  const m1=mean(C1), m2=mean(C2);
+  const S1=scatter(C1,m1), S2=scatter(C2,m2);
+  const SW=[[S1[0][0]+S2[0][0],S1[0][1]+S2[0][1]],[S1[1][0]+S2[1][0],S1[1][1]+S2[1][1]]];
+
+  /* ── 2×2 inverse ─────────────────────────────────────────── */
+  function inv2(M){ const det=M[0][0]*M[1][1]-M[0][1]*M[1][0]; return [[M[1][1]/det,-M[0][1]/det],[-M[1][0]/det,M[0][0]/det]]; }
+  const SWinv=inv2(SW);
+  const dm=[m2[0]-m1[0],m2[1]-m1[1]];
+  const wopt_raw=[SWinv[0][0]*dm[0]+SWinv[0][1]*dm[1], SWinv[1][0]*dm[0]+SWinv[1][1]*dm[1]];
+  const wopt_norm=Math.sqrt(wopt_raw[0]**2+wopt_raw[1]**2);
+  const wopt=[wopt_raw[0]/wopt_norm, wopt_raw[1]/wopt_norm];
+  const optAngle=Math.round((Math.atan2(wopt[1],wopt[0])*180/Math.PI+360)%180);
+
+  /* ── canvas setup ────────────────────────────────────────── */
+  const cv=document.getElementById('lda-cv');
+  const W=680, H=480, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  /* layout: top 2D scatter, bottom 1D projection */
+  const SC={l:44,r:16,t:16,b:210}; // scatter margins
+  const PR={l:44,r:16,t:H-196,b:H-56}; // projection strip
+  const SCW=W-SC.l-SC.r, SCH=H-SC.t-SC.b;
+  const PRW=W-PR.l-PR.r, PRH=PR.b-PR.t;
+
+  /* data range */
+  const allX=[...C1.map(p=>p[0]),...C2.map(p=>p[0])];
+  const allY=[...C1.map(p=>p[1]),...C2.map(p=>p[1])];
+  const xMn=Math.min(...allX)-0.5, xMx=Math.max(...allX)+0.5;
+  const yMn=Math.min(...allY)-0.5, yMx=Math.max(...allY)+0.5;
+
+  const sx=x=>SC.l+(x-xMn)/(xMx-xMn)*SCW;
+  const sy=y=>SC.t+SCH-(y-yMn)/(yMx-yMn)*SCH;
+
+  /* ── state ───────────────────────────────────────────────── */
+  let curAng=0; // degrees
+
+  /* ── J(w) criterion ──────────────────────────────────────── */
+  function computeJ(w){
+    const proj=pts=>pts.map(p=>p[0]*w[0]+p[1]*w[1]);
+    const p1=proj(C1), p2=proj(C2);
+    const mu1=p1.reduce((a,v)=>a+v,0)/p1.length;
+    const mu2=p2.reduce((a,v)=>a+v,0)/p2.length;
+    const v1=p1.reduce((a,v)=>a+(v-mu1)**2,0)/p1.length;
+    const v2=p2.reduce((a,v)=>a+(v-mu2)**2,0)/p2.length;
+    return {J:(mu1-mu2)**2/(v1+v2+1e-9), mu1, mu2, v1, v2, p1, p2};
+  }
+
+  /* ── draw ────────────────────────────────────────────────── */
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const ang=curAng*Math.PI/180;
+    const w=[Math.cos(ang),Math.sin(ang)];
+    const {J,mu1,mu2,v1,v2,p1,p2}=computeJ(w);
+    const Jopt=computeJ(wopt).J;
+    const ratio=Math.min(J/Jopt,1);
+
+    /* ── 2D scatter panel ── */
+    /* background */
+    ctx.fillStyle='#f8f9fb'; ctx.fillRect(SC.l,SC.t,SCW,SCH);
+    /* grid */
+    ctx.strokeStyle='#e5e9f0'; ctx.lineWidth=0.8;
+    for(let gx=Math.ceil(xMn);gx<=xMx;gx++){
+      ctx.beginPath();ctx.moveTo(sx(gx),SC.t);ctx.lineTo(sx(gx),SC.t+SCH);ctx.stroke();
+    }
+    for(let gy=Math.ceil(yMn);gy<=yMx;gy++){
+      ctx.beginPath();ctx.moveTo(SC.l,sy(gy));ctx.lineTo(SC.l+SCW,sy(gy));ctx.stroke();
+    }
+    /* axes */
+    ctx.strokeStyle='#9aa3b5'; ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(SC.l,SC.t);ctx.lineTo(SC.l,SC.t+SCH);ctx.lineTo(SC.l+SCW,SC.t+SCH);ctx.stroke();
+    /* axis labels */
+    ctx.fillStyle='#666';ctx.font='11px Georgia,serif';ctx.textAlign='center';
+    for(let gx=Math.ceil(xMn);gx<=xMx;gx++){
+      ctx.fillText(gx,sx(gx),SC.t+SCH+13);
+    }
+    ctx.textAlign='right';
+    for(let gy=Math.ceil(yMn);gy<=yMx;gy++){
+      ctx.fillText(gy,SC.l-5,sy(gy)+4);
+    }
+
+    /* optimal direction (dashed purple) */
+    const ctrX=(sx(xMn)+sx(xMx))/2, ctrY=(sy(yMn)+sy(yMx))/2;
+    const optAng=optAngle*Math.PI/180;
+    const rLen=Math.min(SCW,SCH)*0.46;
+    ctx.setLineDash([5,4]); ctx.strokeStyle='#9333ea'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.moveTo(ctrX-Math.cos(optAng)*rLen, ctrY+Math.sin(optAng)*rLen);
+    ctx.lineTo(ctrX+Math.cos(optAng)*rLen, ctrY-Math.sin(optAng)*rLen);
+    ctx.stroke(); ctx.setLineDash([]);
+
+    /* projection axis (green) */
+    const axLen=Math.min(SCW,SCH)*0.48;
+    const axX1=ctrX-Math.cos(ang)*axLen, axY1=ctrY+Math.sin(ang)*axLen;
+    const axX2=ctrX+Math.cos(ang)*axLen, axY2=ctrY-Math.sin(ang)*axLen;
+    ctx.strokeStyle='#16a34a'; ctx.lineWidth=2.2;
+    ctx.beginPath();ctx.moveTo(axX1,axY1);ctx.lineTo(axX2,axY2);ctx.stroke();
+    /* arrowhead */
+    const ah=8;
+    ctx.fillStyle='#16a34a';
+    ctx.save();ctx.translate(axX2,axY2);ctx.rotate(-ang);
+    ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(-ah,-ah/2.5);ctx.lineTo(-ah,ah/2.5);ctx.closePath();ctx.fill();
+    ctx.restore();
+    ctx.fillStyle='#16a34a';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';
+    ctx.fillText('w',axX2+6,axY2-4);
+
+    /* projection drop-lines */
+    function projectPt(p){
+      const t=p[0]*w[0]+p[1]*w[1];
+      return {t, fx:ctrX+(t*w[0]-ctrX*0+0)*1, fy:ctrY };
+    }
+    // compute origin on axis in data coords
+    const originT=0;
+    // foot of perpendicular from point p onto axis
+    function foot(p){
+      const t=p[0]*w[0]+p[1]*w[1];
+      return { px:sx(t*w[0]), py:sy(t*w[1]) };
+      // more precisely: foot in screen coords
+    }
+    function footScreen(p){
+      const t=p[0]*w[0]+p[1]*w[1];
+      // point on axis = ctr + t*(cos,-sin)*scale ... but scale is tricky cross-unit
+      // easier: foot = ctrScreen + t_screen * w_screen_dir
+      const tScaled=t*(axLen/(Math.abs(w[0])*(xMx-xMn)/SCW*0.5+Math.abs(w[1])*(yMx-yMn)/SCH*0.5));
+      // simplest correct formula using actual screen ax direction
+      const dx=axX2-axX1, dy=axY2-axY1;
+      const axLen2=Math.sqrt(dx*dx+dy*dy);
+      const ux=dx/axLen2, uy=dy/axLen2;
+      const px_s=sx(p[0]), py_s=sy(p[1]);
+      const proj2=(px_s-axX1)*ux+(py_s-axY1)*uy;
+      return { fx:axX1+proj2*ux, fy:axY1+proj2*uy, t:proj2 };
+    }
+
+    ctx.lineWidth=0.8; ctx.strokeStyle='rgba(100,120,160,0.35)';
+    [...C1,...C2].forEach(p=>{
+      const {fx,fy}=footScreen(p);
+      ctx.beginPath();ctx.moveTo(sx(p[0]),sy(p[1]));ctx.lineTo(fx,fy);ctx.stroke();
+    });
+
+    /* data points */
+    function drawPts(pts,col){
+      pts.forEach(p=>{
+        ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),4.5,0,2*Math.PI);
+        ctx.fillStyle=col+'cc';ctx.fill();
+        ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.stroke();
+      });
+    }
+    drawPts(C1,'#2563eb'); drawPts(C2,'#e05c2a');
+
+    /* ── 1D projection strip ── */
+    ctx.fillStyle='#f0f4fa';
+    ctx.fillRect(PR.l,PR.t,PRW,PRH);
+    ctx.strokeStyle='#c5cfe0';ctx.lineWidth=1;
+    ctx.strokeRect(PR.l,PR.t,PRW,PRH);
+
+    ctx.fillStyle='#8892a4';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Proyecciones 1D  (eje w)',PR.l+PRW/2,PR.t-5);
+
+    /* map projection values to strip x */
+    const allProj=[...p1,...p2];
+    const pMn=Math.min(...allProj)-0.5, pMx=Math.max(...allProj)+0.5;
+    const ps=t=>PR.l+(t-pMn)/(pMx-pMn)*PRW;
+
+    /* axis in strip */
+    const midY=PR.t+PRH/2;
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PR.l,midY);ctx.lineTo(PR.l+PRW,midY);ctx.stroke();
+    /* ticks */
+    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    for(let tv=Math.ceil(pMn);tv<=pMx;tv++){
+      ctx.beginPath();ctx.moveTo(ps(tv),midY-4);ctx.lineTo(ps(tv),midY+4);ctx.strokeStyle='#aaa';ctx.lineWidth=1;ctx.stroke();
+      ctx.fillText(tv.toFixed(0),ps(tv),midY+15);
+    }
+
+    /* projected points */
+    function drawProj1D(projs,col,yRow){
+      projs.forEach(t=>{
+        ctx.beginPath();ctx.arc(ps(t),yRow,4,0,2*Math.PI);
+        ctx.fillStyle=col+'bb';ctx.fill();
+        ctx.strokeStyle=col;ctx.lineWidth=1;ctx.stroke();
+      });
+    }
+    drawProj1D(p1,'#2563eb',midY-18);
+    drawProj1D(p2,'#e05c2a',midY+18);
+
+    /* class means on strip */
+    const pm1=p1.reduce((a,v)=>a+v,0)/p1.length;
+    const pm2=p2.reduce((a,v)=>a+v,0)/p2.length;
+    function drawMeanTick(t,col,yRow){
+      ctx.strokeStyle=col;ctx.lineWidth=2.5;
+      ctx.beginPath();ctx.moveTo(ps(t),yRow-6);ctx.lineTo(ps(t),yRow+6);ctx.stroke();
+      ctx.fillStyle=col;ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText('μ',ps(t),yRow-9);
+    }
+    drawMeanTick(pm1,'#1d4ed8',midY-18);
+    drawMeanTick(pm2,'#b94018',midY+18);
+
+    /* threshold midpoint */
+    const thr=(pm1+pm2)/2;
+    ctx.strokeStyle='#374151';ctx.lineWidth=1.8;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(ps(thr),PR.t+4);ctx.lineTo(ps(thr),PR.b-4);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='#374151';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('t',ps(thr),PR.t+2);
+
+    /* ── J(w) metric display ── */
+    const Jcolor=ratio>0.85?'#16a34a':ratio>0.5?'#ca8a04':'#dc2626';
+    document.getElementById('lda-jval').innerHTML=
+      `J(w) = <strong style="color:${Jcolor}">${J.toFixed(3)}</strong>`+
+      `&ensp;|&ensp;J<sub>óptimo</sub> = <strong>${Jopt.toFixed(3)}</strong>`+
+      `&ensp;|&ensp;Eficiencia = <strong style="color:${Jcolor}">${(ratio*100).toFixed(1)}%</strong>`+
+      `&ensp;|&ensp;θ = ${curAng}°&ensp;(θ<sub>opt</sub> = ${optAngle}°)`;
+
+    /* ── panel label ── */
+    ctx.fillStyle='#1a2e45';ctx.font='bold 12px Georgia,serif';ctx.textAlign='left';
+    ctx.fillText('Espacio 2D original',SC.l+4,SC.t+14);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';
+    ctx.fillText('Proyección sobre w',PR.l+4,PR.t+13);
+  }
+
+  /* ── controls ─────────────────────────────────────────────── */
+  const slider=document.getElementById('lda-ang');
+  const angLabel=document.getElementById('lda-angv');
+  slider.addEventListener('input',function(){
+    curAng=parseInt(this.value);
+    angLabel.textContent=curAng+'°';
+    draw();
+  });
+
+  window.ldaOptimal=function(){
+    curAng=optAngle;
+    slider.value=optAngle;
+    angLabel.textContent=optAngle+'°';
+    draw();
+  };
+
+  draw();
+})();
+</script>
+```
+
+### Implementación de Fisher en Python
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+
+rng = np.random.default_rng(7)
+X1 = rng.normal(loc=[1.5, 2.0], scale=[0.7, 0.5], size=(40, 2))
+X2 = rng.normal(loc=[4.0, 3.2], scale=[0.8, 0.6], size=(40, 2))
+
+m1 = X1.mean(axis=0)
+m2 = X2.mean(axis=0)
+
+S1 = (X1 - m1).T @ (X1 - m1)
+S2 = (X2 - m2).T @ (X2 - m2)
+SW = S1 + S2
+
+w = np.linalg.pinv(SW) @ (m1 - m2)
+w = w / np.linalg.norm(w)
+
+# Proyecciones
+z1 = X1 @ w
+z2 = X2 @ w
+threshold = 0.5 * (z1.mean() + z2.mean())
+
+threshold, w
+```
+
+```{python}
+plt.scatter(X1[:, 0], X1[:, 1], label="Clase 1")
+plt.scatter(X2[:, 0], X2[:, 1], label="Clase 2")
+
+origen = np.array([0, 0])
+plt.arrow(origen[0], origen[1], w[0], w[1], width=0.03, length_includes_head=True)
+plt.xlabel("x1")
+plt.ylabel("x2")
+plt.title("Dirección de proyección de Fisher")
+plt.legend()
+plt.show()
+```
+
+En problemas aplicados, el umbral puede elegirse según el costo de los errores. Si los falsos negativos son más graves que los falsos positivos, se puede desplazar el umbral para aumentar sensibilidad. Una curva ROC permite estudiar el intercambio entre tasa de verdaderos positivos y tasa de falsos positivos para distintos umbrales [@fawcett2006introduction].
+
+## El perceptrón
+
+El perceptrón, propuesto por Rosenblatt, es uno de los primeros modelos de aprendizaje para clasificación binaria [@rosenblatt1958perceptron]. A diferencia de la regresión lineal con solución cerrada, el perceptrón aprende de manera iterativa: revisa ejemplos, detecta errores y actualiza sus pesos.
+
+Se usa una función de decisión
+$$
+\widehat{y}=\operatorname{sign}(\mathbf{w}^\top\mathbf{x}+b),
+$$
+con etiquetas $y_i\in\{-1,+1\}$. Si una muestra está mal clasificada, entonces
+$$
+y_i(\mathbf{w}^\top\mathbf{x}_i+b)\leq 0.
+$$
+El algoritmo corrige los parámetros mediante
+$$
+\mathbf{w}\leftarrow \mathbf{w}+\eta y_i\mathbf{x}_i,
+\qquad
+b\leftarrow b+\eta y_i,
+$$
+donde $\eta>0$ es la tasa de aprendizaje.
+
+::: {.callout-note appearance="minimal"}
+Definición. El algoritmo del perceptrón actualiza sus pesos cuando encuentra una observación mal clasificada:
+$$
+\mathbf{w}^{(t+1)}=\mathbf{w}^{(t)}+\eta y_i\mathbf{x}_i,
+\qquad
+b^{(t+1)}=b^{(t)}+\eta y_i.
+$$ {#eq-perceptron-update}
+:::
+
+El teorema de convergencia del perceptrón establece que, si los datos son linealmente separables, el algoritmo encuentra una solución en un número finito de actualizaciones [@novikoff1962convergence; @minsky1969perceptrons]. Si los datos no son linealmente separables, el algoritmo puede no converger, por lo que en la práctica se fija un número máximo de épocas o se usan variantes con regularización y funciones de pérdida suaves.
+
+::: {.callout-note appearance="minimal"}
+Definición. Un conjunto de datos binario es linealmente separable si existe un vector $\mathbf{w}$ y un sesgo $b$ tales que todas las observaciones quedan correctamente clasificadas con margen positivo:
+$$
+y_i(\mathbf{w}^\top\mathbf{x}_i+b)>0,
+\qquad i=1,\ldots,n.
+$$ {#eq-linear-separability}
+:::
+
+### Implementación del perceptrón desde cero
+
+```{python}
+import numpy as np
+
+class PerceptronBinario:
+    def __init__(self, lr=1.0, max_epochs=100):
+        self.lr = lr
+        self.max_epochs = max_epochs
+        self.w = None
+        self.b = 0.0
+        self.errors_ = []
+
+    def fit(self, X, y):
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        self.w = np.zeros(X.shape[1])
+        self.b = 0.0
+
+        for _ in range(self.max_epochs):
+            errores = 0
+            for xi, yi in zip(X, y):
+                if yi * (np.dot(self.w, xi) + self.b) <= 0:
+                    self.w += self.lr * yi * xi
+                    self.b += self.lr * yi
+                    errores += 1
+            self.errors_.append(errores)
+            if errores == 0:
+                break
+        return self
+
+    def decision_function(self, X):
+        return np.asarray(X) @ self.w + self.b
+
+    def predict(self, X):
+        return np.where(self.decision_function(X) >= 0, 1, -1)
+```
+
+Probemos el algoritmo con datos linealmente separables:
+
+```{python}
+X_pos = rng.normal(loc=[3, 3], scale=0.4, size=(25, 2))
+X_neg = rng.normal(loc=[1, 1], scale=0.4, size=(25, 2))
+X_clf = np.vstack([X_pos, X_neg])
+y_clf = np.hstack([np.ones(len(X_pos)), -np.ones(len(X_neg))])
+
+per = PerceptronBinario(lr=1.0, max_epochs=50)
+per.fit(X_clf, y_clf)
+
+pred = per.predict(X_clf)
+accuracy = np.mean(pred == y_clf)
+accuracy, per.w, per.b, per.errors_
+```
+
+```{python}
+plt.plot(per.errors_, marker="o")
+plt.xlabel("Época")
+plt.ylabel("Errores")
+plt.title("Errores del perceptrón durante el entrenamiento")
+plt.show()
+```
+
+La secuencia de errores permite observar si el modelo converge. En un conjunto linealmente separable, los errores deben llegar a cero. En datos no separables, la curva puede oscilar.
+
+## Comparación conceptual: regresión lineal, Fisher y perceptrón
+
+Aunque regresión lineal, Fisher y perceptrón son modelos lineales, responden a objetivos distintos. La regresión lineal aproxima una variable continua minimizando errores cuadráticos. El discriminante de Fisher busca una dirección de proyección que maximice separación relativa entre clases. El perceptrón busca un hiperplano que clasifique correctamente ejemplos binarios, actualizando sus parámetros cuando comete errores.
+
+| Modelo | Tipo de tarea | Objetivo principal | Salida |
+|---|---|---|---|
+| Regresión lineal | Regresión | Minimizar error cuadrático | Valor real |
+| Fisher LDA binario | Clasificación | Maximizar separación proyectada | Clase según umbral |
+| Perceptrón | Clasificación | Corregir errores de clasificación | Etiqueta binaria |
+
+La conexión común es la geometría lineal. Todos construyen combinaciones lineales de las características. Por ello, su desempeño depende fuertemente de la representación de entrada. Variables mal escaladas, redundantes o irrelevantes pueden afectar la estimación, la orientación del hiperplano y la estabilidad del aprendizaje.
+
+## Buenas prácticas en documentación reproducible con Quarto
+
+Al convertir una presentación en capítulo técnico, conviene transformar diapositivas breves en explicaciones progresivas. Un capítulo reproducible debe incluir definiciones formales, ejemplos ejecutables, interpretación de resultados y referencias. En Quarto, los bloques de código permiten que el análisis sea verificable y actualizable. Para proyectos docentes o técnicos, una organización mínima recomendable es:
+
+1. introducir el concepto con intuición;
+2. formalizarlo con notación matemática;
+3. mostrar un ejemplo pequeño calculable a mano;
+4. implementar el método en Python;
+5. evaluar resultados e interpretar limitaciones.
+
+Esta estructura evita que el capítulo sea solo una transcripción de diapositivas y lo convierte en material de estudio reutilizable.
+
+## Conclusiones
+
+La regresión lineal y los clasificadores lineales son modelos fundamentales porque condensan ideas centrales del aprendizaje supervisado: representación de datos, estimación de parámetros, funciones objetivo, interpretación geométrica, evaluación de desempeño y generalización. La regresión lineal muestra cómo ajustar una función continua minimizando residuos. Sus métricas, como MAE, RMSE y $R^2$, permiten evaluar el error desde distintas perspectivas. El discriminante lineal de Fisher introduce el principio de separar clases mediante una proyección óptima. El perceptrón muestra cómo una máquina puede aprender iterativamente a corregir errores.
+
+Aunque estos modelos pueden ser insuficientes para relaciones altamente no lineales, siguen siendo puntos de referencia indispensables. Su simplicidad permite diagnosticar problemas de datos, construir líneas base interpretables y comprender métodos más avanzados. En ciencia de datos, una buena práctica consiste en comenzar con modelos simples, evaluarlos rigurosamente y aumentar la complejidad solo cuando los datos y el problema lo justifican.
