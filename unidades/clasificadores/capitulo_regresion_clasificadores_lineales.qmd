@@ -415,6 +415,138 @@ R^2=1-\frac{\mathrm{SSE}}{\mathrm{SST}}
 $$ {#eq-r2}
 :::
 
+```{=html}
+<div id="met-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Métricas de error — sensibilidad a valores atípicos</span><br>
+    <span style="font-size:0.81em;color:#666;">Desplaza el control para ver cómo MAE y RMSE reaccionan de manera diferente ante errores grandes</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">Error del punto atípico: <strong id="met-ov">0.0</strong> unidades</label>
+    <input id="met-sl" type="range" min="0" max="9" step="0.1" value="0"
+           style="flex:1;min-width:160px;accent-color:#c0392b;">
+  </div>
+  <canvas id="met-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;margin-bottom:10px;"></canvas>
+  <div id="met-info" style="font-size:0.82em;text-align:center;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;min-height:22px;"></div>
+</div>
+
+<script>
+(function(){
+  /* 10 base residuals; last one = the controllable outlier */
+  const BASE=[0.4,-0.3,0.7,-0.5,0.2,-0.6,0.8,-0.2,0.5,-0.4];
+  const N=BASE.length;
+
+  const cv=document.getElementById('met-cv');
+  const W=660, H=240, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  /* two panels */
+  const LP={l:46,r:W/2-8,t:24,b:210};
+  const RP={l:W/2+8,r:W-12,t:24,b:210};
+  const LW=LP.r-LP.l, LH=LP.b-LP.t;
+  const RW=RP.r-RP.l, RH=RP.b-RP.t;
+
+  function draw(outlier){
+    const res=[...BASE]; res[N-1]=outlier;
+    const mae =res.reduce((s,r)=>s+Math.abs(r),0)/N;
+    const mse =res.reduce((s,r)=>s+r*r,0)/N;
+    const rmse=Math.sqrt(mse);
+
+    ctx.clearRect(0,0,W,H);
+
+    /* ── left: residual dot plot ── */
+    ctx.fillStyle='#f8f9fb'; ctx.fillRect(LP.l,LP.t,LW,LH);
+    const maxAbs=Math.max(1.5,Math.abs(outlier)*1.1);
+    const zy=LP.t+LH/2;
+    const ys=y=>zy-y*(LH/2)/maxAbs;
+
+    /* reference lines */
+    [-1,1].forEach(v=>{
+      ctx.strokeStyle='#dde';ctx.lineWidth=0.8;ctx.setLineDash([4,3]);
+      ctx.beginPath();ctx.moveTo(LP.l,ys(v));ctx.lineTo(LP.r,ys(v));ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='#bbb';ctx.font='9px Georgia,serif';ctx.textAlign='right';
+      ctx.fillText(v>0?'+1':'-1',LP.l-3,ys(v)+3);
+    });
+    /* zero line */
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.3;
+    ctx.beginPath();ctx.moveTo(LP.l,zy);ctx.lineTo(LP.r,zy);ctx.stroke();
+    ctx.fillStyle='#aaa';ctx.font='9px Georgia,serif';ctx.textAlign='right';
+    ctx.fillText('0',LP.l-3,zy+3);
+
+    /* panel label */
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Distribución de residuos eᵢ',LP.l+LW/2,LP.t-7);
+    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';
+    ctx.fillText('Observación i',LP.l+LW/2,LP.b+15);
+
+    /* residual sticks and dots */
+    const xStep=LW/(N+1);
+    res.forEach((r,i)=>{
+      const xx=LP.l+(i+1)*xStep;
+      const yy=ys(r);
+      const isOut=(i===N-1);
+      ctx.strokeStyle=isOut?'#c0392b':'rgba(37,99,235,0.55)';
+      ctx.lineWidth=isOut?2.2:1.5;
+      ctx.beginPath();ctx.moveTo(xx,zy);ctx.lineTo(xx,yy);ctx.stroke();
+      ctx.beginPath();ctx.arc(xx,yy,isOut?6:4,0,2*Math.PI);
+      ctx.fillStyle=isOut?'#c0392b':'#2563eb';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();
+    });
+    if(Math.abs(outlier)>0.5){
+      const oxo=LP.l+N*xStep, oyo=ys(outlier);
+      ctx.fillStyle='#c0392b';ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText('atípico',oxo,outlier>0?Math.max(oyo-8,LP.t+4):Math.min(oyo+14,LP.b-2));
+    }
+
+    /* ── right: metric bars ── */
+    ctx.fillStyle='#f8f9fb'; ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Métricas de error',RP.l+RW/2,RP.t-7);
+
+    const metrics=[
+      {lbl:'MAE',val:mae,col:'#2563eb',sub:'media |eᵢ|'},
+      {lbl:'RMSE',val:rmse,col:'#16a34a',sub:'√ media eᵢ²'},
+      {lbl:'MSE',val:mse,col:'#e05c2a',sub:'media eᵢ²'},
+    ];
+    const maxV=Math.max(...metrics.map(m=>m.val))*1.12;
+    const bW=RW*0.2;
+    metrics.forEach((m,i)=>{
+      const bx=RP.l+RW*(i+1)/(metrics.length+1)-bW/2;
+      const bh=Math.min((m.val/maxV)*(RH-30),RH-30);
+      const by=RP.b-bh-4;
+      ctx.fillStyle=m.col+'bb';ctx.fillRect(bx,by,bW,bh);
+      ctx.strokeStyle=m.col;ctx.lineWidth=1.5;ctx.strokeRect(bx,by,bW,bh);
+      ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(m.val.toFixed(3),bx+bW/2,by-5);
+      ctx.fillStyle=m.col;ctx.font='bold 12px Georgia,serif';
+      ctx.fillText(m.lbl,bx+bW/2,RP.b+12);
+      ctx.fillStyle='#888';ctx.font='9px Georgia,serif';
+      ctx.fillText(m.sub,bx+bW/2,RP.b+23);
+    });
+
+    /* info line */
+    const ratio=mae>0?(rmse/mae).toFixed(2):'—';
+    document.getElementById('met-info').innerHTML=
+      `MAE = <strong style="color:#2563eb">${mae.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `RMSE = <strong style="color:#16a34a">${rmse.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `MSE = <strong style="color:#e05c2a">${mse.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#777">RMSE/MAE = <strong>${ratio}</strong> `+
+      `<em>(cerca de 1.0 sin atípicos; crece con valores extremos)</em></span>`;
+  }
+
+  document.getElementById('met-sl').addEventListener('input',function(){
+    const v=parseFloat(this.value);
+    document.getElementById('met-ov').textContent=v.toFixed(1);
+    draw(v);
+  });
+  draw(0);
+})();
+</script>
+```
+
 ### Cálculo de métricas en Python
 
 ```{python}
@@ -499,6 +631,168 @@ $$ {#eq-linear-classifier}
 :::
 
 Geométricamente, $\mathbf{w}$ es perpendicular a la frontera de decisión. Cambiar $w_0$ desplaza el hiperplano sin cambiar su orientación. Esta interpretación permite conectar clasificadores lineales con proyecciones, márgenes y separación de clases.
+
+```{=html}
+<div id="clf-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Frontera de decisión lineal — explorador interactivo</span><br>
+    <span style="font-size:0.81em;color:#666;">Ajusta w₁, w₂ y w₀ para rotar y desplazar el hiperplano de decisión g(x)=w₁x₁+w₂x₂+w₀</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+    <div>
+      <label style="font-size:0.82em;color:#444;">w₁ = <strong id="clf-w1v">1.0</strong></label>
+      <input id="clf-w1" type="range" min="-3" max="3" step="0.1" value="1"
+             style="width:100%;accent-color:#1a3a5c;">
+    </div>
+    <div>
+      <label style="font-size:0.82em;color:#444;">w₂ = <strong id="clf-w2v">1.0</strong></label>
+      <input id="clf-w2" type="range" min="-3" max="3" step="0.1" value="1"
+             style="width:100%;accent-color:#1a3a5c;">
+    </div>
+    <div>
+      <label style="font-size:0.82em;color:#444;">w₀ = <strong id="clf-w0v">-6.0</strong></label>
+      <input id="clf-w0" type="range" min="-8" max="4" step="0.1" value="-6"
+             style="width:100%;accent-color:#1a3a5c;">
+    </div>
+  </div>
+  <div id="clf-acc" style="text-align:center;font-size:0.83em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:24px;"></div>
+  <canvas id="clf-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div style="margin-top:8px;display:flex;gap:18px;justify-content:center;font-size:0.79em;color:#555;">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#2563eb;margin-right:4px;vertical-align:middle;"></span>Clase +1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#e05c2a;margin-right:4px;vertical-align:middle;"></span>Clase −1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;border:2px solid #dc2626;background:transparent;margin-right:4px;vertical-align:middle;"></span>Mal clasificado</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* ── datos: clase +1 (arriba-izq), clase -1 (abajo-der) ── */
+  const Cp=[[1.2,3.8],[2.0,4.2],[1.5,3.0],[0.8,4.5],[2.3,3.5],[1.0,2.8],[1.8,4.8],[2.5,4.0]];
+  const Cn=[[4.5,1.2],[5.0,0.8],[3.8,1.5],[5.2,2.0],[4.0,0.5],[5.5,1.8],[4.8,0.3],[3.5,2.2]];
+
+  const cv=document.getElementById('clf-cv');
+  const W=660, H=340, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  const PL=46,PR=12,PT=18,PB=36;
+  const PW=W-PL-PR, PH=H-PT-PB;
+  const xMn=0,xMx=6.5,yMn=0,yMx=5.8;
+  const sx=x=>PL+(x-xMn)/(xMx-xMn)*PW;
+  const sy=y=>PT+PH-(y-yMn)/(yMx-yMn)*PH;
+  const ixs=cx=>xMn+(cx-PL)/PW*(xMx-xMn);
+  const iys=cy=>yMn+(1-(cy-PT)/PH)*(yMx-yMn);
+
+  function draw(){
+    const w1=+document.getElementById('clf-w1').value;
+    const w2=+document.getElementById('clf-w2').value;
+    const w0=+document.getElementById('clf-w0').value;
+    document.getElementById('clf-w1v').textContent=w1.toFixed(1);
+    document.getElementById('clf-w2v').textContent=w2.toFixed(1);
+    document.getElementById('clf-w0v').textContent=w0.toFixed(1);
+
+    ctx.clearRect(0,0,W,H);
+
+    /* background shading by column */
+    for(let cx=PL;cx<PL+PW;cx+=3){
+      const xd=ixs(cx);
+      if(Math.abs(w2)>1e-4){
+        const yb=-(w1*xd+w0)/w2;
+        const yb_cl=Math.max(yMn,Math.min(yMx,yb));
+        const cyb=sy(yb_cl);
+        const posAbove=w2>0;
+        ctx.fillStyle=posAbove?'rgba(37,99,235,0.07)':'rgba(224,92,42,0.07)';
+        ctx.fillRect(cx,PT,3,Math.max(0,cyb-PT));
+        ctx.fillStyle=posAbove?'rgba(224,92,42,0.07)':'rgba(37,99,235,0.07)';
+        ctx.fillRect(cx,cyb,3,Math.max(0,PT+PH-cyb));
+      } else {
+        const xb=Math.abs(w1)>1e-4?-w0/w1:Infinity;
+        const posRight=w1>0;
+        const isRight=(xd>xb);
+        ctx.fillStyle=(posRight===isRight)?'rgba(37,99,235,0.07)':'rgba(224,92,42,0.07)';
+        ctx.fillRect(cx,PT,3,PH);
+      }
+    }
+
+    /* grid */
+    ctx.strokeStyle='#e5e9f0';ctx.lineWidth=0.7;
+    for(let gx=0;gx<=6;gx++){ctx.beginPath();ctx.moveTo(sx(gx),PT);ctx.lineTo(sx(gx),PT+PH);ctx.stroke();}
+    for(let gy=0;gy<=5;gy++){ctx.beginPath();ctx.moveTo(PL,sy(gy));ctx.lineTo(PL+PW,sy(gy));ctx.stroke();}
+
+    /* axes */
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.lineTo(PL+PW,PT+PH);ctx.stroke();
+
+    /* tick labels */
+    ctx.fillStyle='#888';ctx.font='11px Georgia,serif';ctx.textAlign='center';
+    for(let gx=0;gx<=6;gx++) ctx.fillText(gx,sx(gx),PT+PH+14);
+    ctx.textAlign='right';
+    for(let gy=0;gy<=5;gy++) ctx.fillText(gy,PL-5,sy(gy)+4);
+    ctx.fillStyle='#666';ctx.font='11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('x₁',PL+PW/2,H-4);
+    ctx.save();ctx.translate(14,PT+PH/2);ctx.rotate(-Math.PI/2);ctx.fillText('x₂',0,0);ctx.restore();
+
+    /* decision boundary */
+    const score=x=>w1*x[0]+w2*x[1]+w0;
+
+    if(Math.abs(w2)>1e-4){
+      const y0=-(w1*0+w0)/w2, y1=-(w1*6.5+w0)/w2;
+      ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+      ctx.beginPath();ctx.moveTo(sx(0),sy(y0));ctx.lineTo(sx(6.5),sy(y1));ctx.stroke();
+      ctx.setLineDash([]);
+      /* label */
+      const midX=3.25, midY=-(w1*midX+w0)/w2;
+      if(midY>yMn&&midY<yMx){
+        const eq=`g(x)=${w1>=0?'':'-'}${Math.abs(w1).toFixed(1)}x₁${w2>=0?'+':'-'}${Math.abs(w2).toFixed(1)}x₂${w0>=0?'+':'-'}${Math.abs(w0).toFixed(1)}=0`;
+        ctx.fillStyle='#1a2e45';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+        ctx.fillText(eq,sx(midX),sy(midY)-8);
+      }
+    } else if(Math.abs(w1)>1e-4){
+      const xb=-w0/w1;
+      ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+      ctx.beginPath();ctx.moveTo(sx(xb),PT);ctx.lineTo(sx(xb),PT+PH);ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    /* points */
+    function drawPts(pts,label){
+      const yLbl=label===1?1:-1;
+      pts.forEach(p=>{
+        const s=score(p);
+        const pred=s>0?1:-1;
+        const wrong=(pred!==yLbl);
+        const col=label===1?'#2563eb':'#e05c2a';
+        ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),6,0,2*Math.PI);
+        ctx.fillStyle=wrong?'rgba(255,255,255,0.9)':col+'cc';ctx.fill();
+        ctx.strokeStyle=wrong?'#dc2626':col;
+        ctx.lineWidth=wrong?2.5:1.5;ctx.stroke();
+        if(wrong){
+          ctx.strokeStyle='#dc2626';ctx.lineWidth=2;
+          const cx2=sx(p[0]),cy2=sy(p[1]),r=8;
+          ctx.beginPath();ctx.moveTo(cx2-r,cy2-r);ctx.lineTo(cx2+r,cy2+r);ctx.stroke();
+          ctx.beginPath();ctx.moveTo(cx2+r,cy2-r);ctx.lineTo(cx2-r,cy2+r);ctx.stroke();
+        }
+      });
+    }
+    drawPts(Cp,1); drawPts(Cn,-1);
+
+    /* accuracy */
+    const all=[...Cp.map(p=>({p,y:1})),...Cn.map(p=>({p,y:-1}))];
+    const correct=all.filter(({p,y})=>(score(p)>0?1:-1)===y).length;
+    const acc=(correct/all.length*100).toFixed(0);
+    const acol=correct===all.length?'#16a34a':correct>all.length*0.6?'#ca8a04':'#dc2626';
+    document.getElementById('clf-acc').innerHTML=
+      `Clasificados correctamente: <strong style="color:${acol}">${correct}/${all.length}</strong> &ensp;·&ensp; `+
+      `Exactitud: <strong style="color:${acol}">${acc}%</strong>&ensp;·&ensp;`+
+      `<span style="color:#888">Frontera: ${w1>=0?'':'-'}${Math.abs(w1).toFixed(1)}x₁ ${w2>=0?'+':'-'} ${Math.abs(w2).toFixed(1)}x₂ ${w0>=0?'+':'-'} ${Math.abs(w0).toFixed(1)} = 0</span>`;
+  }
+
+  ['clf-w1','clf-w2','clf-w0'].forEach(id=>document.getElementById(id).addEventListener('input',draw));
+  draw();
+})();
+</script>
+```
 
 ## Discriminante lineal de Fisher
 
@@ -905,6 +1199,232 @@ y_i(\mathbf{w}^\top\mathbf{x}_i+b)>0,
 \qquad i=1,\ldots,n.
 $$ {#eq-linear-separability}
 :::
+
+```{=html}
+<div id="per-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Algoritmo del perceptrón — animación paso a paso</span><br>
+    <span style="font-size:0.81em;color:#666;">Observa cómo el perceptrón corrige la frontera de decisión cada vez que comete un error</span>
+  </div>
+  <div style="display:flex;gap:8px;justify-content:center;margin-bottom:10px;flex-wrap:wrap;">
+    <button onclick="perStep()" id="per-btn-step"
+            style="padding:6px 16px;background:#1a2e45;color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:Georgia,serif;font-size:0.83em;">
+      Siguiente actualización
+    </button>
+    <button onclick="perEpoch()"
+            style="padding:6px 16px;background:#374151;color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:Georgia,serif;font-size:0.83em;">
+      Época completa
+    </button>
+    <button onclick="perReset()"
+            style="padding:6px 16px;background:#fff;color:#374151;border:1px solid #aab;border-radius:5px;cursor:pointer;font-family:Georgia,serif;font-size:0.83em;">
+      Reiniciar
+    </button>
+  </div>
+  <div id="per-status" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:24px;"></div>
+  <canvas id="per-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div id="per-log" style="margin-top:10px;font-size:0.79em;color:#555;background:#fff;border:1px solid #e0e5ed;border-radius:5px;padding:8px 12px;min-height:36px;max-height:100px;overflow-y:auto;"></div>
+  <div style="margin-top:8px;display:flex;gap:18px;justify-content:center;font-size:0.79em;color:#555;">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#2563eb;margin-right:4px;vertical-align:middle;"></span>Clase +1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#e05c2a;margin-right:4px;vertical-align:middle;"></span>Clase −1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;border:2px solid #f59e0b;background:#fef3c7;margin-right:4px;vertical-align:middle;"></span>Punto activo</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* ── datos linealmente separables ── */
+  const DATA=[
+    {x:[1.0,1.0],y:1},{x:[1.5,0.6],y:1},{x:[0.7,1.5],y:1},
+    {x:[1.3,1.8],y:1},{x:[0.5,0.9],y:1},{x:[1.8,1.3],y:1},
+    {x:[0.9,2.0],y:1},{x:[1.2,0.4],y:1},
+    {x:[3.5,3.2],y:-1},{x:[4.0,3.8],y:-1},{x:[3.2,4.0],y:-1},
+    {x:[4.2,3.0],y:-1},{x:[3.8,4.2],y:-1},{x:[3.0,3.6],y:-1},
+    {x:[4.5,3.5],y:-1},{x:[3.3,2.8],y:-1}
+  ];
+  const N=DATA.length;
+
+  /* ── canvas ── */
+  const cv=document.getElementById('per-cv');
+  const W=660, H=320, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  const PL=46,PR=12,PT=18,PB=36;
+  const PW=W-PL-PR, PH=H-PT-PB;
+  const xMn=0,xMx=5.5,yMn=0,yMx=5;
+  const sx=x=>PL+(x-xMn)/(xMx-xMn)*PW;
+  const sy=y=>PT+PH-(y-yMn)/(yMx-yMn)*PH;
+
+  /* ── state ── */
+  let w=[0,0], b=0;
+  let ptr=0, epochN=0, stepN=0, done=false;
+  let activeIdx=-1, logLines=[];
+
+  const sign=v=>v>0?1:-1; // sign(0)=+1
+
+  function predict(x){ return sign(w[0]*x[0]+w[1]*x[1]+b); }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    /* background shading */
+    if(w[0]!==0||w[1]!==0){
+      for(let cx=PL;cx<PL+PW;cx+=3){
+        const xd=xMn+(cx-PL)/PW*(xMx-xMn);
+        if(Math.abs(w[1])>1e-6){
+          const yb=-(w[0]*xd+b)/w[1];
+          const yb_cl=Math.max(yMn,Math.min(yMx,yb));
+          const cyb=sy(yb_cl);
+          const posAbove=w[1]>0;
+          ctx.fillStyle=posAbove?'rgba(37,99,235,0.06)':'rgba(224,92,42,0.06)';
+          ctx.fillRect(cx,PT,3,Math.max(0,cyb-PT));
+          ctx.fillStyle=posAbove?'rgba(224,92,42,0.06)':'rgba(37,99,235,0.06)';
+          ctx.fillRect(cx,cyb,3,Math.max(0,PT+PH-cyb));
+        } else {
+          const xb=Math.abs(w[0])>1e-6?-b/w[0]:Infinity;
+          ctx.fillStyle=(xd>xb)===(w[0]>0)?'rgba(37,99,235,0.06)':'rgba(224,92,42,0.06)';
+          ctx.fillRect(cx,PT,3,PH);
+        }
+      }
+    }
+
+    /* grid */
+    ctx.strokeStyle='#e5e9f0';ctx.lineWidth=0.7;
+    for(let gx=0;gx<=5;gx++){ctx.beginPath();ctx.moveTo(sx(gx),PT);ctx.lineTo(sx(gx),PT+PH);ctx.stroke();}
+    for(let gy=0;gy<=5;gy++){ctx.beginPath();ctx.moveTo(PL,sy(gy));ctx.lineTo(PL+PW,sy(gy));ctx.stroke();}
+
+    /* axes */
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.lineTo(PL+PW,PT+PH);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='11px Georgia,serif';ctx.textAlign='center';
+    for(let gx=0;gx<=5;gx++) ctx.fillText(gx,sx(gx),PT+PH+14);
+    ctx.textAlign='right';
+    for(let gy=0;gy<=4;gy++) ctx.fillText(gy,PL-5,sy(gy)+4);
+    ctx.fillStyle='#666';ctx.font='11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('x₁',PL+PW/2,H-4);
+    ctx.save();ctx.translate(14,PT+PH/2);ctx.rotate(-Math.PI/2);ctx.fillText('x₂',0,0);ctx.restore();
+
+    /* decision boundary */
+    if(w[0]!==0||w[1]!==0){
+      if(Math.abs(w[1])>1e-6){
+        const y0=-(w[0]*xMn+b)/w[1], y1=-(w[0]*xMx+b)/w[1];
+        ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+        ctx.beginPath();ctx.moveTo(sx(xMn),sy(y0));ctx.lineTo(sx(xMx),sy(y1));ctx.stroke();
+        ctx.setLineDash([]);
+      } else if(Math.abs(w[0])>1e-6){
+        const xb=-b/w[0];
+        ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+        ctx.beginPath();ctx.moveTo(sx(xb),PT);ctx.lineTo(sx(xb),PT+PH);ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      /* w vector label */
+      ctx.fillStyle='#1a2e45';ctx.font='10px Georgia,serif';ctx.textAlign='left';
+      ctx.fillText(`w=[${w[0].toFixed(1)}, ${w[1].toFixed(1)}]  b=${b.toFixed(1)}`,PL+4,PT+14);
+    } else {
+      ctx.fillStyle='#aaa';ctx.font='italic 11px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText('(w=0, b=0 — frontera no definida)',PL+PW/2,PT+PH/2);
+    }
+
+    /* data points */
+    DATA.forEach((d,i)=>{
+      const isActive=(i===activeIdx);
+      const wrong=(predict(d.x)!==d.y);
+      const col=d.y===1?'#2563eb':'#e05c2a';
+      const r=isActive?8:6;
+      ctx.beginPath();ctx.arc(sx(d.x[0]),sy(d.x[1]),r,0,2*Math.PI);
+      if(isActive){
+        ctx.fillStyle='#fef3c7';ctx.fill();
+        ctx.strokeStyle='#f59e0b';ctx.lineWidth=2.5;ctx.stroke();
+      } else if(wrong&&(w[0]!==0||w[1]!==0||b!==0)){
+        ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fill();
+        ctx.strokeStyle='#dc2626';ctx.lineWidth=2;ctx.stroke();
+      } else {
+        ctx.fillStyle=col+'cc';ctx.fill();
+        ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.stroke();
+      }
+    });
+
+    /* status */
+    const correct=DATA.filter(d=>predict(d.x)===d.y).length;
+    const acol=done?'#16a34a':correct<N*0.6?'#dc2626':'#ca8a04';
+    const wStr=`w=[${w[0].toFixed(1)},${w[1].toFixed(1)}], b=${b.toFixed(1)}`;
+    document.getElementById('per-status').innerHTML=
+      done
+        ? `<strong style="color:#16a34a">Convergió</strong> en ${stepN} actualiz. / ${epochN} épocas — todos los puntos correctos ✓`
+        : `Época ${epochN} · Actualización ${stepN} · `+
+          `Correctos: <strong style="color:${acol}">${correct}/${N}</strong> · ${wStr}`;
+  }
+
+  function logPush(msg){
+    logLines.unshift(msg);
+    if(logLines.length>12) logLines.pop();
+    document.getElementById('per-log').innerHTML=logLines.join('<br>');
+  }
+
+  function findNext(){
+    /* scan starting from ptr, find first misclassified */
+    for(let k=0;k<N;k++){
+      const i=(ptr+k)%N;
+      if(predict(DATA[i].x)!==DATA[i].y) return i;
+    }
+    return -1;
+  }
+
+  window.perStep=function(){
+    if(done) return;
+    const i=findNext();
+    if(i===-1){ done=true; draw(); return; }
+    activeIdx=i;
+    const d=DATA[i];
+    const oldPred=predict(d.x);
+    /* update */
+    w[0]+=d.y*d.x[0];
+    w[1]+=d.y*d.x[1];
+    b+=d.y;
+    stepN++;
+    if(i<ptr&&i<ptr%N) epochN++;
+    if(i+1>=N&&ptr<=i) epochN++;
+    ptr=(i+1)%N;
+    logPush(`Paso ${stepN}: punto (${d.x[0].toFixed(1)},${d.x[1].toFixed(1)}) `+
+            `predijo ${oldPred>0?'+1':'−1'} (real ${d.y>0?'+1':'−1'}) → `+
+            `w=[${w[0].toFixed(1)},${w[1].toFixed(1)}], b=${b.toFixed(1)}`);
+    const allOK=DATA.every(d=>predict(d.x)===d.y);
+    if(allOK){ done=true; epochN++; }
+    draw();
+  };
+
+  window.perEpoch=function(){
+    if(done) return;
+    epochN++;
+    let updates=0;
+    DATA.forEach((d,i)=>{
+      if(predict(d.x)!==d.y){
+        activeIdx=i;
+        w[0]+=d.y*d.x[0];
+        w[1]+=d.y*d.x[1];
+        b+=d.y;
+        stepN++;
+        updates++;
+      }
+    });
+    if(updates===0||DATA.every(d=>predict(d.x)===d.y)){ done=true; }
+    logPush(`Época ${epochN}: ${updates} actualiz. — w=[${w[0].toFixed(1)},${w[1].toFixed(1)}], b=${b.toFixed(1)}`);
+    activeIdx=-1;
+    draw();
+  };
+
+  window.perReset=function(){
+    w=[0,0];b=0;ptr=0;epochN=0;stepN=0;done=false;activeIdx=-1;logLines=[];
+    document.getElementById('per-log').innerHTML='';
+    draw();
+  };
+
+  draw();
+  logPush('Iniciando con w=[0,0], b=0 — haz clic en "Siguiente actualización"');
+})();
+</script>
+```
 
 ### Implementación del perceptrón desde cero
 
