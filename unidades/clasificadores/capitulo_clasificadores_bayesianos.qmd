@@ -59,27 +59,245 @@ donde $A_i$ significa que el auto está detrás de la puerta $i$.
 
 Ahora bien, Chabelo sabe dónde está el auto y siempre abre una puerta que tiene una cabra. Además, si tiene dos puertas con cabra disponibles, asumimos que escoge una de ellas al azar. Entonces las posibilidades son las siguientes:
 
-```{mermaid}
-flowchart TD
-    I[Escogemos inicialmente la puerta 1]
+Las ramas donde cambiar gana valen por 2 porque tienen probabilidad $\frac{1}{3}$, mientras que las ramas donde cambiar pierde valen $\frac{1}{6}$. Esto ocurre porque si el auto está en nuestra puerta inicial, Chabelo tiene dos puertas posibles para abrir y divide ese caso en dos ramas de probabilidad $\frac{1}{6}$. En cambio, si el auto está en una puerta distinta a la nuestra, Chabelo no tiene libertad: sólo puede abrir la única puerta restante con cabra. Por eso cada una de esas ramas conserva probabilidad $\frac{1}{3}$, equivalente a dos partes de tamaño $\frac{1}{6}$.
 
-    I --> A1[Auto en puerta 1<br/>Probabilidad 1/3]
-    I --> A2[Auto en puerta 2<br/>Probabilidad 1/3]
-    I --> A3[Auto en puerta 3<br/>Probabilidad 1/3]
+```{=html}
+<div id="cgv3" style="font-family:'Segoe UI',system-ui,sans-serif;max-width:940px;margin:1.5rem auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:1.4rem 1.8rem;">
 
-    A1 --> B12[Chabelo abre puerta 2<br/>Probabilidad 1/2]
-    A1 --> B13[Chabelo abre puerta 3<br/>Probabilidad 1/2]
+  <div style="margin-bottom:1.1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;">
+    <span style="font-weight:700;color:#1e293b;font-size:.95rem;">Elige tu puerta inicial:</span>
+    <div id="cgv3-btns" style="display:flex;gap:6px;"></div>
+  </div>
 
-    A2 --> B23[Chabelo abre puerta 3<br/>Probabilidad 1]
+  <div style="margin-bottom:1rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.6rem 1rem;font-size:.86rem;color:#1e40af;">
+    El &#225;rbol muestra <strong>todos los caminos posibles</strong> del juego.
+    Las ramas m&#225;s probables (p&#160;=&#160;1/3) contribuyen 2&#160;unidades al conteo final;
+    las menos probables (p&#160;=&#160;1/6) contribuyen 1. Las ramas donde cambiar gana pesan 2 porque Chabelo estaba obligado a abrir una sola puerta. El total es 6&#160;estados de igual peso.
+  </div>
 
-    A3 --> B32[Chabelo abre puerta 2<br/>Probabilidad 1]
+  <svg id="cgv3-svg" viewBox="0 0 920 490" xmlns="http://www.w3.org/2000/svg"
+       style="width:100%;display:block;border-radius:10px;background:white;border:1px solid #f1f5f9;"></svg>
 
-    B12 --> C12[Si cambiamos a puerta 3: perdemos]
-    B13 --> C13[Si cambiamos a puerta 2: perdemos]
+  <div id="cgv3-counter" style="margin-top:.9rem;"></div>
+</div>
 
-    B23 --> C23[Si cambiamos a puerta 2: ganamos]
-    B32 --> C32[Si cambiamos a puerta 3: ganamos]
+<script>
+(function () {
+  var cgv3Choice = 1;
+
+  // Leaf x-positions for 4 columns
+  var LX = [105, 315, 580, 805];
+  var RX = 460; // root x
+
+  function getLeaves(d) {
+    var oth = [1,2,3].filter(function(x){ return x!==d; }).sort(function(a,b){ return a-b; });
+    return [
+      { auto:d,      chabelo:oth[0], switchTo:oth[1], switchWins:false, dots:1, pFrac:'1/6', edgeP:'1/2' },
+      { auto:d,      chabelo:oth[1], switchTo:oth[0], switchWins:false, dots:1, pFrac:'1/6', edgeP:'1/2' },
+      { auto:oth[0], chabelo:oth[1], switchTo:oth[0], switchWins:true,  dots:2, pFrac:'1/3', edgeP:'1'   },
+      { auto:oth[1], chabelo:oth[0], switchTo:oth[1], switchWins:true,  dots:2, pFrac:'1/3', edgeP:'1'   },
+    ];
+  }
+
+  function bez(x1,y1,x2,y2) {
+    var my=(y1+y2)/2;
+    return 'M'+x1+','+y1+' C'+x1+','+my+' '+x2+','+my+' '+x2+','+y2;
+  }
+
+  function edge(x1,y1,x2,y2,col,sw) {
+    return '<path d="'+bez(x1,y1,x2,y2)+'" stroke="'+col
+          +'" stroke-width="'+(sw||2.2)+'" fill="none" stroke-linecap="round"/>';
+  }
+
+  function edgeLbl(x1,y1,x2,y2,txt,col) {
+    var mx=(x1+x2)/2, my=(y1+y2)/2;
+    return '<rect x="'+(mx-24)+'" y="'+(my-10)+'" width="48" height="18" rx="5" fill="white"/>'
+          +'<text x="'+mx+'" y="'+(my+4)+'" text-anchor="middle" font-size="11.5" '
+          +'font-family="\'Segoe UI\',sans-serif" font-weight="600" fill="'+(col||'#475569')+'">'+txt+'</text>';
+  }
+
+  function bx(cx,cy,bw,bh,lines,bg,fg) {
+    var x=cx-bw/2, y=cy-bh/2, lh=18;
+    var th=lines.length*lh, sy=cy-th/2+lh*0.72;
+    var s='<g>';
+    s+='<rect x="'+x+'" y="'+y+'" width="'+bw+'" height="'+bh+'" rx="8" fill="'+bg+'"/>';
+    lines.forEach(function(l,i){
+      s+='<text x="'+cx+'" y="'+(sy+i*lh)+'" text-anchor="middle" font-family="\'Segoe UI\',sans-serif" '
+        +'font-size="'+(i===0?13:12)+'" font-weight="'+(i===0?'700':'400')+'" fill="'+fg+'">'+l+'</text>';
+    });
+    return s+'</g>';
+  }
+
+  function render(choice) {
+    var leaves = getLeaves(choice);
+    var oth = [1,2,3].filter(function(x){ return x!==choice; }).sort(function(a,b){ return a-b; });
+    var l1x = [(LX[0]+LX[1])/2, LX[2], LX[3]]; // [210, 580, 805]
+
+    // Y levels
+    var Yr = 44,  BHr = 46;   // root
+    var Yl = 152, BHl = 48;   // L1 (auto position)
+    var Yc = 284, BHc = 58;   // L2 (Chabelo)
+    var Yo = 402, BHo = 46;   // outcome banner
+    var Yd = 466;              // dots row
+    var Yw = 488;              // ×N weight labels
+
+    var BW = 160;
+
+    var svg = '';
+
+    // ── background column tints ──
+    // Left group (auto=choice): light red
+    var lx0 = LX[0]-BW/2-12, lx1 = LX[1]+BW/2+12;
+    svg += '<rect x="'+lx0+'" y="'+(Yr-28)+'" width="'+(lx1-lx0)+'" height="'+(Yw-Yr+28+12)+'" rx="10" fill="#fef2f2" opacity="0.6"/>';
+    // Right group (auto=oth): light green
+    var lx2 = LX[2]-BW/2-12, lx3 = LX[3]+BW/2+12;
+    svg += '<rect x="'+lx2+'" y="'+(Yr-28)+'" width="'+(lx3-lx2)+'" height="'+(Yw-Yr+28+12)+'" rx="10" fill="#f0fdf4" opacity="0.6"/>';
+
+    // ── edges root → L1 (with prob labels) ──
+    var rootBot = Yr+BHr/2, l1Top = Yl-BHl/2;
+    [0,1,2].forEach(function(j){
+      svg += edge(RX, rootBot, l1x[j], l1Top, '#94a3b8');
+      svg += edgeLbl(RX, rootBot, l1x[j], l1Top, '1/3');
+    });
+
+    // Edges L1 to L2 (Chabelo)
+    var l1Bot = Yl+BHl/2, l2Top = Yc-BHc/2;
+    svg += edge(l1x[0], l1Bot, LX[0], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[0], l1Bot, LX[0], l2Top, '1/2');
+    svg += edge(l1x[0], l1Bot, LX[1], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[0], l1Bot, LX[1], l2Top, '1/2');
+    svg += edge(l1x[1], l1Bot, LX[2], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[1], l1Bot, LX[2], l2Top, '1');
+    svg += edge(l1x[2], l1Bot, LX[3], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[2], l1Bot, LX[3], l2Top, '1');
+
+    // Edges L2 to outcome (with joint probability)
+    var l2Bot = Yc+BHc/2, outTop = Yo-BHo/2;
+    leaves.forEach(function(lf,i){
+      var col = lf.switchWins ? '#16a34a' : '#dc2626';
+      svg += edge(LX[i], l2Bot, LX[i], outTop, col, 2.8);
+      svg += edgeLbl(LX[i], l2Bot, LX[i], outTop, 'p='+lf.pFrac, col);
+    });
+
+    // Nodes
+    // Root
+    svg += bx(RX, Yr, 200, BHr, ['Elegiste la puerta '+choice], '#6366f1', '#fff');
+
+    // L1
+    [0,1,2].forEach(function(j){
+      var lbl = j===0 ? ['Auto en puerta '+choice, 'p = 1/3']
+                      : ['Auto en puerta '+oth[j-1], 'p = 1/3'];
+      svg += bx(l1x[j], Yl, BW, BHl, lbl, '#475569', '#fff');
+    });
+
+    // L2 (Chabelo)
+    leaves.forEach(function(lf,i){
+      svg += bx(LX[i], Yc, BW, BHc,
+        ['Chabelo abre', 'puerta '+lf.chabelo], '#0284c7', '#fff');
+    });
+
+    // Outcome banners
+    leaves.forEach(function(lf,i){
+      var col = lf.switchWins ? '#16a34a' : '#dc2626';
+      var changeTxt = lf.switchWins ? 'Cambiar: GANAS' : 'Cambiar: PIERDES';
+      var stayTxt = lf.switchWins ? 'Quedarte: PIERDES' : 'Quedarte: GANAS';
+      var x=LX[i]-BW/2, y=Yo-BHo/2;
+      svg += '<rect x="'+x+'" y="'+y+'" width="'+BW+'" height="'+BHo+'" rx="8" fill="'+col+'"/>';
+      svg += '<text x="'+LX[i]+'" y="'+(y+17)+'" text-anchor="middle" font-size="13.5" '
+            +'font-family="\'Segoe UI\',sans-serif" fill="white" font-weight="700">'+changeTxt+'</text>';
+      svg += '<text x="'+LX[i]+'" y="'+(y+33)+'" text-anchor="middle" font-size="11" '
+            +'font-family="\'Segoe UI\',sans-serif" fill="rgba(255,255,255,.9)">'+stayTxt+'</text>';
+    });
+
+    // Dots row in SVG: each dot represents 1/6 of the sample space.
+    var dotR = 12, dotGap = 7;
+    leaves.forEach(function(lf,i){
+      var col = lf.switchWins ? '#16a34a' : '#dc2626';
+      var totalW = lf.dots*(dotR*2) + (lf.dots-1)*dotGap;
+      var sx = LX[i] - totalW/2 + dotR;
+      for (var d=0; d<lf.dots; d++){
+        svg += '<circle cx="'+(sx+d*(dotR*2+dotGap))+'" cy="'+Yd+'" r="'+dotR
+              +'" fill="'+col+'" stroke="white" stroke-width="2.5"/>';
+      }
+      // weight label
+      var wlbl = lf.dots===1 ? 'x1' : 'x2';
+      svg += '<text x="'+LX[i]+'" y="'+Yw+'" text-anchor="middle" font-size="11" '
+            +'font-family="\'Segoe UI\',sans-serif" font-weight="700" fill="'+col+'">'+wlbl+'</text>';
+    });
+
+    // Bracket / count annotation
+    var bktY = Yd + dotR + 6;
+    // red bracket over cols 0-1
+    var bktLx = LX[0]-dotR-4, bktRx = LX[1]+dotR+4;
+    svg += '<line x1="'+bktLx+'" y1="'+bktY+'" x2="'+bktRx+'" y2="'+bktY+'" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="3 2"/>';
+    // green bracket over cols 2-3
+    var bktLx2 = LX[2]-dotR-4, bktRx2 = LX[3]+dotR+4+8;
+    svg += '<line x1="'+bktLx2+'" y1="'+bktY+'" x2="'+bktRx2+'" y2="'+bktY+'" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="3 2"/>';
+
+    document.getElementById('cgv3-svg').innerHTML = svg;
+
+    // ── dot counter strip (HTML below SVG) ──
+    var dotsHTML = '';
+    // 2 red
+    for (var r=0; r<2; r++){
+      dotsHTML += '<div style="width:36px;height:36px;border-radius:50%;background:#dc2626;'
+               +  'border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,.18);'
+               +  'display:flex;align-items:center;justify-content:center;'
+               +  'color:white;font-size:.8rem;font-weight:700;">'+(r+1)+'</div>';
+    }
+    dotsHTML += '<div style="width:1px;height:36px;background:#d1d5db;margin:0 6px;"></div>';
+    // 4 green
+    for (var g=0; g<4; g++){
+      dotsHTML += '<div style="width:36px;height:36px;border-radius:50%;background:#16a34a;'
+               +  'border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,.18);'
+               +  'display:flex;align-items:center;justify-content:center;'
+               +  'color:white;font-size:.8rem;font-weight:700;">'+(g+3)+'</div>';
+    }
+
+    document.getElementById('cgv3-counter').innerHTML =
+      '<div style="display:flex;align-items:center;gap:1.2rem;padding:.85rem 1.1rem;'
+     +'background:white;border:1px solid #e2e8f0;border-radius:10px;flex-wrap:wrap;">'
+     +'<div style="font-size:.88rem;font-weight:700;color:#1e293b;min-width:160px;">'
+     +'Conteo de estados<br><span style="font-weight:400;color:#64748b;">(cada circulo = 1/6 del espacio muestral)</span></div>'
+     +'<div style="display:flex;gap:6px;align-items:center;">'+ dotsHTML +'</div>'
+     +'<div style="border-left:2px solid #e2e8f0;padding-left:1.1rem;font-size:.9rem;line-height:1.6;">'
+     +'<div><span style="color:#dc2626;font-weight:700;">2 de 6</span>'
+     +' -> pierdes cambiando = 1/3</div>'
+     +'<div><span style="color:#16a34a;font-weight:700;">4 de 6</span>'
+     +' -> <strong>ganas cambiando = 2/3</strong></div>'
+     +'</div>'
+     +'</div>';
+  }
+
+  window.cgv3SetChoice = function(d) {
+    cgv3Choice = d;
+    [1,2,3].forEach(function(i){
+      var b=document.getElementById('cgv3-b'+i);
+      var on=i===d;
+      b.style.background  = on?'#6366f1':'white';
+      b.style.color       = on?'white':'#374151';
+      b.style.borderColor = on?'#6366f1':'#cbd5e1';
+    });
+    render(d);
+  };
+
+  var btns = document.getElementById('cgv3-btns');
+  [1,2,3].forEach(function(i){
+    var b=document.createElement('button');
+    b.id='cgv3-b'+i;
+    b.textContent='Puerta '+i;
+    b.setAttribute('onclick','cgv3SetChoice('+i+')');
+    b.style.cssText='padding:6px 18px;border-radius:8px;border:2px solid #cbd5e1;background:white;'
+                   +'color:#374151;cursor:pointer;font-size:.9rem;font-weight:600;transition:all .15s;';
+    btns.appendChild(b);
+  });
+
+  cgv3SetChoice(1);
+})();
+</script>
 ```
+
+
 
 Como en el ejemplo Chabelo abre la puerta 3 y muestra una cabra, debemos quedarnos únicamente con los casos compatibles con esa información. Es decir, descartamos todos los casos donde Chabelo abre la puerta 2 o donde el auto estaba detrás de la puerta 3.
 
@@ -317,7 +535,7 @@ Si tuvieramos que clasificar entre monedas de un centavo y monedas de diez centa
 Los clasificadores bayesianos usan el teorema de Bayes para decidir a qué clase pertenece una observación. Para cada clase $\omega_i$, se considera qué tan probable es observar los datos $\mathbf{x}$ si esa clase fuera la correcta, junto con qué tan probable era esa clase antes de ver los datos. Con esta información se calcula la probabilidad de cada clase después de observar $\mathbf{x}$. La decisión más sencilla consiste en elegir la clase con mayor probabilidad posterior; si algunos errores son más costosos que otros, se puede modificar la decisión para tomar en cuenta esos costos [@duda2001pattern; @jaynes2003probability].
 
 
-Este capítulo desarrolla la clasificación bayesiana desde sus fundamentos hasta algunas variantes prácticas: clasificadores gaussianos, modelos de Markov para secuencias discretas, Naïve Bayes, decisión bayesiana con costos y el criterio minimax cuando las probabilidades previas son inciertas. Los ejemplos computacionales están escritos en Python y buscan conectar la teoría con implementaciones reproducibles.
+Este capítulo desarrolla la clasificación bayesiana desde sus fundamentos hasta algunas variantes prácticas: Naïve Bayes, clasificadores gaussianos, modelos de Markov para secuencias discretas, decisión bayesiana con costos y el criterio minimax cuando las probabilidades previas son inciertas. Los ejemplos computacionales están escritos en Python y buscan conectar la teoría con implementaciones reproducibles.
 
 ## Vista probabilística de la clasificación
 
@@ -473,8 +691,6 @@ Es importante notar que la decisión anterior depende de las probabilidades prev
 
 ::: {.column width="50%"}
 
-**Esta persona dejó caer su boleto en el pasillo.**
-
 ¿Le dices?
 
 > “Disculpe, señora”
@@ -483,28 +699,15 @@ o
 
 > “Disculpe, señor”
 
-**Tienes que hacer una conjetura.**
-
 :::
 
 ::: {.column width="50%"}
 
-**¿Qué pasa si esto ocurre mientras estás formado en la fila del baño de hombres?**
-![](https://ichef.bbci.co.uk/ace/standard/976/cpsprodpb/D01D/production/_85377235_queueing-lords-getty.jpg){width="70%"}
+
+![](https://ichef.bbci.co.uk/ace/standard/976/cpsprodpb/D01D/production/_85377235_queueing-lords-getty.jpg){width="80%"}
 :::
 
 :::
-
-$$
-P(\text{sexo}\mid \text{cabello})
-=
-\frac{
-P(\text{cabello}\mid \text{sexo})P(\text{sexo})
-}{
-\sum_{\text{sexo}} P(\text{sexo})P(\text{cabello}\mid \text{sexo})
-}
-$$
-
 
 Ahora las probabilidades previas cambian:
 
@@ -613,33 +816,61 @@ $$
 $$
 
 ::: {.callout-important}
-La misma evidencia observada —cabello largo— puede llevar a una decisión distinta cuando cambian las probabilidades previas.
+La misma evidencia observada (cabello largo) puede llevar a una decisión distinta cuando cambian las probabilidades previas.
 
 En clasificación bayesiana, el contexto modifica la inferencia.
 :::
 
 
 
-### 2.2 Implementación básica: decisión bayesiana para dos clases
+### Implementación básica: algoritmo general de un clasificador bayesiano
+
+A continuación se muestra una implementación básica de un clasificador bayesiano para cualquier número de clases. El código calcula las probabilidades posteriores y toma la decisión de clasificación basada en la clase con mayor probabilidad posterior.
 
 ```{python}
+#| echo: true
+#| code-fold: false
 import numpy as np
 
-def posterior_two_classes(px_w1, px_w2, p_w1, p_w2):
-    """Calcula posteriores para dos clases usando Bayes."""
-    evidence = px_w1 * p_w1 + px_w2 * p_w2
-    return (px_w1 * p_w1 / evidence,
-            px_w2 * p_w2 / evidence)
+def clasificador_bayesiano(verosimilitudes, priors, clases):
+    """
+    Clasificador bayesiano para cualquier número de clases.
 
-px_w1 = 0.2
-px_w2 = 0.4
-p_w1 = 0.9
-p_w2 = 0.1
+    verosimilitudes: p(x | omega_i) para cada clase.
+    priors: P(omega_i) para cada clase.
+    clases: nombres de las clases.
+    """
+    verosimilitudes = np.array(verosimilitudes, dtype=float)
+    priors = np.array(priors, dtype=float)
+    clases = np.array(clases)
 
-post_w1, post_w2 = posterior_two_classes(px_w1, px_w2, p_w1, p_w2)
-decision = "normal" if post_w1 > post_w2 else "disease"
+    evidencia = np.sum(verosimilitudes * priors)
+    posteriores = (verosimilitudes * priors) / evidencia
 
-print(post_w1, post_w2, decision)
+    indice_decision = np.argmax(posteriores)
+    decision = clases[indice_decision]
+
+    return posteriores, decision
+
+
+clases = ["normal", "enfermedad"]
+
+# p(x | omega_i): qué tan probable es observar x en cada clase
+verosimilitudes = [0.2, 0.4]
+
+# P(omega_i): probabilidad previa de cada clase
+priors = [0.9, 0.1]
+
+posteriores, decision = clasificador_bayesiano(
+    verosimilitudes,
+    priors,
+    clases
+)
+
+for clase, posterior in zip(clases, posteriores):
+    print(f"P({clase} | x) = {posterior:.3f}")
+
+print("Decisión:", decision)
 ```
 
 En este ejemplo, aunque la verosimilitud bajo la clase de enfermedad es mayor, el prior de la clase normal domina la decisión de error mínimo. Esto ilustra una idea importante: una evidencia local no se interpreta de manera aislada, sino en relación con la frecuencia previa de cada clase.
@@ -789,7 +1020,59 @@ P(\omega_1\mid\mathbf{x})>P(\omega_2\mid\mathbf{x})
 \mathbf{x}\in\omega_1.
 $$
 
-### 2.1 Formas equivalentes de la regla de decisión
+### Ejemplo en Python: decisión de error mínimo
+
+El siguiente código muestra la regla de error mínimo para varias observaciones. Para cada observación se tienen las verosimilitudes $p(\mathbf{x}\mid\omega_i)$ bajo dos clases. Después se calculan las posteriores, se elige la clase con mayor posterior y se reporta el error condicional mínimo.
+
+```{python}
+#| code-fold: false
+import numpy as np
+
+clases = np.array(["normal", "enfermedad"])
+
+# Probabilidades previas P(omega_i)
+priors = np.array([0.8, 0.2])
+
+# Cada fila representa una observación distinta.
+# Las columnas contienen p(x | normal) y p(x | enfermedad).
+verosimilitudes = np.array([
+    [0.50, 0.10],
+    [0.35, 0.25],
+    [0.20, 0.45],
+    [0.10, 0.60],
+    [0.40, 0.30]
+])
+
+# Numerador de Bayes: p(x | omega_i) P(omega_i)
+puntajes_no_normalizados = verosimilitudes * priors
+
+# Evidencia p(x), calculada para cada observación
+evidencia = puntajes_no_normalizados.sum(axis=1, keepdims=True)
+
+# Posteriores P(omega_i | x)
+posteriores = puntajes_no_normalizados / evidencia
+
+# Regla de error mínimo: elegir la clase con mayor posterior
+indices_decision = np.argmax(posteriores, axis=1)
+decisiones = clases[indices_decision]
+
+# El error condicional mínimo es 1 menos la posterior más grande
+errores_condicionales = 1 - np.max(posteriores, axis=1)
+
+for i, (post, decision, error) in enumerate(
+    zip(posteriores, decisiones, errores_condicionales),
+    start=1
+):
+    print(f"Observación {i}")
+    print(f"  P(normal | x) = {post[0]:.3f}")
+    print(f"  P(enfermedad | x) = {post[1]:.3f}")
+    print(f"  Decisión de error mínimo: {decision}")
+    print(f"  Error condicional mínimo: {error:.3f}\n")
+```
+
+En este ejemplo, una observación se clasifica como `enfermedad` sólo cuando su posterior supera a la posterior de `normal`. No basta con que $p(\mathbf{x}\mid\text{enfermedad})$ sea grande de manera aislada: también importa el prior de cada clase. Por eso la decisión se basa en el producto $p(\mathbf{x}\mid\omega_i)P(\omega_i)$ y no únicamente en la verosimilitud.
+
+### Formas equivalentes de la regla de decisión
 
 Usando el teorema de Bayes, la comparación de posteriores puede escribirse como una comparación de productos entre verosimilitud y prior:
 
@@ -820,7 +1103,183 @@ $$
 
 Esta forma es especialmente útil en alta dimensión, en secuencias largas y en modelos donde las densidades son productos de muchas probabilidades pequeñas.
 
-## 3. Clasificadores bayesianos gaussianos
+
+
+## Clasificador Naïve Bayes
+
+En alta dimensión, estimar la densidad conjunta $p(\mathbf{x}\mid\omega_i)$ puede ser difícil. Si $\mathbf{x}=(x_1,\dots,x_d)$, una densidad conjunta general requiere modelar dependencias entre todas las variables. Por ejemplo, en clasificación de textos no basta con preguntar si aparece una palabra: un documento puede contener cientos o miles de términos, y cada término puede aparecer varias veces.
+
+Naïve Bayes simplifica el problema suponiendo independencia condicional de las características dada la clase [@mccallum1998comparison; @murphy2012machine]. La palabra *naïve* no significa que el método sea inútil, sino que usa una suposición fuerte: una vez que conocemos la clase, tratamos a las características como si aportaran evidencia de manera separada.
+
+::: {.callout-note appearance="minimal"}
+Definición. El supuesto de independencia condicional de Naïve Bayes establece que
+$$
+p(\mathbf{x}\mid\omega_i)=p(x_1,x_2,\dots,x_d\mid\omega_i)=\prod_{k=1}^{d}p(x_k\mid\omega_i)
+$$ {#eq-naive-bayes-assumption}
+:::
+
+Con este supuesto, la regla MAP se escribe como:
+
+$$
+\hat{\omega}(\mathbf{x})=\arg\max_i \left[\log P(\omega_i)+\sum_{k=1}^{d}\log p(x_k\mid\omega_i)\right].
+$$
+
+Esta expresión tiene una lectura sencilla. El término $\log P(\omega_i)$ representa qué tan probable era la clase antes de observar el documento. La suma $\sum_{k=1}^{d}\log p(x_k\mid\omega_i)$ acumula la evidencia que aportan las características observadas. La clase elegida es aquella que obtiene la puntuación total más alta.
+
+### Naïve Bayes multinomial para texto
+
+Una de las versiones más usadas en clasificación de documentos es Naïve Bayes multinomial. En este caso, cada documento se representa como un vector de conteos:
+
+$$
+\mathbf{x}=(x_1,x_2,\dots,x_d),
+$$
+
+donde $x_k$ indica cuántas veces aparece la palabra $k$ del vocabulario en el documento. Si $\theta_{ik}$ representa la probabilidad de observar la palabra $k$ dentro de documentos de la clase $\omega_i$, entonces el modelo asigna la siguiente puntuación:
+
+$$
+g_i(\mathbf{x})
+=
+\log P(\omega_i)
++
+\sum_{k=1}^{d}x_k\log \theta_{ik}.
+$$
+
+La decisión se toma escogiendo la clase con mayor puntuación:
+
+$$
+\hat{\omega}(\mathbf{x})
+=
+\arg\max_i g_i(\mathbf{x}).
+$$
+
+En problemas de texto, las probabilidades $\theta_{ik}$ se estiman contando palabras en los documentos de entrenamiento. Si $N_{ik}$ es el número de veces que aparece la palabra $k$ en documentos de la clase $\omega_i$, una estimación directa sería:
+
+$$
+\theta_{ik}
+=
+\frac{N_{ik}}{\sum_{r=1}^{d}N_{ir}}.
+$$
+
+El problema es que si una palabra nunca aparece en una clase durante el entrenamiento, entonces $N_{ik}=0$ y su probabilidad estimada sería cero. Como el modelo multiplica probabilidades, una sola palabra con probabilidad cero puede anular toda la puntuación de una clase. Para evitarlo se usa suavizado de Laplace:
+
+$$
+\theta_{ik}
+=
+\frac{N_{ik}+\alpha}{\sum_{r=1}^{d}N_{ir}+\alpha d}.
+$$
+
+Cuando $\alpha=1$, se interpreta como si agregáramos una aparición ficticia de cada palabra en cada clase. Esto evita probabilidades cero y vuelve más estable al clasificador.
+
+::: {.callout-tip}
+En la práctica se trabaja con logaritmos, no con productos directos. Esto evita problemas numéricos cuando se multiplican muchas probabilidades pequeñas y convierte el producto de evidencias en una suma de evidencias.
+:::
+
+### Ejemplo manual: clasificación de un documento corto
+
+Supongamos que queremos clasificar documentos en dos clases: `spam` y `ham`. Después de entrenar el modelo, podríamos obtener las siguientes probabilidades:
+
+| Palabra | $P(\text{palabra}\mid\text{spam})$ | $P(\text{palabra}\mid\text{ham})$ |
+|---|---:|---:|
+| free | $0.30$ | $0.05$ |
+| prize | $0.25$ | $0.05$ |
+| project | $0.05$ | $0.30$ |
+
+Si los priors son iguales,
+
+$$
+P(\text{spam})=P(\text{ham})=0.5,
+$$
+
+y observamos el documento:
+
+$$
+\mathbf{x}=\text{``free project prize''},
+$$
+
+entonces las puntuaciones logarítmicas son:
+
+$$
+g_{\text{spam}}(\mathbf{x})
+=
+\log(0.5)+\log(0.30)+\log(0.05)+\log(0.25),
+$$
+
+$$
+g_{\text{ham}}(\mathbf{x})
+=
+\log(0.5)+\log(0.05)+\log(0.30)+\log(0.05).
+$$
+
+Aunque la palabra `project` favorece a `ham`, las palabras `free` y `prize` favorecen a `spam`. El clasificador suma toda la evidencia y decide por la clase con mayor puntuación final.
+
+### Ejemplo en Python: Naïve Bayes para texto
+
+```{python}
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.pipeline import make_pipeline
+
+texts = [
+    "free money offer now",
+    "win money free prize",
+    "meeting schedule project update",
+    "project discussion and meeting notes",
+    "free prize offer",
+    "schedule the project meeting"
+]
+labels = ["spam", "spam", "ham", "ham", "spam", "ham"]
+
+model = make_pipeline(
+    CountVectorizer(),
+    MultinomialNB(alpha=1.0)
+)
+
+model.fit(texts, labels)
+
+new_docs = ["free project prize", "meeting update schedule"]
+print(model.predict(new_docs))
+print(model.predict_proba(new_docs))
+```
+
+El parámetro `alpha=1.0` introduce suavizado de Laplace. Este suavizado evita que una palabra ausente en el entrenamiento de una clase anule completamente la probabilidad de un documento.
+
+También podemos inspeccionar el vocabulario aprendido y las probabilidades estimadas por clase:
+
+```{python}
+import numpy as np
+
+vectorizer = model.named_steps["countvectorizer"]
+clf = model.named_steps["multinomialnb"]
+
+vocabulario = vectorizer.get_feature_names_out()
+
+for clase, log_probs in zip(clf.classes_, clf.feature_log_prob_):
+    print(f"\nClase: {clase}")
+    for palabra, log_prob in zip(vocabulario, log_probs):
+        print(f"{palabra:12s} P(palabra | clase) = {np.exp(log_prob):.3f}")
+```
+
+Este segundo bloque muestra de manera explícita qué aprendió el modelo: para cada clase, estima qué palabras son más probables. Por eso Naïve Bayes suele ser fácil de interpretar en texto. Una palabra como `free` debería tener mayor probabilidad bajo `spam`, mientras que una palabra como `meeting` debería tener mayor probabilidad bajo `ham`.
+
+::: {.callout-important}
+Naïve Bayes no necesita que el supuesto de independencia sea perfectamente cierto para clasificar bien. Lo importante es que las puntuaciones relativas separen razonablemente las clases. Por eso puede funcionar bien incluso cuando las palabras de un documento claramente no son independientes entre sí.
+:::
+
+### Variantes comunes de Naïve Bayes
+
+La misma idea puede adaptarse a distintos tipos de características:
+
+| Variante | Tipo de característica | Ejemplo de uso |
+|---|---|---|
+| Bernoulli Naïve Bayes | Presencia o ausencia de una característica | Si una palabra aparece o no aparece |
+| Multinomial Naïve Bayes | Conteos discretos | Frecuencias de palabras en documentos |
+| Gaussian Naïve Bayes | Variables continuas | Mediciones físicas, señales o atributos numéricos |
+
+La diferencia entre estas variantes está en cómo se modela $p(x_k\mid\omega_i)$. El principio de decisión sigue siendo el mismo: estimar una probabilidad por clase, sumar la evidencia de las características y elegir la clase con mayor posterior.
+
+Aunque el supuesto de independencia suele ser falso, el clasificador puede funcionar muy bien en tareas de texto, filtrado de spam y clasificación de documentos, porque para decidir no siempre se necesita estimar perfectamente las probabilidades; basta con obtener fronteras de decisión útiles [@mccallum1998comparison].
+
+## Clasificadores bayesianos gaussianos
 
 Una familia muy importante de clasificadores bayesianos se obtiene cuando las densidades condicionales de clase se modelan mediante distribuciones normales. Este supuesto es razonable cuando las características observadas resultan de la agregación de muchos factores independientes o débilmente dependientes, de acuerdo con la intuición asociada al teorema central del límite [@wasserman2004all; @bishop2006pattern].
 
@@ -841,7 +1300,7 @@ p(\mathbf{x}) = \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}}
 $$ {#eq-normal-multivariate}
 :::
 
-### 3.1 Funciones discriminantes gaussianas
+### Funciones discriminantes gaussianas
 
 Si cada clase $\omega_i$ tiene una densidad condicional gaussiana
 
@@ -865,7 +1324,7 @@ $$
 
 Cuando las matrices de covarianza son distintas entre clases, la frontera $g_i(\mathbf{x})=g_j(\mathbf{x})$ es cuadrática. Este caso se conoce como análisis discriminante cuadrático, o QDA [@hastie2009elements].
 
-### 3.2 Casos especiales
+### Casos especiales
 
 #### Covarianza esférica común y priors iguales
 
@@ -895,9 +1354,10 @@ $$
 
 Este caso corresponde al análisis discriminante lineal, o LDA [@fisher1936use; @hastie2009elements]. El término $\log P(\omega_i)$ desplaza la frontera de decisión hacia la clase con menor prior, porque se requiere más evidencia para asignar una observación a una clase poco frecuente.
 
-### 3.3 Ejemplo en Python: clasificador gaussiano con covarianza común
+### Ejemplo en Python: clasificador gaussiano con covarianza común
 
 ```{python}
+#| code-fold: false
 import numpy as np
 from sklearn.datasets import make_blobs
 from sklearn.model_selection import train_test_split
@@ -1074,7 +1534,221 @@ Este código implementa la regla discriminante lineal sin llamar directamente a 
 </script>
 ```
 
-## 4. ¿Cómo evaluar el supuesto gaussiano?
+### Ejemplo interactivo 2: dos gaussianas en 1D
+
+El siguiente ejemplo muestra el caso más simple de clasificación gaussiana: una sola variable $x$ y dos clases. Cada clase se modela con una distribución normal distinta:
+
+$$
+p(x\mid\omega_1)=\mathcal{N}(x;\mu_1,\sigma_1^2),
+\qquad
+p(x\mid\omega_2)=\mathcal{N}(x;\mu_2,\sigma_2^2).
+$$
+
+Para clasificar un valor observado $x$, no comparamos únicamente las densidades $p(x\mid\omega_i)$. La regla MAP compara las densidades ponderadas por sus probabilidades previas:
+
+$$
+p(x\mid\omega_1)P(\omega_1)
+\quad\text{contra}\quad
+p(x\mid\omega_2)P(\omega_2).
+$$
+
+La frontera de decisión aparece en los valores de $x$ donde ambas cantidades son iguales. En esos puntos el clasificador está indiferente entre las dos clases:
+
+$$
+p(x\mid\omega_1)P(\omega_1)
+=
+p(x\mid\omega_2)P(\omega_2).
+$$
+
+El control interactivo modifica $P(\omega_1)$. Cuando aumenta el prior de una clase, esa clase necesita menos evidencia local para ser seleccionada. Por eso la frontera se desplaza hacia la otra clase: se requiere evidencia más fuerte para vencer a la clase que ahora es más probable a priori.
+
+```{python}
+#| label: fig-gaussian-1d
+#| fig-cap: "Densidades, posterior y frontera de decisión para dos clases gaussianas."
+import numpy as np
+import plotly.graph_objects as go
+
+x = np.linspace(-5, 7, 600)
+mu1, s1 = 0.0, 1.0
+mu2, s2 = 2.2, 1.4
+
+def normal_pdf(x, mu, sigma):
+    return np.exp(-0.5*((x-mu)/sigma)**2)/(sigma*np.sqrt(2*np.pi))
+
+frames = []
+prior_grid = np.linspace(0.1, 0.9, 9)
+for p1 in prior_grid:
+    p2 = 1 - p1
+    f1 = normal_pdf(x, mu1, s1)
+    f2 = normal_pdf(x, mu2, s2)
+    un1 = f1 * p1
+    un2 = f2 * p2
+    post1 = un1 / (un1 + un2)
+    post2 = 1 - post1
+
+    score = un1 - un2
+    crossing_idx = np.where(np.diff(np.sign(score)) != 0)[0]
+    boundary_x = x[crossing_idx] if len(crossing_idx) > 0 else np.array([])
+    boundary_y = np.interp(boundary_x, x, np.maximum(un1, un2))
+
+    frames.append(go.Frame(
+        data=[
+            go.Scatter(x=x, y=un1, mode="lines", name="p(x|ω1)P(ω1)"),
+            go.Scatter(x=x, y=un2, mode="lines", name="p(x|ω2)P(ω2)"),
+            go.Scatter(x=x, y=post1, mode="lines", name="P(ω1|x)", yaxis="y2"),
+            go.Scatter(x=x, y=post2, mode="lines", name="P(ω2|x)", yaxis="y2"),
+            go.Scatter(
+                x=boundary_x,
+                y=boundary_y,
+                mode="markers",
+                name="frontera MAP",
+                marker=dict(size=9, symbol="x", color="black")
+            )
+        ],
+        name=f"P(ω1)={p1:.1f}"
+    ))
+
+fig = go.Figure(data=frames[4].data, frames=frames)
+fig.update_layout(
+    title="Dos clases gaussianas en 1D: el prior desplaza la decisión",
+    xaxis_title="x",
+    yaxis=dict(title="p(x | ωᵢ)P(ωᵢ)"),
+    yaxis2=dict(title="posterior", overlaying="y", side="right", range=[0, 1]),
+    height=500,
+    legend=dict(orientation="h", y=-0.25),
+    margin=dict(b=120),
+    updatemenus=[dict(
+        type="buttons",
+        buttons=[dict(label="Animar", method="animate", args=[None])]
+    )],
+    sliders=[dict(
+        steps=[dict(method="animate", args=[[fr.name], {"mode":"immediate"}], label=fr.name) for fr in frames]
+    )]
+)
+fig.show()
+```
+
+La gráfica muestra tres ideas importantes. Primero, las curvas $p(x\mid\omega_i)P(\omega_i)$ son las cantidades que realmente se comparan para decidir. Segundo, las posteriores $P(\omega_i\mid x)$ cambian suavemente con $x$: cerca de la media de una clase, su posterior suele aumentar. Tercero, si las varianzas son distintas, puede aparecer más de una frontera de decisión, porque las curvas gaussianas pueden cruzarse en más de un punto.
+
+### Clasificación gaussiana en 2D
+
+En dos dimensiones, cada observación ya no es un número sino un vector:
+
+$$
+\mathbf{x}=(x_1,x_2)^T.
+$$
+
+Cada clase se describe con tres elementos:
+
+- Un centro $\boldsymbol{\mu}_i$.
+- Una matriz de covarianza $\Sigma_i$.
+- Un prior $P(\omega_i)$.
+
+El centro $\boldsymbol{\mu}_i$ indica dónde se concentra la clase. La matriz $\Sigma_i$ indica la forma de la nube: qué tan dispersa está, si está alargada en alguna dirección y si las variables $x_1$ y $x_2$ están correlacionadas. El prior $P(\omega_i)$ desplaza la decisión hacia la clase menos frecuente, porque se necesita más evidencia para asignar una observación a una clase con menor probabilidad previa.
+
+La función discriminante para cada clase es:
+
+$$
+g_i(\mathbf{x})
+=
+\log p(\mathbf{x}\mid\omega_i)
++
+\log P(\omega_i).
+$$
+
+La frontera se obtiene donde las dos clases tienen la misma puntuación:
+
+$$
+g_1(\mathbf{x})=g_2(\mathbf{x}).
+$$
+
+Si las covarianzas son iguales, la frontera es lineal. Si las covarianzas son distintas, la frontera puede ser curva, porque cada clase mide la cercanía a su centro con una geometría diferente.
+
+### Ejemplo interactivo 3: frontera en 2D
+
+El siguiente ejemplo simula dos nubes gaussianas en el plano. El fondo indica la región donde gana cada clase y la línea de contorno muestra los puntos donde $g_1(\mathbf{x})-g_2(\mathbf{x})=0$. A un lado de esa frontera se decide $\omega_1$ y al otro lado se decide $\omega_2$.
+
+```{python}
+#| label: fig-gaussian-2d
+#| fig-cap: "Frontera MAP para dos clases gaussianas en dos dimensiones."
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(7)
+n = 180
+mu1 = np.array([-1.2, 0.0])
+mu2 = np.array([1.2, 0.6])
+S1 = np.array([[1.0, 0.55], [0.55, 1.0]])
+S2 = np.array([[1.2, -0.45], [-0.45, 0.75]])
+X1 = np.random.multivariate_normal(mu1, S1, n)
+X2 = np.random.multivariate_normal(mu2, S2, n)
+
+xx, yy = np.meshgrid(np.linspace(-5, 5, 180), np.linspace(-4, 5, 180))
+G = np.c_[xx.ravel(), yy.ravel()]
+
+def log_gauss(X, mu, S):
+    invS = np.linalg.inv(S)
+    diff = X - mu
+    q = np.sum(diff @ invS * diff, axis=1)
+    return -0.5*q - 0.5*np.log(np.linalg.det(S))
+
+p1 = 0.5
+score = log_gauss(G, mu1, S1) + np.log(p1) - log_gauss(G, mu2, S2) - np.log(1-p1)
+Z = score.reshape(xx.shape)
+decision_region = (Z > 0).astype(int)
+
+fig = go.Figure()
+fig.add_trace(go.Contour(
+    x=xx[0],
+    y=yy[:,0],
+    z=decision_region,
+    contours=dict(start=0, end=1, size=1, coloring="heatmap"),
+    colorscale=[[0, "rgba(214,39,40,0.18)"], [1, "rgba(31,119,180,0.18)"]],
+    showscale=False,
+    line=dict(width=0),
+    name="región de decisión"
+))
+fig.add_trace(go.Contour(
+    x=xx[0],
+    y=yy[:,0],
+    z=Z,
+    contours=dict(start=0, end=0, size=1),
+    showscale=False,
+    line=dict(color="black", width=3),
+    name="frontera MAP"
+))
+fig.add_trace(go.Scatter(x=X1[:,0], y=X1[:,1], mode="markers", name="ω1", opacity=0.75))
+fig.add_trace(go.Scatter(x=X2[:,0], y=X2[:,1], mode="markers", name="ω2", opacity=0.75))
+fig.update_layout(
+    title="Frontera MAP en 2D con covarianzas distintas",
+    xaxis_title="x1",
+    yaxis_title="x2",
+    height=520,
+    legend=dict(orientation="h", y=-0.15),
+    margin=dict(b=90)
+)
+fig.show()
+```
+
+La frontera no depende sólo de qué media esté más cerca en distancia euclidiana. También depende de la orientación y dispersión de cada nube. Por ejemplo, una clase muy dispersa puede asignar probabilidad razonable a puntos alejados de su centro, mientras que una clase muy compacta exige que los puntos estén cerca de su media. Esa diferencia aparece en la forma curva de la frontera.
+
+### Interpretación geométrica
+
+La cantidad
+
+$$
+(\mathbf{x}-\boldsymbol{\mu}_i)^T\Sigma_i^{-1}(\mathbf{x}-\boldsymbol{\mu}_i)
+$$
+
+es una distancia de Mahalanobis.
+
+Significa que el modelo no mide sólo cercanía euclidiana, sino cercanía relativa a la forma de la nube de datos.
+
+::: {.callout-tip}
+La covarianza codifica orientación, escala y correlación.
+:::
+
+## ¿Cómo evaluar el supuesto gaussiano?
 
 El supuesto de normalidad rara vez debe aceptarse sin diagnóstico. En aplicaciones reales conviene combinar razonamiento sustantivo, visualización y pruebas estadísticas. La visualización suele ser más informativa que una prueba aislada, porque permite detectar asimetrías, colas pesadas, multimodalidad o valores atípicos.
 
@@ -1103,7 +1777,7 @@ print(f"Shapiro-Wilk statistic={stat:.3f}, p-value={p_value:.3f}")
 
 Una advertencia importante es que las pruebas de normalidad son sensibles al tamaño de muestra. Con muestras grandes pueden detectar desviaciones pequeñas sin relevancia práctica; con muestras pequeñas pueden carecer de potencia. Por ello, el diagnóstico debe vincularse con el objetivo de clasificación.
 
-## 5. Clasificación bayesiana de secuencias discretas
+## Clasificación bayesiana de secuencias discretas
 
 Los clasificadores bayesianos no se limitan a variables continuas. También pueden aplicarse a datos discretos estructurados, como texto, secuencias genómicas o series de símbolos. En biología computacional, un ejemplo clásico es la identificación de islas CpG en el genoma humano [@durbin1998biological].
 
@@ -1123,7 +1797,7 @@ $$
 $$ {#eq-cpg-ratio}
 :::
 
-### 5.1 Cadenas de Markov de primer orden
+### Cadenas de Markov de primer orden
 
 Una cadena de Markov de primer orden modela una secuencia suponiendo que el símbolo actual depende sólo del símbolo inmediatamente anterior. Para ADN, el alfabeto es $\mathcal{A}=\{A,C,G,T\}$.
 
@@ -1147,7 +1821,7 @@ $$
 P(\mathbf{x}) = P(x_1)\prod_{i=2}^{L} a_{x_{i-1}x_i}.
 $$
 
-### 5.2 Log-odds para discriminar secuencias
+### Log-odds para discriminar secuencias
 
 Supongamos que se entrenan dos cadenas de Markov: una para islas CpG, denotada $+$, y otra para regiones no CpG, denotada $-$. La puntuación log-odds de una secuencia es
 
@@ -1161,9 +1835,10 @@ $$ {#eq-markov-log-odds}
 
 Si $S(\mathbf{x})$ supera un umbral, la secuencia se clasifica como CpG; si no, como no CpG. El umbral puede fijarse por priors, por costos de error o por validación empírica.
 
-### 5.3 Ejemplo en Python: puntuación de una secuencia de ADN
+### Ejemplo en Python: puntuación de una secuencia de ADN
 
 ```{python}
+#| code-fold: false
 import numpy as np
 
 alphabet = ["A", "C", "G", "T"]
@@ -1305,57 +1980,8 @@ La normalización por longitud permite comparar secuencias de tamaños distintos
 </script>
 ```
 
-## 6. Clasificador Naïve Bayes
 
-En alta dimensión, estimar la densidad conjunta $p(\mathbf{x}\mid\omega_i)$ puede ser difícil. Si $\mathbf{x}=(x_1,\dots,x_d)$, una densidad conjunta general requiere modelar dependencias entre todas las variables. Naïve Bayes simplifica el problema suponiendo independencia condicional de las características dada la clase [@mccallum1998comparison; @murphy2012machine].
-
-::: {.callout-note appearance="minimal"}
-Definición. El supuesto de independencia condicional de Naïve Bayes establece que
-$$
-p(\mathbf{x}\mid\omega_i)=p(x_1,x_2,\dots,x_d\mid\omega_i)=\prod_{k=1}^{d}p(x_k\mid\omega_i)
-$$ {#eq-naive-bayes-assumption}
-:::
-
-Con este supuesto, la regla MAP se escribe como
-
-$$
-\hat{\omega}(\mathbf{x})=\arg\max_i \left[\log P(\omega_i)+\sum_{k=1}^{d}\log p(x_k\mid\omega_i)\right].
-$$
-
-Aunque el supuesto de independencia suele ser falso, el clasificador puede funcionar muy bien en tareas de texto, filtrado de spam y clasificación de documentos, porque para decidir no siempre se necesita estimar perfectamente las probabilidades; basta con obtener fronteras de decisión útiles [@mccallum1998comparison].
-
-### 6.1 Ejemplo en Python: Naïve Bayes para texto
-
-```{python}
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.pipeline import make_pipeline
-
-texts = [
-    "free money offer now",
-    "win money free prize",
-    "meeting schedule project update",
-    "project discussion and meeting notes",
-    "free prize offer",
-    "schedule the project meeting"
-]
-labels = ["spam", "spam", "ham", "ham", "spam", "ham"]
-
-model = make_pipeline(
-    CountVectorizer(),
-    MultinomialNB(alpha=1.0)
-)
-
-model.fit(texts, labels)
-
-new_docs = ["free project prize", "meeting update schedule"]
-print(model.predict(new_docs))
-print(model.predict_proba(new_docs))
-```
-
-El parámetro `alpha=1.0` introduce suavizado de Laplace. Este suavizado evita que una palabra ausente en el entrenamiento de una clase anule completamente la probabilidad de un documento.
-
-## 7. Clasificadores bayesianos de riesgo mínimo
+## Clasificadores bayesianos de riesgo mínimo
 
 La decisión de error mínimo supone que todos los errores cuestan lo mismo. Sin embargo, en muchas aplicaciones esto no es cierto. En diagnóstico médico, por ejemplo, un falso negativo puede ser mucho más costoso que un falso positivo. En detección de fraude, bloquear una transacción legítima y dejar pasar una transacción fraudulenta tampoco tienen el mismo costo. Por ello se introduce una función de pérdida.
 
@@ -1383,7 +2009,7 @@ $$
 
 Cuando $\lambda_{ii}=0$ y $\lambda_{ij}=1$ para $i\neq j$, la regla de riesgo mínimo se reduce a la regla de error mínimo. Es decir, la clasificación MAP es un caso particular de la teoría de decisión bayesiana [@berger1985statistical; @duda2001pattern].
 
-### 7.1 Dos clases con matriz de pérdidas
+### Dos clases con matriz de pérdidas
 
 Para dos clases y dos decisiones, la matriz de pérdidas puede escribirse como
 
@@ -1416,7 +2042,7 @@ $$
 \frac{\lambda_{12}-\lambda_{22}}{\lambda_{21}-\lambda_{11}}.
 $$
 
-### 7.2 Ejemplo en Python: error mínimo frente a riesgo mínimo
+### Ejemplo en Python: error mínimo frente a riesgo mínimo
 
 ```{python}
 px_w1 = 0.2
@@ -1424,7 +2050,13 @@ px_w2 = 0.4
 p_w1 = 0.9
 p_w2 = 0.1
 
-post_w1, post_w2 = posterior_two_classes(px_w1, px_w2, p_w1, p_w2)
+posterior, _ = clasificador_bayesiano(
+    verosimilitudes=[px_w1, px_w2],
+    priors=[p_w1, p_w2],
+    clases=["normal", "enfermedad"]
+)
+
+post_w1, post_w2 = posterior
 
 # Matriz de pérdida:
 # alpha_1 = decidir normal, alpha_2 = decidir enfermedad
@@ -1434,13 +2066,12 @@ loss = np.array([
     [1, 0]
 ])
 
-posterior = np.array([post_w1, post_w2])
 risks = loss @ posterior
 
 print("Posterior:", posterior)
 print("Conditional risks:", risks)
-print("Minimum-error decision:", "normal" if post_w1 > post_w2 else "disease")
-print("Minimum-risk decision:", "normal" if np.argmin(risks) == 0 else "disease")
+print("Minimum-error decision:", "normal" if post_w1 > post_w2 else "enfermedad")
+print("Minimum-risk decision:", "normal" if np.argmin(risks) == 0 else "enfermedad")
 ```
 
 El resultado muestra que la decisión de error mínimo puede ser “normal”, mientras que la decisión de riesgo mínimo puede ser “enfermedad” si el costo de no detectar la enfermedad es suficientemente alto. Esta diferencia es fundamental en sistemas de decisión sensibles al costo.
@@ -1555,7 +2186,7 @@ El resultado muestra que la decisión de error mínimo puede ser “normal”, m
 </script>
 ```
 
-## 8. Minimizar un tipo de error condicionado al otro
+## Minimizar un tipo de error condicionado al otro
 
 En algunos problemas no se busca minimizar una suma ponderada de errores, sino controlar explícitamente un tipo de error mientras se minimiza otro. Esta idea aparece en pruebas de hipótesis, detección de señales y clasificación con restricciones operativas. El caso clásico es minimizar la probabilidad de falso negativo sujeto a una cota sobre la probabilidad de falso positivo, o viceversa. La regla resultante se relaciona con el lema de Neyman--Pearson [@neyman1933problem].
 
@@ -1598,7 +2229,7 @@ print("TPR:", tpr[best_idx])
 
 Este enfoque es más adecuado que maximizar accuracy cuando una clase es rara o cuando los errores tienen consecuencias asimétricas.
 
-## 9. Criterio minimax cuando los priors son desconocidos
+## Criterio minimax cuando los priors son desconocidos
 
 La regla bayesiana clásica requiere conocer o estimar los priors $P(\omega_i)$. Cuando estos priors son inciertos, una alternativa conservadora es el criterio minimax. La idea es escoger la regla de decisión que minimiza el peor riesgo posible bajo los priors admisibles [@berger1985statistical; @duda2001pattern].
 
@@ -1611,7 +2242,7 @@ $$ {#eq-minimax-rule}
 
 Aquí $\pi$ representa el vector de priors y $\Pi$ el conjunto de priors considerados plausibles. En problemas de dos clases, puede estudiarse el riesgo como función de $P(\omega_1)$, ya que $P(\omega_2)=1-P(\omega_1)$. La regla minimax evita depender de una estimación puntual del prior y protege contra escenarios adversos. Su desventaja es que puede ser demasiado conservadora si sí existe información confiable sobre las frecuencias reales de clase.
 
-## 10. Recomendaciones prácticas
+## Recomendaciones prácticas
 
 La clasificación bayesiana es conceptualmente elegante, pero su desempeño depende de la calidad del modelo probabilístico. Algunas recomendaciones prácticas son:
 
@@ -1624,6 +2255,6 @@ La clasificación bayesiana es conceptualmente elegante, pero su desempeño depe
 
 ## Conclusiones
 
-Los clasificadores bayesianos proporcionan un marco unificado para tomar decisiones bajo incertidumbre. La regla MAP minimiza la probabilidad de error cuando los errores tienen el mismo costo, mientras que la regla de riesgo mínimo permite incorporar pérdidas asimétricas. Los clasificadores gaussianos muestran cómo los supuestos sobre las densidades condicionales determinan la geometría de las fronteras de decisión: fronteras lineales bajo covarianza común y fronteras cuadráticas bajo covarianzas distintas. Por otro lado, los modelos de Markov y Naïve Bayes muestran que el mismo principio puede aplicarse a secuencias discretas y datos de alta dimensión.
+Los clasificadores bayesianos proporcionan un marco unificado para tomar decisiones bajo incertidumbre. La regla MAP minimiza la probabilidad de error cuando los errores tienen el mismo costo, mientras que la regla de riesgo mínimo permite incorporar pérdidas asimétricas. Naïve Bayes muestra cómo construir clasificadores prácticos en alta dimensión mediante una suposición de independencia condicional. Los clasificadores gaussianos muestran cómo los supuestos sobre las densidades condicionales determinan la geometría de las fronteras de decisión: fronteras lineales bajo covarianza común y fronteras cuadráticas bajo covarianzas distintas. Por otro lado, los modelos de Markov muestran que el mismo principio puede aplicarse a secuencias discretas con dependencia entre símbolos.
 
 La idea central del capítulo es que clasificar no consiste únicamente en trazar una frontera, sino en articular tres elementos: un modelo de cómo se generan los datos, una actualización probabilística de las creencias y una regla de decisión adaptada al objetivo. Esta separación hace que los métodos bayesianos sean especialmente útiles en problemas donde la incertidumbre, los costos de error y la interpretabilidad son componentes esenciales del sistema de aprendizaje.
