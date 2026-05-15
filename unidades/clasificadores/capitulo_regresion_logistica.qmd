@@ -1,0 +1,1220 @@
+---
+title: "Regresión Logística"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_regresion_logistica.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+La regresión logística es uno de los modelos de clasificación más utilizados en estadística y aprendizaje automático. A pesar de su nombre, no es un método de regresión en el sentido predictivo clásico: su objetivo es modelar la probabilidad de que una observación pertenezca a una clase determinada. Su elegancia reside en combinar la interpretabilidad de un modelo lineal con una transformación que garantiza salidas en el intervalo $(0,1)$, haciendo posible tratar las predicciones como probabilidades genuinas [@hosmer2013; @mccullagh1989].
+
+El modelo fue propuesto formalmente por David Cox en 1958 y desde entonces se ha convertido en la referencia de partida para problemas de clasificación binaria en medicina, epidemiología, economía y ciencias sociales. En aprendizaje automático, sigue siendo competitivo frente a métodos más complejos cuando los datos son aproximadamente linealmente separables o cuando la interpretabilidad de los coeficientes es una prioridad [@hastie2009].
+
+Este capítulo desarrolla la regresión logística desde sus fundamentos hasta sus variantes más importantes. Comenzamos motivando el problema de clasificar con regresión lineal y mostrando sus limitaciones. Luego introducimos la función logística, derivamos el modelo, estimamos sus parámetros por máxima verosimilitud, interpretamos los coeficientes en términos de odds ratios, estudiamos la regularización y finalizamos con la extensión multiclase mediante softmax. Los ejemplos computacionales están escritos en Python usando únicamente `numpy` y `plotly.graph_objects`, implementando los algoritmos desde cero.
+
+## Motivación: el problema de clasificar con regresión lineal
+
+Antes de introducir la regresión logística, conviene entender por qué la regresión lineal resulta inadecuada para la clasificación binaria. Supongamos que deseamos predecir si un correo electrónico es spam ($y=1$) o no ($y=0$) a partir de una característica numérica $x$, como la frecuencia de la palabra "oferta".
+
+Si ajustamos una regresión lineal ordinaria, obtenemos un modelo de la forma:
+
+$$
+\hat{y} = \beta_0 + \beta_1 x,
+$$
+
+y la regla de decisión natural es: predecir clase $1$ si $\hat{y} > 0.5$, clase $0$ en caso contrario. Esta estrategia tiene tres problemas fundamentales:
+
+1. **Predicciones fuera de rango**: el modelo lineal puede producir valores $\hat{y} < 0$ o $\hat{y} > 1$, que no tienen interpretación como probabilidades.
+2. **Sensibilidad a observaciones atípicas**: un punto muy alejado en el eje $x$ puede arrastrar la recta de regresión de manera que la frontera de decisión se desplace hacia regiones incorrectas.
+3. **Supuestos violados**: la regresión lineal asume homocedasticidad y residuos gaussianos, supuestos que son claramente inapropiados cuando la variable respuesta es binaria.
+
+La siguiente figura ilustra este problema con un conjunto sintético [@james2021].
+
+```{python}
+#| label: fig-logit-failure
+#| fig-cap: "Regresión lineal aplicada a un problema de clasificación binaria. La recta ajustada produce predicciones fuera del intervalo [0, 1] y no respeta la naturaleza probabilística de la variable respuesta."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(42)
+
+n0, n1 = 40, 40
+x0 = rng.normal(loc=2.0, scale=0.8, size=n0)
+x1 = rng.normal(loc=5.5, scale=0.8, size=n1)
+# agregar algunos puntos atípicos para que la recta salga del rango
+x1_extra = np.array([9.5, 10.5, 11.0])
+x_all = np.concatenate([x0, x1, x1_extra])
+y_all = np.concatenate([np.zeros(n0), np.ones(n1), np.ones(3)])
+
+# Regresión lineal (mínimos cuadrados)
+X_mat = np.column_stack([np.ones_like(x_all), x_all])
+beta_ols = np.linalg.lstsq(X_mat, y_all, rcond=None)[0]
+
+x_line = np.linspace(-1.5, 12.5, 300)
+y_line = beta_ols[0] + beta_ols[1] * x_line
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=x0, y=np.zeros(n0),
+    mode="markers",
+    name="Clase 0 (no spam)",
+    marker=dict(color="#4C72B0", size=8, opacity=0.8,
+                line=dict(color="white", width=1))
+))
+
+fig.add_trace(go.Scatter(
+    x=np.concatenate([x1, x1_extra]),
+    y=np.ones(n1 + 3),
+    mode="markers",
+    name="Clase 1 (spam)",
+    marker=dict(color="#DD8452", size=8, opacity=0.8,
+                line=dict(color="white", width=1))
+))
+
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_line,
+    mode="lines",
+    name="Regresión lineal",
+    line=dict(color="#2ca02c", width=2.5, dash="solid")
+))
+
+fig.add_hline(y=0, line_dash="dot", line_color="gray", line_width=1)
+fig.add_hline(y=1, line_dash="dot", line_color="gray", line_width=1)
+fig.add_hrect(y0=1.0, y1=1.4, fillcolor="rgba(220,50,50,0.07)",
+              line_width=0, annotation_text="Zona inválida (ŷ > 1)")
+fig.add_hrect(y0=-0.4, y1=0.0, fillcolor="rgba(220,50,50,0.07)",
+              line_width=0, annotation_text="Zona inválida (ŷ < 0)")
+
+fig.add_annotation(x=0.5, y=0.5, xref="paper", yref="y",
+                   text="Umbral: 0.5", showarrow=False,
+                   font=dict(size=11, color="gray"),
+                   xanchor="left")
+
+fig.update_layout(
+    title="Falla de la regresión lineal en clasificación binaria",
+    xaxis_title="Característica x",
+    yaxis_title="Respuesta y (o ŷ)",
+    template="plotly_white",
+    height=460,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+Nótese cómo para valores grandes de $x$ la recta predice valores mayores que $1$, y teóricamente podría predecir valores negativos si hubiera observaciones de clase $0$ con valores muy pequeños de $x$. Estas predicciones fuera de $[0,1]$ son inutilizables como estimaciones de probabilidad [@hastie2009].
+
+::: {.callout-important}
+La regresión lineal puede usarse como clasificador en casos simples, pero sus predicciones no son probabilidades y su frontera de decisión puede ser inestable en presencia de observaciones atípicas. La regresión logística resuelve estos problemas de forma principiada.
+:::
+
+## La función logística (sigmoide)
+
+La solución natural al problema anterior es transformar la salida lineal mediante una función que mapee $\mathbb{R}$ al intervalo $(0,1)$. La función más utilizada con este propósito es la **función logística**, también llamada función sigmoide.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** La función logística $\sigma : \mathbb{R} \to (0,1)$ se define como
+
+$$
+\sigma(z) = \frac{1}{1 + e^{-z}}
+$$ {#eq-sigmoid}
+:::
+
+Esta función tiene varias propiedades matemáticas que la hacen especialmente adecuada para modelar probabilidades:
+
+**Rango:** Para cualquier $z \in \mathbb{R}$, se cumple $0 < \sigma(z) < 1$. Cuando $z \to +\infty$, $\sigma(z) \to 1$; cuando $z \to -\infty$, $\sigma(z) \to 0$.
+
+**Simetría alrededor del origen:** $\sigma(0) = 1/2$. Esto significa que el punto $z=0$ separa las dos clases con probabilidad exactamente igual.
+
+**Derivada conveniente:** La derivada de la sigmoide admite una expresión cerrada en términos de la misma función:
+
+$$
+\frac{d\sigma}{dz}(z) = \sigma(z)\bigl(1 - \sigma(z)\bigr).
+$$ {#eq-sigmoid-deriv}
+
+Esta propiedad simplifica enormemente el cálculo del gradiente durante el entrenamiento.
+
+**Interpretación como log-odds:** Si definimos $p = \sigma(z)$, entonces se puede verificar que
+
+$$
+\log \frac{p}{1-p} = z.
+$$ {#eq-logit}
+
+La cantidad $\log(p/(1-p))$ se denomina **logit** o log-odds de $p$. La @eq-logit establece que el argumento $z$ de la sigmoide equivale al logaritmo de las probabilidades relativas entre la clase positiva y la negativa. De ahí el nombre "regresión logística": el modelo asume que el logit de la probabilidad es una función lineal de las características [@bishop2006].
+
+La siguiente figura muestra la curva sigmoide con la posibilidad de desplazar el umbral de decisión $z_0$, que corresponde al punto donde la probabilidad predicha cruza $0.5$.
+
+```{python}
+#| label: fig-sigmoid
+#| fig-cap: "Función sigmoide con animación del umbral de decisión z₀. Cada frame corresponde a un valor distinto de z₀; la región sombreada indica la zona de clase predicha como positiva."
+
+import numpy as np
+import plotly.graph_objects as go
+
+z = np.linspace(-8, 8, 400)
+sigma = 1 / (1 + np.exp(-z))
+
+z0_values = np.arange(-4, 4.5, 0.5)
+
+frames = []
+for z0 in z0_values:
+    sigma_shifted = 1 / (1 + np.exp(-(z - z0)))
+    frames.append(go.Frame(
+        data=[
+            go.Scatter(x=z, y=sigma_shifted,
+                       mode="lines",
+                       line=dict(color="#4C72B0", width=2.5)),
+            go.Scatter(x=z[z >= z0], y=sigma_shifted[z >= z0],
+                       fill="tozeroy", fillcolor="rgba(221,132,82,0.15)",
+                       mode="none", showlegend=False),
+            go.Scatter(x=[z0], y=[0.5],
+                       mode="markers",
+                       marker=dict(color="#DD8452", size=10,
+                                   line=dict(color="white", width=2))),
+        ],
+        name=str(round(z0, 1))
+    ))
+
+# Frame inicial
+sigma0 = 1 / (1 + np.exp(-z))
+fig = go.Figure(
+    data=[
+        go.Scatter(x=z, y=sigma0, mode="lines",
+                   name="σ(z − z₀)",
+                   line=dict(color="#4C72B0", width=2.5)),
+        go.Scatter(x=z[z >= 0], y=sigma0[z >= 0],
+                   fill="tozeroy", fillcolor="rgba(221,132,82,0.15)",
+                   mode="none", name="Región clase 1"),
+        go.Scatter(x=[0], y=[0.5], mode="markers",
+                   name="Umbral z₀",
+                   marker=dict(color="#DD8452", size=10,
+                               line=dict(color="white", width=2))),
+    ],
+    frames=frames
+)
+
+fig.add_hline(y=0.5, line_dash="dash", line_color="gray", line_width=1,
+              annotation_text="p = 0.5", annotation_position="right")
+fig.add_hline(y=1.0, line_dash="dot", line_color="lightgray", line_width=1)
+fig.add_hline(y=0.0, line_dash="dot", line_color="lightgray", line_width=1)
+
+fig.update_layout(
+    title="Función sigmoide: desplazamiento del umbral z₀",
+    xaxis_title="z",
+    yaxis_title="σ(z − z₀)",
+    template="plotly_white",
+    height=470,
+    updatemenus=[dict(
+        type="buttons",
+        showactive=False,
+        y=1.15, x=0.5, xanchor="center",
+        buttons=[
+            dict(label="Animar",
+                 method="animate",
+                 args=[None, dict(frame=dict(duration=300, redraw=True),
+                                  fromcurrent=True)]),
+            dict(label="Pausar",
+                 method="animate",
+                 args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                    mode="immediate")])
+        ]
+    )],
+    sliders=[dict(
+        steps=[dict(args=[[f.name],
+                          dict(frame=dict(duration=300, redraw=True),
+                               mode="immediate")],
+                    label=f.name, method="animate")
+               for f in frames],
+        currentvalue=dict(prefix="z₀ = ", font=dict(size=13)),
+        x=0.05, len=0.9, y=0
+    )],
+    legend=dict(orientation="h", yanchor="top", y=-0.25,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+### Intuición geométrica
+
+La función sigmoide convierte la recta numérica $\mathbb{R}$ en el intervalo abierto $(0,1)$. El argumento $z$ actúa como un "puntaje de clase positiva": valores grandes de $z$ corresponden a probabilidades cercanas a $1$, valores pequeños corresponden a probabilidades cercanas a $0$, y $z=0$ corresponde exactamente a probabilidad $0.5$.
+
+Cuando $z = \beta_0 + \boldsymbol{\beta}^\top \mathbf{x}$, el umbral $z=0$ corresponde al hiperplano $\beta_0 + \boldsymbol{\beta}^\top \mathbf{x} = 0$, que es precisamente la **frontera de decisión** del modelo. Exploraremos esto con detalle en la sección siguiente.
+
+## El modelo de regresión logística
+
+Con la función logística en mano, el modelo de regresión logística modela la probabilidad condicional de que la respuesta sea $1$ dada una observación $\mathbf{x} \in \mathbb{R}^d$:
+
+::: {.callout-note appearance="minimal"}
+**Definición.** El modelo de regresión logística establece que
+
+$$
+P(y=1 \mid \mathbf{x}) = \sigma(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x}) = \frac{1}{1 + e^{-(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x})}},
+$$ {#eq-logistic-model}
+
+donde $\beta_0 \in \mathbb{R}$ es el intercepto y $\boldsymbol{\beta} \in \mathbb{R}^d$ es el vector de coeficientes.
+:::
+
+Y consecuentemente:
+
+$$
+P(y=0 \mid \mathbf{x}) = 1 - \sigma(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x}) = \sigma(-(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x})).
+$$
+
+### Frontera de decisión
+
+La regla de clasificación más natural consiste en asignar la clase $1$ cuando la probabilidad posterior supera $0.5$:
+
+$$
+\hat{y} = \begin{cases} 1 & \text{si } P(y=1\mid\mathbf{x}) \geq 0.5, \\ 0 & \text{en caso contrario.} \end{cases}
+$$
+
+Como $\sigma(z) \geq 0.5$ si y solo si $z \geq 0$, la condición anterior equivale a:
+
+$$
+\beta_0 + \boldsymbol{\beta}^\top \mathbf{x} \geq 0.
+$$ {#eq-decision-boundary}
+
+El conjunto de puntos $\mathbf{x}$ donde $\beta_0 + \boldsymbol{\beta}^\top \mathbf{x} = 0$ define un **hiperplano** en $\mathbb{R}^d$, que es la frontera de decisión del modelo. Esto implica que la regresión logística es un **clasificador lineal**: separa las clases mediante una frontera plana [@bishop2006; @hastie2009].
+
+::: {.callout-note}
+La frontera de decisión de la regresión logística siempre es un hiperplano en el espacio original de características. Para capturar fronteras no lineales, es necesario incluir transformaciones de las características originales (polinomios, interacciones, etc.) antes de ajustar el modelo.
+:::
+
+La siguiente figura muestra la frontera de decisión y el mapa de probabilidades posterior en dos dimensiones con datos sintéticos de dos clases gaussianas.
+
+```{python}
+#| label: fig-logistic-boundary-2d
+#| fig-cap: "Frontera de decisión de la regresión logística en dos dimensiones. El contorno de colores representa la probabilidad predicha P(y=1|x); la línea negra es la isocurva p=0.5 (frontera de decisión)."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(7)
+n = 60
+X0 = rng.multivariate_normal([1.5, 1.5], [[1, 0.3],[0.3, 1]], n)
+X1 = rng.multivariate_normal([4.0, 4.0], [[1, -0.2],[-0.2, 1]], n)
+X = np.vstack([X0, X1])
+y = np.concatenate([np.zeros(n), np.ones(n)])
+
+# Entrenamiento por descenso de gradiente
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+def entrenar_logistica(X, y, lr=0.1, n_iter=1000):
+    N, d = X.shape
+    X_aug = np.column_stack([np.ones(N), X])
+    w = np.zeros(d + 1)
+    for _ in range(n_iter):
+        p = sigmoid(X_aug @ w)
+        grad = X_aug.T @ (p - y) / N
+        w -= lr * grad
+    return w
+
+w = entrenar_logistica(X, y)
+beta0, beta = w[0], w[1:]
+
+# Malla de probabilidades
+x1g = np.linspace(-1, 7, 120)
+x2g = np.linspace(-1, 7, 120)
+xx1, xx2 = np.meshgrid(x1g, x2g)
+Z = sigmoid(beta0 + beta[0]*xx1 + beta[1]*xx2)
+
+fig = go.Figure()
+
+fig.add_trace(go.Contour(
+    x=x1g, y=x2g, z=Z,
+    colorscale=[[0, "#4C72B0"], [0.5, "white"], [1, "#DD8452"]],
+    opacity=0.45,
+    showscale=True,
+    colorbar=dict(title="P(y=1|x)"),
+    contours=dict(showlines=False),
+    name="Probabilidad"
+))
+
+fig.add_trace(go.Contour(
+    x=x1g, y=x2g, z=Z,
+    contours=dict(start=0.5, end=0.5, coloring="none",
+                  showlabels=True, labelfont=dict(size=12, color="black")),
+    line=dict(color="black", width=2.5),
+    showscale=False,
+    name="Frontera (p=0.5)"
+))
+
+fig.add_trace(go.Scatter(
+    x=X0[:,0], y=X0[:,1],
+    mode="markers", name="Clase 0",
+    marker=dict(color="#4C72B0", size=7, opacity=0.85,
+                line=dict(color="white", width=1))
+))
+
+fig.add_trace(go.Scatter(
+    x=X1[:,0], y=X1[:,1],
+    mode="markers", name="Clase 1",
+    marker=dict(color="#DD8452", size=7, opacity=0.85,
+                line=dict(color="white", width=1))
+))
+
+fig.update_layout(
+    title="Frontera de decisión logística en 2D",
+    xaxis_title="Característica x₁",
+    yaxis_title="Característica x₂",
+    template="plotly_white",
+    height=490,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+### Notación compacta con vector aumentado
+
+Es habitual absorber el intercepto $\beta_0$ en el vector de coeficientes definiendo $\tilde{\boldsymbol{\beta}} = (\beta_0, \beta_1, \dots, \beta_d)^\top$ y aumentando cada observación con una coordenada fija igual a $1$: $\tilde{\mathbf{x}} = (1, x_1, \dots, x_d)^\top$. Con esta convención, el modelo se escribe de forma compacta como:
+
+$$
+P(y=1 \mid \mathbf{x}) = \sigma\!\left(\tilde{\boldsymbol{\beta}}^\top \tilde{\mathbf{x}}\right).
+$$
+
+De aquí en adelante, cuando no haya ambigüedad, omitiremos la tilde y escribiremos simplemente $\boldsymbol{\beta}^\top \mathbf{x}$ entendiendo que el vector $\mathbf{x}$ ya incluye la coordenada $1$.
+
+## Estimación por máxima verosimilitud
+
+Para aprender los parámetros $\boldsymbol{\beta}$ del modelo se usa el principio de **máxima verosimilitud** (MLE): se buscan los valores de $\boldsymbol{\beta}$ que hacen más probable el conjunto de observaciones de entrenamiento $\{(\mathbf{x}_i, y_i)\}_{i=1}^n$ [@murphy2012].
+
+Dado que cada $y_i \in \{0, 1\}$, la distribución de $y_i$ dado $\mathbf{x}_i$ es Bernoulli con parámetro $p_i = \sigma(\boldsymbol{\beta}^\top \mathbf{x}_i)$:
+
+$$
+P(y_i \mid \mathbf{x}_i; \boldsymbol{\beta}) = p_i^{y_i}(1-p_i)^{1-y_i}.
+$$
+
+Asumiendo independencia entre las observaciones, la verosimilitud conjunta es:
+
+$$
+L(\boldsymbol{\beta}) = \prod_{i=1}^n p_i^{y_i}(1-p_i)^{1-y_i}.
+$$
+
+Tomando logaritmo se obtiene la **log-verosimilitud**:
+
+$$
+\ell(\boldsymbol{\beta}) = \sum_{i=1}^n \left[ y_i \log p_i + (1-y_i)\log(1-p_i) \right].
+$$ {#eq-log-likelihood}
+
+### Equivalencia con entropía cruzada
+
+La @eq-log-likelihood es exactamente el negativo de la **entropía cruzada binaria** (binary cross-entropy), que es la función de pérdida estándar para clasificación binaria en redes neuronales y otros modelos. Maximizar la log-verosimilitud equivale a minimizar la entropía cruzada:
+
+$$
+\mathcal{L}(\boldsymbol{\beta}) = -\frac{1}{n}\ell(\boldsymbol{\beta}) = -\frac{1}{n}\sum_{i=1}^n \left[ y_i \log p_i + (1-y_i)\log(1-p_i) \right].
+$$ {#eq-cross-entropy}
+
+### Gradiente de la log-verosimilitud
+
+A diferencia de la regresión lineal, la log-verosimilitud logística no admite una solución de forma cerrada. Sin embargo, la función es **cóncava** (o equivalentemente, la entropía cruzada es convexa), lo que garantiza que el máximo global existe y es único, y que los métodos de optimización basados en gradiente convergen al óptimo global [@hastie2009].
+
+El gradiente de la log-verosimilitud respecto a $\boldsymbol{\beta}$ es:
+
+$$
+\nabla_{\boldsymbol{\beta}}\,\ell(\boldsymbol{\beta}) = \mathbf{X}^\top(\mathbf{y} - \hat{\mathbf{p}}),
+$$ {#eq-gradient}
+
+donde $\mathbf{X} \in \mathbb{R}^{n \times (d+1)}$ es la matriz de diseño (con columna de unos), $\mathbf{y} = (y_1, \dots, y_n)^\top$ y $\hat{\mathbf{p}} = (p_1, \dots, p_n)^\top$ con $p_i = \sigma(\boldsymbol{\beta}^\top \mathbf{x}_i)$.
+
+**Derivación del gradiente.** Para la $j$-ésima componente:
+
+$$
+\frac{\partial \ell}{\partial \beta_j} = \sum_{i=1}^n \left[ y_i \frac{1}{p_i} \frac{\partial p_i}{\partial \beta_j} - (1-y_i)\frac{1}{1-p_i}\frac{\partial p_i}{\partial \beta_j} \right].
+$$
+
+Usando la propiedad de la derivada de la sigmoide (Ec. @eq-sigmoid-deriv):
+
+$$
+\frac{\partial p_i}{\partial \beta_j} = p_i(1-p_i)\,x_{ij}.
+$$
+
+Sustituyendo:
+
+$$
+\frac{\partial \ell}{\partial \beta_j} = \sum_{i=1}^n \left[ y_i(1-p_i) - (1-y_i)p_i \right] x_{ij} = \sum_{i=1}^n (y_i - p_i)\,x_{ij},
+$$
+
+lo que en forma matricial da exactamente la @eq-gradient.
+
+### Descenso de gradiente
+
+El algoritmo de **descenso de gradiente** actualiza los parámetros en la dirección del gradiente de la log-verosimilitud (o el negativo del gradiente de la pérdida):
+
+$$
+\boldsymbol{\beta}^{(t+1)} = \boldsymbol{\beta}^{(t)} + \eta \cdot \mathbf{X}^\top(\mathbf{y} - \hat{\mathbf{p}}^{(t)}),
+$$ {#eq-gradient-descent}
+
+donde $\eta > 0$ es la **tasa de aprendizaje**. Para minimizar la entropía cruzada, la actualización sería con signo negativo.
+
+### Algoritmo IRLS
+
+El método de Newton-Raphson aplicado a la log-verosimilitud logística da lugar al algoritmo **IRLS** (*Iteratively Reweighted Least Squares*). En cada iteración, el problema se reduce a una regresión lineal ponderada con matriz de pesos $\mathbf{W} = \text{diag}(p_i(1-p_i))$:
+
+$$
+\boldsymbol{\beta}^{(t+1)} = \left(\mathbf{X}^\top \mathbf{W}^{(t)} \mathbf{X}\right)^{-1} \mathbf{X}^\top \mathbf{W}^{(t)} \mathbf{z}^{(t)},
+$$
+
+donde $\mathbf{z}^{(t)} = \mathbf{X}\boldsymbol{\beta}^{(t)} + (\mathbf{W}^{(t)})^{-1}(\mathbf{y}-\hat{\mathbf{p}}^{(t)})$ es la respuesta ajustada. IRLS converge cuadráticamente cerca del óptimo, mientras que el descenso de gradiente converge linealmente [@mccullagh1989; @murphy2012].
+
+La siguiente figura muestra la evolución de la función de pérdida (entropía cruzada) durante el entrenamiento por descenso de gradiente.
+
+```{python}
+#| label: fig-gradient-descent
+#| fig-cap: "Convergencia del descenso de gradiente en regresión logística. Se muestra la entropía cruzada (pérdida) en función del número de iteraciones para distintas tasas de aprendizaje."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(21)
+n = 120
+X0 = rng.multivariate_normal([1, 1], [[1, 0],[0, 1]], n//2)
+X1 = rng.multivariate_normal([3.5, 3.5], [[1, 0],[0, 1]], n//2)
+X_tr = np.vstack([X0, X1])
+y_tr = np.concatenate([np.zeros(n//2), np.ones(n//2)])
+X_aug = np.column_stack([np.ones(n), X_tr])
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+def cross_entropy(w, X, y):
+    p = sigmoid(X @ w)
+    p = np.clip(p, 1e-10, 1-1e-10)
+    return -np.mean(y * np.log(p) + (1-y) * np.log(1-p))
+
+colores = ["#4C72B0", "#DD8452", "#2ca02c"]
+learning_rates = [0.5, 0.1, 0.02]
+n_iter = 200
+
+fig = go.Figure()
+
+for lr, color in zip(learning_rates, colores):
+    w = np.zeros(3)
+    losses = []
+    for _ in range(n_iter):
+        losses.append(cross_entropy(w, X_aug, y_tr))
+        p = sigmoid(X_aug @ w)
+        grad = X_aug.T @ (p - y_tr) / n
+        w -= lr * grad
+
+    fig.add_trace(go.Scatter(
+        x=list(range(n_iter)),
+        y=losses,
+        mode="lines",
+        name=f"η = {lr}",
+        line=dict(color=color, width=2.2)
+    ))
+
+fig.update_layout(
+    title="Convergencia del descenso de gradiente: entropía cruzada vs. iteración",
+    xaxis_title="Iteración",
+    yaxis_title="Entropía cruzada (pérdida)",
+    template="plotly_white",
+    height=450,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+Observamos que una tasa de aprendizaje grande ($\eta = 0.5$) converge rápidamente pero puede ser inestable, mientras que una tasa pequeña ($\eta = 0.02$) converge de manera más suave pero requiere más iteraciones. La elección de $\eta$ es un hiperparámetro crítico del entrenamiento [@hastie2009].
+
+## Interpretación de coeficientes: odds ratio
+
+Una de las grandes ventajas de la regresión logística sobre otros clasificadores es que sus coeficientes admiten una **interpretación directa en términos de probabilidades y razones de momios** (*odds ratios*) [@hosmer2013].
+
+### Log-odds y odds ratio
+
+De la @eq-logit sabemos que el modelo puede escribirse en la escala del logit:
+
+$$
+\log \frac{P(y=1\mid\mathbf{x})}{P(y=0\mid\mathbf{x})} = \beta_0 + \beta_1 x_1 + \cdots + \beta_d x_d.
+$$ {#eq-log-odds}
+
+Esta expresión revela que la regresión logística es, en realidad, un modelo **lineal en la escala del log-odds**. El coeficiente $\beta_j$ indica el cambio en el log-odds asociado a un incremento unitario en $x_j$, manteniendo las demás variables constantes.
+
+Para obtener el **odds ratio** asociado a $x_j$, basta con exponenciar el coeficiente:
+
+$$
+OR_j = e^{\beta_j}.
+$$ {#eq-odds-ratio}
+
+**Interpretación:** Si $x_j$ aumenta en una unidad, los odds de la clase positiva se **multiplican** por $e^{\beta_j}$:
+
+- $e^{\beta_j} > 1$: aumentan los odds de clase positiva.
+- $e^{\beta_j} < 1$: disminuyen los odds de clase positiva.
+- $e^{\beta_j} = 1$: el predictor no tiene efecto sobre los odds.
+
+### Intervalos de confianza
+
+Los intervalos de confianza para los coeficientes se construyen usando la matriz de información de Fisher, que es la Hessiana negativa de la log-verosimilitud:
+
+$$
+\mathbf{I}(\boldsymbol{\beta}) = \mathbf{X}^\top \mathbf{W} \mathbf{X},
+$$
+
+donde $\mathbf{W} = \text{diag}(p_i(1-p_i))$. Los errores estándar de los coeficientes son las raíces cuadradas de los elementos diagonales de $\mathbf{I}(\boldsymbol{\beta})^{-1}$, y un intervalo de confianza aproximado al $95\%$ es:
+
+$$
+\beta_j \pm 1.96 \cdot \text{SE}(\beta_j).
+$$
+
+La siguiente figura muestra un **forest plot** con los coeficientes estimados e intervalos de confianza al $95\%$, estilo habitual en publicaciones epidemiológicas [@hosmer2013].
+
+```{python}
+#| label: fig-forest-plot
+#| fig-cap: "Forest plot de coeficientes del modelo logístico. Las barras horizontales representan intervalos de confianza al 95%; los puntos son las estimaciones puntuales. Valores mayores que 0 (OR > 1) indican asociación positiva con la clase 1."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(99)
+n = 200
+# Variables: edad, colesterol, presión, tabaquismo, ejercicio
+nombres = ["Intercepto", "Edad", "Colesterol", "Presión arterial",
+           "Tabaquismo", "Ejercicio físico"]
+X_raw = np.column_stack([
+    np.ones(n),
+    rng.normal(55, 10, n),
+    rng.normal(200, 30, n),
+    rng.normal(130, 20, n),
+    rng.binomial(1, 0.35, n).astype(float),
+    rng.binomial(1, 0.5, n).astype(float)
+])
+# Estandarizar variables continuas (excluyendo intercepto y binarias)
+X_std = X_raw.copy()
+for j in [1, 2, 3]:
+    X_std[:, j] = (X_raw[:, j] - X_raw[:, j].mean()) / X_raw[:, j].std()
+
+# Generar etiquetas con logit conocido
+beta_true = np.array([-1.0, 0.8, 0.5, 0.6, 1.2, -0.7])
+logit_true = X_std @ beta_true
+p_true = 1 / (1 + np.exp(-logit_true))
+y_sim = rng.binomial(1, p_true)
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+# Entrenar por descenso de gradiente
+w = np.zeros(6)
+for _ in range(3000):
+    p = sigmoid(X_std @ w)
+    grad = X_std.T @ (p - y_sim) / n
+    w -= 0.05 * grad
+
+# Errores estándar vía Fisher information
+p_hat = sigmoid(X_std @ w)
+W_diag = p_hat * (1 - p_hat)
+I_mat = (X_std * W_diag[:, None]).T @ X_std
+try:
+    I_inv = np.linalg.inv(I_mat)
+    se = np.sqrt(np.diag(I_inv))
+except np.linalg.LinAlgError:
+    se = np.ones(6) * 0.1
+
+ci_low = w - 1.96 * se
+ci_high = w + 1.96 * se
+
+colores_coef = ["#DD8452" if v > 0 else "#4C72B0" for v in w]
+
+fig = go.Figure()
+
+for i, (nombre, coef, lo, hi, color) in enumerate(
+        zip(nombres, w, ci_low, ci_high, colores_coef)):
+    fig.add_trace(go.Scatter(
+        x=[lo, hi], y=[i, i],
+        mode="lines",
+        line=dict(color=color, width=3),
+        showlegend=False
+    ))
+    fig.add_trace(go.Scatter(
+        x=[coef], y=[i],
+        mode="markers",
+        marker=dict(color=color, size=11,
+                    line=dict(color="white", width=2)),
+        name=nombre,
+        showlegend=False
+    ))
+
+fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1.5)
+
+fig.update_layout(
+    title="Coeficientes del modelo logístico con IC 95%",
+    xaxis_title="Coeficiente β (escala log-odds)",
+    yaxis=dict(tickvals=list(range(len(nombres))),
+               ticktext=nombres, showgrid=False),
+    template="plotly_white",
+    height=430,
+    shapes=[dict(type="line", x0=0, x1=0, y0=-0.5,
+                 y1=len(nombres)-0.5,
+                 line=dict(color="gray", dash="dash", width=1.5))]
+)
+fig.show()
+```
+
+La tabla siguiente resume la interpretación de los coeficientes del ejemplo anterior:
+
+| Variable | $\hat{\beta}_j$ | $e^{\hat{\beta}_j}$ | Interpretación |
+|---|---:|---:|---|
+| Edad (estand.) | $\approx 0.80$ | $\approx 2.23$ | Cada SD de edad multiplica por 2.2 los odds |
+| Colesterol | $\approx 0.50$ | $\approx 1.65$ | Asociación positiva moderada |
+| Presión arterial | $\approx 0.60$ | $\approx 1.82$ | Riesgo elevado con mayor presión |
+| Tabaquismo | $\approx 1.20$ | $\approx 3.32$ | Mayor factor de riesgo individual |
+| Ejercicio físico | $\approx -0.70$ | $\approx 0.50$ | Factor protector (reduce a la mitad los odds) |
+
+: Interpretación de los coeficientes del modelo logístico. {tbl-colwidths="[25,15,15,45]"}
+
+::: {.callout-tip}
+Cuando las variables continuas están estandarizadas (media $0$, desviación estándar $1$), los coeficientes son directamente comparables entre sí y el odds ratio refleja el efecto de cambiar la variable en una desviación estándar.
+:::
+
+## Regularización
+
+### El problema de la separabilidad perfecta
+
+Un supuesto implícito en la estimación por MLE es que los datos no son **perfectamente separables**. Si existe un hiperplano que separa perfectamente las dos clases, el gradiente de la log-verosimilitud nunca se anula: siempre es posible aumentar el módulo de $\boldsymbol{\beta}$ para hacer las predicciones más extremas y aumentar la verosimilitud. El resultado es que los coeficientes divergen hacia $\pm\infty$, haciendo el modelo numéricamente inestable e inutilizable [@hastie2009].
+
+Este fenómeno ocurre con frecuencia cuando:
+
+- El número de variables $d$ es grande en relación con $n$.
+- Las variables predictoras están altamente correlacionadas (colinealidad).
+- Se incluyen variables binarias o indicadoras que predicen perfectamente un evento raro.
+
+La solución estándar es añadir un término de **regularización** que penalice coeficientes grandes.
+
+### Regularización L2 (Ridge)
+
+La penalización L2 añade el cuadrado de la norma euclidiana de $\boldsymbol{\beta}$ a la función de pérdida:
+
+$$
+\mathcal{L}_{\text{Ridge}}(\boldsymbol{\beta}) = -\ell(\boldsymbol{\beta}) + \lambda \|\boldsymbol{\beta}\|_2^2 = -\ell(\boldsymbol{\beta}) + \lambda \sum_{j=1}^d \beta_j^2.
+$$ {#eq-ridge}
+
+El parámetro $\lambda > 0$ controla la intensidad de la regularización. A mayor $\lambda$, mayor penalización a coeficientes grandes, y el modelo tiende hacia $\boldsymbol{\beta} = \mathbf{0}$.
+
+El gradiente de la pérdida regularizada es:
+
+$$
+\nabla \mathcal{L}_{\text{Ridge}} = -\mathbf{X}^\top(\mathbf{y} - \hat{\mathbf{p}}) + 2\lambda\boldsymbol{\beta}.
+$$
+
+La regularización L2 corresponde, en un marco bayesiano, a colocar una distribución prior gaussiana $\boldsymbol{\beta} \sim \mathcal{N}(\mathbf{0}, (2\lambda)^{-1}\mathbf{I})$ sobre los coeficientes.
+
+### Regularización L1 (Lasso)
+
+La penalización L1 añade la norma $\ell_1$ de $\boldsymbol{\beta}$:
+
+$$
+\mathcal{L}_{\text{Lasso}}(\boldsymbol{\beta}) = -\ell(\boldsymbol{\beta}) + \lambda \|\boldsymbol{\beta}\|_1 = -\ell(\boldsymbol{\beta}) + \lambda \sum_{j=1}^d |\beta_j|.
+$$ {#eq-lasso}
+
+La diferencia clave con L2 es que L1 produce soluciones **dispersas** (sparse): para $\lambda$ suficientemente grande, muchos coeficientes se vuelven exactamente cero, realizando selección automática de variables. Bayesianamente, corresponde a una distribución prior de Laplace sobre $\boldsymbol{\beta}$ [@murphy2012].
+
+La penalización L1 no es diferenciable en $\beta_j = 0$, por lo que requiere algoritmos especiales como el descenso de subgradiente o el descenso coordinado.
+
+### Elastic Net
+
+La **Elastic Net** combina ambas penalizaciones:
+
+$$
+\mathcal{L}_{\text{EN}}(\boldsymbol{\beta}) = -\ell(\boldsymbol{\beta}) + \lambda\left[\alpha \|\boldsymbol{\beta}\|_1 + \frac{1-\alpha}{2}\|\boldsymbol{\beta}\|_2^2\right],
+$$ {#eq-elastic-net}
+
+donde $\alpha \in [0,1]$ controla el balance entre L1 y L2. Cuando $\alpha=1$ se recupera el Lasso; cuando $\alpha=0$ se recupera Ridge. La Elastic Net es útil cuando hay grupos de variables correlacionadas, pues tiende a seleccionar o descartar grupos completos de variables correlacionadas.
+
+### Regularization path
+
+El **regularization path** muestra cómo evolucionan los coeficientes estimados en función de $\lambda$. Para $\lambda \to 0$ se recuperan los estimadores MLE sin regularización; para $\lambda \to \infty$ todos los coeficientes convergen a cero.
+
+```{python}
+#| label: fig-reg-path
+#| fig-cap: "Regularization path para regresión logística: evolución de los coeficientes en función del parámetro de regularización log(λ). Panel izquierdo: penalización L2 (Ridge). Panel derecho: penalización L1 (Lasso, con descenso de subgradiente)."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng = np.random.default_rng(55)
+n_path = 150
+d_path = 5
+nombres_vars = [f"β_{j}" for j in range(1, d_path + 1)]
+
+X_p = rng.normal(size=(n_path, d_path))
+beta_gen = np.array([1.5, -1.0, 0.5, 0.0, -0.3])
+logit_p = -0.5 + X_p @ beta_gen
+p_gen = 1 / (1 + np.exp(-logit_p))
+y_p = rng.binomial(1, p_gen)
+X_paug = np.column_stack([np.ones(n_path), X_p])
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+# --- Ridge path ---
+lambdas = np.logspace(-3, 2, 50)
+coefs_ridge = []
+
+for lam in lambdas:
+    w = np.zeros(d_path + 1)
+    for _ in range(2000):
+        p_hat = sigmoid(X_paug @ w)
+        grad = X_paug.T @ (p_hat - y_p) / n_path
+        grad[1:] += 2 * lam * w[1:]  # no penalizar intercepto
+        w -= 0.05 * grad
+    coefs_ridge.append(w[1:].copy())
+
+coefs_ridge = np.array(coefs_ridge)
+
+# --- Lasso path (subgradiente) ---
+def soft_threshold(x, threshold):
+    return np.sign(x) * np.maximum(np.abs(x) - threshold, 0)
+
+coefs_lasso = []
+for lam in lambdas:
+    w = np.zeros(d_path + 1)
+    lr_l1 = 0.02
+    for it in range(3000):
+        p_hat = sigmoid(X_paug @ w)
+        grad = X_paug.T @ (p_hat - y_p) / n_path
+        w[0] -= lr_l1 * grad[0]
+        w[1:] -= lr_l1 * grad[1:]
+        w[1:] = soft_threshold(w[1:], lr_l1 * lam)
+    coefs_lasso.append(w[1:].copy())
+
+coefs_lasso = np.array(coefs_lasso)
+
+paleta = ["#4C72B0", "#DD8452", "#2ca02c", "#d62728", "#9467bd"]
+log_lam = np.log10(lambdas)
+
+fig = make_subplots(rows=1, cols=2,
+                    subplot_titles=["Ridge (L2)", "Lasso (L1)"],
+                    shared_yaxes=False)
+
+for j in range(d_path):
+    fig.add_trace(go.Scatter(
+        x=log_lam, y=coefs_ridge[:, j],
+        mode="lines", name=nombres_vars[j],
+        line=dict(color=paleta[j], width=2),
+        legendgroup=nombres_vars[j],
+        showlegend=True
+    ), row=1, col=1)
+
+for j in range(d_path):
+    fig.add_trace(go.Scatter(
+        x=log_lam, y=coefs_lasso[:, j],
+        mode="lines", name=nombres_vars[j],
+        line=dict(color=paleta[j], width=2),
+        legendgroup=nombres_vars[j],
+        showlegend=False
+    ), row=1, col=2)
+
+fig.add_hline(y=0, line_dash="dot", line_color="gray",
+              line_width=1, row=1, col=1)
+fig.add_hline(y=0, line_dash="dot", line_color="gray",
+              line_width=1, row=1, col=2)
+
+fig.update_xaxes(title_text="log₁₀(λ)", row=1, col=1)
+fig.update_xaxes(title_text="log₁₀(λ)", row=1, col=2)
+fig.update_yaxes(title_text="Coeficiente β̂", row=1, col=1)
+fig.update_yaxes(title_text="Coeficiente β̂", row=1, col=2)
+
+fig.update_layout(
+    title="Regularization path: Ridge vs. Lasso",
+    template="plotly_white",
+    height=460,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+Nótese la diferencia fundamental entre los dos paneles: en Ridge, los coeficientes se encogen suavemente hacia cero pero nunca llegan a serlo exactamente (excepto en el límite $\lambda \to \infty$). En Lasso, los coeficientes se vuelven exactamente cero a partir de un valor de $\lambda$ determinado, realizando selección de variables implícita [@hastie2009].
+
+::: {.callout-note}
+En la práctica, el parámetro $\lambda$ se elige mediante validación cruzada. Una mala elección puede llevar a sobreajuste ($\lambda$ muy pequeño) o a un modelo demasiado simple ($\lambda$ muy grande).
+:::
+
+## Extensión multiclase
+
+La regresión logística puede extenderse a problemas con $K > 2$ clases mediante dos estrategias principales: **One-vs-Rest** y **regresión logística multinomial** (softmax).
+
+### One-vs-Rest (OvR)
+
+La estrategia **One-vs-Rest** (también llamada One-vs-All, OvA) entrena $K$ clasificadores binarios independientes. El $k$-ésimo clasificador aprende a distinguir la clase $k$ de todas las demás clases combinadas. Para una nueva observación $\mathbf{x}$, se calcula la probabilidad $p_k = P(y=k \mid \mathbf{x})$ de cada clasificador binario, y se asigna la clase con mayor probabilidad:
+
+$$
+\hat{y} = \arg\max_{k \in \{1,\dots,K\}} \hat{p}_k(\mathbf{x}).
+$$
+
+La ventaja es la simplicidad: solo se requieren $K$ modelos logísticos estándar. La desventaja es que las $K$ probabilidades no suman $1$ necesariamente, ya que provienen de modelos independientes.
+
+### Regresión logística multinomial (softmax)
+
+La regresión logística multinomial extiende el modelo de manera conjunta y probabilísticamente coherente. Se aprenden $K-1$ conjuntos de parámetros $\boldsymbol{\beta}_k$ (uno de los $K$ sirve como referencia, típicamente $\boldsymbol{\beta}_K = \mathbf{0}$) y la probabilidad de cada clase se calcula mediante la función **softmax**:
+
+$$
+P(y=k \mid \mathbf{x}) = \frac{e^{\boldsymbol{\beta}_k^\top \mathbf{x}}}{\sum_{j=1}^K e^{\boldsymbol{\beta}_j^\top \mathbf{x}}}.
+$$ {#eq-softmax}
+
+La función softmax garantiza que las probabilidades sumen $1$ y sean positivas, siendo una generalización directa de la función sigmoide al caso multiclase. La log-verosimilitud se convierte en:
+
+$$
+\ell(\{\boldsymbol{\beta}_k\}) = \sum_{i=1}^n \sum_{k=1}^K \mathbb{1}[y_i = k] \log P(y_i = k \mid \mathbf{x}_i),
+$$ {#eq-softmax-loglik}
+
+que es la **entropía cruzada categórica** generalizada. El gradiente respecto a $\boldsymbol{\beta}_k$ es:
+
+$$
+\nabla_{\boldsymbol{\beta}_k} \ell = \sum_{i=1}^n \left(\mathbb{1}[y_i = k] - P(y_i = k \mid \mathbf{x}_i)\right) \mathbf{x}_i = \mathbf{X}^\top(\mathbf{r}_k - \hat{\mathbf{p}}_k),
+$$
+
+donde $\mathbf{r}_k = (\mathbb{1}[y_1=k], \dots, \mathbb{1}[y_n=k])^\top$ [@bishop2006; @murphy2012].
+
+La siguiente figura muestra la frontera de decisión multiclase obtenida con el modelo softmax en un problema 2D con tres clases.
+
+```{python}
+#| label: fig-multiclass
+#| fig-cap: "Frontera de decisión del modelo logístico multinomial (softmax) para tres clases en dos dimensiones. Las regiones coloreadas representan la clase predicha; los puntos son los datos de entrenamiento."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(13)
+n_mc = 60
+
+# Tres clases gaussianas
+medias = [[1.0, 4.5], [4.5, 1.0], [4.5, 5.5]]
+covs = [[[0.8, 0.1],[0.1, 0.8]],
+        [[0.8, -0.1],[-0.1, 0.8]],
+        [[0.8, 0.2],[0.2, 0.8]]]
+colores_clases = ["#4C72B0", "#DD8452", "#2ca02c"]
+
+Xs, ys = [], []
+for k, (mu, cov) in enumerate(zip(medias, covs)):
+    pts = rng.multivariate_normal(mu, cov, n_mc)
+    Xs.append(pts)
+    ys.extend([k] * n_mc)
+
+X_mc = np.vstack(Xs)
+y_mc = np.array(ys)
+K = 3
+
+# Entrenamiento softmax desde cero
+def softmax(Z):
+    Z_shift = Z - Z.max(axis=1, keepdims=True)
+    E = np.exp(Z_shift)
+    return E / E.sum(axis=1, keepdims=True)
+
+X_mc_aug = np.column_stack([np.ones(len(y_mc)), X_mc])
+d_mc = X_mc_aug.shape[1]
+
+W_mc = np.zeros((d_mc, K))
+lr_mc = 0.05
+
+# One-hot encoding
+Y_oh = np.zeros((len(y_mc), K))
+Y_oh[np.arange(len(y_mc)), y_mc] = 1
+
+for _ in range(3000):
+    Z_mc = X_mc_aug @ W_mc
+    P_mc = softmax(Z_mc)
+    grad_mc = X_mc_aug.T @ (P_mc - Y_oh) / len(y_mc)
+    W_mc -= lr_mc * grad_mc
+
+# Malla de predicciones
+x1g = np.linspace(-1.5, 7.5, 200)
+x2g = np.linspace(-1.5, 8.0, 200)
+xx1, xx2 = np.meshgrid(x1g, x2g)
+X_grid = np.column_stack([np.ones(xx1.size), xx1.ravel(), xx2.ravel()])
+P_grid = softmax(X_grid @ W_mc)
+clase_grid = P_grid.argmax(axis=1).reshape(xx1.shape)
+
+# Convertir a imagen RGB para fondo de regiones
+# Usar colorscale con valores discretos
+paleta_rgb = [
+    [0.0, "rgba(76,114,176,0.35)"],
+    [0.33, "rgba(76,114,176,0.35)"],
+    [0.33, "rgba(221,132,82,0.35)"],
+    [0.66, "rgba(221,132,82,0.35)"],
+    [0.66, "rgba(44,160,44,0.35)"],
+    [1.0, "rgba(44,160,44,0.35)"],
+]
+
+fig = go.Figure()
+
+fig.add_trace(go.Heatmap(
+    x=x1g, y=x2g, z=clase_grid,
+    colorscale=paleta_rgb,
+    showscale=False,
+    zmin=0, zmax=2
+))
+
+nombres_clases = ["Clase 0", "Clase 1", "Clase 2"]
+for k, (pts, nombre, color) in enumerate(zip(Xs, nombres_clases, colores_clases)):
+    fig.add_trace(go.Scatter(
+        x=pts[:, 0], y=pts[:, 1],
+        mode="markers", name=nombre,
+        marker=dict(color=color, size=7, opacity=0.9,
+                    line=dict(color="white", width=1.2))
+    ))
+
+fig.update_layout(
+    title="Frontera de decisión multinomial (softmax) — 3 clases",
+    xaxis_title="Característica x₁",
+    yaxis_title="Característica x₂",
+    template="plotly_white",
+    height=490,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+### Comparación OvR vs. Softmax
+
+| Aspecto | One-vs-Rest | Softmax multinomial |
+|---|---|---|
+| Coherencia probabilística | No garantizada | Garantizada ($\sum_k p_k = 1$) |
+| Número de modelos | $K$ modelos separados | 1 modelo conjunto |
+| Costo computacional | $K \times$ costo binario | Similar, pero conjunto |
+| Interpretación | Directa por modelo | Requiere clase de referencia |
+| Separabilidad perfecta | Cada modelo por separado | Puede ocurrir globalmente |
+
+: Comparación entre One-vs-Rest y regresión logística multinomial. {tbl-colwidths="[30,35,35]"}
+
+En la práctica, para $K$ grande (como clasificación de texto con muchas categorías), OvR suele ser preferible por su paralelizabilidad. Para $K$ pequeño o cuando se requiere coherencia probabilística, el modelo multinomial es superior [@murphy2012].
+
+## Calibración de probabilidades
+
+Una propiedad deseable pero no siempre garantizada en los clasificadores es que sus **predicciones de probabilidad estén bien calibradas**: si el modelo predice $P(y=1\mid\mathbf{x}) = 0.7$, entonces aproximadamente el $70\%$ de las observaciones con esa predicción deberían pertenecer a la clase $1$.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** Un clasificador está **perfectamente calibrado** si para todo valor $p \in (0,1)$:
+
+$$
+P\!\left(y=1 \mid \hat{p}(\mathbf{x}) = p\right) = p.
+$$
+:::
+
+### Calibración de la regresión logística
+
+La regresión logística está **bien calibrada por diseño** bajo sus propios supuestos: el entrenamiento por máxima verosimilitud minimiza la pérdida de entropía cruzada, que es precisamente la pérdida asociada a la calibración probabilística. En contraste, otros clasificadores como los bosques aleatorios o las SVM no están calibrados de forma natural [@hastie2009; @murphy2012].
+
+Sin embargo, esta garantía de calibración solo se mantiene si:
+
+1. El modelo está correctamente especificado (la verdadera frontera de decisión es lineal en $\mathbf{x}$).
+2. No hay sobreajuste severo.
+3. Se usa un conjunto de evaluación independiente del conjunto de entrenamiento.
+
+La calibración se visualiza mediante la **curva de calibración** (o *reliability diagram*): se dividen las predicciones en $B$ contenedores (*bins*) según el valor de $\hat{p}$, y se grafica la fracción real de positivos en cada contenedor contra el promedio de $\hat{p}$ en ese contenedor. Un clasificador perfectamente calibrado sigue la diagonal.
+
+```{python}
+#| label: fig-calibration
+#| fig-cap: "Curva de calibración (reliability diagram) para la regresión logística. La diagonal representa calibración perfecta. La histograma en la parte inferior muestra la distribución de las predicciones."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng = np.random.default_rng(42)
+n_cal = 500
+X_cal = rng.normal(size=(n_cal, 3))
+beta_cal = np.array([-0.3, 1.0, -0.8, 0.5])
+X_cal_aug = np.column_stack([np.ones(n_cal), X_cal])
+logit_cal = X_cal_aug @ beta_cal
+p_true_cal = 1 / (1 + np.exp(-logit_cal))
+y_cal = rng.binomial(1, p_true_cal)
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+# Entrenar modelo
+w_cal = np.zeros(4)
+for _ in range(2000):
+    p_hat_cal = sigmoid(X_cal_aug @ w_cal)
+    grad_cal = X_cal_aug.T @ (p_hat_cal - y_cal) / n_cal
+    w_cal -= 0.1 * grad_cal
+
+p_pred_cal = sigmoid(X_cal_aug @ w_cal)
+
+# Calibration curve con 10 bins
+n_bins = 10
+bins = np.linspace(0, 1, n_bins + 1)
+bin_centers = (bins[:-1] + bins[1:]) / 2
+frac_pos = []
+mean_pred = []
+counts = []
+
+for lo, hi in zip(bins[:-1], bins[1:]):
+    mask = (p_pred_cal >= lo) & (p_pred_cal < hi)
+    if mask.sum() > 0:
+        frac_pos.append(y_cal[mask].mean())
+        mean_pred.append(p_pred_cal[mask].mean())
+        counts.append(mask.sum())
+    else:
+        frac_pos.append(np.nan)
+        mean_pred.append((lo + hi) / 2)
+        counts.append(0)
+
+frac_pos = np.array(frac_pos)
+mean_pred = np.array(mean_pred)
+counts = np.array(counts)
+
+fig = make_subplots(rows=2, cols=1,
+                    row_heights=[0.75, 0.25],
+                    shared_xaxes=True,
+                    subplot_titles=["Curva de calibración", "Distribución de predicciones"])
+
+# Curva de calibración
+fig.add_trace(go.Scatter(
+    x=[0, 1], y=[0, 1],
+    mode="lines", name="Calibración perfecta",
+    line=dict(color="gray", dash="dash", width=1.5)
+), row=1, col=1)
+
+mask_valid = ~np.isnan(frac_pos)
+fig.add_trace(go.Scatter(
+    x=mean_pred[mask_valid], y=frac_pos[mask_valid],
+    mode="lines+markers", name="Regresión logística",
+    line=dict(color="#4C72B0", width=2.5),
+    marker=dict(size=9, color="#4C72B0",
+                line=dict(color="white", width=1.5))
+), row=1, col=1)
+
+# Histograma de predicciones
+fig.add_trace(go.Bar(
+    x=bin_centers, y=counts,
+    name="Conteo",
+    marker=dict(color="#DD8452", opacity=0.7),
+    width=0.08
+), row=2, col=1)
+
+fig.update_xaxes(title_text="Probabilidad predicha", row=2, col=1,
+                 range=[0, 1])
+fig.update_yaxes(title_text="Fracción de positivos", row=1, col=1,
+                 range=[0, 1])
+fig.update_yaxes(title_text="Conteo", row=2, col=1)
+
+fig.update_layout(
+    template="plotly_white",
+    height=510,
+    legend=dict(orientation="h", yanchor="top", y=-0.12,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+Cuando la curva de calibración se aleja sistemáticamente de la diagonal, se puede aplicar **calibración post-hoc** mediante regresión isotónica o escala de Platt (una regresión logística adicional sobre las puntuaciones del modelo) para corregir el sesgo sin reentrenar el modelo completo [@murphy2012].
+
+## Ventajas y limitaciones
+
+### Ventajas
+
+::: {.callout-tip title="Ventajas de la regresión logística"}
+
+**Interpretabilidad:** Los coeficientes tienen una interpretación directa en términos de log-odds y odds ratios, lo que facilita la comunicación de resultados en contextos aplicados como la medicina o las ciencias sociales.
+
+**Eficiencia computacional:** El entrenamiento por descenso de gradiente o IRLS es eficiente incluso con conjuntos de datos grandes. No requiere almacenar la matriz completa de datos durante la predicción.
+
+**Salidas probabilísticas calibradas:** A diferencia de SVM o clasificadores de árbol, la regresión logística produce estimaciones de probabilidad que están bien calibradas bajo sus supuestos.
+
+**Pocos hiperparámetros:** El único hiperparámetro principal es el parámetro de regularización $\lambda$ (y el tipo de penalización). Esto simplifica el ajuste del modelo.
+
+**Estabilidad numérica:** La función de pérdida es convexa, lo que garantiza convergencia al óptimo global con métodos de optimización estándar.
+
+**Línea de base sólida:** En muchos problemas prácticos, la regresión logística es difícil de superar significativamente con métodos más complejos, especialmente cuando los datos son aproximadamente linealmente separables [@james2021].
+:::
+
+### Limitaciones
+
+::: {.callout-warning title="Limitaciones de la regresión logística"}
+
+**Frontera de decisión lineal:** La regresión logística solo puede aprender fronteras lineales en el espacio de características. Para problemas con fronteras no lineales complejas (como clasificación de imágenes o texto), otros métodos pueden ser más adecuados.
+
+**Sensibilidad a la colinealidad:** Cuando dos o más variables predictoras están altamente correlacionadas, los coeficientes estimados pueden tener alta varianza y ser difíciles de interpretar. La regularización L2 mitiga este problema.
+
+**Separabilidad perfecta:** En dimensiones altas o con pocas observaciones, los datos pueden ser perfectamente separables y el MLE no está definido. Requiere regularización obligatoria.
+
+**Supuesto de linealidad en el logit:** Si la relación entre las características y el logit no es lineal, el modelo estará mal especificado. Es necesario incluir transformaciones o interacciones manualmente.
+
+**Sensibilidad a datos atípicos:** Los puntos atípicos en el espacio de características pueden influir desproporcionadamente en los coeficientes estimados, aunque menos que en regresión lineal.
+:::
+
+## Recomendaciones prácticas
+
+Las siguientes recomendaciones sintetizan buenas prácticas para el uso de la regresión logística en proyectos reales de clasificación.
+
+1. **Estandarizar las variables continuas.** Antes de ajustar el modelo, escalar las variables a media $0$ y desviación estándar $1$ mejora la comparabilidad de los coeficientes, acelera la convergencia del gradiente y hace que el intercepto sea más interpretable.
+
+2. **Usar regularización L2 por defecto.** A menos que se tenga una razón específica para selección de variables, la penalización Ridge es la opción más robusta: estabiliza el entrenamiento, reduce la varianza y es diferenciable en todo punto.
+
+3. **Elegir $\lambda$ por validación cruzada.** Explorar un grid logarítmico de valores de $\lambda$ (por ejemplo, $10^{-4}$ a $10^2$) usando $k$-fold cross-validation (típicamente $k=5$ o $k=10$) para seleccionar el valor óptimo.
+
+4. **Verificar la calibración.** Construir la curva de calibración en un conjunto de validación independiente. Si la calibración es pobre (curva alejada de la diagonal), aplicar calibración post-hoc antes de publicar probabilidades.
+
+5. **Revisar la separabilidad.** Si el algoritmo de optimización no converge o los coeficientes son extremadamente grandes, sospechar separabilidad perfecta. La solución es incrementar la regularización.
+
+6. **Explorar transformaciones de características.** Si el modelo tiene baja capacidad predictiva, considerar añadir términos cuadráticos, interacciones o transformaciones logarítmicas de las variables predictoras antes de migrar a modelos más complejos.
+
+7. **Interpretar con intervalo de confianza.** Siempre reportar los odds ratios con sus intervalos de confianza, no solo las estimaciones puntuales. Un coeficiente estadísticamente no significativo no implica ausencia de efecto, sino incertidumbre.
+
+8. **Comparar con una línea de base simple.** Antes de declarar que un modelo más complejo supera a la regresión logística, asegurarse de que la comparación se hace con la versión regularizada y con características bien preprocesadas.
+
+9. **Cuidar el desbalanceo de clases.** Cuando una clase es mucho menos frecuente que la otra (por ejemplo, fraude, enfermedad rara), considerar ajustar el umbral de clasificación o usar métricas como AUC-ROC o F1 en lugar de la exactitud (*accuracy*).
+
+10. **Documentar el proceso de selección del modelo.** Registrar qué variables se incluyeron, qué transformaciones se aplicaron, qué valor de $\lambda$ se seleccionó y por qué. La reproducibilidad es esencial en análisis de datos serios.
+
+## Resumen del capítulo
+
+La regresión logística es un modelo de clasificación que combina la simplicidad de los modelos lineales con la capacidad de producir estimaciones de probabilidad bien calibradas. Sus ingredientes fundamentales son la función logística (@eq-sigmoid), el modelo de probabilidad (@eq-logistic-model), la estimación por máxima verosimilitud (@eq-log-likelihood) y la interpretación de los coeficientes como log-odds (@eq-log-odds).
+
+A lo largo del capítulo hemos visto que:
+
+- La regresión lineal falla para clasificación porque produce predicciones fuera de $[0,1]$ y es inestable ante observaciones atípicas.
+- La función sigmoide transforma la recta real en $(0,1)$ y su inversa, el logit, da nombre al modelo.
+- La frontera de decisión es un hiperplano en el espacio de características.
+- El gradiente de la log-verosimilitud tiene la forma elegante $\mathbf{X}^\top(\mathbf{y}-\hat{\mathbf{p}})$, que permite optimización eficiente.
+- Los coeficientes se interpretan como cambios en el log-odds; exponenciados dan los odds ratios.
+- La regularización (Ridge, Lasso o Elastic Net) es esencial en alta dimensión o cuando los datos son separables.
+- La extensión multiclase se logra mediante softmax, una generalización directa de la sigmoide.
+- La regresión logística está bien calibrada por diseño, a diferencia de muchos otros clasificadores.
+
+Para profundizar en los fundamentos matemáticos se recomienda [@bishop2006] y [@hastie2009]; para aplicaciones en ciencias de la salud, [@hosmer2013]; para una perspectiva bayesiana, [@murphy2012]; y para una introducción más accesible con ejemplos en R, [@james2021].
+
+## Referencias
+
+::: {#refs}
+:::
