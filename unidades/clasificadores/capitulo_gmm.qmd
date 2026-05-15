@@ -1,0 +1,1146 @@
+---
+title: "Modelos de Mezcla Gaussiana"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_gmm.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+Los **modelos de mezcla gaussiana** (GMM, por sus siglas en inglés) son modelos probabilísticos generativos que representan la distribución de los datos como una suma ponderada de distribuciones normales, lo que los hace ideales para capturar estructuras multimodales que una sola gaussiana no puede describir [@bishop2006; @murphy2012]. El algoritmo de Expectation-Maximization (EM), introducido formalmente por @dempster1977, proporciona el marco de optimización para estimar los parámetros del modelo a partir de datos incompletos (en este caso, los datos están "incompletos" porque la asignación de cada observación a cada componente es desconocida). Los GMM pueden entenderse como una generalización probabilística del algoritmo K-Means: cuando las covarianzas son esféricas e iguales y se toma el límite de varianza cero, las asignaciones blandas del GMM convergen a las asignaciones duras de K-Means [@hastie2009]. En este capítulo se desarrolla la teoría completa del modelo, el algoritmo EM desde cero, y todos los ejemplos computacionales se implementan exclusivamente con `numpy` y `plotly`.
+
+## Motivación: ¿por qué un solo gaussiano no basta?
+
+La distribución normal multivariada es, sin duda, el modelo probabilístico más utilizado en aprendizaje automático. Su elegancia matemática y sus propiedades analíticas la hacen atractiva, pero su aplicabilidad está fundamentalmente limitada a datos **unimodales**: datos cuya densidad tiene un único máximo y una forma aproximadamente elipsoidal. Cuando los datos provienen de varias poblaciones distintas, o cuando la verdadera densidad tiene múltiples crestas, un único gaussiano ajustado a todos los datos producirá una descripción pobre que coloca masa de probabilidad en regiones vacías y asigna poca densidad a las regiones donde realmente se concentran las observaciones.
+
+Considérese un conjunto de datos unidimensional formado por dos grupos bien separados. La figura @fig-gmm-motivacion ilustra el contraste entre un único gaussiano ajustado a todos los datos (panel izquierdo) y una mezcla de dos gaussianas (panel derecho). El modelo unimodal coloca la mayor parte de su masa en el valle entre los dos grupos, mientras que la mezcla captura fielmente la estructura bimodal. Este ejemplo simple motiva la necesidad de modelos más flexibles que puedan representar distribuciones multimodales de manera principiada.
+
+```{python}
+#| label: fig-gmm-motivacion
+#| fig-cap: "Motivación para los modelos de mezcla. Panel izquierdo: un único gaussiano ajustado a datos bimodales produce un ajuste pobre, colocando masa de probabilidad en el valle entre los grupos. Panel derecho: una mezcla de dos gaussianas captura correctamente la estructura bimodal."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng = np.random.default_rng(42)
+
+# Generar datos bimodales
+datos_1 = rng.normal(-3, 0.8, 300)
+datos_2 = rng.normal(3, 1.0, 200)
+datos = np.concatenate([datos_1, datos_2])
+
+# Ajustar un solo gaussiano
+mu_unico = datos.mean()
+sigma_unico = datos.std()
+
+# Parametros GMM hardcoded (resultado razonable de EM)
+pi1, mu1_gmm, sigma1_gmm = 0.60, -3.0, 0.80
+pi2, mu2_gmm, sigma2_gmm = 0.40,  3.0, 1.00
+
+x_plot = np.linspace(-7, 7, 400)
+
+def normal_1d(x, mu, sigma):
+    return np.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
+
+pdf_unico = normal_1d(x_plot, mu_unico, sigma_unico)
+pdf_gmm   = pi1 * normal_1d(x_plot, mu1_gmm, sigma1_gmm) + \
+            pi2 * normal_1d(x_plot, mu2_gmm, sigma2_gmm)
+
+fig = make_subplots(rows=1, cols=2,
+                    subplot_titles=("Un solo gaussiano", "Mezcla de 2 gaussianas"))
+
+# Panel izquierdo: histograma + gaussiano unico
+fig.add_trace(
+    go.Histogram(x=datos, histnorm='probability density', nbinsx=40,
+                 name='Datos', marker_color='steelblue', opacity=0.5,
+                 showlegend=True),
+    row=1, col=1
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pdf_unico, mode='lines',
+               name='N(x|μ,σ)', line=dict(color='crimson', width=2.5),
+               showlegend=True),
+    row=1, col=1
+)
+
+# Panel derecho: histograma + mezcla GMM
+fig.add_trace(
+    go.Histogram(x=datos, histnorm='probability density', nbinsx=40,
+                 name='Datos', marker_color='steelblue', opacity=0.5,
+                 showlegend=False),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pdf_gmm, mode='lines',
+               name='GMM (K=2)', line=dict(color='darkorange', width=2.5),
+               showlegend=True),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pi1 * normal_1d(x_plot, mu1_gmm, sigma1_gmm),
+               mode='lines', name='Componente 1',
+               line=dict(color='green', width=1.5, dash='dash'),
+               showlegend=True),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pi2 * normal_1d(x_plot, mu2_gmm, sigma2_gmm),
+               mode='lines', name='Componente 2',
+               line=dict(color='purple', width=1.5, dash='dash'),
+               showlegend=True),
+    row=1, col=2
+)
+
+fig.update_xaxes(title_text="x", row=1, col=1)
+fig.update_xaxes(title_text="x", row=1, col=2)
+fig.update_yaxes(title_text="Densidad de probabilidad", row=1, col=1)
+fig.update_layout(height=420, width=850,
+                  title_text="Gaussiano único vs. Mezcla gaussiana",
+                  legend=dict(x=0.75, y=0.95))
+fig.show()
+```
+
+## El modelo de mezcla gaussiana
+
+### Definición formal
+
+Un modelo de mezcla gaussiana con $K$ componentes define la siguiente densidad de probabilidad sobre $\mathbf{x} \in \mathbb{R}^D$:
+
+$$
+p(\mathbf{x}) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+$$ {#eq-gmm-marginal}
+
+donde $\mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)$ es la densidad gaussiana multivariada con media $\boldsymbol{\mu}_k$ y matriz de covarianza $\boldsymbol{\Sigma}_k$:
+
+$$
+\mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) =
+\frac{1}{(2\pi)^{D/2} |\boldsymbol{\Sigma}_k|^{1/2}}
+\exp\!\left(-\frac{1}{2}(\mathbf{x} - \boldsymbol{\mu}_k)^\top \boldsymbol{\Sigma}_k^{-1} (\mathbf{x} - \boldsymbol{\mu}_k)\right)
+$$ {#eq-gaussian-pdf}
+
+Los **coeficientes de mezcla** $\pi_k$ satisfacen las restricciones $\pi_k \geq 0$ para todo $k$ y $\sum_{k=1}^{K} \pi_k = 1$, de modo que pueden interpretarse como probabilidades a priori sobre las componentes: $\pi_k = p(z = k)$.
+
+### Variable latente y verosimilitud completa
+
+La formulación con variable latente es fundamental para entender el algoritmo EM. Se introduce una variable aleatoria discreta $\mathbf{z} \in \{1, \ldots, K\}$ (o equivalentemente, un vector one-hot $\mathbf{z} \in \{0,1\}^K$ con $\sum_k z_k = 1$) que indica cuál componente generó la observación $\mathbf{x}$. La distribución conjunta del modelo generativo es:
+
+$$
+p(\mathbf{x}, \mathbf{z}) = p(\mathbf{z}) \, p(\mathbf{x} \mid \mathbf{z}) = \prod_{k=1}^{K} \left[\pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)\right]^{z_k}
+$$ {#eq-gmm-joint}
+
+La densidad marginal @eq-gmm-marginal se obtiene sumando (integrando) sobre todos los posibles valores de $\mathbf{z}$:
+
+$$
+p(\mathbf{x}) = \sum_{k=1}^{K} p(z=k) \, p(\mathbf{x} \mid z=k) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+$$
+
+Para un conjunto de $N$ observaciones i.i.d. $\mathcal{D} = \{\mathbf{x}_1, \ldots, \mathbf{x}_N\}$, la **log-verosimilitud observada** es:
+
+$$
+\ell(\boldsymbol{\theta}) = \sum_{i=1}^{N} \log \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+$$ {#eq-log-lik}
+
+donde $\boldsymbol{\theta} = \{\pi_k, \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k\}_{k=1}^{K}$ son todos los parámetros del modelo. El logaritmo de una suma no tiene solución analítica en forma cerrada, lo que motiva el uso del algoritmo EM.
+
+### Densidad de una mezcla en 2D
+
+La figura @fig-gmm-2d-densidad muestra la densidad de una mezcla con $K=3$ componentes en $\mathbb{R}^2$. Se observa cómo cada componente contribuye una "joroba" en la densidad total, y la mezcla puede representar distribuciones con formas geométricas arbitrariamente complejas.
+
+```{python}
+#| label: fig-gmm-2d-densidad
+#| fig-cap: "Densidad de una mezcla gaussiana con K=3 componentes en 2D. Los contornos rellenos muestran la densidad conjunta de la mezcla; los puntos coloreados representan las observaciones asignadas a cada componente."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng2 = np.random.default_rng(7)
+
+# Parametros de los 3 componentes
+pis_true  = [0.40, 0.35, 0.25]
+mus_true  = [np.array([-3.0, -2.0]),
+             np.array([ 3.0, -1.5]),
+             np.array([ 0.0,  3.5])]
+Sigs_true = [np.array([[1.2, 0.6], [0.6, 0.8]]),
+             np.array([[0.9, -0.4], [-0.4, 1.5]]),
+             np.array([[0.5, 0.0], [0.0, 0.5]])]
+
+colores_comp = ['#e41a1c', '#377eb8', '#4daf4a']
+
+# Generar puntos de cada componente
+n_total = 500
+ns = [int(pis_true[k] * n_total) for k in range(3)]
+ns[-1] = n_total - sum(ns[:-1])
+
+puntos = []
+etiquetas = []
+for k in range(3):
+    pts = rng2.multivariate_normal(mus_true[k], Sigs_true[k], ns[k])
+    puntos.append(pts)
+    etiquetas.extend([k] * ns[k])
+
+# Calcular densidad en grilla
+def gauss_pdf_2d(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return np.exp(-0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet))
+
+x_g = np.linspace(-7, 7, 150)
+y_g = np.linspace(-5, 7, 150)
+XX, YY = np.meshgrid(x_g, y_g)
+grid = np.column_stack([XX.ravel(), YY.ravel()])
+
+Z_dens = np.zeros(grid.shape[0])
+for k in range(3):
+    Z_dens += pis_true[k] * gauss_pdf_2d(grid, mus_true[k], Sigs_true[k])
+Z_dens = Z_dens.reshape(XX.shape)
+
+fig2 = go.Figure()
+
+# Contorno de densidad
+fig2.add_trace(go.Contour(
+    x=x_g, y=y_g, z=Z_dens,
+    colorscale='Blues',
+    contours=dict(showlabels=False, coloring='fill'),
+    opacity=0.7,
+    showscale=True,
+    colorbar=dict(title="Densidad"),
+    name='Densidad GMM'
+))
+
+# Puntos de cada componente
+nombres_comp = ['Componente 1', 'Componente 2', 'Componente 3']
+for k in range(3):
+    pts_k = puntos[k]
+    fig2.add_trace(go.Scatter(
+        x=pts_k[:, 0], y=pts_k[:, 1],
+        mode='markers',
+        name=nombres_comp[k],
+        marker=dict(color=colores_comp[k], size=4, opacity=0.7,
+                    line=dict(color='white', width=0.3))
+    ))
+
+fig2.update_layout(
+    height=500, width=700,
+    xaxis_title="x₁",
+    yaxis_title="x₂",
+    title="Densidad de la mezcla gaussiana (K=3)",
+    legend=dict(x=0.78, y=0.98)
+)
+fig2.show()
+```
+
+## El algoritmo EM
+
+### Principio general: ascenso coordinado sobre el ELBO
+
+El algoritmo EM (Expectation-Maximization) es un procedimiento iterativo para encontrar estimadores de máxima verosimilitud en modelos con variables latentes [@dempster1977; @mclachlan2000]. La dificultad central es que la log-verosimilitud observada @eq-log-lik contiene el logaritmo de una suma, que no tiene solución analítica. La clave del EM es introducir una cota inferior (ELBO, *Evidence Lower BOund*) que sí es maximizable en forma cerrada.
+
+Para cualquier distribución $q(\mathbf{z})$ sobre la variable latente, la desigualdad de Jensen garantiza:
+
+$$
+\log p(\mathbf{x} \mid \boldsymbol{\theta}) \geq \mathbb{E}_{q}\!\left[\log \frac{p(\mathbf{x}, \mathbf{z} \mid \boldsymbol{\theta})}{q(\mathbf{z})}\right] \equiv \mathcal{L}(q, \boldsymbol{\theta})
+$$ {#eq-elbo}
+
+El EM alterna entre dos pasos que maximizan este funcional de manera coordinada.
+
+### Paso E: cálculo de responsabilidades
+
+El **paso E** fija los parámetros $\boldsymbol{\theta}^{(t)}$ y maximiza $\mathcal{L}$ con respecto a $q(\mathbf{z})$. La solución óptima es la distribución posterior verdadera $q^*(\mathbf{z}) = p(\mathbf{z} \mid \mathbf{x}, \boldsymbol{\theta}^{(t)})$. Para el GMM, esta posterior factoriza y la **responsabilidad** de la componente $k$ sobre la observación $\mathbf{x}_i$ es:
+
+$$
+r_{ik} = p(z_i = k \mid \mathbf{x}_i, \boldsymbol{\theta}^{(t)}) =
+\frac{\pi_k^{(t)} \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k^{(t)}, \boldsymbol{\Sigma}_k^{(t)})}
+     {\displaystyle\sum_{j=1}^{K} \pi_j^{(t)} \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_j^{(t)}, \boldsymbol{\Sigma}_j^{(t)})}
+$$ {#eq-e-step}
+
+Nótese que $r_{ik} \geq 0$ y $\sum_k r_{ik} = 1$ para todo $i$; las responsabilidades son asignaciones **blandas** (probabilísticas) de cada punto a cada componente.
+
+### Paso M: actualización de parámetros
+
+El **paso M** fija $q(\mathbf{z})$ y maximiza $\mathcal{L}$ con respecto a $\boldsymbol{\theta}$. Definiendo $N_k = \sum_{i=1}^{N} r_{ik}$ (número efectivo de puntos en la componente $k$), las actualizaciones en forma cerrada son:
+
+$$
+\pi_k^{(t+1)} = \frac{N_k}{N}
+$$ {#eq-m-step-pi}
+
+$$
+\boldsymbol{\mu}_k^{(t+1)} = \frac{1}{N_k} \sum_{i=1}^{N} r_{ik} \, \mathbf{x}_i
+$$ {#eq-m-step-mu}
+
+$$
+\boldsymbol{\Sigma}_k^{(t+1)} = \frac{1}{N_k} \sum_{i=1}^{N} r_{ik} \,
+(\mathbf{x}_i - \boldsymbol{\mu}_k^{(t+1)})(\mathbf{x}_i - \boldsymbol{\mu}_k^{(t+1)})^\top
+$$ {#eq-m-step-sigma}
+
+### Convergencia y propiedad monótona
+
+Una propiedad fundamental del EM es que la log-verosimilitud observada $\ell(\boldsymbol{\theta}^{(t)})$ es **monótonamente no decreciente** en cada iteración: $\ell(\boldsymbol{\theta}^{(t+1)}) \geq \ell(\boldsymbol{\theta}^{(t)})$. Esto se demuestra formalmente usando la desigualdad de Jensen y el hecho de que ambos pasos maximizan el ELBO. En la práctica, el algoritmo se detiene cuando el incremento en log-verosimilitud cae por debajo de una tolerancia $\varepsilon$ (por ejemplo, $10^{-6}$).
+
+### Implementación desde cero en numpy
+
+El siguiente bloque implementa el algoritmo EM completo, incluyendo un truco numérico para evitar desbordamiento: se calcula el logaritmo de las densidades y se aplica la sustracción del máximo antes de exponenciar (equivalente al truco log-sum-exp).
+
+```{python}
+#| label: fig-gmm-em-animacion
+#| fig-cap: "Animación del algoritmo EM para un GMM con K=2 en 2D. Cada fotograma muestra el estado del modelo en una iteración específica: los puntos están coloreados por la responsabilidad de la primera componente (azul = comp. 1, rojo = comp. 2), y las elipses representan los contornos de confianza al 95% de cada gaussiana."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng3 = np.random.default_rng(123)
+
+# ---- Datos sinteticos 2D ----
+n1, n2 = 180, 220
+X1 = rng3.multivariate_normal([-3, 1], [[1.0, 0.5], [0.5, 0.8]], n1)
+X2 = rng3.multivariate_normal([ 3, -1], [[0.8, -0.3], [-0.3, 1.2]], n2)
+X_em = np.vstack([X1, X2])
+N_em, D_em = X_em.shape
+
+# ---- Funciones EM ----
+def gauss_log_pdf(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return -0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet)
+
+def e_step(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_R = np.zeros((N, K))
+    for k in range(K):
+        log_R[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf(X, mus[k], Sigmas[k])
+    # log-sum-exp trick
+    log_R_max = log_R.max(axis=1, keepdims=True)
+    log_R_norm = log_R - log_R_max
+    R = np.exp(log_R_norm)
+    R /= R.sum(axis=1, keepdims=True)
+    return R
+
+def m_step(X, R):
+    N, D = X.shape
+    K = R.shape[1]
+    Nk = R.sum(axis=0)
+    pis_new = Nk / N
+    mus_new = (R.T @ X) / Nk[:, None]
+    Sigmas_new = []
+    for k in range(K):
+        diff = X - mus_new[k]
+        Sk = (R[:, k:k+1] * diff).T @ diff / Nk[k]
+        Sk += 1e-6 * np.eye(D)
+        Sigmas_new.append(Sk)
+    return pis_new, mus_new, Sigmas_new
+
+def log_likelihood(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_lik_mat = np.zeros((N, K))
+    for k in range(K):
+        log_lik_mat[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf(X, mus[k], Sigmas[k])
+    lse_max = log_lik_mat.max(axis=1)
+    log_sum = lse_max + np.log(np.exp(log_lik_mat - lse_max[:, None]).sum(axis=1) + 1e-300)
+    return log_sum.sum()
+
+# ---- Inicializacion aleatoria ----
+K_em = 2
+idx_init = rng3.choice(N_em, K_em, replace=False)
+pis_em  = np.array([0.5, 0.5])
+mus_em  = [X_em[idx_init[k]].copy() for k in range(K_em)]
+Sigmas_em = [np.eye(D_em) for _ in range(K_em)]
+
+# Iteraciones a guardar
+iters_guardar = [0, 1, 2, 3, 5, 10, 20]
+max_iter = max(iters_guardar)
+
+historial_estados = {}  # iter -> (R, pis, mus, Sigmas)
+ll_historia = []
+
+R_em = e_step(X_em, pis_em, mus_em, Sigmas_em)
+if 0 in iters_guardar:
+    historial_estados[0] = (R_em.copy(),
+                             pis_em.copy(),
+                             [m.copy() for m in mus_em],
+                             [s.copy() for s in Sigmas_em])
+
+for it in range(1, max_iter + 1):
+    pis_em, mus_em, Sigmas_em = m_step(X_em, R_em)
+    R_em = e_step(X_em, pis_em, mus_em, Sigmas_em)
+    ll = log_likelihood(X_em, pis_em, mus_em, Sigmas_em)
+    ll_historia.append((it, ll))
+    if it in iters_guardar:
+        historial_estados[it] = (R_em.copy(),
+                                  pis_em.copy(),
+                                  [m.copy() for m in mus_em],
+                                  [s.copy() for s in Sigmas_em])
+
+# ---- Funcion para dibujar elipse de confianza ----
+def elipse_confianza(mu, Sigma, escala=2.0, n_pts=100):
+    vals, vecs = np.linalg.eigh(Sigma)
+    t = np.linspace(0, 2 * np.pi, n_pts)
+    v1 = vecs[:, 0] * np.sqrt(vals[0]) * escala
+    v2 = vecs[:, 1] * np.sqrt(vals[1]) * escala
+    xe = mu[0] + v1[0] * np.cos(t) + v2[0] * np.sin(t)
+    ye = mu[1] + v1[1] * np.cos(t) + v2[1] * np.sin(t)
+    return xe, ye
+
+# ---- Construir frames de animacion ----
+colores_anim = ['#1f77b4', '#d62728']  # azul, rojo
+
+frames = []
+for it in iters_guardar:
+    R_f, pis_f, mus_f, Sigs_f = historial_estados[it]
+
+    # Color de cada punto segun responsabilidad hacia comp 0
+    r0 = R_f[:, 0]  # responsabilidad componente 0
+    colores_pts = [
+        'rgba({},{},{},0.8)'.format(
+            int(r0[i] * 31 + (1 - r0[i]) * 214),
+            int(r0[i] * 119 + (1 - r0[i]) * 39),
+            int(r0[i] * 180 + (1 - r0[i]) * 40)
+        )
+        for i in range(N_em)
+    ]
+
+    trazas_frame = []
+
+    # Scatter de puntos
+    trazas_frame.append(go.Scatter(
+        x=X_em[:, 0], y=X_em[:, 1],
+        mode='markers',
+        marker=dict(color=colores_pts, size=5),
+        name='Datos'
+    ))
+
+    # Elipses de cada componente
+    for k in range(K_em):
+        xe, ye = elipse_confianza(mus_f[k], Sigs_f[k], escala=2.0)
+        trazas_frame.append(go.Scatter(
+            x=xe, y=ye,
+            mode='lines',
+            line=dict(color=colores_anim[k], width=2.5),
+            name='Componente {}'.format(k + 1)
+        ))
+        trazas_frame.append(go.Scatter(
+            x=[mus_f[k][0]], y=[mus_f[k][1]],
+            mode='markers',
+            marker=dict(color=colores_anim[k], size=10, symbol='x'),
+            name='Media {}'.format(k + 1)
+        ))
+
+    frames.append(go.Frame(data=trazas_frame,
+                            name=str(it),
+                            layout=go.Layout(title_text='Iteracion EM: {}'.format(it))))
+
+# ---- Figura inicial (iteracion 0) ----
+R_0, pis_0, mus_0, Sigs_0 = historial_estados[0]
+r0_init = R_0[:, 0]
+colores_init = [
+    'rgba({},{},{},0.8)'.format(
+        int(r0_init[i] * 31 + (1 - r0_init[i]) * 214),
+        int(r0_init[i] * 119 + (1 - r0_init[i]) * 39),
+        int(r0_init[i] * 180 + (1 - r0_init[i]) * 40)
+    )
+    for i in range(N_em)
+]
+
+trazas_init = []
+trazas_init.append(go.Scatter(
+    x=X_em[:, 0], y=X_em[:, 1],
+    mode='markers',
+    marker=dict(color=colores_init, size=5),
+    name='Datos'
+))
+for k in range(K_em):
+    xe, ye = elipse_confianza(mus_0[k], Sigs_0[k], escala=2.0)
+    trazas_init.append(go.Scatter(
+        x=xe, y=ye, mode='lines',
+        line=dict(color=colores_anim[k], width=2.5),
+        name='Componente {}'.format(k + 1)
+    ))
+    trazas_init.append(go.Scatter(
+        x=[mus_0[k][0]], y=[mus_0[k][1]],
+        mode='markers',
+        marker=dict(color=colores_anim[k], size=10, symbol='x'),
+        name='Media {}'.format(k + 1)
+    ))
+
+# Slider
+pasos_slider = []
+for it in iters_guardar:
+    pasos_slider.append(dict(
+        args=[[str(it)],
+              dict(frame=dict(duration=600, redraw=True), mode='immediate',
+                   transition=dict(duration=300))],
+        label=str(it),
+        method='animate'
+    ))
+
+fig_anim = go.Figure(
+    data=trazas_init,
+    frames=frames,
+    layout=go.Layout(
+        title='Convergencia del algoritmo EM (K=2)',
+        xaxis=dict(title='x₁', range=[-7, 7]),
+        yaxis=dict(title='x₂', range=[-5, 5]),
+        height=520, width=750,
+        updatemenus=[dict(
+            type='buttons',
+            buttons=[
+                dict(label='Reproducir',
+                     method='animate',
+                     args=[None, dict(frame=dict(duration=600, redraw=True),
+                                      fromcurrent=True,
+                                      transition=dict(duration=300))]),
+                dict(label='Pausar',
+                     method='animate',
+                     args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                        mode='immediate',
+                                        transition=dict(duration=0))])
+            ],
+            x=0.0, y=1.12, xanchor='left', yanchor='top'
+        )],
+        sliders=[dict(
+            active=0,
+            steps=pasos_slider,
+            x=0.0, y=0.0,
+            xanchor='left', yanchor='top',
+            len=1.0,
+            currentvalue=dict(prefix='Iteracion: ', visible=True, xanchor='center'),
+            transition=dict(duration=300)
+        )]
+    )
+)
+fig_anim.show()
+```
+
+### Curva de log-verosimilitud
+
+La figura @fig-gmm-log-verosimilitud confirma la propiedad de convergencia monótona del EM: la log-verosimilitud crece de manera no decreciente en cada iteración hasta alcanzar una meseta, señal de convergencia al óptimo local.
+
+```{python}
+#| label: fig-gmm-log-verosimilitud
+#| fig-cap: "Log-verosimilitud en función del número de iteraciones del algoritmo EM. La curva es monótonamente no decreciente, lo que garantiza que el algoritmo no empeora el ajuste en ninguna iteración."
+#| code-fold: true
+
+import plotly.graph_objects as go
+import numpy as np
+
+iters_ll = [t for t, _ in ll_historia]
+vals_ll  = [v for _, v in ll_historia]
+
+fig_ll = go.Figure()
+fig_ll.add_trace(go.Scatter(
+    x=iters_ll, y=vals_ll,
+    mode='lines+markers',
+    line=dict(color='#2ca02c', width=2.5),
+    marker=dict(size=7, color='#2ca02c'),
+    name='Log-verosimilitud'
+))
+fig_ll.update_layout(
+    title='Convergencia del EM: log-verosimilitud vs. iteracion',
+    xaxis_title='Iteracion',
+    yaxis_title='Log-verosimilitud ℓ(θ)',
+    height=380, width=650
+)
+fig_ll.show()
+```
+
+## Tipos de covarianza
+
+La flexibilidad de un GMM depende en gran medida de la estructura impuesta a las matrices de covarianza $\boldsymbol{\Sigma}_k$. Restringir la forma de $\boldsymbol{\Sigma}_k$ reduce el número de parámetros a estimar, lo que puede mejorar la generalización cuando los datos son escasos, pero a costa de capacidad expresiva [@murphy2012; @hastie2009]. La siguiente tabla resume las cuatro estructuras más comunes en la práctica:
+
+| Tipo | Descripcion | Parametros por componente | Forma del contorno |
+|------|-------------|--------------------------|-------------------|
+| Esférica (*spherical*) | $\boldsymbol{\Sigma}_k = \sigma_k^2 \mathbf{I}$ | 1 | Círculos |
+| Diagonal (*diagonal*) | $\boldsymbol{\Sigma}_k = \mathrm{diag}(\sigma_{k1}^2, \ldots, \sigma_{kD}^2)$ | $D$ | Elipses alineadas con los ejes |
+| Completa (*full*) | $\boldsymbol{\Sigma}_k$ simétrica definida positiva | $D(D+1)/2$ | Elipses rotadas arbitrariamente |
+| Atada (*tied*) | $\boldsymbol{\Sigma}_k = \boldsymbol{\Sigma}$ (igual para todo $k$) | $D(D+1)/2$ en total | Elipses con la misma forma |
+
+Para un GMM con $D=2$ y $K=3$: la covarianza esférica usa solo 3 parámetros de covarianza, la diagonal usa 6, la completa usa 9, y la atada usa 3 (compartidos). La figura @fig-gmm-tipos-covarianza ilustra el efecto visual de cada estructura.
+
+```{python}
+#| label: fig-gmm-tipos-covarianza
+#| fig-cap: "Los cuatro tipos de covarianza para un GMM con K=3 componentes en 2D. Cada panel muestra las elipses de confianza al 95% correspondientes a cada estructura de covarianza."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng4 = np.random.default_rng(55)
+
+# Centros comunes para los 3 componentes
+mus_tipos = [np.array([-2.5,  1.0]),
+             np.array([ 2.5,  1.0]),
+             np.array([ 0.0, -2.5])]
+
+# Covarianza "full" de referencia para cada componente
+Sigs_full = [np.array([[1.5,  0.8], [ 0.8, 0.6]]),
+             np.array([[0.6, -0.5], [-0.5, 1.2]]),
+             np.array([[0.9,  0.0], [ 0.0, 0.4]])]
+
+def make_spherical(Sig):
+    sigma2 = np.trace(Sig) / Sig.shape[0]
+    return sigma2 * np.eye(Sig.shape[0])
+
+def make_diagonal(Sig):
+    return np.diag(np.diag(Sig))
+
+def make_tied(Sigs, pis):
+    S = np.zeros_like(Sigs[0])
+    for pi, Sg in zip(pis, Sigs):
+        S += pi * Sg
+    return S
+
+pis_tipos = [1/3, 1/3, 1/3]
+Sigma_tied = make_tied(Sigs_full, pis_tipos)
+
+tipos = {
+    'Esférica': [make_spherical(S) for S in Sigs_full],
+    'Diagonal': [make_diagonal(S) for S in Sigs_full],
+    'Completa': Sigs_full,
+    'Atada':    [Sigma_tied for _ in range(3)]
+}
+
+colores_tc = ['#e41a1c', '#377eb8', '#4daf4a']
+
+fig_tc = make_subplots(rows=2, cols=2,
+                        subplot_titles=list(tipos.keys()))
+
+def elipse_comp(mu, Sigma, escala=2.0, n_pts=100):
+    vals, vecs = np.linalg.eigh(Sigma)
+    t = np.linspace(0, 2 * np.pi, n_pts)
+    v1 = vecs[:, 0] * np.sqrt(np.maximum(vals[0], 1e-9)) * escala
+    v2 = vecs[:, 1] * np.sqrt(np.maximum(vals[1], 1e-9)) * escala
+    xe = mu[0] + v1[0] * np.cos(t) + v2[0] * np.sin(t)
+    ye = mu[1] + v1[1] * np.cos(t) + v2[1] * np.sin(t)
+    return xe, ye
+
+posiciones = [(1,1), (1,2), (2,1), (2,2)]
+for idx, (tipo_nombre, Sigs_tipo) in enumerate(tipos.items()):
+    fila, col = posiciones[idx]
+    for k in range(3):
+        xe, ye = elipse_comp(mus_tipos[k], Sigs_tipo[k])
+        mostrar_leyenda = (idx == 0)
+        fig_tc.add_trace(go.Scatter(
+            x=xe, y=ye,
+            mode='lines',
+            line=dict(color=colores_tc[k], width=2.2),
+            name='Componente {}'.format(k+1),
+            showlegend=mostrar_leyenda
+        ), row=fila, col=col)
+        # Centro
+        fig_tc.add_trace(go.Scatter(
+            x=[mus_tipos[k][0]], y=[mus_tipos[k][1]],
+            mode='markers',
+            marker=dict(color=colores_tc[k], size=8, symbol='cross'),
+            showlegend=False
+        ), row=fila, col=col)
+
+for fila in [1, 2]:
+    for col in [1, 2]:
+        fig_tc.update_xaxes(range=[-5.5, 5.5], row=fila, col=col)
+        fig_tc.update_yaxes(range=[-5.0, 4.0], row=fila, col=col)
+
+fig_tc.update_layout(height=620, width=820,
+                      title='Tipos de covarianza en GMM (K=3, D=2)',
+                      legend=dict(x=0.78, y=0.98))
+fig_tc.show()
+```
+
+## Selección del número de componentes
+
+### El problema del sobreajuste
+
+Una limitación fundamental del GMM es que el número de componentes $K$ debe especificarse de antemano. Aumentar $K$ siempre incrementa la log-verosimilitud en los datos de entrenamiento (mayor flexibilidad), pero puede llevar a sobreajuste: el modelo captura ruido particular de la muestra en lugar de la estructura real de la distribución subyacente [@bishop2006; @reynolds2009]. Un caso extremo es que con $K = N$, cada componente puede colapsar sobre un solo punto, llevando la log-verosimilitud al infinito pero sin poder generalizar.
+
+### Criterios de información: AIC y BIC
+
+Los criterios de información penalizan la log-verosimilitud por el número de parámetros libres $p$, buscando un equilibrio entre ajuste y parsimonia:
+
+$$
+\mathrm{AIC} = -2\,\ell(\hat{\boldsymbol{\theta}}) + 2p
+$$ {#eq-aic}
+
+$$
+\mathrm{BIC} = -2\,\ell(\hat{\boldsymbol{\theta}}) + p \log N
+$$ {#eq-bic}
+
+Para un GMM con covarianza completa en $D$ dimensiones y $K$ componentes, el número de parámetros libres es:
+
+$$
+p = \underbrace{K \cdot D}_{\text{medias}} + \underbrace{K \cdot \frac{D(D+1)}{2}}_{\text{covarianzas}} + \underbrace{(K-1)}_{\text{mezclas}}
+$$ {#eq-gmm-params}
+
+El BIC penaliza más fuertemente que el AIC cuando $N > e^2 \approx 7$, tendiendo a seleccionar modelos más parsimoniosos. Se elige el $K$ que minimiza el criterio. La figura @fig-gmm-bic-aic muestra la curva de AIC y BIC para $K = 1, \ldots, 8$.
+
+```{python}
+#| label: fig-gmm-bic-aic
+#| fig-cap: "Criterios AIC y BIC en función del número de componentes K. El mínimo de cada curva indica el número óptimo de componentes según cada criterio. Una línea vertical punteada marca el mínimo del BIC."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng5 = np.random.default_rng(77)
+
+# Dataset con 3 grupos verdaderos en 2D
+n_sel = 300
+X_sel = np.vstack([
+    rng5.multivariate_normal([-4, 0], [[0.8, 0.2], [0.2, 0.6]], 100),
+    rng5.multivariate_normal([ 4, 0], [[0.7, -0.1], [-0.1, 0.9]], 100),
+    rng5.multivariate_normal([ 0, 4], [[0.5, 0.3], [0.3, 0.7]], 100)
+])
+N_sel, D_sel = X_sel.shape
+
+def gauss_log_pdf_sel(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return -0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet)
+
+def e_step_sel(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_R = np.zeros((N, K))
+    for k in range(K):
+        log_R[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf_sel(X, mus[k], Sigmas[k])
+    log_R_max = log_R.max(axis=1, keepdims=True)
+    R = np.exp(log_R - log_R_max)
+    R /= R.sum(axis=1, keepdims=True)
+    return R
+
+def m_step_sel(X, R):
+    N, D = X.shape
+    K = R.shape[1]
+    Nk = R.sum(axis=0) + 1e-10
+    pis_n = Nk / N
+    mus_n = (R.T @ X) / Nk[:, None]
+    Sigs_n = []
+    for k in range(K):
+        diff = X - mus_n[k]
+        Sk = (R[:, k:k+1] * diff).T @ diff / Nk[k]
+        Sk += 1e-5 * np.eye(D)
+        Sigs_n.append(Sk)
+    return pis_n, mus_n, Sigs_n
+
+def ll_sel(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_lm = np.zeros((N, K))
+    for k in range(K):
+        log_lm[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf_sel(X, mus[k], Sigmas[k])
+    lmax = log_lm.max(axis=1)
+    return (lmax + np.log(np.exp(log_lm - lmax[:, None]).sum(axis=1) + 1e-300)).sum()
+
+def fit_gmm(X, K, n_iter=60, rng_fit=None):
+    N, D = X.shape
+    if rng_fit is None:
+        rng_fit = np.random.default_rng(0)
+    idx = rng_fit.choice(N, K, replace=False)
+    pis = np.ones(K) / K
+    mus = [X[idx[k]].copy() for k in range(K)]
+    Sigs = [np.eye(D) for _ in range(K)]
+    R = e_step_sel(X, pis, mus, Sigs)
+    for _ in range(n_iter):
+        pis, mus, Sigs = m_step_sel(X, R)
+        R = e_step_sel(X, pis, mus, Sigs)
+    return ll_sel(X, pis, mus, Sigs)
+
+Ks = list(range(1, 9))
+aics, bics = [], []
+rng_bic = np.random.default_rng(99)
+for K in Ks:
+    ll_val = fit_gmm(X_sel, K, n_iter=80, rng_fit=rng_bic)
+    p_params = K * D_sel + K * D_sel * (D_sel + 1) // 2 + (K - 1)
+    aics.append(-2 * ll_val + 2 * p_params)
+    bics.append(-2 * ll_val + p_params * np.log(N_sel))
+
+k_opt_bic = Ks[int(np.argmin(bics))]
+
+fig_crit = go.Figure()
+fig_crit.add_trace(go.Scatter(
+    x=Ks, y=aics, mode='lines+markers',
+    name='AIC', line=dict(color='#1f77b4', width=2),
+    marker=dict(size=8)
+))
+fig_crit.add_trace(go.Scatter(
+    x=Ks, y=bics, mode='lines+markers',
+    name='BIC', line=dict(color='#d62728', width=2),
+    marker=dict(size=8)
+))
+fig_crit.add_vline(x=k_opt_bic, line_dash='dash', line_color='gray',
+                    annotation_text='K={} (min BIC)'.format(k_opt_bic),
+                    annotation_position='top right')
+fig_crit.update_layout(
+    title='Seleccion del numero de componentes: AIC y BIC',
+    xaxis_title='Numero de componentes K',
+    yaxis_title='Criterio de informacion',
+    height=400, width=650,
+    legend=dict(x=0.78, y=0.98)
+)
+fig_crit.show()
+```
+
+## GMM como clasificador vs. K-Means
+
+### K-Means como caso límite del GMM
+
+El algoritmo K-Means puede derivarse formalmente como un caso límite del GMM bajo las siguientes restricciones: (1) coeficientes de mezcla iguales $\pi_k = 1/K$ para todo $k$, (2) covarianzas esféricas e iguales $\boldsymbol{\Sigma}_k = \sigma^2 \mathbf{I}$ para todo $k$, y (3) se toma el límite $\sigma^2 \to 0$ [@bishop2006; @hastie2009]. En este límite, las responsabilidades $r_{ik}$ colapsan a asignaciones duras: $r_{ik} \to 1$ para el componente más cercano y $r_{ik} \to 0$ para todos los demás. La actualización de medias del paso M del GMM se convierte exactamente en la actualización de centroides de K-Means.
+
+La diferencia fundamental es que el GMM produce **asignaciones blandas** (probabilísticas) mediante las responsabilidades $r_{ik}$, mientras que K-Means produce **asignaciones duras** mediante la regla del vecino más cercano. Para clasificación, la regla de decisión del GMM asigna $\mathbf{x}$ a la clase $k^* = \arg\max_k r_{ik}$, pero también cuantifica la incertidumbre mediante la distribución completa $(r_{i1}, \ldots, r_{iK})$.
+
+La figura @fig-gmm-vs-kmeans ilustra la diferencia entre las asignaciones duras de K-Means y las asignaciones blandas del GMM sobre el mismo conjunto de datos.
+
+```{python}
+#| label: fig-gmm-vs-kmeans
+#| fig-cap: "Comparacion entre K-Means (asignaciones duras) y GMM (asignaciones blandas) con K=3 en 2D. Panel izquierdo: cada punto toma el color discreto de su centroide más cercano. Panel derecho: el color de cada punto es una mezcla de los colores de los componentes, ponderada por las responsabilidades."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng6 = np.random.default_rng(31)
+
+# Datos de tres grupos solapantes
+X_clas = np.vstack([
+    rng6.multivariate_normal([-3,  1.5], [[1.0, 0.4], [0.4, 0.7]], 150),
+    rng6.multivariate_normal([ 3,  1.5], [[0.8, -0.3], [-0.3, 1.1]], 150),
+    rng6.multivariate_normal([ 0, -2.5], [[1.2,  0.1], [ 0.1, 0.6]], 150)
+])
+N_clas, D_clas = X_clas.shape
+
+# ---- K-Means simplificado ----
+def kmeans(X, K, n_iter=100, rng_km=None):
+    if rng_km is None:
+        rng_km = np.random.default_rng(0)
+    centroides = X[rng_km.choice(len(X), K, replace=False)].copy()
+    etiquetas = np.zeros(len(X), dtype=int)
+    for _ in range(n_iter):
+        dists = np.array([((X - centroides[k]) ** 2).sum(axis=1) for k in range(K)]).T
+        etiquetas = dists.argmin(axis=1)
+        for k in range(K):
+            mask = etiquetas == k
+            if mask.sum() > 0:
+                centroides[k] = X[mask].mean(axis=0)
+    return etiquetas, centroides
+
+# ---- GMM EM ----
+def gauss_log_pdf_c(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return -0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet)
+
+def e_step_c(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_R = np.zeros((N, K))
+    for k in range(K):
+        log_R[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf_c(X, mus[k], Sigmas[k])
+    lmax = log_R.max(axis=1, keepdims=True)
+    R = np.exp(log_R - lmax)
+    R /= R.sum(axis=1, keepdims=True)
+    return R
+
+def m_step_c(X, R):
+    N, D = X.shape
+    K = R.shape[1]
+    Nk = R.sum(axis=0) + 1e-10
+    pis_n = Nk / N
+    mus_n = (R.T @ X) / Nk[:, None]
+    Sigs_n = []
+    for k in range(K):
+        diff = X - mus_n[k]
+        Sk = (R[:, k:k+1] * diff).T @ diff / Nk[k]
+        Sk += 1e-5 * np.eye(D)
+        Sigs_n.append(Sk)
+    return pis_n, mus_n, Sigs_n
+
+K_clas = 3
+# K-Means
+etiq_km, cents_km = kmeans(X_clas, K_clas, rng_km=rng6)
+
+# GMM
+idx_gm = rng6.choice(N_clas, K_clas, replace=False)
+pis_gm  = np.ones(K_clas) / K_clas
+mus_gm  = [X_clas[idx_gm[k]].copy() for k in range(K_clas)]
+Sigs_gm = [np.eye(D_clas) for _ in range(K_clas)]
+R_gm = e_step_c(X_clas, pis_gm, mus_gm, Sigs_gm)
+for _ in range(80):
+    pis_gm, mus_gm, Sigs_gm = m_step_c(X_clas, R_gm)
+    R_gm = e_step_c(X_clas, pis_gm, mus_gm, Sigs_gm)
+
+# Colores base RGB para 3 componentes
+colores_rgb_base = [(228, 26, 28), (55, 126, 184), (77, 175, 74)]
+
+# Asignaciones duras K-Means
+colores_km = ['rgb({},{},{})'.format(*colores_rgb_base[e]) for e in etiq_km]
+
+# Colores blandos GMM: mezcla ponderada por responsabilidades
+colores_gmm = []
+for i in range(N_clas):
+    r_vec = R_gm[i]
+    rr = sum(r_vec[k] * colores_rgb_base[k][0] for k in range(K_clas))
+    gg = sum(r_vec[k] * colores_rgb_base[k][1] for k in range(K_clas))
+    bb = sum(r_vec[k] * colores_rgb_base[k][2] for k in range(K_clas))
+    colores_gmm.append('rgb({},{},{})'.format(int(rr), int(gg), int(bb)))
+
+fig_vs = make_subplots(rows=1, cols=2,
+                        subplot_titles=('K-Means (asignacion dura)',
+                                        'GMM (asignacion blanda)'))
+
+fig_vs.add_trace(go.Scatter(
+    x=X_clas[:, 0], y=X_clas[:, 1],
+    mode='markers',
+    marker=dict(color=colores_km, size=5, opacity=0.8),
+    name='K-Means'
+), row=1, col=1)
+fig_vs.add_trace(go.Scatter(
+    x=cents_km[:, 0], y=cents_km[:, 1],
+    mode='markers',
+    marker=dict(color='black', size=12, symbol='star'),
+    name='Centroides'
+), row=1, col=1)
+
+fig_vs.add_trace(go.Scatter(
+    x=X_clas[:, 0], y=X_clas[:, 1],
+    mode='markers',
+    marker=dict(color=colores_gmm, size=5, opacity=0.8),
+    name='GMM'
+), row=1, col=2)
+
+fig_vs.update_xaxes(title_text='x₁')
+fig_vs.update_yaxes(title_text='x₂', row=1, col=1)
+fig_vs.update_layout(height=440, width=860,
+                      title='K-Means vs. GMM: asignaciones duras vs. blandas',
+                      showlegend=True)
+fig_vs.show()
+```
+
+## GMM como modelo generativo
+
+Una ventaja clave del GMM sobre los métodos de clustering no probabilísticos es que define una **distribución de probabilidad completa** sobre el espacio de datos. Esto significa que, una vez ajustado el modelo, es posible generar nuevas observaciones que son estadísticamente indistinguibles de los datos originales, siguiendo el procedimiento ancestral del modelo generativo [@bishop2006; @murphy2012].
+
+El procedimiento de muestreo es directo y se realiza en dos etapas:
+
+1. **Muestrear la componente**: extraer $k \sim \mathrm{Categórica}(\pi_1, \ldots, \pi_K)$, es decir, seleccionar la componente $k$ con probabilidad $\pi_k$.
+2. **Muestrear la observación**: extraer $\mathbf{x} \sim \mathcal{N}(\boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)$ de la gaussiana correspondiente.
+
+Este proceso genera muestras de la densidad marginal $p(\mathbf{x}) = \sum_k \pi_k \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)$, lo que confirma que el GMM es un modelo generativo válido. La figura @fig-gmm-generativo compara los datos originales con muestras nuevas generadas del modelo ajustado.
+
+```{python}
+#| label: fig-gmm-generativo
+#| fig-cap: "El GMM como modelo generativo. Panel izquierdo: datos originales con contornos de la mezcla ajustada. Panel derecho: 500 nuevas muestras generadas a partir del GMM ajustado. La similitud entre ambos paneles confirma que el modelo ha capturado la distribución subyacente."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng7 = np.random.default_rng(88)
+
+# Dataset original con 3 grupos
+pis_gen_true = np.array([0.40, 0.35, 0.25])
+mus_gen_true = [np.array([-3.0, -2.0]),
+                np.array([ 3.5,  0.0]),
+                np.array([ 0.0,  3.5])]
+Sigs_gen_true = [np.array([[1.0, 0.5], [0.5, 0.8]]),
+                 np.array([[0.7, -0.3], [-0.3, 1.0]]),
+                 np.array([[0.6,  0.2], [ 0.2, 0.6]])]
+
+n_gen = 400
+ns_gen = [int(p * n_gen) for p in pis_gen_true]
+ns_gen[-1] = n_gen - sum(ns_gen[:-1])
+X_gen = np.vstack([rng7.multivariate_normal(mus_gen_true[k], Sigs_gen_true[k], ns_gen[k])
+                   for k in range(3)])
+etiq_gen_true = np.concatenate([np.full(ns_gen[k], k) for k in range(3)])
+N_gen, D_gen = X_gen.shape
+
+# Ajustar GMM
+def gauss_log_pdf_g(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return -0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet)
+
+def e_step_g(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_R = np.zeros((N, K))
+    for k in range(K):
+        log_R[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf_g(X, mus[k], Sigmas[k])
+    lmax = log_R.max(axis=1, keepdims=True)
+    R = np.exp(log_R - lmax)
+    R /= R.sum(axis=1, keepdims=True)
+    return R
+
+def m_step_g(X, R):
+    N, D = X.shape
+    K = R.shape[1]
+    Nk = R.sum(axis=0) + 1e-10
+    pis_n = Nk / N
+    mus_n = (R.T @ X) / Nk[:, None]
+    Sigs_n = []
+    for k in range(K):
+        diff = X - mus_n[k]
+        Sk = (R[:, k:k+1] * diff).T @ diff / Nk[k]
+        Sk += 1e-6 * np.eye(D)
+        Sigs_n.append(Sk)
+    return pis_n, mus_n, Sigs_n
+
+K_gen = 3
+idx_g0 = rng7.choice(N_gen, K_gen, replace=False)
+pis_fit  = np.ones(K_gen) / K_gen
+mus_fit  = [X_gen[idx_g0[k]].copy() for k in range(K_gen)]
+Sigs_fit = [np.eye(D_gen) for _ in range(K_gen)]
+R_fit = e_step_g(X_gen, pis_fit, mus_fit, Sigs_fit)
+for _ in range(100):
+    pis_fit, mus_fit, Sigs_fit = m_step_g(X_gen, R_fit)
+    R_fit = e_step_g(X_gen, pis_fit, mus_fit, Sigs_fit)
+
+# Muestrear del GMM ajustado
+n_muestras = 500
+ks_muestras = rng7.choice(K_gen, size=n_muestras, p=pis_fit)
+X_muestras = np.vstack([
+    rng7.multivariate_normal(mus_fit[k], Sigs_fit[k])
+    for k in ks_muestras
+])
+
+# Densidad en grilla
+x_gv = np.linspace(-7, 8, 120)
+y_gv = np.linspace(-5.5, 7, 120)
+XX_g, YY_g = np.meshgrid(x_gv, y_gv)
+grid_g = np.column_stack([XX_g.ravel(), YY_g.ravel()])
+
+Z_fit = np.zeros(grid_g.shape[0])
+for k in range(K_gen):
+    Z_fit += pis_fit[k] * np.exp(gauss_log_pdf_g(grid_g, mus_fit[k], Sigs_fit[k]))
+Z_fit = Z_fit.reshape(XX_g.shape)
+
+colores_gen = ['#e41a1c', '#377eb8', '#4daf4a']
+colores_muestras = [colores_gen[k] for k in ks_muestras]
+colores_orig = [colores_gen[k] for k in etiq_gen_true]
+
+fig_gen = make_subplots(rows=1, cols=2,
+                         subplot_titles=('Datos originales + contornos GMM',
+                                         'Muestras generadas por el GMM'))
+
+# Panel izquierdo: datos + contornos
+fig_gen.add_trace(go.Contour(
+    x=x_gv, y=y_gv, z=Z_fit,
+    colorscale='Greys',
+    contours=dict(coloring='lines', showlabels=False),
+    showscale=False,
+    opacity=0.7,
+    name='Densidad ajustada'
+), row=1, col=1)
+fig_gen.add_trace(go.Scatter(
+    x=X_gen[:, 0], y=X_gen[:, 1],
+    mode='markers',
+    marker=dict(color=colores_orig, size=4, opacity=0.6),
+    name='Datos originales',
+    showlegend=True
+), row=1, col=1)
+
+# Panel derecho: muestras generadas
+fig_gen.add_trace(go.Scatter(
+    x=X_muestras[:, 0], y=X_muestras[:, 1],
+    mode='markers',
+    marker=dict(color=colores_muestras, size=4, opacity=0.6),
+    name='Muestras generadas',
+    showlegend=True
+), row=1, col=2)
+
+for col in [1, 2]:
+    fig_gen.update_xaxes(title_text='x₁', range=[-7.5, 8.5], row=1, col=col)
+    fig_gen.update_yaxes(title_text='x₂', range=[-6, 7.5], row=1, col=col)
+
+fig_gen.update_layout(height=440, width=860,
+                       title='GMM como modelo generativo (K=3)',
+                       legend=dict(x=0.75, y=0.98))
+fig_gen.show()
+```
+
+## Consideraciones prácticas
+
+### Inicialización
+
+La calidad de la solución encontrada por el EM depende sensiblemente de la inicialización, ya que el algoritmo solo garantiza convergencia a un óptimo **local** de la log-verosimilitud. Existen dos estrategias principales:
+
+- **Inicialización aleatoria**: seleccionar $K$ observaciones al azar como medias iniciales y usar $\boldsymbol{\Sigma}_k = \mathbf{I}$ y $\pi_k = 1/K$. Es simple pero puede conducir a mínimos locales pobres.
+- **Arranque en caliente con K-Means**: ejecutar K-Means primero y usar los centroides resultantes como medias iniciales, con las covarianzas empíricas de cada cluster y proporciones iguales. Esta estrategia tiende a producir mejores puntos de partida y convergencia más rápida [@bishop2006].
+
+En la práctica se recomienda ejecutar el EM múltiples veces con diferentes inicializaciones y quedarse con la solución de mayor log-verosimilitud.
+
+### Singularidades y regularización
+
+El GMM tiene un problema de **singularidades**: si una componente colapsa sobre un único punto de datos, su covarianza tiende a cero ($|\boldsymbol{\Sigma}_k| \to 0$) y la densidad gaussiana en ese punto tiende al infinito, llevando la log-verosimilitud a $+\infty$. Este no es un máximo legítimo del modelo, sino una degeneración numérica. La solución estándar es añadir una regularización $\varepsilon \mathbf{I}$ a la covarianza estimada en cada paso M:
+
+$$
+\hat{\boldsymbol{\Sigma}}_k \leftarrow \hat{\boldsymbol{\Sigma}}_k + \varepsilon \mathbf{I}
+$$
+
+con $\varepsilon \approx 10^{-6}$ típicamente. Esto garantiza que todas las matrices de covarianza sean definidas positivas y evita la degeneración numérica.
+
+### Óptimos locales y múltiples reinicios
+
+El EM es un algoritmo de ascenso de gradiente generalizado que no garantiza convergencia al óptimo global. La función de log-verosimilitud del GMM tiene en general múltiples óptimos locales, y el EM puede quedar atrapado en cualquiera de ellos dependiendo de la inicialización [@mclachlan2000]. La estrategia estándar es ejecutar el algoritmo $R$ veces (por ejemplo, $R = 10$) con diferentes semillas aleatorias y seleccionar el modelo con la mayor log-verosimilitud al converger.
+
+### Costo computacional
+
+El costo por iteración del EM para un GMM con covarianza completa es $\mathcal{O}(K \cdot N \cdot D^2)$: para cada componente ($K$ términos) y cada observación ($N$ términos) se evalúa la densidad gaussiana, que requiere $\mathcal{O}(D^2)$ operaciones (producto cuadrático con la inversa de $\boldsymbol{\Sigma}_k$). La actualización de $\boldsymbol{\Sigma}_k$ en el paso M también cuesta $\mathcal{O}(N \cdot D^2)$ por componente. Para aplicaciones con $D$ muy grande o $K$ grande, las covarianzas diagonales o esféricas reducen el costo a $\mathcal{O}(K \cdot N \cdot D)$.
+
+### Variational Bayes GMM para selección automática de K
+
+Una extensión bayesiana natural del GMM es el **Variational Bayes GMM** (VB-GMM), que coloca distribuciones a priori sobre todos los parámetros ($\pi_k$, $\boldsymbol{\mu}_k$, $\boldsymbol{\Sigma}_k$) y realiza inferencia variacional en lugar de estimación puntual [@bishop2006]. Una ventaja clave del VB-GMM es que puede determinar automáticamente el número efectivo de componentes: componentes superfluas reciben pesos $\pi_k \to 0$ durante la inferencia, evitando la necesidad de ejecutar el modelo para múltiples valores de $K$ y comparar con AIC/BIC. Sin embargo, la implementación es considerablemente más compleja y queda fuera del alcance de este capítulo.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

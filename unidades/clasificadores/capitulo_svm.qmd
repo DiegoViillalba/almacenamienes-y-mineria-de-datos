@@ -1,0 +1,1297 @@
+---
+title: "Máquinas de Soporte Vectorial"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_svm.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+Las Máquinas de Soporte Vectorial (SVM, del inglés *Support Vector Machines*) son uno de los algoritmos de aprendizaje supervisado más elegantes y teóricamente sólidos que existen. Desarrolladas por Vapnik y colaboradores en los años noventa [@vapnik1995nature; @cortes1995support], combinan tres ideas fundamentales: la búsqueda de un hiperplano de margen máximo, la reformulación del problema mediante dualidad de Lagrange, y el llamado *kernel trick*, que permite operar en espacios de alta dimensión sin calcular explícitamente las coordenadas en ese espacio.
+
+A diferencia de métodos como la regresión logística, que buscan cualquier frontera de decisión que separe bien los datos, las SVM buscan la frontera *óptima*: aquella que maximiza la distancia mínima a los puntos de entrenamiento. Esta propiedad geométrica tiene consecuencias profundas sobre la capacidad de generalización del modelo, vinculando la clasificación a nociones de la teoría estadística del aprendizaje [@hastie2009elements].
+
+Este capítulo desarrolla la teoría de SVM desde sus fundamentos geométricos hasta sus extensiones prácticas, incluyendo el manejo de datos no separables, el kernel trick, la regresión con SVM y la calibración de probabilidades. Los ejemplos computacionales están escritos en Python usando `numpy` y `plotly`, construyendo las visualizaciones desde primeros principios para reforzar la intuición geométrica.
+
+## Motivación: clasificar con margen máximo
+
+### El problema de los múltiples hiperplanos separadores
+
+Supongamos que tenemos un conjunto de datos linealmente separable: existen puntos de dos clases que pueden dividirse perfectamente mediante una línea recta (en 2D) o un hiperplano (en dimensiones superiores). La primera pregunta natural es: ¿cuántos hiperplanos separadores existen?
+
+La respuesta es que, en general, existen infinitos. Si un hiperplano $H$ separa perfectamente las clases, también lo hace cualquier hiperplano obtenido al desplazar o rotar $H$ ligeramente, siempre que no cruce ningún punto de entrenamiento. Ante esta ambigüedad, surge la pregunta clave: **¿cuál de todos esos hiperplanos debería elegirse?**
+
+### Por qué el margen importa
+
+La respuesta de las SVM es elegir el hiperplano que maximiza el **margen**: la distancia mínima entre el hiperplano y los puntos de entrenamiento más cercanos de cada clase. La intuición es geométrica y probabilística a la vez. Un hiperplano con margen grande es más robusto frente a perturbaciones de los datos: si un punto nuevo cae cerca de la frontera de decisión, un margen amplio le da más "espacio" para ser clasificado correctamente. Un hiperplano con margen pequeño, aunque separe perfectamente los datos de entrenamiento, estará demasiado cerca de algunos puntos y será frágil ante datos nuevos.
+
+La teoría de aprendizaje estadístico de Vapnik-Chervonenkis formaliza este argumento: la complejidad efectiva de un clasificador de margen máximo depende del margen, no de la dimensión del espacio de características [@vapnik1995nature]. Esto significa que las SVM pueden generalizar bien incluso en dimensiones muy altas, siempre que el margen sea grande.
+
+### Intuición geométrica: margen = 2/‖w‖
+
+Un hiperplano en $\mathbb{R}^d$ se define como el conjunto de puntos $\mathbf{x}$ que satisfacen:
+
+$$
+\mathbf{w}^\top \mathbf{x} + b = 0
+$$
+
+donde $\mathbf{w} \in \mathbb{R}^d$ es el vector normal al hiperplano y $b \in \mathbb{R}$ es el sesgo. La distancia con signo de un punto $\mathbf{x}_i$ al hiperplano es:
+
+$$
+d_i = \frac{\mathbf{w}^\top \mathbf{x}_i + b}{\|\mathbf{w}\|}
+$$
+
+Si normalizamos la escala de $\mathbf{w}$ de modo que los puntos más cercanos de cada clase satisfagan $|\mathbf{w}^\top \mathbf{x}_i + b| = 1$, entonces la distancia del hiperplano a esos puntos es $1/\|\mathbf{w}\|$. El margen total —la distancia entre las dos "bandas" de clase— es:
+
+$$
+\text{margen} = \frac{2}{\|\mathbf{w}\|}
+$$
+
+Maximizar el margen equivale a minimizar $\|\mathbf{w}\|$.
+
+```{python}
+#| label: fig-svm-multiple-hyperplanes
+#| fig-cap: "Múltiples hiperplanos válidos para datos linealmente separables. El hiperplano de margen máximo (línea sólida azul oscuro) es único y equidistante a ambas clases. Los otros hiperplanos (líneas punteadas grises) también separan correctamente los datos pero son subóptimos."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(42)
+
+# Datos clase -1 (azul)
+X_neg = np.column_stack([
+    np.random.uniform(0.5, 2.5, 12),
+    np.random.uniform(3.5, 6.0, 12)
+])
+# Datos clase +1 (naranja)
+X_pos = np.column_stack([
+    np.random.uniform(3.5, 6.0, 12),
+    np.random.uniform(0.5, 3.0, 12)
+])
+
+fig = go.Figure()
+
+# Puntos clase -1
+fig.add_trace(go.Scatter(
+    x=X_neg[:, 0], y=X_neg[:, 1],
+    mode='markers',
+    name='Clase −1',
+    marker=dict(color='#4C72B0', size=10, symbol='circle')
+))
+
+# Puntos clase +1
+fig.add_trace(go.Scatter(
+    x=X_pos[:, 0], y=X_pos[:, 1],
+    mode='markers',
+    name='Clase +1',
+    marker=dict(color='#DD8452', size=10, symbol='square')
+))
+
+x_line = np.linspace(0, 7, 200)
+
+# Hiperplano óptimo de margen máximo: separa simétricamente ambas nubes
+# w = (1, 1)/sqrt(2), b tal que la frontera pase por (3, 3)
+# Línea: x + y = 6  → y = 6 - x  (aproximación visual)
+y_opt = 6.5 - x_line
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_opt,
+    mode='lines',
+    name='Margen máximo (óptimo)',
+    line=dict(color='#2c4f8c', width=3)
+))
+
+# Hiperplanos subóptimos alternativos (punteados)
+configs = [
+    (5.5 - x_line, 'rgba(100,100,100,0.5)', 'Hiperplano alternativo 1'),
+    (7.0 - 1.3 * x_line, 'rgba(130,130,130,0.5)', 'Hiperplano alternativo 2'),
+    (5.0 - 0.7 * x_line, 'rgba(160,160,160,0.5)', 'Hiperplano alternativo 3'),
+]
+for y_alt, col, name in configs:
+    fig.add_trace(go.Scatter(
+        x=x_line, y=y_alt,
+        mode='lines',
+        name=name,
+        line=dict(color=col, width=1.5, dash='dot')
+    ))
+
+fig.update_layout(
+    title='Múltiples hiperplanos separadores: sólo uno maximiza el margen',
+    xaxis_title='Característica 1',
+    yaxis_title='Característica 2',
+    xaxis=dict(range=[0, 7]),
+    yaxis=dict(range=[0, 7]),
+    height=480,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## SVM de margen duro (datos linealmente separables)
+
+### Formulación primal
+
+Dado un conjunto de entrenamiento $\{(\mathbf{x}_i, y_i)\}_{i=1}^n$ con $y_i \in \{-1, +1\}$, queremos encontrar el hiperplano $(\mathbf{w}, b)$ que maximice el margen $2/\|\mathbf{w}\|$ sujeto a que todos los puntos estén correctamente clasificados con al menos una distancia de $1/\|\mathbf{w}\|$ al hiperplano. Esto equivale a:
+
+$$
+\min_{\mathbf{w},\, b} \quad \frac{1}{2}\|\mathbf{w}\|^2
+$$
+
+$$
+\text{sujeto a} \quad y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1, \quad \forall\, i = 1, \dots, n
+$$ {#eq-svm-primal}
+
+La restricción $y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1$ garantiza que los puntos de clase $+1$ queden al lado positivo del hiperplano (con valor funcional $\geq 1$) y los de clase $-1$ queden al lado negativo (con valor funcional $\leq -1$). Minimizar $\frac{1}{2}\|\mathbf{w}\|^2$ equivale a maximizar el margen $2/\|\mathbf{w}\|$.
+
+### Vectores de soporte
+
+Los **vectores de soporte** son los puntos de entrenamiento que satisfacen la restricción con igualdad: $y_i(\mathbf{w}^\top \mathbf{x}_i + b) = 1$. Estos puntos están exactamente sobre las bandas de margen (los hiperplanos $\mathbf{w}^\top \mathbf{x} + b = \pm 1$) y son los únicos que determinan la solución. Si se eliminaran todos los demás puntos, el hiperplano óptimo no cambiaría. Esta propiedad de escasez (*sparsity*) es una de las características más importantes de las SVM.
+
+### Formulación dual y el rol del Lagrangiano
+
+Para derivar la formulación dual, se introduce un multiplicador de Lagrange $\alpha_i \geq 0$ por cada restricción de la formulación primal (@eq-svm-primal). El Lagrangiano es:
+
+$$
+\mathcal{L}(\mathbf{w}, b, \boldsymbol{\alpha}) = \frac{1}{2}\|\mathbf{w}\|^2 - \sum_{i=1}^n \alpha_i \bigl[y_i(\mathbf{w}^\top \mathbf{x}_i + b) - 1\bigr]
+$$
+
+Tomando las condiciones de optimalidad de primer orden respecto a $\mathbf{w}$ y $b$:
+
+$$
+\frac{\partial \mathcal{L}}{\partial \mathbf{w}} = 0 \implies \mathbf{w} = \sum_{i=1}^n \alpha_i y_i \mathbf{x}_i
+$$
+
+$$
+\frac{\partial \mathcal{L}}{\partial b} = 0 \implies \sum_{i=1}^n \alpha_i y_i = 0
+$$
+
+Sustituyendo de regreso en el Lagrangiano, se obtiene el **problema dual**:
+
+$$
+\max_{\boldsymbol{\alpha}} \quad \sum_{i=1}^n \alpha_i - \frac{1}{2}\sum_{i=1}^n\sum_{j=1}^n \alpha_i \alpha_j y_i y_j \mathbf{x}_i^\top \mathbf{x}_j
+$$ {#eq-svm-dual}
+
+$$
+\text{sujeto a} \quad \alpha_i \geq 0, \quad \sum_{i=1}^n \alpha_i y_i = 0
+$$
+
+La función dual depende de los datos sólo a través de productos internos $\mathbf{x}_i^\top \mathbf{x}_j$. Esta observación es el punto de partida del kernel trick.
+
+### Condiciones KKT
+
+Las condiciones de Karush-Kuhn-Tucker (KKT) para este problema de optimización implican, entre otras cosas, la condición de complementariedad:
+
+$$
+\alpha_i \bigl[y_i(\mathbf{w}^\top \mathbf{x}_i + b) - 1\bigr] = 0, \quad \forall\, i
+$$
+
+Esta condición dice que, para cada punto, o bien $\alpha_i = 0$ (el punto no es vector de soporte y no contribuye a la solución) o bien $y_i(\mathbf{w}^\top \mathbf{x}_i + b) = 1$ (el punto está exactamente sobre el margen y es vector de soporte). En la práctica, la mayoría de los $\alpha_i$ son cero, lo que hace que la solución sea dispersa.
+
+### Función de decisión en forma dual
+
+Una vez resuelto el problema dual y obtenidos los $\alpha_i$, la función de decisión para un nuevo punto $\mathbf{x}$ es:
+
+$$
+f(\mathbf{x}) = \text{sgn}\!\left(\sum_{i \in \mathcal{S}} \alpha_i y_i \mathbf{x}_i^\top \mathbf{x} + b\right)
+$$ {#eq-svm-decision}
+
+donde $\mathcal{S}$ es el conjunto de vectores de soporte (aquellos con $\alpha_i > 0$). El sesgo $b$ se recupera de cualquier vector de soporte usando $y_s(\mathbf{w}^\top \mathbf{x}_s + b) = 1$.
+
+```{python}
+#| label: fig-svm-hard-margin
+#| fig-cap: "SVM de margen duro en datos 2D linealmente separables. Los vectores de soporte (marcados con borde negro grueso) son los únicos puntos que determinan el hiperplano óptimo. Las líneas punteadas representan las bandas de margen (w⊤x + b = ±1)."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(7)
+
+# Datos separables con margen claro
+# Clase +1: arriba-derecha
+X_pos = np.column_stack([
+    np.random.uniform(3.2, 5.5, 10),
+    np.random.uniform(3.2, 5.5, 10)
+])
+# Clase -1: abajo-izquierda
+X_neg = np.column_stack([
+    np.random.uniform(0.5, 2.8, 10),
+    np.random.uniform(0.5, 2.8, 10)
+])
+
+# El hiperplano óptimo biseca el espacio: w = [1,1]/sqrt(2), b tal que
+# frontera pasa por (3, 3): w^T x + b = 0  => x+y = 6 => b = -3*sqrt(2)
+# En coordenadas normalizadas: y = 6 - x
+# Banda +1: x + y = 7.2  => y = 7.2 - x  (ajustado a vectores de soporte cercanos)
+# Banda -1: x + y = 4.8  => y = 4.8 - x
+
+# Encontrar vectores de soporte como puntos más cercanos al hiperplano x+y=6
+w = np.array([1.0, 1.0]) / np.sqrt(2)
+b_unnorm = -6.0 / np.sqrt(2)   # hiperplano: w^T x + b = 0
+
+dist_pos = (X_pos @ w + b_unnorm)   # distancias firmadas clase +1
+dist_neg = (X_neg @ w + b_unnorm)   # distancias firmadas clase -1
+
+# Vectores de soporte: punto más cercano de cada clase al hiperplano
+sv_pos_idx = np.argmin(dist_pos)    # el de menor distancia positiva
+sv_neg_idx = np.argmax(dist_neg)    # el de mayor distancia negativa (más cerca)
+
+# Margen exacto basado en los SVs
+margin_pos = dist_pos[sv_pos_idx]   # distancia del SV+ al hiperplano
+margin_neg = -dist_neg[sv_neg_idx]  # distancia del SV- al hiperplano (positiva)
+
+# Líneas del hiperplano y del margen
+x_line = np.linspace(0, 7, 300)
+y_hyp  = 6.0 - x_line                          # frontera: x+y=6
+y_marg_pos = 6.0 + margin_pos*np.sqrt(2) - x_line  # banda +1
+y_marg_neg = 6.0 - margin_neg*np.sqrt(2) - x_line  # banda -1
+
+fig = go.Figure()
+
+# Región de margen sombreada
+fig.add_trace(go.Scatter(
+    x=np.concatenate([x_line, x_line[::-1]]),
+    y=np.concatenate([y_marg_pos, y_marg_neg[::-1]]),
+    fill='toself',
+    fillcolor='rgba(150,150,150,0.12)',
+    line=dict(color='rgba(0,0,0,0)'),
+    name='Región de margen',
+    showlegend=True
+))
+
+# Banda margen +1
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_marg_pos,
+    mode='lines',
+    name='Margen +1',
+    line=dict(color='#DD8452', width=1.5, dash='dash')
+))
+# Banda margen -1
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_marg_neg,
+    mode='lines',
+    name='Margen −1',
+    line=dict(color='#4C72B0', width=1.5, dash='dash')
+))
+# Hiperplano óptimo
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_hyp,
+    mode='lines',
+    name='Hiperplano óptimo',
+    line=dict(color='#2c4f8c', width=2.5)
+))
+
+# Puntos clase -1 (sin SV)
+mask_neg = np.ones(len(X_neg), dtype=bool)
+mask_neg[sv_neg_idx] = False
+fig.add_trace(go.Scatter(
+    x=X_neg[mask_neg, 0], y=X_neg[mask_neg, 1],
+    mode='markers',
+    name='Clase −1',
+    marker=dict(color='#4C72B0', size=10)
+))
+# Puntos clase +1 (sin SV)
+mask_pos = np.ones(len(X_pos), dtype=bool)
+mask_pos[sv_pos_idx] = False
+fig.add_trace(go.Scatter(
+    x=X_pos[mask_pos, 0], y=X_pos[mask_pos, 1],
+    mode='markers',
+    name='Clase +1',
+    marker=dict(color='#DD8452', size=10, symbol='square')
+))
+
+# Vectores de soporte con borde negro
+fig.add_trace(go.Scatter(
+    x=[X_neg[sv_neg_idx, 0]], y=[X_neg[sv_neg_idx, 1]],
+    mode='markers',
+    name='Vector de soporte −1',
+    marker=dict(
+        color='#4C72B0', size=14,
+        line=dict(color='black', width=2.5)
+    )
+))
+fig.add_trace(go.Scatter(
+    x=[X_pos[sv_pos_idx, 0]], y=[X_pos[sv_pos_idx, 1]],
+    mode='markers',
+    name='Vector de soporte +1',
+    marker=dict(
+        color='#DD8452', size=14, symbol='square',
+        line=dict(color='black', width=2.5)
+    )
+))
+
+# Flecha indicando el margen
+mid_x = 5.5
+mid_y_hyp  = 6.0 - mid_x
+mid_y_marg = 6.0 + margin_pos*np.sqrt(2) - mid_x
+fig.add_annotation(
+    x=mid_x, y=mid_y_marg,
+    ax=mid_x, ay=mid_y_hyp,
+    xref='x', yref='y', axref='x', ayref='y',
+    arrowhead=2, arrowsize=1, arrowwidth=2,
+    arrowcolor='#555555',
+    text=f'  1/‖w‖',
+    font=dict(size=11, color='#555555')
+)
+
+fig.update_layout(
+    title='SVM de margen duro: hiperplano óptimo y vectores de soporte',
+    xaxis_title='Característica 1',
+    yaxis_title='Característica 2',
+    xaxis=dict(range=[0, 7]),
+    yaxis=dict(range=[0, 7]),
+    height=500,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## SVM de margen suave (datos no separables)
+
+En la práctica, los datos raramente son linealmente separables. Incluso cuando la separación es posible, un pequeño número de puntos atípicos puede impedir encontrar cualquier hiperplano válido. La SVM de **margen suave** aborda este problema introduciendo variables de holgura que permiten violar las restricciones de manera controlada [@cortes1995support].
+
+### Variables de holgura
+
+Para cada punto de entrenamiento se introduce una variable de holgura $\xi_i \geq 0$ que mide cuánto viola la restricción de margen ese punto:
+
+- $\xi_i = 0$: el punto está correctamente clasificado y fuera del margen.
+- $0 < \xi_i \leq 1$: el punto está correctamente clasificado pero dentro del margen.
+- $\xi_i > 1$: el punto está mal clasificado.
+
+### Formulación primal con margen suave
+
+El problema de optimización se modifica para penalizar las violaciones:
+
+$$
+\min_{\mathbf{w},\, b,\, \boldsymbol{\xi}} \quad \frac{1}{2}\|\mathbf{w}\|^2 + C\sum_{i=1}^n \xi_i
+$$ {#eq-svm-soft-primal}
+
+$$
+\text{sujeto a} \quad y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1 - \xi_i, \quad \xi_i \geq 0, \quad \forall\, i
+$$
+
+El parámetro $C > 0$ controla el equilibrio entre maximizar el margen y minimizar las violaciones:
+
+- $C \to \infty$: se penalizan fuertemente los errores, equivale al margen duro.
+- $C \to 0$: se permiten muchos errores, el modelo ignora casi todos los puntos y el margen se hace arbitrariamente grande.
+
+La formulación dual correspondiente es similar a la del margen duro, con la diferencia de que los multiplicadores están acotados superiormente por $C$:
+
+$$
+\max_{\boldsymbol{\alpha}} \quad \sum_{i=1}^n \alpha_i - \frac{1}{2}\sum_{i=1}^n\sum_{j=1}^n \alpha_i \alpha_j y_i y_j \mathbf{x}_i^\top \mathbf{x}_j
+$$
+
+$$
+\text{sujeto a} \quad 0 \leq \alpha_i \leq C, \quad \sum_{i=1}^n \alpha_i y_i = 0
+$$
+
+La cota superior $\alpha_i \leq C$ es la única diferencia respecto al problema dual de margen duro, y es una consecuencia directa de las variables de holgura en el Lagrangiano.
+
+```{python}
+#| label: fig-svm-soft-C
+#| fig-cap: "Efecto del parámetro C en la SVM de margen suave. Un C grande penaliza los errores fuertemente (margen estrecho, pocos puntos mal clasificados); un C pequeño permite más violaciones a cambio de un margen más amplio. Use el slider para explorar diferentes valores."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(21)
+n = 30
+
+# Datos no linealmente separables (con solapamiento)
+X_pos = np.column_stack([
+    np.random.normal(3.5, 0.9, n),
+    np.random.normal(3.5, 0.9, n)
+])
+X_neg = np.column_stack([
+    np.random.normal(2.0, 0.9, n),
+    np.random.normal(2.0, 0.9, n)
+])
+
+X = np.vstack([X_pos, X_neg])
+y = np.array([1]*n + [-1]*n)
+
+def svm_soft_approx(X, y, C):
+    """
+    Aproximación del hiperplano SVM de margen suave para datos 2D.
+    Usa proyección sobre la dirección de la diferencia de medias,
+    escalada por C para simular el efecto del parámetro.
+    """
+    mu_pos = X[y == 1].mean(axis=0)
+    mu_neg = X[y == -1].mean(axis=0)
+    w_dir = mu_pos - mu_neg
+    w_dir = w_dir / np.linalg.norm(w_dir)
+
+    # La frontera pasa por el punto medio, ajustada por C
+    mid = (mu_pos + mu_neg) / 2.0
+
+    # Con C grande el margen es estrecho (parecido al margen duro)
+    # Con C pequeño se abre el margen
+    margin_scale = 1.0 / (1.0 + 0.3 * np.log1p(C))
+
+    b = -np.dot(w_dir, mid)
+    return w_dir, b, margin_scale
+
+C_values = [0.01, 0.1, 1.0, 10.0, 100.0]
+x_line = np.linspace(-1, 7, 300)
+
+frames = []
+for C in C_values:
+    w, b, ms = svm_soft_approx(X, y, C)
+    # Frontera: w[0]*x + w[1]*y + b = 0 => y = -(w[0]*x + b)/w[1]
+    y_hyp = -(w[0]*x_line + b) / w[1]
+    # Bandas de margen (±ms / ||w||, pero w ya está normalizado)
+    y_mp  = -(w[0]*x_line + b - ms) / w[1]
+    y_mn  = -(w[0]*x_line + b + ms) / w[1]
+
+    # Clasificar puntos
+    scores = X @ w + b
+    correct = (scores * y) >= 0
+    in_margin = (np.abs(scores) < ms) & correct
+    violated = ~correct
+
+    frame_data = [
+        # Región de margen
+        go.Scatter(
+            x=np.concatenate([x_line, x_line[::-1]]),
+            y=np.concatenate([y_mp, y_mn[::-1]]),
+            fill='toself',
+            fillcolor='rgba(150,150,150,0.15)',
+            line=dict(color='rgba(0,0,0,0)'),
+            name='Región de margen',
+            showlegend=True
+        ),
+        go.Scatter(x=x_line, y=y_mp, mode='lines',
+                   line=dict(color='#DD8452', dash='dash', width=1.5),
+                   name='Banda +1', showlegend=True),
+        go.Scatter(x=x_line, y=y_mn, mode='lines',
+                   line=dict(color='#4C72B0', dash='dash', width=1.5),
+                   name='Banda −1', showlegend=True),
+        go.Scatter(x=x_line, y=y_hyp, mode='lines',
+                   line=dict(color='#2c4f8c', width=2.5),
+                   name='Hiperplano', showlegend=True),
+        # Clase +1 correctos
+        go.Scatter(
+            x=X[y==1][correct[y==1], 0], y=X[y==1][correct[y==1], 1],
+            mode='markers', name='Clase +1',
+            marker=dict(color='#DD8452', size=9, symbol='square'),
+            showlegend=True
+        ),
+        # Clase -1 correctos
+        go.Scatter(
+            x=X[y==-1][correct[y==-1], 0], y=X[y==-1][correct[y==-1], 1],
+            mode='markers', name='Clase −1',
+            marker=dict(color='#4C72B0', size=9),
+            showlegend=True
+        ),
+        # Puntos violados
+        go.Scatter(
+            x=X[violated, 0], y=X[violated, 1],
+            mode='markers', name='Mal clasificados',
+            marker=dict(color='red', size=10, symbol='x', line=dict(width=2)),
+            showlegend=True
+        ),
+    ]
+    frames.append(go.Frame(data=frame_data, name=str(C)))
+
+# Figura inicial (C=1)
+w0, b0, ms0 = svm_soft_approx(X, y, 1.0)
+y_hyp0 = -(w0[0]*x_line + b0) / w0[1]
+y_mp0  = -(w0[0]*x_line + b0 - ms0) / w0[1]
+y_mn0  = -(w0[0]*x_line + b0 + ms0) / w0[1]
+scores0 = X @ w0 + b0
+correct0 = (scores0 * y) >= 0
+violated0 = ~correct0
+
+fig = go.Figure(
+    data=[
+        go.Scatter(
+            x=np.concatenate([x_line, x_line[::-1]]),
+            y=np.concatenate([y_mp0, y_mn0[::-1]]),
+            fill='toself', fillcolor='rgba(150,150,150,0.15)',
+            line=dict(color='rgba(0,0,0,0)'), name='Región de margen'
+        ),
+        go.Scatter(x=x_line, y=y_mp0, mode='lines',
+                   line=dict(color='#DD8452', dash='dash', width=1.5), name='Banda +1'),
+        go.Scatter(x=x_line, y=y_mn0, mode='lines',
+                   line=dict(color='#4C72B0', dash='dash', width=1.5), name='Banda −1'),
+        go.Scatter(x=x_line, y=y_hyp0, mode='lines',
+                   line=dict(color='#2c4f8c', width=2.5), name='Hiperplano'),
+        go.Scatter(x=X[y==1][correct0[y==1], 0], y=X[y==1][correct0[y==1], 1],
+                   mode='markers', name='Clase +1',
+                   marker=dict(color='#DD8452', size=9, symbol='square')),
+        go.Scatter(x=X[y==-1][correct0[y==-1], 0], y=X[y==-1][correct0[y==-1], 1],
+                   mode='markers', name='Clase −1',
+                   marker=dict(color='#4C72B0', size=9)),
+        go.Scatter(x=X[violated0, 0], y=X[violated0, 1],
+                   mode='markers', name='Mal clasificados',
+                   marker=dict(color='red', size=10, symbol='x', line=dict(width=2))),
+    ],
+    frames=frames
+)
+
+slider_steps = []
+for C in C_values:
+    slider_steps.append(dict(
+        args=[[str(C)], dict(frame=dict(duration=300), mode='immediate',
+                             transition=dict(duration=200))],
+        label=str(C),
+        method='animate'
+    ))
+
+fig.update_layout(
+    title='Efecto del parámetro C: trade-off margen vs errores de clasificación',
+    xaxis_title='Característica 1',
+    yaxis_title='Característica 2',
+    xaxis=dict(range=[-0.5, 6.5]),
+    yaxis=dict(range=[-0.5, 6.5]),
+    height=490,
+    template='plotly_white',
+    updatemenus=[dict(
+        type='buttons', showactive=False,
+        y=1.1, x=0.0, xanchor='left',
+        buttons=[
+            dict(label='▶ Animar', method='animate',
+                 args=[None, dict(frame=dict(duration=800), fromcurrent=True,
+                                  transition=dict(duration=400))]),
+            dict(label='⏸ Pausar', method='animate',
+                 args=[[None], dict(mode='immediate', frame=dict(duration=0),
+                                    transition=dict(duration=0))])
+        ]
+    )],
+    sliders=[dict(
+        currentvalue=dict(prefix='C = ', font=dict(size=14)),
+        steps=slider_steps,
+        pad=dict(t=50)
+    )],
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## El kernel trick
+
+### El problema de la no separabilidad lineal
+
+La SVM de margen duro y suave opera con hiperplanos: fronteras de decisión lineales en el espacio de características. Sin embargo, muchos problemas del mundo real tienen estructuras no lineales: dos clases pueden estar dispuestas en anillos concéntricos, en espirales, o en cualquier forma que ningún hiperplano puede separar.
+
+La solución clásica sería transformar los datos a un espacio de mayor dimensión donde sí sean linealmente separables. Si $\phi: \mathbb{R}^d \to \mathbb{R}^D$ es un mapeo a un espacio de dimensión $D \gg d$, entonces se aplicaría la SVM sobre los puntos transformados $\phi(\mathbf{x}_i)$. El problema es que si $D$ es muy grande (incluso infinito), calcular $\phi(\mathbf{x})$ explícitamente puede ser computacionalmente inviable.
+
+### El kernel trick: producto interno implícito
+
+La clave está en observar que la formulación dual de la SVM (@eq-svm-dual) y la función de decisión (@eq-svm-decision) dependen de los datos únicamente a través de productos internos $\mathbf{x}_i^\top \mathbf{x}_j$. Si se aplica el mapeo $\phi$, estos productos se convierten en $\phi(\mathbf{x}_i)^\top \phi(\mathbf{x}_j)$.
+
+Una **función kernel** es una función $K: \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$ que computa este producto interno de manera implícita:
+
+$$
+K(\mathbf{x}_i, \mathbf{x}_j) = \phi(\mathbf{x}_i)^\top \phi(\mathbf{x}_j)
+$$ {#eq-kernel-def}
+
+El kernel evalúa el producto interno en el espacio de alta dimensión sin necesidad de calcular $\phi(\mathbf{x})$ explícitamente. Basta con sustituir $\mathbf{x}_i^\top \mathbf{x}_j$ por $K(\mathbf{x}_i, \mathbf{x}_j)$ en todas las expresiones. Esto se conoce como el *kernel trick* [@scholkopf2002learning].
+
+### Kernels más utilizados
+
+**Kernel lineal:**
+
+$$
+K(\mathbf{x}_i, \mathbf{x}_j) = \mathbf{x}_i^\top \mathbf{x}_j
+$$
+
+Equivale a no hacer transformación alguna. Produce fronteras de decisión lineales en el espacio original.
+
+**Kernel polinomial:**
+
+$$
+K(\mathbf{x}_i, \mathbf{x}_j) = (\gamma\, \mathbf{x}_i^\top \mathbf{x}_j + r)^d
+$$
+
+Donde $d$ es el grado del polinomio, $\gamma > 0$ y $r \geq 0$. El mapeo implícito incluye todos los monomios de grado hasta $d$. Por ejemplo, con $d=2$ y $\mathbf{x} \in \mathbb{R}^2$, el espacio transformado incluye términos $x_1^2, x_2^2, x_1 x_2, x_1, x_2, 1$.
+
+**Kernel RBF (Gaussiano):**
+
+$$
+K(\mathbf{x}_i, \mathbf{x}_j) = \exp\!\left(-\gamma\,\|\mathbf{x}_i - \mathbf{x}_j\|^2\right)
+$$ {#eq-rbf-kernel}
+
+El parámetro $\gamma > 0$ controla el ancho del gaussiano. Este kernel corresponde a un mapeo a un espacio de dimensión infinita: su expansión en serie de Taylor genera todos los polinomios de todos los grados. Geométricamente, $K(\mathbf{x}_i, \mathbf{x}_j)$ mide la similitud entre dos puntos: vale 1 cuando son idénticos y decae a 0 conforme se alejan. El radio de influencia de cada punto de entrenamiento es $\sim 1/\sqrt{\gamma}$.
+
+**Kernel sigmoide:**
+
+$$
+K(\mathbf{x}_i, \mathbf{x}_j) = \tanh(\gamma\, \mathbf{x}_i^\top \mathbf{x}_j + r)
+$$
+
+Este kernel no cumple las condiciones de Mercer para todos los valores de $\gamma$ y $r$, lo que puede causar problemas numéricos en algunos casos.
+
+### Condición de Mercer
+
+No toda función simétrica puede ser un kernel válido. La **condición de Mercer** establece que $K$ es un kernel válido (positivo semidefinido) si y sólo si, para cualquier conjunto finito de puntos $\{\mathbf{x}_1, \dots, \mathbf{x}_n\}$, la matriz de Gram $\mathbf{K}$ con entradas $K_{ij} = K(\mathbf{x}_i, \mathbf{x}_j)$ es positiva semidefinida [@scholkopf2002learning]:
+
+$$
+\sum_{i=1}^n \sum_{j=1}^n c_i c_j K(\mathbf{x}_i, \mathbf{x}_j) \geq 0, \quad \forall\, c_i \in \mathbb{R}
+$$
+
+Esta condición garantiza que existe un mapeo $\phi$ tal que $K(\mathbf{x}_i, \mathbf{x}_j) = \phi(\mathbf{x}_i)^\top \phi(\mathbf{x}_j)$, y que el problema de optimización dual es cóncavo (tiene solución única).
+
+```{python}
+#| label: fig-kernel-transform
+#| fig-cap: "Transformación de datos no linealmente separables a un espacio de mayor dimensión. En el espacio original 1D (izquierda), los puntos de las dos clases se solapan. Tras el mapeo φ(x) = (x, x²) (derecha), los datos se vuelven linealmente separables en 2D."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(3)
+
+# Datos 1D no separables: clase +1 lejos del origen, clase -1 cerca
+x_neg = np.random.uniform(-1.0, 1.0, 20)          # clase -1: cerca del 0
+x_pos = np.concatenate([
+    np.random.uniform(-2.5, -1.2, 10),
+    np.random.uniform(1.2,  2.5, 10)
+])                                                  # clase +1: lejos del 0
+
+# Mapeo: phi(x) = (x, x^2)
+phi_neg = np.column_stack([x_neg, x_neg**2])
+phi_pos = np.column_stack([x_pos, x_pos**2])
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        'Espacio original ℝ¹ (no separable)',
+        'Espacio transformado ℝ² con φ(x)=(x, x²) (separable)'
+    ]
+)
+
+# Panel izquierdo: espacio 1D (mostrado con jitter en y)
+jitter_neg = np.random.uniform(-0.05, 0.05, len(x_neg))
+jitter_pos = np.random.uniform(-0.05, 0.05, len(x_pos))
+
+fig.add_trace(go.Scatter(
+    x=x_neg, y=jitter_neg,
+    mode='markers', name='Clase −1',
+    marker=dict(color='#4C72B0', size=10),
+    legendgroup='neg'
+), row=1, col=1)
+
+fig.add_trace(go.Scatter(
+    x=x_pos, y=jitter_pos,
+    mode='markers', name='Clase +1',
+    marker=dict(color='#DD8452', size=10, symbol='square'),
+    legendgroup='pos'
+), row=1, col=1)
+
+# Línea horizontal de referencia
+fig.add_trace(go.Scatter(
+    x=[-3, 3], y=[0, 0],
+    mode='lines', line=dict(color='gray', width=1),
+    showlegend=False
+), row=1, col=1)
+
+# Panel derecho: espacio 2D transformado
+fig.add_trace(go.Scatter(
+    x=phi_neg[:, 0], y=phi_neg[:, 1],
+    mode='markers', name='Clase −1 (φ)',
+    marker=dict(color='#4C72B0', size=10),
+    legendgroup='neg', showlegend=False
+), row=1, col=2)
+
+fig.add_trace(go.Scatter(
+    x=phi_pos[:, 0], y=phi_pos[:, 1],
+    mode='markers', name='Clase +1 (φ)',
+    marker=dict(color='#DD8452', size=10, symbol='square'),
+    legendgroup='pos', showlegend=False
+), row=1, col=2)
+
+# Hiperplano separador en el espacio transformado: y = 1.3 (línea horizontal)
+x_sep = np.linspace(-3, 3, 100)
+fig.add_trace(go.Scatter(
+    x=x_sep, y=np.full_like(x_sep, 1.3),
+    mode='lines', name='Hiperplano separador',
+    line=dict(color='#2c4f8c', width=2.5, dash='dash')
+), row=1, col=2)
+
+fig.update_xaxes(title_text='x', row=1, col=1)
+fig.update_yaxes(title_text='', showticklabels=False, row=1, col=1)
+fig.update_xaxes(title_text='φ₁(x) = x', row=1, col=2)
+fig.update_yaxes(title_text='φ₂(x) = x²', row=1, col=2)
+
+fig.update_layout(
+    height=430,
+    template='plotly_white',
+    title='El kernel trick: datos no separables en ℝ¹ → separables en ℝ²',
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## Efecto de los hiperparámetros C y γ (kernel RBF)
+
+Cuando se usa el kernel RBF (@eq-rbf-kernel), la SVM tiene dos hiperparámetros principales que deben ajustarse mediante validación cruzada [@hastie2009elements]:
+
+**Parámetro C (regularización):**
+
+- **C grande**: Se penalizan fuertemente los errores de clasificación. El modelo intenta clasificar correctamente casi todos los puntos de entrenamiento, lo que puede producir fronteras muy irregulares y sobreajuste.
+- **C pequeño**: Se permite más margen a cambio de tolerar más errores en entrenamiento. El modelo generaliza mejor en datos ruidosos.
+
+**Parámetro γ (ancho del kernel RBF):**
+
+- **γ grande**: El radio de influencia de cada punto de soporte es pequeño ($\sim 1/\sqrt{\gamma}$). La frontera de decisión se vuelve muy irregular, capturando la forma local de cada punto. Alto riesgo de sobreajuste.
+- **γ pequeño**: Cada punto de soporte influye sobre una región amplia. La frontera es suave. Alto riesgo de subajuste si γ es demasiado pequeño.
+
+La interacción entre C y γ es compleja: un C grande con un γ grande produce el modelo más complejo (muy propenso a sobreajuste). Un C pequeño con un γ pequeño produce el modelo más simple (frontera suave, posible subajuste).
+
+```{python}
+#| label: fig-svm-hyperparams
+#| fig-cap: "Efecto combinado de C y γ en la frontera de decisión SVM con kernel RBF. Cada cuadrante muestra una combinación diferente de hiperparámetros. La frontera se estima numéricamente desde la función de distancia al hiperplano aproximada."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(11)
+
+# Datos con estructura circular (moons sintético manual)
+n = 40
+theta_pos = np.random.uniform(0, np.pi, n)
+theta_neg = np.random.uniform(np.pi, 2*np.pi, n)
+
+X_pos = np.column_stack([
+    np.cos(theta_pos) + np.random.normal(0, 0.15, n),
+    np.sin(theta_pos) + np.random.normal(0, 0.15, n)
+])
+X_neg = np.column_stack([
+    np.cos(theta_neg) + 1 + np.random.normal(0, 0.15, n),
+    np.sin(theta_neg) - 0.3 + np.random.normal(0, 0.15, n)
+])
+
+X = np.vstack([X_pos, X_neg])
+y = np.array([1]*n + [-1]*n)
+
+def rbf_kernel(X1, X2, gamma):
+    diff = X1[:, None, :] - X2[None, :, :]
+    return np.exp(-gamma * np.sum(diff**2, axis=-1))
+
+def decision_function_approx(X_train, y_train, X_grid, C, gamma):
+    """
+    Aproximación de la función de decisión SVM con kernel RBF.
+    Usa pesos proporcionales a C y al kernel, simplificado para visualización.
+    """
+    K = rbf_kernel(X_train, X_train, gamma)
+    n_train = len(y_train)
+    # Pesos heurísticos: alpha_i proporcional a C, modulado por clase
+    alpha = np.minimum(C, 1.0) * np.ones(n_train)
+    # Función de decisión: suma ponderada de kernels
+    K_pred = rbf_kernel(X_grid, X_train, gamma)
+    f = K_pred @ (alpha * y_train)
+    # Normalizar
+    f = f / (np.max(np.abs(f)) + 1e-10)
+    return f
+
+# Grid de evaluación
+x1_range = np.linspace(-2, 3, 80)
+x2_range = np.linspace(-1.5, 1.5, 80)
+xx, yy = np.meshgrid(x1_range, x2_range)
+X_grid = np.column_stack([xx.ravel(), yy.ravel()])
+
+configs = [
+    (0.1, 0.5, 'C=0.1, γ=0.5\n(subajuste)'),
+    (10,  0.5, 'C=10, γ=0.5\n(equilibrado)'),
+    (0.1, 5.0, 'C=0.1, γ=5\n(margen amplio, local)'),
+    (10,  5.0, 'C=10, γ=5\n(sobreajuste)'),
+]
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=[c[2].replace('\n', ' — ') for c in configs],
+    horizontal_spacing=0.08,
+    vertical_spacing=0.12
+)
+
+positions = [(1,1),(1,2),(2,1),(2,2)]
+
+for idx, (C, gamma, title) in enumerate(configs):
+    row, col = positions[idx]
+    f = decision_function_approx(X, y, X_grid, C, gamma)
+    Z = f.reshape(xx.shape)
+
+    # Contorno de la frontera
+    fig.add_trace(go.Contour(
+        x=x1_range, y=x2_range, z=Z,
+        contours=dict(
+            start=0, end=0, size=0.01,
+            coloring='lines',
+            showlabels=False
+        ),
+        line=dict(color='#2c4f8c', width=2.5),
+        colorscale='RdBu',
+        showscale=False,
+        opacity=0.85,
+        name=f'Frontera C={C}, γ={gamma}'
+    ), row=row, col=col)
+
+    # Región coloreada suavemente
+    fig.add_trace(go.Contour(
+        x=x1_range, y=x2_range, z=Z,
+        contours=dict(start=-1, end=1, size=2),
+        colorscale=[
+            [0.0, 'rgba(76,114,176,0.18)'],
+            [0.5, 'rgba(255,255,255,0.0)'],
+            [1.0, 'rgba(221,132,82,0.18)']
+        ],
+        showscale=False,
+        line=dict(width=0)
+    ), row=row, col=col)
+
+    # Puntos
+    fig.add_trace(go.Scatter(
+        x=X_neg[:, 0], y=X_neg[:, 1],
+        mode='markers', showlegend=(idx == 0),
+        name='Clase −1',
+        marker=dict(color='#4C72B0', size=7)
+    ), row=row, col=col)
+    fig.add_trace(go.Scatter(
+        x=X_pos[:, 0], y=X_pos[:, 1],
+        mode='markers', showlegend=(idx == 0),
+        name='Clase +1',
+        marker=dict(color='#DD8452', size=7, symbol='square')
+    ), row=row, col=col)
+
+fig.update_layout(
+    title='Efecto de los hiperparámetros C y γ en la frontera de decisión (kernel RBF)',
+    height=520,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.08, xanchor='center', x=0.5)
+)
+for r in [1, 2]:
+    for c in [1, 2]:
+        fig.update_xaxes(title_text='Característica 1', row=r, col=c)
+        fig.update_yaxes(title_text='Característica 2', row=r, col=c)
+fig.show()
+```
+
+## Comparación de kernels en datos reales
+
+Un paso importante en la práctica es comparar diferentes kernels sobre los mismos datos para determinar cuál captura mejor la estructura subyacente. En datos con estructura circular o no lineal, el kernel lineal fracasará, mientras que el kernel RBF con parámetros adecuados puede lograr una separación casi perfecta [@bishop2006pattern].
+
+```{python}
+#| label: fig-kernel-comparison
+#| fig-cap: "Comparación de fronteras de decisión para cuatro kernels distintos en datos con estructura circular. El kernel lineal no puede separar datos con estructura no lineal. El kernel RBF captura la geometría circular. Los kernels polinomial y sigmoide ofrecen comportamientos intermedios."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(17)
+
+# Datos circulares: clase -1 en anillo interior, clase +1 en anillo exterior
+n = 45
+r_neg = np.random.uniform(0.0, 0.8, n)
+r_pos = np.random.uniform(1.2, 2.0, n)
+theta_neg = np.random.uniform(0, 2*np.pi, n)
+theta_pos = np.random.uniform(0, 2*np.pi, n)
+
+X_neg = np.column_stack([
+    r_neg * np.cos(theta_neg) + np.random.normal(0, 0.08, n),
+    r_neg * np.sin(theta_neg) + np.random.normal(0, 0.08, n)
+])
+X_pos = np.column_stack([
+    r_pos * np.cos(theta_pos) + np.random.normal(0, 0.08, n),
+    r_pos * np.sin(theta_pos) + np.random.normal(0, 0.08, n)
+])
+
+X = np.vstack([X_neg, X_pos])
+y = np.array([-1]*n + [1]*n)
+
+# Kernels
+def k_linear(X1, X2):
+    return X1 @ X2.T
+
+def k_poly(X1, X2, degree=3, gamma=1.0, r=1.0):
+    return (gamma * X1 @ X2.T + r)**degree
+
+def k_rbf(X1, X2, gamma=1.0):
+    diff = X1[:, None, :] - X2[None, :, :]
+    return np.exp(-gamma * np.sum(diff**2, axis=-1))
+
+def k_sigmoid(X1, X2, gamma=0.5, r=0.0):
+    return np.tanh(gamma * X1 @ X2.T + r)
+
+def decision_from_kernel(K_train, K_pred, y):
+    """Aproximación de la función de decisión desde la matriz kernel."""
+    alpha = np.ones(len(y))
+    f = K_pred @ (alpha * y)
+    return f / (np.max(np.abs(f)) + 1e-10)
+
+x1_range = np.linspace(-2.5, 2.5, 90)
+x2_range = np.linspace(-2.5, 2.5, 90)
+xx, yy = np.meshgrid(x1_range, x2_range)
+X_grid = np.column_stack([xx.ravel(), yy.ravel()])
+
+kernels = [
+    ('Lineal', lambda Xg: decision_from_kernel(k_linear(X, X), k_linear(Xg, X), y)),
+    ('Polinomial (d=3)', lambda Xg: decision_from_kernel(k_poly(X, X), k_poly(Xg, X), y)),
+    ('RBF (γ=1)', lambda Xg: decision_from_kernel(k_rbf(X, X, 1.0), k_rbf(Xg, X, 1.0), y)),
+    ('Sigmoide', lambda Xg: decision_from_kernel(k_sigmoid(X, X), k_sigmoid(Xg, X), y)),
+]
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=[k[0] for k in kernels],
+    horizontal_spacing=0.08,
+    vertical_spacing=0.12
+)
+
+for idx, (name, kernel_fn) in enumerate(kernels):
+    row = idx // 2 + 1
+    col = idx % 2 + 1
+
+    f = kernel_fn(X_grid)
+    Z = f.reshape(xx.shape)
+
+    fig.add_trace(go.Contour(
+        x=x1_range, y=x2_range, z=Z,
+        colorscale=[
+            [0.0, 'rgba(76,114,176,0.22)'],
+            [0.5, 'rgba(255,255,255,0.0)'],
+            [1.0, 'rgba(221,132,82,0.22)']
+        ],
+        contours=dict(start=-1, end=1, size=2),
+        showscale=False, line=dict(width=0)
+    ), row=row, col=col)
+
+    fig.add_trace(go.Contour(
+        x=x1_range, y=x2_range, z=Z,
+        contours=dict(start=0, end=0, size=0.01,
+                      coloring='lines', showlabels=False),
+        line=dict(color='#2c4f8c', width=2.5),
+        showscale=False
+    ), row=row, col=col)
+
+    fig.add_trace(go.Scatter(
+        x=X_neg[:, 0], y=X_neg[:, 1],
+        mode='markers', showlegend=(idx == 0),
+        name='Clase −1',
+        marker=dict(color='#4C72B0', size=7)
+    ), row=row, col=col)
+    fig.add_trace(go.Scatter(
+        x=X_pos[:, 0], y=X_pos[:, 1],
+        mode='markers', showlegend=(idx == 0),
+        name='Clase +1',
+        marker=dict(color='#DD8452', size=7, symbol='square')
+    ), row=row, col=col)
+
+fig.update_layout(
+    title='Comparación de kernels en datos con estructura circular',
+    height=520,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.08, xanchor='center', x=0.5)
+)
+for r in [1, 2]:
+    for c in [1, 2]:
+        fig.update_xaxes(title_text='Característica 1', row=r, col=c)
+        fig.update_yaxes(title_text='Característica 2', row=r, col=c)
+fig.show()
+```
+
+## SVM para regresión (SVR)
+
+Las ideas de las SVM se extienden naturalmente al problema de regresión mediante la **Support Vector Regression** (SVR) [@vapnik1995nature]. La diferencia fundamental respecto a la regresión lineal clásica es que la SVR no penaliza errores pequeños: introduce un margen de tolerancia $\varepsilon$ alrededor de la función de regresión, y sólo penaliza las predicciones que caen fuera de ese tubo.
+
+### El tubo ε-insensible
+
+La función de pérdida $\varepsilon$-insensible es:
+
+$$
+L_\varepsilon(y, f(\mathbf{x})) = \max(0,\, |y - f(\mathbf{x})| - \varepsilon)
+$$
+
+Esta función vale cero cuando el error de predicción es menor que $\varepsilon$, y crece linealmente con el error por encima de ese umbral. Geométricamente, define un **tubo** de ancho $2\varepsilon$ alrededor de la función de regresión: los puntos dentro del tubo no contribuyen a la función de pérdida.
+
+### Formulación primal de SVR
+
+Introduciendo variables de holgura $\xi_i^+, \xi_i^- \geq 0$ para las violaciones por encima y por debajo del tubo respectivamente, el problema de optimización es:
+
+$$
+\min_{\mathbf{w},\, b,\, \boldsymbol{\xi}^+,\, \boldsymbol{\xi}^-} \quad \frac{1}{2}\|\mathbf{w}\|^2 + C\sum_{i=1}^n (\xi_i^+ + \xi_i^-)
+$$
+
+$$
+\text{sujeto a} \quad y_i - f(\mathbf{x}_i) \leq \varepsilon + \xi_i^+
+$$
+
+$$
+f(\mathbf{x}_i) - y_i \leq \varepsilon + \xi_i^-
+$$
+
+$$
+\xi_i^+,\, \xi_i^- \geq 0
+$$
+
+donde $f(\mathbf{x}) = \mathbf{w}^\top \mathbf{x} + b$. Los **vectores de soporte en SVR** son los puntos que caen fuera o exactamente sobre el borde del tubo ($\xi_i^+ > 0$ o $\xi_i^- > 0$, o que satisfacen la igualdad). Igual que en clasificación, la solución es dispersa: sólo los vectores de soporte determinan $\mathbf{w}$.
+
+```{python}
+#| label: fig-svr
+#| fig-cap: "SVR con tubo ε-insensible. La función de regresión (línea azul) está rodeada por un tubo de ancho 2ε (región gris). Los puntos dentro del tubo no contribuyen a la pérdida. Los vectores de soporte (borde negro) son los puntos sobre o fuera del tubo. Se compara con la regresión lineal mínimo cuadrados (línea naranja punteada)."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(5)
+
+n = 40
+x = np.linspace(0, 10, n)
+y_true = 2.5 * np.sin(0.8 * x) + 0.5 * x
+noise = np.random.normal(0, 0.8, n)
+# Algunos outliers
+outlier_mask = np.random.choice(n, 4, replace=False)
+noise[outlier_mask] *= 4
+y = y_true + noise
+
+# SVR aproximada: función suavizada (media móvil ponderada por kernel RBF)
+def svr_predict(x_train, y_train, x_pred, gamma=0.3, C=1.0, eps=0.8):
+    """SVR aproximada usando suavizado por kernel."""
+    K = np.exp(-gamma * (x_train[:, None] - x_train[None, :])**2)
+    K_pred = np.exp(-gamma * (x_pred[:, None] - x_train[None, :])**2)
+    # Pesos: kernel ridge regression con regularización 1/C
+    alpha = np.linalg.solve(K + np.eye(len(x_train)) / C, y_train)
+    f = K_pred @ alpha
+    return f
+
+eps = 0.9
+x_fine = np.linspace(-0.2, 10.2, 300)
+y_svr = svr_predict(x, y, x_fine, gamma=0.4, C=2.0, eps=eps)
+
+# Regresión lineal mínimos cuadrados
+coeffs = np.polyfit(x, y, 1)
+y_ols = np.polyval(coeffs, x_fine)
+
+# Vectores de soporte: puntos fuera del tubo ε
+y_svr_train = svr_predict(x, y, x, gamma=0.4, C=2.0, eps=eps)
+residuals = np.abs(y - y_svr_train)
+sv_mask = residuals > eps * 0.95  # puntos sobre o fuera del tubo
+
+fig = go.Figure()
+
+# Tubo ε
+fig.add_trace(go.Scatter(
+    x=np.concatenate([x_fine, x_fine[::-1]]),
+    y=np.concatenate([y_svr + eps, (y_svr - eps)[::-1]]),
+    fill='toself',
+    fillcolor='rgba(44,79,140,0.12)',
+    line=dict(color='rgba(0,0,0,0)'),
+    name=f'Tubo ε = {eps}'
+))
+
+# Bordes del tubo
+fig.add_trace(go.Scatter(
+    x=x_fine, y=y_svr + eps,
+    mode='lines', line=dict(color='#4C72B0', dash='dash', width=1.2),
+    name='Borde superior (f + ε)'
+))
+fig.add_trace(go.Scatter(
+    x=x_fine, y=y_svr - eps,
+    mode='lines', line=dict(color='#4C72B0', dash='dash', width=1.2),
+    name='Borde inferior (f − ε)'
+))
+
+# Función SVR
+fig.add_trace(go.Scatter(
+    x=x_fine, y=y_svr,
+    mode='lines', line=dict(color='#2c4f8c', width=2.8),
+    name='SVR'
+))
+
+# Regresión lineal
+fig.add_trace(go.Scatter(
+    x=x_fine, y=y_ols,
+    mode='lines', line=dict(color='#DD8452', dash='dot', width=2),
+    name='Regresión lineal OLS'
+))
+
+# Puntos dentro del tubo
+fig.add_trace(go.Scatter(
+    x=x[~sv_mask], y=y[~sv_mask],
+    mode='markers', name='Dentro del tubo',
+    marker=dict(color='#4C72B0', size=8, opacity=0.7)
+))
+
+# Vectores de soporte
+fig.add_trace(go.Scatter(
+    x=x[sv_mask], y=y[sv_mask],
+    mode='markers', name='Vectores de soporte',
+    marker=dict(
+        color='#DD8452', size=11, symbol='circle',
+        line=dict(color='black', width=2.5)
+    )
+))
+
+fig.update_layout(
+    title='SVR con tubo ε-insensible vs Regresión lineal OLS',
+    xaxis_title='Variable independiente',
+    yaxis_title='Variable dependiente',
+    height=460,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## Aspectos computacionales
+
+### Complejidad del entrenamiento
+
+El entrenamiento de una SVM implica resolver un problema de programación cuadrática (QP) con $n$ variables ($\alpha_i$) y $n+1$ restricciones. Los algoritmos de QP de propósito general tienen complejidad $O(n^3)$ en tiempo y $O(n^2)$ en memoria debido a la necesidad de calcular y almacenar la matriz de Gram $\mathbf{K}$ de tamaño $n \times n$.
+
+Esto hace que las SVM estándar sean impracticables para $n > 10{,}000$ a $50{,}000$ puntos, dependiendo de la memoria disponible. Para $n$ grande, existen varias estrategias:
+
+- **SMO (Sequential Minimal Optimization)**: Algoritmo de Platt [@platt1999probabilistic] que descompone el problema QP en subproblemas de tamaño 2 que se resuelven analíticamente. Es el algoritmo más usado en implementaciones modernas como LIBSVM [@chang2011libsvm].
+- **Chunking y decomposición**: Divide el problema en subproblemas más pequeños, solucionando sólo los pares de variables con mayor violación de las condiciones KKT en cada iteración.
+- **Aproximaciones de bajo rango**: Métodos como Nyström o random features que aproximan la matriz kernel con una representación de rango bajo.
+
+### SMO (Sequential Minimal Optimization)
+
+El algoritmo SMO selecciona en cada iteración el par de multiplicadores $(\alpha_i, \alpha_j)$ que más viola las condiciones KKT. Dado que la restricción $\sum_i \alpha_i y_i = 0$ debe mantenerse, cambiar un solo $\alpha_i$ obliga a cambiar al menos otro. El subproblema de optimización para dos variables tiene solución analítica explícita:
+
+$$
+\alpha_j^{\text{nuevo}} = \alpha_j^{\text{viejo}} + \frac{y_j(E_i - E_j)}{\eta}
+$$
+
+donde $E_i = f(\mathbf{x}_i) - y_i$ es el error de clasificación del punto $i$, y $\eta = K_{ii} + K_{jj} - 2K_{ij}$.
+
+### Escalabilidad: SVM vs modelos lineales
+
+| Modelo | Entrenamiento | Predicción | Memoria |
+|--------|--------------|------------|---------|
+| SVM (kernel) | $O(n^2)$ a $O(n^3)$ | $O(n_{\text{sv}} \cdot d)$ | $O(n^2)$ |
+| SVM (lineal) | $O(n \cdot d)$ | $O(d)$ | $O(d)$ |
+| Regresión logística | $O(n \cdot d)$ | $O(d)$ | $O(d)$ |
+| Redes neuronales | Variable | $O(d \cdot \text{capas})$ | $O(\text{parámetros})$ |
+
+: Comparación de complejidad computacional {#tbl-complejidad}
+
+Para $n$ muy grande (millones de puntos), los modelos lineales como la regresión logística con regularización $\ell_2$ son preferibles. Las SVM con kernel son más competitivas cuando $n$ es moderado (miles) y la dimensión del espacio de características es alta.
+
+### Cuándo usar SVM
+
+Las SVM son especialmente adecuadas cuando:
+
+1. El número de características es alto respecto al número de muestras ($d \gg n$), como en clasificación de texto o genómica.
+2. Se busca una solución dispersa: sólo los vectores de soporte son necesarios.
+3. Los datos tienen una estructura de margen claro y el kernel captura bien la geometría.
+4. La memoria es limitada y no se pueden cargar todos los datos simultáneamente (implementaciones que usan sólo los vectores de soporte).
+
+## Ventajas y limitaciones
+
+::: {.callout-note appearance="minimal"}
+**Ventajas de las SVM**
+
+- **Efectivas en alta dimensión**: El principio de margen máximo no depende de la dimensión del espacio de entrada. Las SVM funcionan bien cuando $d \gg n$, lo que las hace populares en clasificación de texto y bioinformática.
+- **Robustez frente a sobreajuste**: El margen máximo actúa como una forma de regularización implícita. La complejidad efectiva del clasificador depende del margen, no de la dimensión.
+- **Solución global única**: El problema dual es estrictamente cóncavo (cuando el kernel es definido positivo), garantizando que la solución es única y global.
+- **Solución dispersa**: Sólo los vectores de soporte determinan la frontera. En la predicción, sólo se necesitan estos puntos.
+- **Flexibilidad mediante kernels**: El kernel trick permite capturar estructuras no lineales arbitrarias sin aumentar explícitamente la dimensión.
+- **Buena generalización cuando $n < d$**: En regímenes donde hay pocas muestras pero muchas características, las SVM suelen superar a redes neuronales.
+:::
+
+::: {.callout-warning appearance="minimal"}
+**Limitaciones de las SVM**
+
+- **Escala mal con $n$ grande**: La complejidad $O(n^2)$ a $O(n^3)$ hace que el entrenamiento sea lento para conjuntos de más de 50,000–100,000 puntos. Para grandes datos, métodos como regresión logística o redes neuronales con SGD son más prácticos.
+- **Elección del kernel y sus hiperparámetros**: La selección del kernel adecuado y el ajuste de $C$, $\gamma$ (y posiblemente $d$, $r$) requiere validación cruzada exhaustiva. Una mala elección puede llevar a un rendimiento muy pobre.
+- **No da probabilidades directamente**: La salida de la SVM es una función de decisión $f(\mathbf{x})$, no una probabilidad. Para obtener probabilidades se necesita calibración adicional (ver @sec-platt).
+- **Sensible a la escala de las características**: El kernel RBF y el kernel lineal son sensibles a las escalas relativas de las características. Es necesario estandarizar los datos antes de entrenar.
+- **Interpretabilidad limitada**: En espacios de alta dimensión con kernel no lineal, es difícil interpretar qué características son importantes para la decisión.
+- **Un solo umbral de decisión**: Las SVM son clasificadores binarios por naturaleza. Para problemas multiclase se necesitan estrategias como uno-contra-uno o uno-contra-todos.
+:::
+
+## Obtener probabilidades de SVM: calibración de Platt {#sec-platt}
+
+Una limitación práctica de las SVM es que no producen estimaciones de probabilidad directamente: la salida es una puntuación real $f(\mathbf{x}) = \mathbf{w}^\top \mathbf{x} + b$ (o su versión kernelizada), no una probabilidad $P(y=1 \mid \mathbf{x})$. En muchas aplicaciones —como sistemas de diagnóstico médico o modelos de riesgo— se necesita saber no sólo la clase predicha sino también la confianza en la predicción.
+
+### El método de calibración de Platt
+
+John Platt propuso en 1999 un método elegante para convertir las puntuaciones de la SVM en probabilidades calibradas [@platt1999probabilistic]. La idea es ajustar un modelo de regresión logística sobre las puntuaciones de la SVM:
+
+$$
+P(y = 1 \mid f(\mathbf{x})) = \frac{1}{1 + \exp(Af(\mathbf{x}) + B)}
+$$ {#eq-platt}
+
+donde $A$ y $B$ son parámetros que se estiman por máxima verosimilitud usando los scores $f(\mathbf{x}_i)$ y las etiquetas $y_i$. Para evitar sobreoptimismo, Platt recomienda usar **validación cruzada** para obtener los scores $f(\mathbf{x}_i)$: se entrena la SVM en un subconjunto y se obtienen los scores en los puntos dejados fuera.
+
+### Relación con la regresión logística
+
+La calibración de Platt transforma la SVM en algo conceptualmente similar a un clasificador probabilístico. De hecho, la regresión logística puede verse como una SVM "calibrada" desde el origen: en lugar de maximizar el margen de manera directa, minimiza la pérdida logística que es una aproximación suave de la pérdida de bisagra (*hinge loss*) usada en las SVM.
+
+La pérdida de bisagra de la SVM es:
+
+$$
+L_{\text{hinge}}(y, f(\mathbf{x})) = \max(0,\, 1 - y\, f(\mathbf{x}))
+$$
+
+La pérdida logística es:
+
+$$
+L_{\text{log}}(y, f(\mathbf{x})) = \log(1 + \exp(-y\, f(\mathbf{x})))
+$$
+
+Ambas penalizan las clasificaciones incorrectas, pero la pérdida logística es diferenciable en todas partes y produce estimaciones de probabilidad directamente. La pérdida de bisagra tiene gradiente cero para los puntos bien clasificados con margen suficiente, lo que explica por qué la solución SVM es dispersa.
+
+La calibración de Platt es un puente entre ambas perspectivas: usa la estructura de margen de la SVM (que es geométricamente óptima) y añade encima una capa logística para producir probabilidades bien calibradas.
+
+## Recomendaciones prácticas
+
+Al aplicar SVM a un problema real, las siguientes recomendaciones pueden mejorar significativamente los resultados [@chang2011libsvm; @hastie2009elements]:
+
+1. **Estandarizar las características**: Escalar cada característica a media cero y desviación estándar uno antes de entrenar. El kernel RBF depende de distancias euclídeas; sin estandarización, las características con mayor varianza dominarán.
+
+2. **Comenzar con el kernel RBF**: A menos que se sepa de antemano que los datos son linealmente separables, el kernel RBF con parámetros ajustados es un buen punto de partida. Es flexible, tiene pocos hiperparámetros y funciona bien en la mayoría de los casos.
+
+3. **Ajustar C y γ mediante validación cruzada en grid**: Explorar C en $\{10^{-3}, 10^{-2}, \dots, 10^3\}$ y $\gamma$ en $\{10^{-4}, \dots, 10^2\}$. Usar búsqueda en grid con 5-fold o 10-fold CV. El logaritmo de los parámetros es más informativo que la escala lineal.
+
+4. **Verificar la escala del problema**: Si $n > 50{,}000$, considerar alternativas más escalables como regresión logística con regularización $\ell_2$ (equivalente a la SVM lineal). Las SVM con kernel son difíciles de entrenar a esa escala.
+
+5. **Usar implementaciones eficientes**: LIBSVM [@chang2011libsvm] es la implementación de referencia, accesible desde Python vía `scikit-learn` (`SVC`, `SVR`). Para datos linealmente separables de gran escala, `LinearSVC` usa una formulación diferente (LIBLINEAR) que escala a millones de puntos.
+
+6. **Calibrar probabilidades si es necesario**: Si el problema requiere probabilidades (no sólo clases), activar la calibración de Platt (`probability=True` en scikit-learn, que usa CV interna) o usar `CalibratedClassifierCV`.
+
+7. **Considerar el desbalance de clases**: Si las clases están muy desbalanceadas, usar `class_weight='balanced'` que ajusta los parámetros $C$ de cada clase inversamente proporcional a su frecuencia.
+
+8. **Validar los vectores de soporte**: Un número muy alto de vectores de soporte (cercano a $n$) indica que el modelo está subajustando o que $C$ es demasiado pequeño. Un número muy bajo podría indicar sobreajuste si el error de generalización es alto.
+
+9. **Inspeccionar las curvas de aprendizaje**: Para diagnosticar sobreajuste vs subajuste, graficar el error de entrenamiento y validación en función del tamaño del conjunto de entrenamiento. Las SVM con kernel RBF frecuentemente tienen alta varianza con pocos datos y se benefician de más muestras.
+
+10. **Explorar SVR para regresión con outliers**: Cuando los datos de regresión contienen outliers, SVR con tubo $\varepsilon$ amplio es más robusto que la regresión por mínimos cuadrados, que asigna pérdida cuadrática a todos los residuos.
+
+## Referencias
+
+::: {#refs}
+:::
