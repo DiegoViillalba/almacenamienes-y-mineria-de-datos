@@ -1126,6 +1126,108 @@ $$
 
 Esta expresión tiene una lectura sencilla. El término $\log P(\omega_i)$ representa qué tan probable era la clase antes de observar el documento. La suma $\sum_{k=1}^{d}\log p(x_k\mid\omega_i)$ acumula la evidencia que aportan las características observadas. La clase elegida es aquella que obtiene la puntuación total más alta.
 
+```{python}
+#| label: fig-nb-independencia
+#| fig-cap: "Comparación geométrica entre el supuesto gaussiano general (QDA, covarianza completa) y Naïve Bayes gaussiano (covarianza diagonal). QDA permite elipses rotadas arbitrariamente; NB solo puede representar elipses alineadas con los ejes."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng = np.random.default_rng(7)
+
+# Datos con correlación entre variables
+cov_full = np.array([[1.2, 0.85], [0.85, 0.9]])
+cov_diag = np.diag(np.diag(cov_full))  # versión diagonal (NB)
+
+mu1 = np.array([-1.5, -1.0])
+mu2 = np.array([1.5,  1.0])
+
+X1 = rng.multivariate_normal(mu1, cov_full, 80)
+X2 = rng.multivariate_normal(mu2, cov_full, 80)
+
+def ellipse_points(mu, cov, n_std=2, n_pts=120):
+    """Elipse de confianza via descomposición espectral."""
+    vals, vecs = np.linalg.eigh(cov)
+    t = np.linspace(0, 2 * np.pi, n_pts)
+    circle = np.stack([np.cos(t), np.sin(t)], axis=1)
+    ellipse = circle @ (vecs * np.sqrt(vals) * n_std).T + mu
+    return ellipse[:, 0], ellipse[:, 1]
+
+def grid_posterior(X1, X2, cov, xlim, ylim, n=80):
+    """Probabilidad posterior P(clase 1 | x) en un grid 2D."""
+    def mvn(X, mu, cov):
+        D = X.shape[1]
+        diff = X - mu
+        inv_cov = np.linalg.inv(cov)
+        sign, logdet = np.linalg.slogdet(cov)
+        maha = np.einsum('ij,jk,ik->i', diff, inv_cov, diff)
+        return np.exp(-0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet))
+
+    xg = np.linspace(xlim[0], xlim[1], n)
+    yg = np.linspace(ylim[0], ylim[1], n)
+    Xg, Yg = np.meshgrid(xg, yg)
+    pts = np.c_[Xg.ravel(), Yg.ravel()]
+
+    mu1_ = X1.mean(axis=0)
+    mu2_ = X2.mean(axis=0)
+    p1 = mvn(pts, mu1_, cov)
+    p2 = mvn(pts, mu2_, cov)
+    post = p1 / (p1 + p2 + 1e-300)
+    return xg, yg, post.reshape(n, n)
+
+xlim = (-5, 5); ylim = (-5, 5)
+xg, yg, Z_full = grid_posterior(X1, X2, cov_full, xlim, ylim)
+xg, yg, Z_diag = grid_posterior(X1, X2, cov_diag, xlim, ylim)
+
+mu1_est = X1.mean(axis=0)
+mu2_est = X2.mean(axis=0)
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["QDA (covarianza completa)", "Naïve Bayes (covarianza diagonal)"]
+)
+
+for col, cov, Z, title in [(1, cov_full, Z_full, "QDA"), (2, cov_diag, Z_diag, "NB")]:
+    fig.add_trace(go.Contour(
+        x=xg, y=yg, z=Z,
+        colorscale=[[0, "#4C72B0"], [0.5, "white"], [1, "#DD8452"]],
+        opacity=0.40,
+        showscale=False,
+        contours=dict(showlines=True, start=0.1, end=0.9, size=0.2,
+                      coloring="fill")
+    ), row=1, col=col)
+
+    for X, mu_e, c_col, name in [
+        (X1, mu1_est, "#2563eb", "Clase 1"),
+        (X2, mu2_est, "#dc2626", "Clase 2")
+    ]:
+        fig.add_trace(go.Scatter(
+            x=X[:, 0], y=X[:, 1],
+            mode="markers",
+            marker=dict(color=c_col, size=5, opacity=0.55),
+            name=name, showlegend=(col == 1)
+        ), row=1, col=col)
+
+        ex, ey = ellipse_points(mu_e, cov if col == 1 else np.diag(np.diag(cov_full)))
+        fig.add_trace(go.Scatter(
+            x=ex, y=ey, mode="lines",
+            line=dict(color=c_col, width=2.2, dash="solid"),
+            showlegend=False
+        ), row=1, col=col)
+
+fig.update_layout(
+    title="Supuesto de independencia condicional: QDA vs Naïve Bayes",
+    template="plotly_white",
+    height=420,
+    legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="right", x=1)
+)
+fig.update_xaxes(range=xlim, title_text="x₁")
+fig.update_yaxes(range=ylim, title_text="x₂")
+fig.show()
+```
+
 ### Naïve Bayes multinomial para texto
 
 Una de las versiones más usadas en clasificación de documentos es Naïve Bayes multinomial. En este caso, cada documento se representa como un vector de conteos:
@@ -1211,6 +1313,69 @@ g_{\text{ham}}(\mathbf{x})
 $$
 
 Aunque la palabra `project` favorece a `ham`, las palabras `free` y `prize` favorecen a `spam`. El clasificador suma toda la evidencia y decide por la clase con mayor puntuación final.
+
+```{python}
+#| label: fig-nb-palabras
+#| fig-cap: "Verosimilitudes por clase para el ejemplo spam/ham. Las barras muestran P(palabra|clase) para cada término del vocabulario. Las palabras con mayor diferencia entre barras son las más discriminativas."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+palabras = ["free", "prize", "project", "meeting", "offer", "money", "update", "win"]
+p_spam = np.array([0.30, 0.25, 0.05, 0.03, 0.18, 0.22, 0.02, 0.15])
+p_ham  = np.array([0.05, 0.05, 0.30, 0.28, 0.06, 0.04, 0.20, 0.02])
+
+# Log-likelihood ratio como barra de fondo (discriminatividad)
+llr = np.log(p_spam / p_ham)
+
+fig = go.Figure()
+
+fig.add_trace(go.Bar(
+    name="P(palabra | spam)",
+    x=palabras, y=p_spam,
+    marker_color="#dc2626",
+    marker_line=dict(color="#7f1d1d", width=1),
+    opacity=0.85
+))
+
+fig.add_trace(go.Bar(
+    name="P(palabra | ham)",
+    x=palabras, y=p_ham,
+    marker_color="#2563eb",
+    marker_line=dict(color="#1e3a6e", width=1),
+    opacity=0.85
+))
+
+# Anotación de log-ratio sobre cada palabra
+for i, (palabra, ratio) in enumerate(zip(palabras, llr)):
+    color = "#dc2626" if ratio > 0 else "#2563eb"
+    symbol = "▲" if ratio > 0 else "▼"
+    fig.add_annotation(
+        x=palabra,
+        y=max(p_spam[i], p_ham[i]) + 0.015,
+        text=f"{symbol} {abs(ratio):.2f}",
+        showarrow=False,
+        font=dict(size=10, color=color),
+        yanchor="bottom"
+    )
+
+fig.update_layout(
+    title="Verosimilitudes por clase — ejemplo spam/ham",
+    xaxis_title="Palabra",
+    yaxis_title="P(palabra | clase)",
+    barmode="group",
+    template="plotly_white",
+    height=400,
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+    annotations=[dict(
+        x=0.5, y=-0.18, xref="paper", yref="paper",
+        text="▲/▼ = log P(spam)/P(ham). Positivo → favorece spam; negativo → favorece ham",
+        showarrow=False, font=dict(size=11, color="#64748b")
+    )]
+)
+fig.show()
+```
 
 ### Ejemplo en Python: Naïve Bayes para texto
 
@@ -1760,19 +1925,77 @@ Algunas herramientas útiles son:
 - pruebas de bondad de ajuste, como Kolmogorov--Smirnov, Shapiro--Wilk o pruebas basadas en $\chi^2$.
 
 ```{python}
+#| label: fig-qq-normal
+#| fig-cap: "Gráfico Q-Q comparando cuantiles empíricos de una muestra aleatoria contra cuantiles teóricos de una normal estándar. Los puntos sobre la línea diagonal indican buen ajuste gaussiano."
+#| code-fold: true
+
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy import stats
+import plotly.graph_objects as go
 
 rng = np.random.default_rng(123)
 x = rng.normal(loc=0, scale=1, size=300)
 
-stats.probplot(x, dist="norm", plot=plt)
-plt.title("Gráfico Q-Q frente a una normal estándar")
-plt.show()
+# Cuantiles teóricos y empíricos (implementación manual, sin scipy)
+n = len(x)
+x_sorted = np.sort(x)
+# Probabilidades usando la fórmula de Filliben (i-0.375)/(n+0.25)
+probs = (np.arange(1, n + 1) - 0.375) / (n + 0.25)
+# Cuantiles teóricos de N(0,1) usando la aproximación racional de Abramowitz & Stegun
+def norm_ppf(p):
+    """Aproximación del cuantil normal estándar para 0 < p < 1."""
+    p = np.clip(p, 1e-10, 1 - 1e-10)
+    sign = np.where(p < 0.5, -1.0, 1.0)
+    pp = np.where(p < 0.5, p, 1 - p)
+    t = np.sqrt(-2 * np.log(pp))
+    c0, c1, c2 = 2.515517, 0.802853, 0.010328
+    d1, d2, d3 = 1.432788, 0.189269, 0.001308
+    num = c0 + c1 * t + c2 * t**2
+    den = 1 + d1 * t + d2 * t**2 + d3 * t**3
+    return sign * (t - num / den)
 
-stat, p_value = stats.shapiro(x)
-print(f"Shapiro-Wilk statistic={stat:.3f}, p-value={p_value:.3f}")
+q_teoricos = norm_ppf(probs)
+
+# Línea de referencia: regresión sobre cuartiles Q1 y Q3
+q25_emp = np.percentile(x_sorted, 25)
+q75_emp = np.percentile(x_sorted, 75)
+q25_teo = norm_ppf(np.array([0.25]))[0]
+q75_teo = norm_ppf(np.array([0.75]))[0]
+slope = (q75_emp - q25_emp) / (q75_teo - q25_teo)
+intercept = q25_emp - slope * q25_teo
+ref_x = np.array([q_teoricos.min(), q_teoricos.max()])
+ref_y = intercept + slope * ref_x
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=q_teoricos, y=x_sorted,
+    mode="markers",
+    marker=dict(color="#2563eb", size=5, opacity=0.6,
+                line=dict(width=0.5, color="#1e3a6e")),
+    name="Cuantiles empíricos",
+    hovertemplate="Q teórico: %{x:.3f}<br>Q empírico: %{y:.3f}<extra></extra>"
+))
+
+fig.add_trace(go.Scatter(
+    x=ref_x, y=ref_y,
+    mode="lines",
+    line=dict(color="#dc2626", width=2, dash="dash"),
+    name="Línea de referencia"
+))
+
+fig.update_layout(
+    title="Gráfico Q-Q frente a la normal estándar",
+    xaxis_title="Cuantiles teóricos N(0,1)",
+    yaxis_title="Cuantiles empíricos",
+    template="plotly_white",
+    height=400,
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1)
+)
+fig.show()
+
+# Prueba de normalidad manual (estadístico de correlación de cuantiles)
+r_qq = float(np.corrcoef(q_teoricos, x_sorted)[0, 1])
+print(f"Correlación Q-Q (≈1 indica normalidad): r = {r_qq:.4f}")
 ```
 
 Una advertencia importante es que las pruebas de normalidad son sensibles al tamaño de muestra. Con muestras grandes pueden detectar desviaciones pequeñas sin relevancia práctica; con muestras pequeñas pueden carecer de potencia. Por ello, el diagnóstico debe vincularse con el objetivo de clasificación.
@@ -2075,6 +2298,76 @@ print("Minimum-risk decision:", "normal" if np.argmin(risks) == 0 else "enfermed
 ```
 
 El resultado muestra que la decisión de error mínimo puede ser “normal”, mientras que la decisión de riesgo mínimo puede ser “enfermedad” si el costo de no detectar la enfermedad es suficientemente alto. Esta diferencia es fundamental en sistemas de decisión sensibles al costo.
+
+```{python}
+#| label: fig-umbral-riesgo
+#| fig-cap: "Riesgo condicional de cada acción como función de la probabilidad posterior P(ω₂|x). La intersección de las dos curvas define el umbral óptimo de decisión bajo la matriz de pérdida especificada."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+# Matriz de pérdida: λ₁₂=6 (falso negativo), λ₂₁=1 (falso positivo)
+lam12 = 6.0  # costo de decidir "normal" cuando hay enfermedad
+lam21 = 1.0  # costo de decidir "enfermedad" cuando es normal
+
+post2 = np.linspace(0, 1, 300)  # P(ω₂|x)
+post1 = 1 - post2
+
+# R(α₁|x) = λ₁₂·P(ω₂|x)   → riesgo de decidir "normal"
+# R(α₂|x) = λ₂₁·P(ω₁|x)   → riesgo de decidir "enfermedad"
+R1 = lam12 * post2
+R2 = lam21 * post1
+
+# Umbral: R1 = R2  →  lam12·p2 = lam21·(1-p2)  →  p2* = lam21/(lam12+lam21)
+threshold = lam21 / (lam12 + lam21)
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=post2, y=R1,
+    mode="lines",
+    line=dict(color="#2563eb", width=2.5),
+    name="R(α₁|x) = decidir normal",
+    hovertemplate="P(ω₂|x)=%{x:.3f}<br>Riesgo=%{y:.3f}<extra></extra>"
+))
+
+fig.add_trace(go.Scatter(
+    x=post2, y=R2,
+    mode="lines",
+    line=dict(color="#dc2626", width=2.5),
+    name="R(α₂|x) = decidir enfermedad",
+    hovertemplate="P(ω₂|x)=%{x:.3f}<br>Riesgo=%{y:.3f}<extra></extra>"
+))
+
+# Región donde conviene α₁ (decidir normal)
+fig.add_vrect(x0=0, x1=threshold, fillcolor="#2563eb", opacity=0.07,
+              line_width=0, annotation_text="decidir normal",
+              annotation_position="top left",
+              annotation_font=dict(color="#2563eb", size=11))
+
+# Región donde conviene α₂ (decidir enfermedad)
+fig.add_vrect(x0=threshold, x1=1, fillcolor="#dc2626", opacity=0.07,
+              line_width=0, annotation_text="decidir enfermedad",
+              annotation_position="top right",
+              annotation_font=dict(color="#dc2626", size=11))
+
+# Umbral
+fig.add_vline(x=threshold, line_dash="dash", line_color="#475569", line_width=1.8,
+              annotation_text=f"p* = λ₂₁/(λ₁₂+λ₂₁) = {threshold:.3f}",
+              annotation_position="bottom right",
+              annotation_font=dict(size=11))
+
+fig.update_layout(
+    title=f"Riesgo condicional por acción (λ₁₂={lam12:.0f}, λ₂₁={lam21:.0f})",
+    xaxis_title="P(ω₂|x) — probabilidad posterior de enfermedad",
+    yaxis_title="Riesgo condicional R(αᵢ|x)",
+    template="plotly_white",
+    height=400,
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1)
+)
+fig.show()
+```
 
 ```{=html}
 <div id="risk-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">

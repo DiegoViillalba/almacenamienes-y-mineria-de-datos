@@ -1,0 +1,1212 @@
+---
+title: "Gradient Boosting y XGBoost"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar codigo"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_xgboost.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+XGBoost (*eXtreme Gradient Boosting*) fue propuesto por Chen y Guestrin en 2016 [@chen2016xgboost] y desde entonces ha dominado competencias de machine learning en Kaggle y otros benchmarks de referencia. Se trata de una implementacion regularizada y optimizada a segundo orden del algoritmo de gradient boosting [@friedman2001greedy], con innovaciones clave en la busqueda aproximada de particiones, el manejo eficiente de datos dispersos, y un diseno de sistema orientado a la escalabilidad. Este capitulo cubre los fundamentos matematicos del algoritmo, sus hiperparametros principales, la interpretacion de importancia de variables mediante SHAP, y la implementacion practica en Python.
+
+## De los arboles de decision al boosting
+
+### El problema del sesgo-varianza y los modelos individuales
+
+Un arbol de decision profundo tiene la capacidad de memorizar el conjunto de entrenamiento: al aumentar la profundidad, el modelo se ajusta cada vez mas a los datos observados y su varianza aumenta. Por el contrario, un arbol poco profundo (o un "tronco" de un solo nivel) introduce un sesgo alto porque su capacidad expresiva es limitada. Este dilema entre sesgo y varianza es central en el aprendizaje automatico y motiva el uso de metodos de ensamble.
+
+Los metodos de ensamble combinan multiples modelos debiles para obtener un modelo fuerte. En el caso del *bagging* (e.g., Random Forest [@breiman2001random]), los arboles se entrenan de forma independiente sobre muestras con reemplazo, y su prediccion se promedia para reducir la varianza. En el *boosting*, la estrategia es diferente: los modelos se construyen de manera secuencial, donde cada nuevo arbol aprende de los errores del ensamble anterior, reduciendo progresivamente el sesgo.
+
+```{python}
+#| label: fig-gb-sesgo-varianza
+#| fig-cap: "Ilustracion del compromiso sesgo-varianza para arboles de decision de distinta profundidad. Un arbol superficial (profundidad 1) presenta alto sesgo, mientras que uno muy profundo (profundidad 10) presenta alta varianza."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.tree import DecisionTreeRegressor
+
+rng = np.random.default_rng(42)
+n = 80
+X_raw = np.sort(rng.uniform(0, 2 * np.pi, n))
+y_raw = np.sin(X_raw) + rng.normal(0, 0.35, n)
+X_fit = X_raw.reshape(-1, 1)
+
+X_plot = np.linspace(0, 2 * np.pi, 300).reshape(-1, 1)
+
+profundidades = [1, 3, 10]
+titulos = [
+    "Arbol profundidad 1 (alto sesgo)",
+    "Arbol profundidad 3 (equilibrado)",
+    "Arbol profundidad 10 (alta varianza)"
+]
+
+fig = make_subplots(rows=1, cols=3, subplot_titles=titulos)
+
+for idx, (depth, titulo) in enumerate(zip(profundidades, titulos), start=1):
+    tree = DecisionTreeRegressor(max_depth=depth, random_state=0)
+    tree.fit(X_fit, y_raw)
+    y_pred = tree.predict(X_plot)
+
+    fig.add_trace(
+        go.Scatter(
+            x=X_raw, y=y_raw,
+            mode="markers",
+            marker=dict(color="#94a3b8", size=5),
+            name="Datos",
+            showlegend=(idx == 1)
+        ),
+        row=1, col=idx
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=X_plot.flatten(), y=y_pred,
+            mode="lines",
+            line=dict(color="#2563eb", width=2.5),
+            name="Prediccion",
+            showlegend=(idx == 1)
+        ),
+        row=1, col=idx
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=X_plot.flatten(), y=np.sin(X_plot.flatten()),
+            mode="lines",
+            line=dict(color="black", dash="dash", width=1.5),
+            name="Funcion verdadera",
+            showlegend=(idx == 1)
+        ),
+        row=1, col=idx
+    )
+
+fig.update_layout(
+    height=380,
+    template="plotly_white",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5)
+)
+fig.update_xaxes(title_text="x")
+fig.update_yaxes(title_text="y", col=1)
+fig.show()
+```
+
+La @fig-gb-sesgo-varianza muestra claramente como la profundidad del arbol determina el equilibrio entre sesgo y varianza. El arbol de profundidad 3 logra un ajuste razonable sin sobreajustar el ruido.
+
+### Boosting: aprendizaje secuencial de residuos
+
+El boosting construye un modelo aditivo de forma secuencial. Partiendo de una prediccion inicial constante:
+
+$$F_0(\mathbf{x}) = \underset{\gamma}{\mathrm{argmin}} \sum_{i=1}^{n} L(y_i, \gamma)$$ {#eq-f0}
+
+En cada iteracion $m = 1, \ldots, M$, se calcula el gradiente negativo (pseudoresiduos) de la funcion de perdida evaluada en la prediccion actual:
+
+$$r_i^{(m)} = -\left[\frac{\partial L(y_i, F(\mathbf{x}_i))}{\partial F(\mathbf{x}_i)}\right]_{F = F_{m-1}}$$ {#eq-pseudoresiduos}
+
+Luego se ajusta un modelo debil $h_m$ a estos pseudoresiduos, y se actualiza el ensamble:
+
+$$F_m(\mathbf{x}) = F_{m-1}(\mathbf{x}) + \eta \cdot h_m(\mathbf{x})$$ {#eq-actualizacion}
+
+donde $\eta \in (0, 1]$ es la tasa de aprendizaje o *shrinkage*. Para la perdida cuadratica $L(y, F) = \tfrac{1}{2}(y - F)^2$, el gradiente negativo es simplemente el residuo ordinario $r_i = y_i - F_{m-1}(\mathbf{x}_i)$. Esto significa que el algoritmo ajusta iterativamente los errores del ensamble: cada nuevo arbol aprende lo que el ensamble anterior no pudo capturar.
+
+::: {.callout-note appearance="minimal"}
+**Gradient Boosting (version simplificada)**
+
+1. Inicializar $F_0(\mathbf{x}) = \bar{y}$ (media de la variable objetivo).
+2. Para $m = 1, \ldots, M$:
+   - Calcular residuos $r_i^{(m)} = y_i - F_{m-1}(\mathbf{x}_i)$.
+   - Ajustar un arbol debil $h_m$ a $\{(\mathbf{x}_i, r_i^{(m)})\}_{i=1}^n$.
+   - Actualizar $F_m(\mathbf{x}) = F_{m-1}(\mathbf{x}) + \eta \cdot h_m(\mathbf{x})$.
+3. Devolver $F_M(\mathbf{x})$.
+:::
+
+La siguiente figura ilustra la convergencia del algoritmo de gradient boosting implementado desde cero, sin usar XGBoost.
+
+```{python}
+#| label: fig-gb-pasos
+#| fig-cap: "Convergencia iterativa del gradient boosting sobre un problema de regresion 1D. Cada frame muestra la prediccion acumulada del ensamble (azul) y los residuos actuales (naranja) luego de agregar M arboles."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng2 = np.random.default_rng(7)
+n2 = 60
+X2 = np.sort(rng2.uniform(0, 2 * np.pi, n2)).reshape(-1, 1)
+y2 = np.sin(X2.flatten()) + rng2.normal(0, 0.3, n2)
+X_line = np.linspace(0, 2 * np.pi, 300).reshape(-1, 1)
+y_true_line = np.sin(X_line.flatten())
+
+
+class Stump:
+    def fit(self, X, r):
+        best_feat, best_thr, best_loss = 0, 0, float("inf")
+        for feat in range(X.shape[1]):
+            thresholds = np.unique(X[:, feat])
+            for thr in thresholds:
+                left = r[X[:, feat] <= thr]
+                right = r[X[:, feat] > thr]
+                if len(left) == 0 or len(right) == 0:
+                    continue
+                loss = np.sum((left - left.mean()) ** 2) + np.sum((right - right.mean()) ** 2)
+                if loss < best_loss:
+                    best_loss = loss
+                    best_feat, best_thr = feat, thr
+                    self.val_left, self.val_right = left.mean(), right.mean()
+        self.feat, self.thr = best_feat, best_thr
+
+    def predict(self, X):
+        return np.where(X[:, self.feat] <= self.thr, self.val_left, self.val_right)
+
+
+eta = 0.5
+M_max = 20
+stumps = []
+F_current = np.full(n2, y2.mean())
+
+snapshots = {}
+rondas = [1, 2, 3, 5, 10, 20]
+
+for m in range(1, M_max + 1):
+    residuos = y2 - F_current
+    stump = Stump()
+    stump.fit(X2, residuos)
+    stumps.append(stump)
+    F_current = F_current + eta * stump.predict(X2)
+    if m in rondas:
+        F_line = np.full(300, y2.mean())
+        for s in stumps:
+            F_line = F_line + eta * s.predict(X_line)
+        snapshots[m] = {
+            "F_line": F_line.copy(),
+            "residuos": (y2 - F_current).copy()
+        }
+
+frames = []
+for m in rondas:
+    snap = snapshots[m]
+    frame = go.Frame(
+        data=[
+            go.Scatter(
+                x=X2.flatten(), y=y2,
+                mode="markers",
+                marker=dict(color="#94a3b8", size=6),
+                name="Datos"
+            ),
+            go.Scatter(
+                x=X_line.flatten(), y=y_true_line,
+                mode="lines",
+                line=dict(color="black", dash="dash", width=1.5),
+                name="Funcion verdadera"
+            ),
+            go.Scatter(
+                x=X_line.flatten(), y=snap["F_line"],
+                mode="lines",
+                line=dict(color="#2563eb", width=2.5),
+                name="Prediccion F_m"
+            ),
+            go.Scatter(
+                x=X2.flatten(), y=snap["residuos"],
+                mode="markers",
+                marker=dict(color="#f97316", size=6, symbol="diamond"),
+                name="Residuos"
+            )
+        ],
+        name=str(m)
+    )
+    frames.append(frame)
+
+snap0 = snapshots[1]
+fig2 = go.Figure(
+    data=[
+        go.Scatter(x=X2.flatten(), y=y2, mode="markers",
+                   marker=dict(color="#94a3b8", size=6), name="Datos"),
+        go.Scatter(x=X_line.flatten(), y=y_true_line, mode="lines",
+                   line=dict(color="black", dash="dash", width=1.5), name="Funcion verdadera"),
+        go.Scatter(x=X_line.flatten(), y=snap0["F_line"], mode="lines",
+                   line=dict(color="#2563eb", width=2.5), name="Prediccion F_m"),
+        go.Scatter(x=X2.flatten(), y=snap0["residuos"], mode="markers",
+                   marker=dict(color="#f97316", size=6, symbol="diamond"), name="Residuos")
+    ],
+    frames=frames
+)
+
+steps = []
+for m in rondas:
+    step = dict(
+        method="animate",
+        args=[[str(m)], {"frame": {"duration": 600, "redraw": True}, "mode": "immediate"}],
+        label=str(m)
+    )
+    steps.append(step)
+
+fig2.update_layout(
+    template="plotly_white",
+    height=440,
+    xaxis_title="x",
+    yaxis_title="y",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+    sliders=[dict(
+        active=0,
+        currentvalue=dict(prefix="M = ", font=dict(size=14)),
+        pad=dict(t=50),
+        steps=steps
+    )],
+    updatemenus=[dict(
+        type="buttons",
+        showactive=False,
+        y=1.1, x=0.5, xanchor="center",
+        buttons=[
+            dict(label="Reproducir", method="animate",
+                 args=[None, {"frame": {"duration": 800, "redraw": True}, "fromcurrent": True}]),
+            dict(label="Pausar", method="animate",
+                 args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
+        ]
+    )]
+)
+fig2.show()
+```
+
+Observando la @fig-gb-pasos se aprecia como los residuos (puntos naranjas) se reducen progresivamente a medida que se agregan mas arboles al ensamble, y la curva de prediccion (azul) se acerca a la funcion verdadera (linea discontinua negra).
+
+Un aspecto fundamental del boosting es que la tasa de aprendizaje $\eta$ en la @eq-actualizacion actua como un regulador de la velocidad de convergencia. Con $\eta = 1$ el algoritmo intenta corregir completamente los errores en cada paso, lo que puede llevar a sobreajuste rapido. Con $\eta$ pequeno se necesitan mas iteraciones pero el modelo final suele generalizar mejor. Este efecto se conoce como *shrinkage* [@friedman2002stochastic] y es uno de los mecanismos de regularizacion implicitos del boosting.
+
+El gradient boosting en su forma general (@eq-pseudoresiduos) puede verse como un descenso de gradiente funcional: en lugar de actualizar los parametros de un modelo parametrico en el espacio euclidiano, se actualiza la funcion de prediccion en el espacio funcional. Cada nuevo arbol debil $h_m$ es el "paso de gradiente" que mas reduce la perdida esperada. Esta perspectiva, formalizada por @friedman2001greedy, unifica una amplia familia de algoritmos de aprendizaje bajo un unico marco matematico.
+
+## El objetivo de XGBoost
+
+### Modelo aditivo y funcion objetivo regularizada
+
+XGBoost construye el modelo de forma aditiva:
+
+$$\hat{y}_i^{(t)} = \sum_{k=1}^{t} f_k(\mathbf{x}_i), \quad f_k \in \mathcal{F}$$ {#eq-modelo-aditivo}
+
+donde $\mathcal{F}$ es el espacio de arboles de regresion. En cada ronda $t$, se busca el arbol $f_t$ que minimiza el objetivo regularizado:
+
+$$\text{Obj}^{(t)} = \sum_{i=1}^{n} l\!\left(y_i,\, \hat{y}_i^{(t-1)} + f_t(\mathbf{x}_i)\right) + \Omega(f_t) + \text{constante}$$ {#eq-objetivo}
+
+La regularizacion $\Omega$ penaliza tanto el numero de hojas como la magnitud de los pesos:
+
+$$\Omega(f) = \gamma T + \frac{1}{2}\lambda\|\mathbf{w}\|^2$$ {#eq-regularizacion}
+
+donde $T$ es el numero de hojas del arbol $f_t$ y $\mathbf{w}$ son los pesos de las hojas. El parametro $\gamma$ controla la poda (un arbol solo se expande si la ganancia supera $\gamma$) y $\lambda$ regula el tamano de los pesos mediante regularizacion L2.
+
+::: {.callout-note appearance="minimal"}
+**Innovacion clave de XGBoost:** A diferencia del gradient boosting clasico [@friedman2001greedy], XGBoost incluye explicitamente la regularizacion en el objetivo de optimizacion y utiliza informacion de segundo orden (el hessiano) para encontrar pesos optimos de forma analitica, lo que conduce a una convergencia mas rapida y modelos mas robustos.
+:::
+
+### Aproximacion de Taylor de segundo orden
+
+Para poder optimizar el objetivo de la @eq-objetivo eficientemente, XGBoost aplica una expansion de Taylor de segundo orden alrededor de $\hat{y}_i^{(t-1)}$:
+
+$$l\!\left(y_i, \hat{y}_i^{(t-1)} + f_t\right) \approx l\!\left(y_i, \hat{y}_i^{(t-1)}\right) + g_i f_t(\mathbf{x}_i) + \frac{1}{2} h_i f_t^2(\mathbf{x}_i)$$ {#eq-taylor}
+
+donde se definen:
+
+$$g_i = \frac{\partial\, l(y_i, \hat{y}^{(t-1)})}{\partial\, \hat{y}^{(t-1)}} \quad \text{(gradiente de primer orden)}$$ {#eq-gradiente}
+
+$$h_i = \frac{\partial^2\, l(y_i, \hat{y}^{(t-1)})}{\partial\, (\hat{y}^{(t-1)})^2} \quad \text{(hessiano — curvatura local)}$$ {#eq-hessiano}
+
+Descartando los terminos constantes respecto a $f_t$, el objetivo simplificado es:
+
+$$\tilde{\text{Obj}}^{(t)} = \sum_{i=1}^{n}\left[g_i f_t(\mathbf{x}_i) + \frac{1}{2}h_i f_t^2(\mathbf{x}_i)\right] + \gamma T + \frac{1}{2}\lambda\sum_{j=1}^{T}w_j^2$$ {#eq-objetivo-simplificado}
+
+Esta aproximacion cuadratica es exacta para la perdida cuadratica y una buena aproximacion local para cualquier perdida dos veces diferenciable, lo que hace a XGBoost aplicable a una amplia variedad de problemas (regresion, clasificacion, ranking, etc.).
+
+```{python}
+#| label: fig-xgb-taylor
+#| fig-cap: "Aproximacion de Taylor de segundo orden de la funcion de perdida. Panel izquierdo: curva de perdida real (negro), aproximacion lineal (naranja) y aproximacion cuadratica (azul) alrededor del punto de expansion F=-0.3. Panel derecho: contribucion cuadratica al objetivo en funcion del cambio Delta, con el optimo analitico senalado."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+y_obs = 1.0
+F0 = -0.3
+
+F_vals = np.linspace(-2.0, 2.5, 400)
+loss_true = 0.5 * (y_obs - F_vals) ** 2
+
+g_i = -(y_obs - F0)
+h_i = 1.0
+
+loss_linear = 0.5 * (y_obs - F0) ** 2 + g_i * (F_vals - F0)
+loss_quadratic = 0.5 * (y_obs - F0) ** 2 + g_i * (F_vals - F0) + 0.5 * h_i * (F_vals - F0) ** 2
+
+lam = 1.0
+delta_vals = np.linspace(-3.0, 3.0, 400)
+obj_delta = g_i * delta_vals + 0.5 * (h_i + lam) * delta_vals ** 2
+delta_opt = -g_i / (h_i + lam)
+obj_opt = g_i * delta_opt + 0.5 * (h_i + lam) * delta_opt ** 2
+
+fig3 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "Curva de perdida y aproximacion de Taylor",
+        "Contribucion cuadratica al objetivo (con lambda)"
+    ]
+)
+
+fig3.add_trace(
+    go.Scatter(x=F_vals, y=loss_true, mode="lines",
+               line=dict(color="black", width=2.5),
+               name="Perdida real L(y, F)"),
+    row=1, col=1
+)
+fig3.add_trace(
+    go.Scatter(x=F_vals, y=loss_linear, mode="lines",
+               line=dict(color="#f97316", width=1.8, dash="dot"),
+               name="Aprox. lineal (1er orden)"),
+    row=1, col=1
+)
+fig3.add_trace(
+    go.Scatter(x=F_vals, y=loss_quadratic, mode="lines",
+               line=dict(color="#2563eb", width=2.0, dash="dash"),
+               name="Aprox. cuadratica (2do orden)"),
+    row=1, col=1
+)
+fig3.add_trace(
+    go.Scatter(x=[F0], y=[0.5 * (y_obs - F0) ** 2],
+               mode="markers",
+               marker=dict(color="red", size=10, symbol="circle"),
+               name="Punto de expansion F_0"),
+    row=1, col=1
+)
+
+fig3.add_trace(
+    go.Scatter(x=delta_vals, y=obj_delta, mode="lines",
+               line=dict(color="#2563eb", width=2.5),
+               name="g*Delta + (1/2)(h+lambda)*Delta^2",
+               showlegend=True),
+    row=1, col=2
+)
+fig3.add_trace(
+    go.Scatter(
+        x=[delta_opt, delta_opt],
+        y=[obj_delta.min() - 0.3, obj_delta.max()],
+        mode="lines",
+        line=dict(color="red", dash="dash", width=1.8),
+        name="Delta* optimo = -g/(h+lambda)"
+    ),
+    row=1, col=2
+)
+fig3.add_trace(
+    go.Scatter(x=[delta_opt], y=[obj_opt],
+               mode="markers",
+               marker=dict(color="red", size=10),
+               name="Minimo analitico",
+               showlegend=False),
+    row=1, col=2
+)
+fig3.add_annotation(
+    x=delta_opt, y=obj_opt - 0.5,
+    text=f"Delta* = {delta_opt:.2f}",
+    showarrow=True, arrowhead=2,
+    font=dict(size=12, color="red"),
+    row=1, col=2
+)
+
+fig3.update_xaxes(title_text="F (prediccion)", row=1, col=1)
+fig3.update_yaxes(title_text="Perdida L(y, F)", row=1, col=1)
+fig3.update_xaxes(title_text="Delta (cambio en prediccion)", row=1, col=2)
+fig3.update_yaxes(title_text="Contribucion al objetivo", row=1, col=2)
+fig3.update_layout(
+    height=420,
+    template="plotly_white",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5)
+)
+fig3.show()
+```
+
+La @fig-xgb-taylor ilustra por que la aproximacion cuadratica es util: permite encontrar el cambio optimo $\Delta^* = -g_i / (h_i + \lambda)$ de forma analitica, sin necesidad de busqueda iterativa. XGBoost utiliza exactamente esta idea para calcular el peso optimo de cada hoja.
+
+### Pesos optimos de las hojas
+
+Agrupando las muestras por hoja $j$ (donde $I_j = \{i : q(\mathbf{x}_i) = j\}$ es el conjunto de indices de la hoja $j$), el objetivo simplificado se puede reescribir como:
+
+$$\tilde{\text{Obj}}^{(t)} = \sum_{j=1}^{T}\left[\left(\sum_{i\in I_j}g_i\right)w_j + \frac{1}{2}\left(\sum_{i\in I_j}h_i + \lambda\right)w_j^2\right] + \gamma T$$ {#eq-objetivo-hojas}
+
+Definiendo $G_j = \sum_{i\in I_j} g_i$ y $H_j = \sum_{i\in I_j} h_i$, y minimizando respecto a $w_j$, se obtiene el peso optimo:
+
+$$w_j^* = -\frac{G_j}{H_j + \lambda}$$ {#eq-peso-optimo}
+
+Sustituyendo en el objetivo:
+
+$$\text{Obj}^* = -\frac{1}{2}\sum_{j=1}^{T}\frac{G_j^2}{H_j + \lambda} + \gamma T$$ {#eq-objetivo-optimo}
+
+Este valor sirve como puntuacion de la estructura del arbol: cuanto mas negativo sea, mejor es el arbol. Notese que $\lambda > 0$ reduce la magnitud de los pesos y tiene un efecto regularizador directo, ya que $|w_j^*|$ decrece con $\lambda$.
+
+### Ganancia de una particion
+
+Para decidir si realizar una division, XGBoost compara el objetivo antes y despues de la particion. Si un nodo padre $P$ se divide en hijos izquierdo $L$ y derecho $R$, la ganancia de la division es:
+
+$$\text{Gain} = \frac{1}{2}\left[\frac{G_L^2}{H_L+\lambda} + \frac{G_R^2}{H_R+\lambda} - \frac{G_P^2}{H_P+\lambda}\right] - \gamma$$ {#eq-ganancia}
+
+Si $\text{Gain} \leq 0$, la division se rechaza (poda). El termino $-\gamma$ penaliza la complejidad del arbol: un $\gamma$ mayor hace que solo se acepten divisiones con mejoras sustanciales.
+
+```{python}
+#| label: fig-xgb-ganancia
+#| fig-cap: "Ganancia de particion en funcion del umbral para un conjunto de datos sintetico 1D. La linea discontinua roja marca el umbral optimo (maxima ganancia). La linea horizontal gris indica Gain=0, umbral de poda cuando gamma=0."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng3 = np.random.default_rng(21)
+n3 = 150
+X3 = np.sort(rng3.uniform(0, 10, n3))
+y3 = 2.0 * np.sin(X3 * 0.8) + rng3.normal(0, 0.5, n3)
+
+F_prev = np.full(n3, y3.mean())
+g_vals = -(y3 - F_prev)
+h_vals = np.ones(n3)
+
+lam3 = 1.0
+G_total = g_vals.sum()
+H_total = h_vals.sum()
+score_parent = G_total ** 2 / (H_total + lam3)
+
+thresholds = np.unique(X3)[1:-1]
+gains = []
+
+for thr in thresholds:
+    left_mask = X3 <= thr
+    right_mask = ~left_mask
+    G_L = g_vals[left_mask].sum()
+    H_L = h_vals[left_mask].sum()
+    G_R = g_vals[right_mask].sum()
+    H_R = h_vals[right_mask].sum()
+    if H_L + lam3 <= 0 or H_R + lam3 <= 0:
+        gains.append(float("nan"))
+        continue
+    gain = 0.5 * (G_L ** 2 / (H_L + lam3) + G_R ** 2 / (H_R + lam3) - score_parent)
+    gains.append(gain)
+
+gains = np.array(gains)
+best_idx = np.nanargmax(gains)
+best_thr = thresholds[best_idx]
+best_gain = gains[best_idx]
+
+fig4 = go.Figure()
+
+fig4.add_trace(go.Scatter(
+    x=thresholds, y=gains,
+    mode="lines",
+    fill="tozeroy",
+    fillcolor="rgba(37, 99, 235, 0.15)",
+    line=dict(color="#2563eb", width=2.0),
+    name="Ganancia"
+))
+fig4.add_trace(go.Scatter(
+    x=[best_thr, best_thr],
+    y=[gains.min() - 0.5, best_gain],
+    mode="lines",
+    line=dict(color="red", dash="dash", width=2.0),
+    name=f"Umbral optimo = {best_thr:.2f}"
+))
+fig4.add_trace(go.Scatter(
+    x=[thresholds.min(), thresholds.max()],
+    y=[0, 0],
+    mode="lines",
+    line=dict(color="gray", dash="dash", width=1.5),
+    name="Gain = 0 (poda)"
+))
+fig4.add_annotation(
+    x=best_thr, y=best_gain + 0.3,
+    text=f"Optimo: thr={best_thr:.2f}, Gain={best_gain:.2f}",
+    showarrow=True, arrowhead=2,
+    font=dict(size=12, color="red")
+)
+fig4.update_layout(
+    template="plotly_white",
+    height=400,
+    xaxis_title="Umbral de particion",
+    yaxis_title="Ganancia",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
+)
+fig4.show()
+```
+
+La @fig-xgb-ganancia muestra como la ganancia varia en funcion del umbral de corte. El algoritmo busca el umbral que maximiza esta funcion en cada nivel del arbol. Cuando $\gamma > 0$, cualquier ganancia por debajo de ese valor lleva a rechazar la particion.
+
+### Busqueda aproximada de particiones (*Approximate Split Finding*)
+
+Un aspecto crucial del diseno de XGBoost es que la busqueda exacta del mejor umbral (recorriendo todos los valores unicos de cada variable) puede ser prohibitivamente costosa para conjuntos de datos grandes. Para abordar esto, @chen2016xgboost proponen un algoritmo de busqueda aproximada basado en quantiles ponderados.
+
+La idea es proponer un conjunto reducido de candidatos de particion $\mathcal{S}_k = \{s_{k1}, s_{k2}, \ldots, s_{kl}\}$ para cada variable $k$, utilizando los quantiles de la distribucion de la variable ponderada por los hessianos $h_i$:
+
+$$\text{rank}_k(z) = \frac{\sum_{(x,h): x_k < z} h}{\sum_{(x,h)} h}$$ {#eq-rank}
+
+Los candidatos se seleccionan tal que $|\text{rank}_k(s_{k,j}) - \text{rank}_k(s_{k,j+1})| \leq \varepsilon$, donde $\varepsilon$ controla el numero aproximado de candidatos: $\approx 1/\varepsilon$ por variable. Esto garantiza que el error de aproximacion respecto a la solucion exacta esta acotado.
+
+El uso de los hessianos $h_i$ como pesos en la distribucion de quantiles no es arbitrario: las observaciones con mayor hessiano (mayor curvatura de la perdida) tienen mas influencia en la seleccion de los puntos de corte, lo que dirige la busqueda hacia las regiones del espacio de caracteristicas donde la ganancia potencial es mayor.
+
+::: {.callout-note appearance="minimal"}
+**Sparsity-awareness (manejo de datos dispersos)**
+
+XGBoost aprende automaticamente la *direccion por defecto* para los valores faltantes o cero en cada nodo. Durante el entrenamiento, solo se evaluan los valores no faltantes para cada variable; los valores faltantes se asignan a la rama que minimiza el objetivo. Esto hace que XGBoost sea nativamente compatible con matrices dispersas sin necesidad de imputacion previa, una ventaja practica significativa en aplicaciones reales [@chen2016xgboost].
+:::
+
+## Hiperparametros principales
+
+XGBoost expone numerosos hiperparametros que permiten controlar la capacidad del modelo, la regularizacion, el subsampling y la velocidad de convergencia. La siguiente tabla resume los mas importantes.
+
+Desde la perspectiva del aprendizaje estadistico, los hiperparametros pueden agruparse en tres categorias conceptuales:
+
+1. **Capacidad del modelo:** `max_depth`, `n_estimators`, `min_child_weight`. Determinan cuanta informacion puede memorizar el modelo. Valores altos de `max_depth` y `n_estimators` pueden llevar a sobreajuste.
+
+2. **Regularizacion:** `gamma`, `reg_alpha`, `reg_lambda`. Penalizan la complejidad del modelo y reducen la varianza de los pesos de las hojas. Corresponden directamente a los terminos de la @eq-regularizacion.
+
+3. **Aleatoriedad y robustez:** `subsample`, `colsample_bytree`, `learning_rate`. Introducen estocasticidad en el proceso de construccion, similar al gradient boosting estocastico [@friedman2002stochastic], y controlan la velocidad de convergencia mediante el *shrinkage* $\eta$.
+
+| Parametro | Descripcion | Valor tipico |
+|-----------|-------------|--------------|
+| `n_estimators` | Numero de arboles en el ensamble | 100–1000 |
+| `max_depth` | Profundidad maxima por arbol | 3–8 |
+| `learning_rate` ($\eta$) | Tasa de aprendizaje (shrinkage) | 0.01–0.3 |
+| `subsample` | Fraccion de filas muestreadas por arbol | 0.6–1.0 |
+| `colsample_bytree` | Fraccion de columnas por arbol | 0.6–1.0 |
+| `min_child_weight` | Minimo de $\sum h_i$ en un nodo hoja | 1–10 |
+| `gamma` ($\gamma$) | Ganancia minima para realizar una particion | 0–5 |
+| `reg_alpha` | Regularizacion L1 sobre pesos | 0–1 |
+| `reg_lambda` | Regularizacion L2 sobre pesos | 1 (default) |
+
+: Hiperparametros principales de XGBoost y sus rangos tipicos. {#tbl-hiperparametros}
+
+El numero de arboles (`n_estimators`) y la tasa de aprendizaje (`learning_rate`) interactuan directamente: tasas de aprendizaje menores requieren mas arboles pero generalmente producen mejores modelos. El `subsample` y el `colsample_bytree` introducen aleatoriedad similar al Random Forest, lo que reduce la varianza y el sobreajuste [@friedman2002stochastic]. El `min_child_weight` controla la complejidad de cada arbol al exigir que cada hoja tenga una suma de hessianos minima.
+
+### Convergencia y early stopping
+
+```{python}
+#| label: fig-xgb-convergencia
+#| fig-cap: "Curvas de error RMSE en entrenamiento y validacion en funcion del numero de rondas de boosting para el conjunto de datos California Housing. La linea vertical indica la ronda de parada anticipada (early stopping). La zona roja sombreada senala la region de sobreajuste potencial."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_ca = fetch_california_housing()
+X_ca, y_ca = data_ca.data, data_ca.target
+X_train, X_val, y_train, y_val = train_test_split(X_ca, y_ca, test_size=0.2, random_state=42)
+
+dtrain = xgb.DMatrix(X_train, label=y_train)
+dval = xgb.DMatrix(X_val, label=y_val)
+
+params = {
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "seed": 42
+}
+
+evals_result = {}
+model_conv = xgb.train(
+    params,
+    dtrain,
+    num_boost_round=300,
+    evals=[(dtrain, "train"), (dval, "validacion")],
+    early_stopping_rounds=20,
+    evals_result=evals_result,
+    verbose_eval=False
+)
+
+train_rmse = evals_result["train"]["rmse"]
+val_rmse = evals_result["validacion"]["rmse"]
+best_round = model_conv.best_iteration
+rounds = list(range(1, len(train_rmse) + 1))
+
+fig5 = go.Figure()
+
+fig5.add_trace(go.Scatter(
+    x=list(range(best_round + 1, len(rounds) + 1)),
+    y=val_rmse[best_round:],
+    fill="tozeroy",
+    fillcolor="rgba(220, 38, 38, 0.08)",
+    mode="none",
+    name="Region de sobreajuste",
+    showlegend=True
+))
+fig5.add_trace(go.Scatter(
+    x=rounds, y=train_rmse,
+    mode="lines",
+    line=dict(color="#2563eb", width=2.0),
+    name="RMSE entrenamiento"
+))
+fig5.add_trace(go.Scatter(
+    x=rounds, y=val_rmse,
+    mode="lines",
+    line=dict(color="#dc2626", width=2.0),
+    name="RMSE validacion"
+))
+fig5.add_vline(
+    x=best_round + 1,
+    line=dict(color="black", dash="dash", width=1.8),
+    annotation_text=f"Early stop: ronda {best_round + 1}",
+    annotation_position="top right"
+)
+fig5.update_layout(
+    template="plotly_white",
+    height=420,
+    xaxis_title="Ronda de boosting",
+    yaxis_title="RMSE",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
+)
+fig5.show()
+```
+
+La @fig-xgb-convergencia muestra el comportamiento tipico del gradient boosting: el error de entrenamiento decrece monotonamente, mientras el error de validacion se estabiliza y puede comenzar a subir si se excede la cantidad optima de arboles. La tecnica de *early stopping* detiene el entrenamiento cuando el error de validacion no mejora durante un numero definido de rondas consecutivas.
+
+### Busqueda de hiperparametros: profundidad y tasa de aprendizaje
+
+```{python}
+#| label: fig-xgb-hiperparametros
+#| fig-cap: "RMSE de validacion sobre una grilla de max_depth x learning_rate en el conjunto California Housing. Valores mas bajos (verde) indican mejor rendimiento. La celda optima se marca con un borde rojo."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_hp = fetch_california_housing()
+X_hp, y_hp = data_hp.data, data_hp.target
+X_tr_hp, X_va_hp, y_tr_hp, y_va_hp = train_test_split(X_hp, y_hp, test_size=0.2, random_state=42)
+
+depths = [2, 3, 4, 5, 6]
+lrs = [0.01, 0.05, 0.1, 0.2, 0.3]
+
+rmse_grid = np.zeros((len(depths), len(lrs)))
+
+for i, depth in enumerate(depths):
+    for j, lr in enumerate(lrs):
+        model_g = xgb.XGBRegressor(
+            n_estimators=100,
+            max_depth=depth,
+            learning_rate=lr,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=1.0,
+            random_state=42,
+            verbosity=0
+        )
+        model_g.fit(X_tr_hp, y_tr_hp)
+        preds = model_g.predict(X_va_hp)
+        rmse_grid[i, j] = np.sqrt(np.mean((y_va_hp - preds) ** 2))
+
+best_i, best_j = np.unravel_index(np.argmin(rmse_grid), rmse_grid.shape)
+
+text_vals = [[f"{rmse_grid[i, j]:.3f}" for j in range(len(lrs))] for i in range(len(depths))]
+
+fig6 = go.Figure()
+
+fig6.add_trace(go.Heatmap(
+    z=rmse_grid.tolist(),
+    x=[str(lr) for lr in lrs],
+    y=[str(d) for d in depths],
+    colorscale="RdYlGn_r",
+    text=text_vals,
+    texttemplate="%{text}",
+    colorbar=dict(title="RMSE"),
+    showscale=True
+))
+
+bx = best_j
+by = best_i
+dx = 0.5
+dy = 0.5
+
+fig6.add_trace(go.Scatter(
+    x=[bx - dx, bx + dx, bx + dx, bx - dx, bx - dx],
+    y=[by - dy, by - dy, by + dy, by + dy, by - dy],
+    mode="lines",
+    line=dict(color="red", width=3),
+    name=f"Mejor: depth={depths[best_i]}, lr={lrs[best_j]}",
+    showlegend=True
+))
+
+fig6.update_layout(
+    template="plotly_white",
+    height=440,
+    xaxis_title="learning_rate",
+    yaxis_title="max_depth",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+)
+fig6.show()
+```
+
+La @fig-xgb-hiperparametros revela la interaccion entre la profundidad del arbol y la tasa de aprendizaje. En general, tasas de aprendizaje muy bajas (0.01) requieren mas arboles para converger y con solo 100 estimadores pueden tener alto sesgo. Profundidades intermedias (3–5) suelen dar el mejor equilibrio entre capacidad y generalizacion.
+
+## Importancia de variables
+
+XGBoost ofrece tres metricas para cuantificar la importancia de cada variable en el modelo entrenado:
+
+- **Frecuencia (weight):** numero de veces que la variable se usa en una division a lo largo de todos los arboles. Es sensible al numero de categorias distintas de cada variable.
+- **Ganancia (gain):** reduccion promedio de la perdida aportada por cada division que usa esa variable. Es la metrica mas informativa porque captura la contribucion real al rendimiento del modelo.
+- **Cobertura (cover):** numero promedio de observaciones que pasan por cada division de la variable. Refleja cuantas muestras son "afectadas" por esa variable.
+
+La metrica de ganancia suele ser la mas recomendable para interpretar cuales variables son verdaderamente relevantes, ya que la frecuencia puede sobreestimar la importancia de variables con muchos valores posibles.
+
+Es importante destacar que todas estas metricas miden la importancia *global* del modelo, es decir, el aporte promedio de cada variable a traves de todas las observaciones. Para obtener importancias *locales* (especificas a una prediccion individual), se deben usar los valores SHAP, descritos en la @sec-shap.
+
+Matematicamente, la importancia de ganancia para la variable $k$ se calcula como:
+
+$$\text{Gain}_k = \frac{1}{|\mathcal{T}_k|} \sum_{t \in \mathcal{T}_k} \text{Gain}_t$$ {#eq-importancia-gain}
+
+donde $\mathcal{T}_k$ es el conjunto de todas las divisiones que usan la variable $k$ en todos los arboles del ensamble. La importancia de frecuencia es simplemente $|\mathcal{T}_k|$, y la de cobertura es el promedio de $|I_L| + |I_R|$ sobre todas esas divisiones.
+
+```{python}
+#| label: fig-xgb-importancia
+#| fig-cap: "Importancia de variables del modelo XGBoost entrenado en California Housing, segun tres criterios: Frecuencia (numero de divisiones), Ganancia (reduccion media de perdida) y Cobertura (muestras promedio por division)."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_imp = fetch_california_housing()
+X_imp, y_imp = data_imp.data, data_imp.target
+X_tr_imp, X_va_imp, y_tr_imp, y_va_imp = train_test_split(X_imp, y_imp, test_size=0.2, random_state=42)
+feat_names = list(data_imp.feature_names)
+
+dtrain_imp = xgb.DMatrix(X_tr_imp, label=y_tr_imp, feature_names=feat_names)
+dval_imp = xgb.DMatrix(X_va_imp, label=y_va_imp, feature_names=feat_names)
+
+params_imp = {
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "seed": 42
+}
+evals_r = {}
+model_imp = xgb.train(
+    params_imp, dtrain_imp,
+    num_boost_round=300,
+    evals=[(dtrain_imp, "train"), (dval_imp, "validacion")],
+    early_stopping_rounds=20,
+    evals_result=evals_r,
+    verbose_eval=False
+)
+
+imp_types = ["weight", "gain", "cover"]
+subtitles = ["Frecuencia", "Ganancia", "Cobertura"]
+
+fig7 = make_subplots(rows=1, cols=3, subplot_titles=subtitles)
+
+for col_idx, (itype, subtitle) in enumerate(zip(imp_types, subtitles), start=1):
+    scores = model_imp.get_score(importance_type=itype)
+    all_feats = feat_names
+    vals = [scores.get(f, 0.0) for f in all_feats]
+    sorted_idx = np.argsort(vals)
+    sorted_feats = [all_feats[i] for i in sorted_idx]
+    sorted_vals = [vals[i] for i in sorted_idx]
+
+    fig7.add_trace(
+        go.Bar(
+            x=sorted_vals,
+            y=sorted_feats,
+            orientation="h",
+            marker=dict(color="#6366f1"),
+            name=subtitle,
+            showlegend=False
+        ),
+        row=1, col=col_idx
+    )
+    fig7.update_xaxes(title_text=subtitle, row=1, col=col_idx)
+
+fig7.update_layout(
+    template="plotly_white",
+    height=420
+)
+fig7.show()
+```
+
+Segun la @fig-xgb-importancia, la variable `MedInc` (ingreso mediano del bloque censal) es consistentemente la mas importante en los tres criterios, lo cual es coherente con el conocimiento del dominio: el ingreso es el predictor mas fuerte del precio de la vivienda en California. Las variables `Latitude` y `Longitude` tambien aparecen como relevantes, capturando efectos geograficos.
+
+## Regularizacion y poda
+
+### Efecto de $\lambda$ (L2) y $\gamma$ (ganancia minima)
+
+La regularizacion en XGBoost actua por dos mecanismos complementarios, derivados directamente de la @eq-regularizacion:
+
+**Regularizacion L2 ($\lambda$):** El peso optimo de cada hoja es $w_j^* = -G_j / (H_j + \lambda)$. Un $\lambda$ mayor reduce la magnitud de los pesos, produciendo predicciones mas conservadoras y previniendo el sobreajuste. Es equivalente a la regularizacion Ridge en modelos lineales pero aplicada a los pesos de cada hoja del arbol.
+
+**Poda por ganancia minima ($\gamma$):** Una division solo se realiza si $\text{Gain} > \gamma$ (ver @eq-ganancia). Un $\gamma$ mayor lleva a arboles mas pequeños y con menos divisiones. A diferencia de la poda post-entrenamiento, esta poda ocurre durante la construccion del arbol, lo que es mas eficiente computacionalmente.
+
+La combinacion de ambos parametros es complementaria: $\lambda$ controla la magnitud de cada prediccion de hoja, mientras que $\gamma$ controla la estructura del arbol. Se recomienda priorizar $\lambda$ alto sobre $\gamma$ alto, ya que $\lambda$ tiene un efecto mas suave y continuo.
+
+```{python}
+#| label: fig-xgb-regularizacion
+#| fig-cap: "RMSE de validacion en funcion de la regularizacion L2 (lambda) y la ganancia minima de poda (gamma) en California Housing. Colores mas verdes indican menor error."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_reg = fetch_california_housing()
+X_reg, y_reg = data_reg.data, data_reg.target
+X_tr_reg, X_va_reg, y_tr_reg, y_va_reg = train_test_split(X_reg, y_reg, test_size=0.2, random_state=42)
+
+lambdas = [0.01, 0.1, 1, 5, 10]
+gammas = [0, 0.5, 1, 2, 5]
+
+rmse_reg = np.zeros((len(lambdas), len(gammas)))
+
+for i, lam in enumerate(lambdas):
+    for j, gam in enumerate(gammas):
+        m_reg = xgb.XGBRegressor(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=lam,
+            gamma=gam,
+            random_state=42,
+            verbosity=0
+        )
+        m_reg.fit(X_tr_reg, y_tr_reg)
+        preds_reg = m_reg.predict(X_va_reg)
+        rmse_reg[i, j] = np.sqrt(np.mean((y_va_reg - preds_reg) ** 2))
+
+text_reg = [[f"{rmse_reg[i, j]:.3f}" for j in range(len(gammas))] for i in range(len(lambdas))]
+
+fig8 = go.Figure(go.Heatmap(
+    z=rmse_reg.tolist(),
+    x=[str(g) for g in gammas],
+    y=[str(l) for l in lambdas],
+    colorscale="RdYlGn_r",
+    text=text_reg,
+    texttemplate="%{text}",
+    colorbar=dict(title="RMSE")
+))
+
+fig8.update_layout(
+    title="Validacion RMSE: efecto de lambda y gamma",
+    template="plotly_white",
+    height=420,
+    xaxis_title="gamma (poda minima)",
+    yaxis_title="lambda (L2)"
+)
+fig8.show()
+```
+
+La @fig-xgb-regularizacion confirma que valores muy altos de $\gamma$ (mayor a 2) pueden degradar el rendimiento al podar demasiado agresivamente, impidiendo que el modelo capture patrones relevantes. Un $\lambda$ moderado (entre 1 y 5) generalmente ofrece el mejor equilibrio.
+
+Adicionalmente, XGBoost soporta regularizacion L1 sobre los pesos de las hojas mediante el parametro `reg_alpha`. El objetivo con regularizacion elastica (L1 + L2) toma la forma:
+
+$$\Omega(f) = \gamma T + \alpha \sum_{j=1}^{T}|w_j| + \frac{1}{2}\lambda\sum_{j=1}^{T}w_j^2$$ {#eq-elasticnet}
+
+La regularizacion L1 ($\alpha > 0$) induce esparsidad en los pesos de las hojas: muchos pesos se vuelven exactamente cero, lo que produce arboles donde algunas hojas no contribuyen a la prediccion. Esto puede ser util cuando se sospecha que muchas divisiones son redundantes o ruidosas. En la practica, la regularizacion L2 ($\lambda$) es suficiente en la mayoria de los casos y se recomienda comenzar con $\alpha = 0$.
+
+### Efecto del subsampling sobre la regularizacion
+
+El parametro `subsample` (fraccion de filas) y `colsample_bytree` (fraccion de columnas) introducen aleatoriedad en la construccion de cada arbol. Desde una perspectiva estadistica, esto puede verse como una forma de regularizacion implicita: al entrenar cada arbol con un subconjunto distinto de datos, se reduce la correlacion entre los arboles del ensamble, lo que disminuye la varianza de las predicciones. @friedman2002stochastic demostro empiricamente que el subsampling de filas mejora consistentemente la generalizacion del gradient boosting, especialmente en conjuntos de datos con ruido.
+
+## Contribuciones individuales (SHAP simplificado) {#sec-shap}
+
+Los valores SHAP (*SHapley Additive exPlanations*), propuestos por @lundberg2017unified, permiten descomponer la prediccion de cualquier modelo en contribuciones aditivas de cada variable para una observacion especifica. Para XGBoost, @lundberg2020local2global desarrollaron el algoritmo TreeSHAP, que calcula estas contribuciones de forma exacta y eficiente en tiempo polinomial.
+
+Formalmente, para una prediccion $\hat{y}_i$, los valores SHAP $\phi_j$ satisfacen:
+
+$$\hat{y}_i = \phi_0 + \sum_{j=1}^{p} \phi_j$$ {#eq-shap}
+
+donde $\phi_0 = \mathbb{E}[\hat{y}]$ es la prediccion base (valor esperado del modelo) y $\phi_j$ es la contribucion de la variable $j$ para esa observacion en particular. Las contribuciones pueden ser positivas (la variable empuja la prediccion hacia arriba) o negativas (la variable la baja).
+
+```{python}
+#| label: fig-xgb-waterfall
+#| fig-cap: "Grafico de cascada (waterfall) que muestra la contribucion de cada variable para una prediccion individual en el conjunto California Housing. Las barras verdes suman a la prediccion y las rojas restan. Se muestran ordenadas por magnitud de contribucion."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_wf = fetch_california_housing()
+X_wf, y_wf = data_wf.data, data_wf.target
+feat_names_wf = list(data_wf.feature_names)
+
+X_tr_wf, X_te_wf, y_tr_wf, y_te_wf = train_test_split(X_wf, y_wf, test_size=0.2, random_state=42)
+
+dtrain_wf = xgb.DMatrix(X_tr_wf, label=y_tr_wf, feature_names=feat_names_wf)
+
+params_wf = {
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "seed": 42
+}
+evals_wf = {}
+model_wf = xgb.train(
+    params_wf, dtrain_wf,
+    num_boost_round=300,
+    evals=[(dtrain_wf, "train")],
+    evals_result=evals_wf,
+    verbose_eval=False
+)
+
+obs_idx = 42
+X_single = X_te_wf[obs_idx:obs_idx + 1]
+d_single = xgb.DMatrix(X_single, feature_names=feat_names_wf)
+
+contribs = model_wf.predict(d_single, pred_contribs=True)[0]
+bias = contribs[-1]
+feature_contribs = contribs[:-1]
+
+sorted_idx = np.argsort(np.abs(feature_contribs))[::-1]
+sorted_feats = [feat_names_wf[i] for i in sorted_idx]
+sorted_contribs = feature_contribs[sorted_idx]
+
+cumulative = bias
+running = [bias]
+for c in sorted_contribs:
+    running.append(running[-1] + c)
+
+final_pred = running[-1]
+
+bar_colors = ["#16a34a" if c >= 0 else "#dc2626" for c in sorted_contribs]
+labels = ["Base"] + sorted_feats
+measures = ["absolute"] + ["relative"] * len(sorted_feats)
+
+fig9 = go.Figure(go.Waterfall(
+    orientation="v",
+    measure=measures,
+    x=labels,
+    y=[bias] + sorted_contribs.tolist(),
+    connector=dict(line=dict(color="gray", width=1)),
+    increasing=dict(marker=dict(color="#16a34a")),
+    decreasing=dict(marker=dict(color="#dc2626")),
+    totals=dict(marker=dict(color="#6366f1"))
+))
+
+fig9.add_annotation(
+    x=len(labels) - 1,
+    y=final_pred + 0.15,
+    text=f"Prediccion final: {final_pred:.3f}",
+    showarrow=True,
+    arrowhead=2,
+    font=dict(size=12, color="black")
+)
+
+fig9.update_layout(
+    title="Contribucion de cada variable para una prediccion individual",
+    template="plotly_white",
+    height=480,
+    xaxis_title="Variable",
+    yaxis_title="Contribucion a la prediccion",
+    showlegend=False
+)
+fig9.show()
+```
+
+La @fig-xgb-waterfall muestra como la prediccion final se construye sumando la contribucion de cada variable al valor base. Para esta observacion particular, `MedInc` tiene la mayor influencia positiva, mientras que algunas variables geograficas pueden reducir la prediccion estimada. Esta visualizacion es especialmente util para comunicar predicciones individuales a usuarios no tecnicos o para auditar el comportamiento del modelo.
+
+## XGBoost para clasificacion
+
+XGBoost es igualmente aplicable a problemas de clasificacion, con soporte nativo para:
+
+- **Clasificacion binaria:** `objective="binary:logistic"` — el modelo genera probabilidades mediante la funcion sigmoide $p_i = \sigma(\hat{y}_i)$, y la funcion de perdida es la log-verosimilitud negativa (log-loss). Los gradientes toman la forma $g_i = p_i - y_i$ y el hessiano $h_i = p_i(1-p_i)$.
+- **Clasificacion multiclase:** `objective="multi:softprob"` con `num_class=K` — se entrena un conjunto de arboles por clase y se aplica softmax para normalizar las probabilidades.
+
+La ventaja de usar el hessiano $h_i = p_i(1-p_i)$ es que pesa menos las observaciones donde el modelo ya esta seguro (probabilidad cercana a 0 o 1), concentrando el aprendizaje en los casos dificiles (probabilidad cercana a 0.5).
+
+```{python}
+#| label: tbl-clasificacion-xgb
+#| code-fold: true
+
+import numpy as np
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+import xgboost as xgb
+
+data_clf = load_breast_cancer()
+X_c, y_c = data_clf.data, data_clf.target
+X_tr_c, X_te_c, y_tr_c, y_te_c = train_test_split(X_c, y_c, test_size=0.2, random_state=42)
+
+clf = xgb.XGBClassifier(
+    n_estimators=100,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    eval_metric="logloss",
+    random_state=42,
+    verbosity=0
+)
+clf.fit(X_tr_c, y_tr_c)
+auc = roc_auc_score(y_te_c, clf.predict_proba(X_te_c)[:, 1])
+acc = (clf.predict(X_te_c) == y_te_c).mean()
+print(f"AUC-ROC en prueba: {auc:.4f}")
+print(f"Exactitud en prueba: {acc:.4f}")
+```
+
+El resultado muestra el excelente rendimiento de XGBoost incluso con hiperparametros predeterminados. En el conjunto de cancer de mama (569 observaciones, 30 variables), se obtiene un AUC-ROC superior a 0.99, lo cual refleja tanto la calidad del clasificador como la separabilidad del conjunto de datos.
+
+### Curva ROC y analisis de umbrales
+
+La curva ROC (*Receiver Operating Characteristic*) es una herramienta estandar para evaluar clasificadores binarios. Traza la tasa de verdaderos positivos (sensibilidad) frente a la tasa de falsos positivos (1 - especificidad) para todos los umbrales de decision posibles. El area bajo la curva (AUC) cuantifica la capacidad discriminatoria del modelo en un unico numero: AUC = 1 indica clasificacion perfecta, AUC = 0.5 indica prediccion aleatoria.
+
+```{python}
+#| label: fig-xgb-roc
+#| fig-cap: "Curva ROC del clasificador XGBoost en el conjunto de prueba de cancer de mama. El area bajo la curva (AUC) indica la capacidad discriminatoria del modelo. La linea diagonal punteada representa un clasificador aleatorio."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_curve, roc_auc_score
+import xgboost as xgb
+
+data_roc = load_breast_cancer()
+X_roc, y_roc = data_roc.data, data_roc.target
+X_tr_roc, X_te_roc, y_tr_roc, y_te_roc = train_test_split(X_roc, y_roc, test_size=0.2, random_state=42)
+
+clf_roc = xgb.XGBClassifier(
+    n_estimators=100,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    eval_metric="logloss",
+    random_state=42,
+    verbosity=0
+)
+clf_roc.fit(X_tr_roc, y_tr_roc)
+probs = clf_roc.predict_proba(X_te_roc)[:, 1]
+fpr, tpr, thresholds_roc = roc_curve(y_te_roc, probs)
+auc_val = roc_auc_score(y_te_roc, probs)
+
+fig_roc = go.Figure()
+
+fig_roc.add_trace(go.Scatter(
+    x=[0, 1], y=[0, 1],
+    mode="lines",
+    line=dict(color="gray", dash="dash", width=1.5),
+    name="Clasificador aleatorio (AUC = 0.5)"
+))
+
+fig_roc.add_trace(go.Scatter(
+    x=fpr.tolist(), y=tpr.tolist(),
+    mode="lines",
+    fill="tozeroy",
+    fillcolor="rgba(37, 99, 235, 0.12)",
+    line=dict(color="#2563eb", width=2.5),
+    name=f"XGBoost (AUC = {auc_val:.4f})"
+))
+
+fig_roc.add_annotation(
+    x=0.6, y=0.35,
+    text=f"AUC = {auc_val:.4f}",
+    showarrow=False,
+    font=dict(size=16, color="#2563eb"),
+    bgcolor="white",
+    bordercolor="#2563eb",
+    borderwidth=1
+)
+
+fig_roc.update_layout(
+    template="plotly_white",
+    height=440,
+    xaxis_title="Tasa de falsos positivos (1 - Especificidad)",
+    yaxis_title="Tasa de verdaderos positivos (Sensibilidad)",
+    xaxis=dict(range=[0, 1]),
+    yaxis=dict(range=[0, 1.02]),
+    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5)
+)
+fig_roc.show()
+```
+
+La @fig-xgb-roc confirma visualmente el alto rendimiento del clasificador: la curva ROC se acerca al punto ideal (0, 1), y el area bajo la curva es practicamente perfecta para este conjunto de datos. En aplicaciones reales, donde la separabilidad es menor, la curva ROC permite elegir el umbral de decision adecuado segun el costo relativo de falsos positivos y falsos negativos.
+
+## Buenas practicas y comparacion con alternativas
+
+### Comparacion de metodos de ensamble
+
+La siguiente tabla resume el posicionamiento de XGBoost en el contexto de otros metodos de aprendizaje supervisado.
+
+| Metodo | Complejidad | Interpretabilidad | Rendimiento tipico |
+|--------|------------|-------------------|--------------------|
+| Arbol unico | Baja | Alta | Bajo |
+| Random Forest | Media | Media | Bueno |
+| Gradient Boosting (sklearn) | Media | Media | Muy bueno |
+| XGBoost | Media-alta | Media (+ SHAP) | Excelente |
+| LightGBM / CatBoost | Media-alta | Media (+ SHAP) | Excelente |
+
+: Comparacion de metodos de ensamble segun complejidad, interpretabilidad y rendimiento tipico. {#tbl-comparacion}
+
+### Recomendaciones practicas
+
+Las siguientes guias resumen las mejores practicas para usar XGBoost de forma efectiva:
+
+1. **Estrategia de ajuste de hiperparametros:** Comenzar con `learning_rate=0.1` y `n_estimators=200–500`. Una vez identificado un buen numero de arboles mediante *early stopping*, reducir la tasa de aprendizaje a 0.05 o 0.01 y aumentar proporcionalmente los estimadores para refinar el modelo [@hastie2009elements].
+
+2. **Early stopping obligatorio:** Siempre usar `early_stopping_rounds` con un conjunto de validacion separado. Esto evita el sobreajuste sin necesidad de una busqueda exhaustiva del numero optimo de arboles.
+
+3. **Subsampling para reducir varianza:** Activar `subsample=0.8` y `colsample_bytree=0.8` por defecto. La aleatoriedad adicional que introducen, similar al Random Forest, generalmente mejora la generalizacion [@friedman2002stochastic].
+
+4. **Metrica de importancia:** Preferir `importance_type="gain"` sobre `"weight"`, ya que la frecuencia puede ser enganiosa cuando las variables tienen cardinalidades muy distintas.
+
+5. **Regularizacion:** Mantener `reg_lambda=1` (valor por defecto) como punto de partida. Aumentar si hay seniales de sobreajuste. Usar `gamma` con moderacion (valores entre 0 y 1) para podar divisiones poco informativas.
+
+6. **Validacion cruzada:** Para conjuntos de datos pequenos, usar `xgb.cv()` con k-fold para estimar el numero optimo de arboles de forma mas robusta que con un unico conjunto de validacion.
+
+7. **Manejo de valores faltantes:** XGBoost aprende automaticamente la direccion optima para los valores faltantes durante el entrenamiento (sparsity-awareness [@chen2016xgboost]). No es necesario imputar previamente.
+
+8. **Comparar con LightGBM:** Para conjuntos de datos muy grandes (millones de filas o cientos de variables), LightGBM suele ser mas rapido gracias a su estrategia de construccion de arboles basada en histogramas (*leaf-wise growth*). La API es muy similar a XGBoost.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

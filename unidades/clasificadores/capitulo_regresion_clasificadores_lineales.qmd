@@ -322,6 +322,70 @@ $$
 $$
 Los residuos son esenciales para evaluar el ajuste: un buen modelo no solo tiene errores pequeños, sino errores sin patrones sistemáticos evidentes.
 
+```{python}
+#| label: fig-ols-superficie
+#| fig-cap: "Superficie de la función de pérdida SCE(β₀, β₁) para regresión simple. El mínimo global (marcado en rojo) corresponde a la solución OLS. La superficie tiene forma de paraboloide, lo que garantiza un único mínimo global."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+# Datos del explorador interactivo reutilizados
+XD = np.array([1,2,3,4,5,6,7,8,9,10], dtype=float)
+YD = np.array([2.1,4.3,5.8,7.9,10.2,11.8,14.0,16.1,17.9,20.2])
+N = len(XD)
+
+# Solución OLS
+xbar, ybar = XD.mean(), YD.mean()
+b1_opt = np.dot(XD - xbar, YD - ybar) / np.dot(XD - xbar, XD - xbar)
+b0_opt = ybar - b1_opt * xbar
+
+# Grid de parámetros
+b0_vals = np.linspace(b0_opt - 4, b0_opt + 4, 60)
+b1_vals = np.linspace(b1_opt - 0.8, b1_opt + 0.8, 60)
+B0, B1 = np.meshgrid(b0_vals, b1_vals)
+
+# SCE en cada punto del grid
+Yhat = B0[:, :, None] + B1[:, :, None] * XD[None, None, :]
+SSE = np.sum((YD[None, None, :] - Yhat) ** 2, axis=2)
+
+fig = go.Figure()
+
+fig.add_trace(go.Surface(
+    x=B0, y=B1, z=SSE,
+    colorscale="Blues",
+    opacity=0.82,
+    colorbar=dict(title="SCE"),
+    showscale=True,
+    hovertemplate="β₀=%{x:.2f}<br>β₁=%{y:.2f}<br>SCE=%{z:.1f}<extra></extra>"
+))
+
+# Mínimo
+sse_opt = float(np.sum((YD - (b0_opt + b1_opt * XD))**2))
+fig.add_trace(go.Scatter3d(
+    x=[b0_opt], y=[b1_opt], z=[sse_opt],
+    mode="markers+text",
+    marker=dict(size=8, color="#dc2626", symbol="diamond"),
+    text=["OLS óptimo"],
+    textposition="top center",
+    textfont=dict(color="#dc2626", size=12),
+    name="Mínimo OLS"
+))
+
+fig.update_layout(
+    title="Superficie de pérdida SCE(β₀, β₁)",
+    scene=dict(
+        xaxis_title="β₀ (intercepto)",
+        yaxis_title="β₁ (pendiente)",
+        zaxis_title="SCE",
+        camera=dict(eye=dict(x=1.6, y=-1.6, z=1.0))
+    ),
+    height=500,
+    template="plotly_white"
+)
+fig.show()
+```
+
 ### Condición de invertibilidad y colinealidad
 
 La fórmula cerrada de mínimos cuadrados requiere que $\mathbf{X}^\top\mathbf{X}$ sea invertible. Esto ocurre cuando las columnas de $\mathbf{X}$ son linealmente independientes. Si una variable explicativa puede escribirse como combinación lineal exacta de otras, la matriz pierde rango y la solución deja de ser única. Este problema se conoce como colinealidad perfecta. En la práctica, también puede aparecer multicolinealidad aproximada, que no impide calcular una solución pero puede hacer que los coeficientes sean inestables.
@@ -566,14 +630,42 @@ pd.DataFrame({
 En una evaluación rigurosa, estas métricas deben calcularse sobre datos no usados para entrenar el modelo. Separar entrenamiento y prueba permite estimar la capacidad de generalización. También es recomendable inspeccionar gráficamente los residuos.
 
 ```{python}
-import matplotlib.pyplot as plt
+#| label: fig-residuos
+#| fig-cap: "Residuos vs. valores predichos. Un buen modelo muestra residuos distribuidos aleatoriamente alrededor de cero sin patrones sistemáticos."
+#| code-fold: true
 
-plt.scatter(y_hat, residuos)
-plt.axhline(0, linestyle="--")
-plt.xlabel("Predicción")
-plt.ylabel("Residuo")
-plt.title("Residuos vs predicciones")
-plt.show()
+import plotly.graph_objects as go
+import numpy as np
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=y_hat,
+    y=residuos,
+    mode="markers",
+    marker=dict(color="#2563eb", size=10, opacity=0.8,
+                line=dict(width=1, color="#1e3a6e")),
+    name="Residuo",
+    hovertemplate="Predicción: %{x:.2f}<br>Residuo: %{y:.2f}<extra></extra>"
+))
+
+# Línea de referencia en cero
+fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8", line_width=1.5)
+
+# Banda de ±1 desviación estándar
+std_r = float(np.std(residuos))
+fig.add_hrect(y0=-std_r, y1=std_r, fillcolor="#2563eb", opacity=0.06,
+              line_width=0, annotation_text="±1 SD", annotation_position="top right")
+
+fig.update_layout(
+    title="Residuos vs. valores predichos",
+    xaxis_title="Predicción ŷᵢ",
+    yaxis_title="Residuo eᵢ = yᵢ − ŷᵢ",
+    template="plotly_white",
+    showlegend=False,
+    height=380
+)
+fig.show()
 ```
 
 Un patrón curvo en esta gráfica puede indicar que la relación entre variables no es lineal. Una dispersión creciente puede sugerir heterocedasticidad. Residuos con valores extremos pueden revelar observaciones atípicas o problemas de medición.
@@ -1122,7 +1214,6 @@ cuando $\mathbf{S}_W$ es invertible. Si no lo es, se puede usar pseudoinversa o 
 
 ```{python}
 import numpy as np
-import matplotlib.pyplot as plt
 
 rng = np.random.default_rng(7)
 X1 = rng.normal(loc=[1.5, 2.0], scale=[0.7, 0.5], size=(40, 2))
@@ -1147,19 +1238,172 @@ threshold, w
 ```
 
 ```{python}
-plt.scatter(X1[:, 0], X1[:, 1], label="Clase 1")
-plt.scatter(X2[:, 0], X2[:, 1], label="Clase 2")
+#| label: fig-fisher-proyeccion
+#| fig-cap: "Dirección de proyección óptima de Fisher (flecha verde) sobre las dos nubes de datos. La dirección maximiza la separación entre medias relativa a la dispersión intra-clase."
+#| code-fold: true
 
-origen = np.array([0, 0])
-plt.arrow(origen[0], origen[1], w[0], w[1], width=0.03, length_includes_head=True)
-plt.xlabel("x1")
-plt.ylabel("x2")
-plt.title("Dirección de proyección de Fisher")
-plt.legend()
-plt.show()
+import plotly.graph_objects as go
+import numpy as np
+
+# Escalar el vector w para visualización
+scale = 1.8
+w_viz = w * scale
+
+# Calcular proyecciones sobre la dirección w para cada clase
+z1 = X1 @ w
+z2 = X2 @ w
+# Pies de perpendicular: foot_i = z_i * w (proyección en el espacio original)
+feet1 = np.outer(z1, w)
+feet2 = np.outer(z2, w)
+
+fig = go.Figure()
+
+# Líneas de proyección (drop lines) — tenues
+for i in range(len(X1)):
+    fig.add_trace(go.Scatter(
+        x=[X1[i, 0], feet1[i, 0]], y=[X1[i, 1], feet1[i, 1]],
+        mode="lines", line=dict(color="#93c5fd", width=0.6),
+        showlegend=False, hoverinfo="skip"
+    ))
+for i in range(len(X2)):
+    fig.add_trace(go.Scatter(
+        x=[X2[i, 0], feet2[i, 0]], y=[X2[i, 1], feet2[i, 1]],
+        mode="lines", line=dict(color="#fca5a5", width=0.6),
+        showlegend=False, hoverinfo="skip"
+    ))
+
+# Puntos clase 1
+fig.add_trace(go.Scatter(
+    x=X1[:, 0], y=X1[:, 1],
+    mode="markers",
+    marker=dict(color="#2563eb", size=8, opacity=0.85,
+                line=dict(width=0.8, color="#1e3a6e")),
+    name="Clase 1"
+))
+
+# Puntos clase 2
+fig.add_trace(go.Scatter(
+    x=X2[:, 0], y=X2[:, 1],
+    mode="markers",
+    marker=dict(color="#dc2626", size=8, opacity=0.85,
+                line=dict(width=0.8, color="#7f1d1d")),
+    name="Clase 2"
+))
+
+# Eje de proyección (dirección w escalada, pasando por el origen)
+t_vals = np.linspace(-2.5, 2.5, 2)
+axis_x = t_vals * w[0]
+axis_y = t_vals * w[1]
+fig.add_trace(go.Scatter(
+    x=axis_x, y=axis_y,
+    mode="lines",
+    line=dict(color="#16a34a", width=2, dash="dot"),
+    name="Eje de Fisher",
+    hoverinfo="skip"
+))
+
+# Flecha (vector w)
+fig.add_annotation(
+    ax=0, ay=0,
+    x=w_viz[0], y=w_viz[1],
+    xref="x", yref="y", axref="x", ayref="y",
+    showarrow=True,
+    arrowhead=3, arrowsize=1.4, arrowwidth=2.5,
+    arrowcolor="#16a34a"
+)
+
+# Medias de cada clase
+m1 = X1.mean(axis=0)
+m2 = X2.mean(axis=0)
+for m, col, name in [(m1, "#2563eb", "μ₁"), (m2, "#dc2626", "μ₂")]:
+    fig.add_trace(go.Scatter(
+        x=[m[0]], y=[m[1]],
+        mode="markers+text",
+        marker=dict(symbol="diamond", size=13, color=col,
+                    line=dict(width=1.5, color="white")),
+        text=[name], textposition="top right",
+        textfont=dict(size=13, color=col),
+        showlegend=False, hoverinfo="skip"
+    ))
+
+fig.update_layout(
+    title="Dirección de proyección de Fisher",
+    xaxis_title="x₁",
+    yaxis_title="x₂",
+    template="plotly_white",
+    height=440,
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1)
+)
+fig.show()
 ```
 
 En problemas aplicados, el umbral puede elegirse según el costo de los errores. Si los falsos negativos son más graves que los falsos positivos, se puede desplazar el umbral para aumentar sensibilidad. Una curva ROC permite estudiar el intercambio entre tasa de verdaderos positivos y tasa de falsos positivos para distintos umbrales [@fawcett2006introduction].
+
+```{python}
+#| label: fig-fisher-1d
+#| fig-cap: "Distribuciones proyectadas sobre la dirección óptima de Fisher. El umbral de clasificación (línea vertical) divide el eje en las dos regiones de decisión."
+#| code-fold: true
+
+import plotly.graph_objects as go
+import numpy as np
+
+# Proyecciones
+z1_plot = X1 @ w
+z2_plot = X2 @ w
+
+z_min = min(z1_plot.min(), z2_plot.min()) - 0.5
+z_max = max(z1_plot.max(), z2_plot.max()) + 0.5
+z_grid = np.linspace(z_min, z_max, 300)
+
+def gauss_pdf(z, mu, sigma):
+    return np.exp(-0.5 * ((z - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
+
+mu1, sig1 = z1_plot.mean(), z1_plot.std()
+mu2, sig2 = z2_plot.mean(), z2_plot.std()
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=z_grid, y=gauss_pdf(z_grid, mu1, sig1),
+    fill="tozeroy", fillcolor="rgba(37,99,235,0.18)",
+    line=dict(color="#2563eb", width=2),
+    name="Clase 1"
+))
+fig.add_trace(go.Scatter(
+    x=z_grid, y=gauss_pdf(z_grid, mu2, sig2),
+    fill="tozeroy", fillcolor="rgba(220,38,38,0.18)",
+    line=dict(color="#dc2626", width=2),
+    name="Clase 2"
+))
+
+# Rug plots
+fig.add_trace(go.Scatter(
+    x=z1_plot, y=np.full_like(z1_plot, -0.02),
+    mode="markers", marker=dict(symbol="line-ns", size=10,
+                                color="#2563eb", line=dict(width=1.5, color="#2563eb")),
+    name="Puntos clase 1", showlegend=False
+))
+fig.add_trace(go.Scatter(
+    x=z2_plot, y=np.full_like(z2_plot, -0.02),
+    mode="markers", marker=dict(symbol="line-ns", size=10,
+                                color="#dc2626", line=dict(width=1.5, color="#dc2626")),
+    name="Puntos clase 2", showlegend=False
+))
+
+# Umbral
+fig.add_vline(x=threshold, line_dash="dash", line_color="#475569", line_width=1.8,
+              annotation_text="umbral", annotation_position="top right")
+
+fig.update_layout(
+    title="Distribuciones proyectadas sobre la dirección de Fisher",
+    xaxis_title="z = wᵀx",
+    yaxis_title="Densidad",
+    template="plotly_white",
+    height=380,
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1)
+)
+fig.show()
+```
 
 ## El perceptrón
 
@@ -1481,11 +1725,51 @@ accuracy, per.w, per.b, per.errors_
 ```
 
 ```{python}
-plt.plot(per.errors_, marker="o")
-plt.xlabel("Época")
-plt.ylabel("Errores")
-plt.title("Errores del perceptrón durante el entrenamiento")
-plt.show()
+#| label: fig-perceptron-errores
+#| fig-cap: "Número de ejemplos mal clasificados por época durante el entrenamiento del perceptrón. La convergencia a cero indica separabilidad lineal del conjunto de datos."
+#| code-fold: true
+
+import plotly.graph_objects as go
+import numpy as np
+
+epocas = list(range(1, len(per.errors_) + 1))
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=epocas, y=per.errors_,
+    mode="lines+markers",
+    line=dict(color="#7c3aed", width=2.5),
+    marker=dict(size=8, color="#7c3aed",
+                line=dict(width=1.5, color="white")),
+    name="Errores",
+    hovertemplate="Época %{x}<br>Errores: %{y}<extra></extra>"
+))
+
+# Área bajo la curva para énfasis visual
+fig.add_trace(go.Scatter(
+    x=epocas, y=per.errors_,
+    fill="tozeroy", fillcolor="rgba(124,58,237,0.10)",
+    line=dict(width=0), showlegend=False, hoverinfo="skip"
+))
+
+converged_epoch = next((i+1 for i, e in enumerate(per.errors_) if e == 0), None)
+if converged_epoch:
+    fig.add_vline(x=converged_epoch, line_dash="dash", line_color="#16a34a",
+                  line_width=1.8,
+                  annotation_text=f"Convergencia (época {converged_epoch})",
+                  annotation_position="top right",
+                  annotation_font_color="#16a34a")
+
+fig.update_layout(
+    title="Errores de clasificación por época — Perceptrón",
+    xaxis_title="Época",
+    yaxis_title="Número de errores",
+    template="plotly_white",
+    height=360,
+    showlegend=False
+)
+fig.show()
 ```
 
 La secuencia de errores permite observar si el modelo converge. En un conjunto linealmente separable, los errores deben llegar a cero. En datos no separables, la curva puede oscilar.
