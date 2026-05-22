@@ -9,7 +9,7 @@ format:
     toc-depth: 3
     toc-title: "Contenido"
     number-sections: true
-    code-fold: true
+    code-fold: false
     code-tools: true
     code-summary: "Mostrar codigo"
     fig-align: center
@@ -37,9 +37,17 @@ crossref:
   eq-prefix: "Ec."
 ---
 
-En el capitulo anterior construimos redes neuronales desde cero utilizando exclusivamente NumPy. El objetivo de ese recorrido fue exponer con total transparencia la matematica subyacente: la propagacion hacia adelante, el calculo del gradiente mediante la regla de la cadena, la actualizacion de pesos en el descenso por gradiente estocastico y las convoluciones como operaciones lineales sobre mapas de caracteristicas. Ese ejercicio es indispensable para comprender *por que* los algoritmos funcionan, pero no es la forma en que se construyen sistemas de aprendizaje profundo en la practica.
+En el capitulo anterior construimos redes neuronales desde cero con NumPy: derivamos la regla de la cadena a mano, escribimos cada operacion de convolución a mano y controlamos cada actualización de pesos. Ese ejercicio es indispensable para entender *por qué* funcionan los algoritmos.
 
-El presente capitulo es el complemento practico: tomamos los mismos conceptos y los implementamos utilizando frameworks de produccion. Existen tres opciones principales segun el nivel de abstracion y el uso previsto. Scikit-learn [@pedregosa2011scikit] ofrece un `MLPClassifier` que se integra con la API `fit`/`predict` estandar, suficiente para conjuntos de datos tabulares pequenos pero sin capacidad de escalar a arquitecturas personalizadas. PyTorch [@paszke2019pytorch] provee grafos computacionales dinamicos, diferenciacion automatica y una API orientada a objetos que equilibra flexibilidad con ergonomia, lo que lo convierte en el framework dominante en investigacion academica. JAX [@bradbury2018jax], desarrollado en Google, adopta un paradigma funcional: las funciones deben ser puras, el estado es externo y la compilacion XLA es transparente mediante `jax.jit`. Sobre JAX se construye Flax [@heek2023flax] como libreria de modulos de redes neuronales, y Optax [@deepmind2020optax] como libreria de optimizadores. Este capitulo desarrolla ejemplos completos en PyTorch y JAX, comparando sus filosofias y mostrando como expresar el mismo modelo en cada framework.
+Este capitulo es el complemento practico. Tomamos exactamente los mismos conceptos — forward pass, backprop, descenso por gradiente — y los reimplementamos en frameworks de produccion que automatizan lo que ya entendemos.
+
+Hay tres alternativas principales según el nivel de abstracción:
+
+- **scikit-learn** — Un `MLPClassifier` con la interfaz `fit/predict` de siempre. Ideal para tablas pequeñas; sin control sobre el ciclo de entrenamiento.
+- **PyTorch** [@paszke2019pytorch] — Grafos computacionales dinámicos, diferenciación automática y una API orientada a objetos. El estándar de facto en investigación académica.
+- **JAX** [@bradbury2018jax] — Paradigma funcional puro: funciones sin estado, PRNG explícito, compilación XLA transparente. Sobre JAX se construye Flax [@heek2023flax] (módulos de redes) y Optax [@deepmind2020optax] (optimizadores).
+
+La diferencia entre PyTorch y JAX no es solo sintáctica: reflejan dos paradigmas de programación opuestos. PyTorch es **imperativo** — escribes instrucciones sobre objetos con estado. JAX es **funcional** — las funciones no tienen estado y se pueden transformar automáticamente. Comprender esta diferencia es el objetivo central de este capítulo.
 
 ## El ecosistema de aprendizaje profundo {#sec-ecosistema}
 
@@ -62,15 +70,26 @@ print(f"Accuracy: {clf.score(X, y):.3f}")
 
 ### PyTorch {#sec-pytorch-intro}
 
-PyTorch [@paszke2019pytorch] introdujo en 2017 el concepto de grafo computacional dinamico (*define-by-run*): el grafo se construye en tiempo de ejecucion a medida que se realizan operaciones sobre tensores, a diferencia del grafo estatico de TensorFlow 1.x que debia compilarse antes de ejecutarse. Esta decision de diseno tiene consecuencias profundas: el codigo de PyTorch es Python normal, se puede depurar con `print` y `pdb`, y las estructuras de control condicionales o los bucles se comportan exactamente como se esperaria.
+PyTorch [@paszke2019pytorch] introdujo en 2017 el **grafo computacional dinámico** (*define-by-run*): el grafo se construye al vuelo mientras se ejecutan operaciones sobre tensores, no antes. A diferencia del grafo estático de TensorFlow 1.x, el código de PyTorch es Python normal — se puede depurar con `print` y `pdb`, y las estructuras de control funcionan exactamente como se esperaría.
 
-El motor de diferenciacion automatica de PyTorch se llama Autograd. Cada tensor que tiene `requires_grad=True` registra las operaciones que se le aplican; al llamar `.backward()` sobre un escalar (la perdida), Autograd recorre el grafo en sentido inverso aplicando la regla de la cadena y acumula los gradientes en el atributo `.grad` de cada parametro. La clase base para todos los modelos es `nn.Module`, que organiza los parametros y sub-modulos, y obliga a definir un metodo `forward` que describe el computo. El ciclo de entrenamiento es explicito: el programador escribe el bucle, llama al paso hacia adelante, calcula la perdida, llama a `.backward()` y actualiza los pesos con el optimizador. Esta explicitacion es una caracteristica, no un defecto: otorga control total.
+El motor de diferenciación automática se llama **Autograd**. Cuando un tensor tiene `requires_grad=True`, cada operación sobre él registra un nodo en el grafo. Al llamar `.backward()` sobre la pérdida escalar, Autograd recorre el grafo en sentido inverso y acumula los gradientes en el atributo `.grad` de cada parámetro.
+
+La clase base para todo modelo es `nn.Module`. Su contrato: el constructor `__init__` declara las capas, y el método `forward` describe el cómputo. El ciclo de entrenamiento es explícito — el programador escribe cada paso. Esa explicitación es una característica, no un defecto: da control total.
 
 ### JAX {#sec-jax-intro}
 
-JAX [@bradbury2018jax] parte de una premisa diferente: las transformaciones funcionales son ciudadanos de primera clase. El nucleo de JAX son cuatro transformaciones componibles: `jax.grad` (diferenciacion automatica de funciones escalares), `jax.jit` (compilacion XLA transparente), `jax.vmap` (vectorizacion sobre dimensiones de lote) y `jax.pmap` (paralelismo en multiples dispositivos). Estas transformaciones se pueden anidar y componer libremente.
+JAX [@bradbury2018jax] parte de una premisa diferente: las **transformaciones funcionales** son ciudadanos de primera clase. El núcleo son cuatro transformaciones componibles:
 
-Para beneficiarse de `jax.jit`, las funciones deben ser puras: no pueden tener efectos secundarios ni depender de estado global mutable. El estado del modelo (los pesos) se almacena como pytrees: estructuras de datos anidadas de Python (diccionarios o listas de arrays de JAX) que el sistema puede recorrer automaticamente para aplicar transformaciones. Flax [@heek2023flax] provee una API de modulos similar a la de PyTorch, pero manteniendo la disciplina funcional: `model.init(key, x)` devuelve los parametros iniciales y `model.apply(params, x)` ejecuta el paso hacia adelante sin modificar ningun estado interno. Optax [@deepmind2020optax] proporciona optimizadores funcionales compatibles con esta convencion.
+| Transformación | Qué hace |
+|---|---|
+| `jax.grad(f)` | Diferenciación automática de funciones escalares |
+| `jax.jit(f)` | Compilación XLA transparente |
+| `jax.vmap(f)` | Vectorización sobre dimensiones de lote |
+| `jax.pmap(f)` | Paralelismo en múltiples dispositivos |
+
+Para beneficiarse de `jax.jit`, las funciones deben ser **puras**: sin efectos secundarios, sin estado global mutable. Los pesos del modelo se pasan como *pytrees* (diccionarios/listas de arrays JAX) que JAX recorre automáticamente.
+
+Flax [@heek2023flax] añade una API de módulos similar a `nn.Module`, manteniendo la disciplina funcional: `model.init(key, x)` devuelve los parámetros y `model.apply(params, x)` ejecuta el forward pass sin modificar nada internamente. Optax [@deepmind2020optax] provee los optimizadores.
 
 ### Comparativa de frameworks {#sec-comparativa-ecosistema}
 
@@ -131,21 +150,129 @@ fig.update_layout(
 fig.show()
 ```
 
+## Dataset a explorar
+
+```{python}
+#| echo: false
+# ── Imports globales ─────────────────────────────────────────────────────────
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import warnings
+warnings.filterwarnings("ignore")
+
+plt.style.use("seaborn-v0_8-whitegrid")
+plt.rcParams["font.size"] = 12
+
+SEED = 42
+np.random.seed(SEED)
+
+print("Entorno listo.")
+```
+
+Para los siguientes ejemplos utilizaremos el conocido dataset `make_moons`, un clasico para ilustrar clasificadores no lineales.
+
+```{python}
+from sklearn.datasets import make_moons
+X, y = make_moons(n_samples=600, noise=0.25, random_state=SEED)
+
+plt.scatter(X[:,0],X[:,1], c = y, cmap=plt.cm.Spectral)
+plt.title("Make Moons Dataset")
+```
+
+## Preparacion de datos {#sec-preparacion-datos}
+
+Antes de entrenar con PyTorch o JAX, los datos deben dividirse en conjuntos de entrenamiento y validacion, y convertirse al formato esperado por cada framework.
+
+### Train-test split
+
+Una particion tipica es 80% entrenamiento, 20% validacion, con la misma semilla aleatoria para reproducibilidad.
+
+```{python}
+#| code-fold: true
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_val, y_train, y_val = train_test_split(
+    X, y,
+    test_size=0.2,
+    random_state=SEED,
+    stratify=y
+)
+
+print(f"Entrenamiento: {X_train.shape[0]} muestras")
+print(f"Validacion:    {X_val.shape[0]} muestras")
+print(f"Clases en train: {np.bincount(y_train)}")
+print(f"Clases en val:   {np.bincount(y_val)}")
+```
+
+### Comparativa: sklearn MLPClassifier
+
+Como punto de partida, entrenemos un MLP de sklearn sobre el mismo dataset. Este es el clasificador "caja negra" que posteriormente comparamos con PyTorch y JAX.
+
+```{python}
+#| code-fold: true
+
+from sklearn.neural_network import MLPClassifier
+
+clf_sk = MLPClassifier(
+    hidden_layer_sizes=(32, 32),
+    max_iter=500,
+    random_state=SEED
+)
+clf_sk.fit(X_train, y_train)
+sklearn_train_acc = clf_sk.score(X_train, y_train)
+sklearn_val_acc = clf_sk.score(X_val, y_val)
+
+print(f"sklearn MLP  |  Train acc: {sklearn_train_acc:.3f}  |  Val acc: {sklearn_val_acc:.3f}")
+```
+
+La ventaja de sklearn es la sencillez: una linea para instanciar, una linea para entrenar, una linea para predecir. La desventaja es que no vemos las curvas de convergencia ni tenemos control sobre el ciclo de entrenamiento.
+
 ## PyTorch: fundamentos {#sec-pytorch-fundamentos}
 
 ### Tensores y autograd {#sec-tensores-autograd}
 
-Los tensores de PyTorch son analogos a los arrays de NumPy: admiten las mismas operaciones aritmeticas, indexacion y broadcasting. La diferencia fundamental es que un tensor puede residir en GPU (mediante `.to("cuda")`) y puede tener activado el rastreo de gradientes mediante `requires_grad=True`. Cuando se activa el rastreo, cada operacion sobre el tensor crea un nodo en el grafo computacional y registra la funcion que permite calcular el gradiente local.
+Los tensores de PyTorch son analogos a los arrays de NumPy: admiten las mismas operaciones aritmeticas, indexacion y broadcasting. La diferencia fundamental es que un tensor puede residir en GPU (mediante `.to("cuda")`) y puede tener activado el rastreo de gradientes mediante `requires_grad=True`.
 
-Para un parametro $\theta$ y una perdida escalar $\mathcal{L}$, la llamada `loss.backward()` computa:
+**¿Que significa "rastreo de gradientes"?** Cuando estableces `requires_grad=True` en un tensor, PyTorch comienza a registrar cada operacion que le aplicas. Cada operacion crea un nodo en un grafo computacional, junto con la funcion que permitira calcular el gradiente local cuando sea necesario. Es como dejar un rastro de "breadcrumbs" a traves de tus calculos.
+
+#### El ciclo de gradientes: backward() y accumulation
+
+Para un parametro $\theta$ y una perdida escalar $\mathcal{L}$, la llamada `loss.backward()` computa todos los gradientes simultaneamente:
 
 $$
 \frac{\partial \mathcal{L}}{\partial \theta} \quad \forall \theta \text{ con } \texttt{requires\_grad=True}
 $$ {#eq-autograd}
 
-El gradiente se acumula en `theta.grad`. Es importante notar que `.backward()` *acumula* (suma) el gradiente al valor existente de `.grad`; por eso el ciclo de entrenamiento debe llamar `optimizer.zero_grad()` antes de cada paso para limpiar los gradientes del paso anterior. Si no se limpiaran, el gradiente del paso $t$ se sumaria al del paso $t-1$, lo que producria actualizaciones incorrectas.
+El gradiente resultante se almacena en `theta.grad`.
 
-Para funciones compuestas, Autograd aplica la regla de la cadena automaticamente. Consideremos $z = (w \cdot x + b)^2$ y $\mathcal{L} = z$. El gradiente respecto a $w$ es $\partial \mathcal{L} / \partial w = 2(wx + b) \cdot x$, y Autograd lo calcula recorriendo el grafo en sentido inverso nodo a nodo. La siguiente figura ilustra este grafo para valores concretos $w = 0.5$, $x = 2.0$, $b = 0.3$.
+**Atrapas y detalles implementacion:** `.backward()` no *reemplaza* el gradiente en `.grad`; *acumula* (suma). Esto significa que si llamas `.backward()` dos veces sin limpiar gradientes intermedios, los valores se suman:
+
+```python
+# Ejemplo: acumulacion no intencional
+w = torch.tensor([2.0], requires_grad=True)
+loss1 = w ** 2
+loss1.backward()
+print(w.grad)  # tensor([4.0])  ← 2*w en w=2
+
+loss2 = w ** 3
+loss2.backward()
+print(w.grad)  # tensor([16.0])  ← 4 + 3*w^2 = 4 + 12 = 16
+```
+
+Por eso **cada ciclo de entrenamiento debe llamar `optimizer.zero_grad()` antes de `.backward()`**. Sin esta linea, el gradiente del epoch $t$ se sumaría al del epoch $t-1$, produciendo actualizaciones completamente incorrectas que oscilan sin convergencia.
+
+#### La regla de la cadena, automatizada
+
+Para funciones compuestas, Autograd aplica la regla de la cadena automaticamente. Consideremos:
+
+$$z = (w \cdot x + b)^2 \quad \text{y} \quad \mathcal{L} = z$$
+
+El gradiente respecto a $w$ es:
+$$\frac{\partial \mathcal{L}}{\partial w} = \frac{\partial \mathcal{L}}{\partial z} \cdot \frac{\partial z}{\partial (wx+b)} \cdot \frac{\partial (wx+b)}{\partial w} = 1 \cdot 2(wx + b) \cdot x = 2(wx + b) \cdot x$$
+
+Autograd calcula esto recorriendo el grafo en sentido inverso, aplicando la regla de la cadena nodo a nodo. La siguiente figura ilustra este grafo para valores concretos $w = 0.5$, $x = 2.0$, $b = 0.3$.
 
 ```{python}
 #| label: fig-fw-autograd
@@ -304,52 +431,315 @@ class MLP(nn.Module):
         return self.net(x)
 ```
 
-`nn.Linear(in, out)` implementa la transformacion afin $y = xW^T + b$ con pesos inicializados por el metodo de Kaiming y bias en cero. `nn.ReLU()` aplica la activacion rectificadora $\max(0, z)$ elemento a elemento. `nn.Sequential` encadena modulos de modo que la salida de cada uno es la entrada del siguiente, evitando la necesidad de escribir explicitamente cada paso en `forward`.
+`nn.Linear(in, out)` implementa $y = xW^T + b$ con inicialización de Kaiming. `nn.ReLU()` aplica $\max(0, z)$ elemento a elemento. `nn.Sequential` encadena módulos: la salida de cada uno es la entrada del siguiente.
 
-Dos metodos de `nn.Module` son especialmente utiles en la practica. `model.parameters()` devuelve un iterador sobre todos los tensores con `requires_grad=True` en el modelo (pesos y biases de todas las capas); este iterador se pasa directamente al optimizador. `model.state_dict()` devuelve un diccionario ordenado con los valores actuales de todos los parametros, lo que permite guardar y cargar modelos con `torch.save` y `torch.load`. Adicionalmente, `model.train()` y `model.eval()` cambian el modo del modelo: en modo evaluacion, capas como `nn.Dropout` desactivan el abandono aleatorio y `nn.BatchNorm` usa estadisticas acumuladas en lugar de estadisticas de lote, lo que es esencial para obtener predicciones deterministas y correctas.
+Los métodos más útiles de cualquier `nn.Module`:
+
+- `model.parameters()` — itera sobre todos los tensores con `requires_grad=True`. Se pasa directamente al optimizador.
+- `model.state_dict()` — diccionario con los valores actuales de todos los parámetros. Permite guardar y cargar con `torch.save` / `torch.load`.
+- `model.train()` / `model.eval()` — cambia el **modo** del modelo.
+
+::: {.callout-important appearance="minimal"}
+#### `model.train()` vs `model.eval()` — crítico en inferencia
+
+`model.eval()` no solo es estético. Capas como `nn.Dropout` y `nn.BatchNorm` se comportan diferente según el modo:
+
+- **Dropout en `.train()`** → desactiva neuronas aleatoriamente (regularización).
+- **Dropout en `.eval()`** → pasa todos los valores sin cambio (inferencia determinista).
+- **BatchNorm en `.train()`** → usa estadísticas del lote actual.
+- **BatchNorm en `.eval()`** → usa medias/varianzas acumuladas durante el entrenamiento.
+
+Si olvidas llamar `model.eval()` en evaluación, tus métricas de validación serán ruidosas e irreproducibles.
+:::
 
 ### El ciclo de entrenamiento {#sec-training-loop}
 
-El ciclo de entrenamiento explicito es una de las caracteristicas mas apreciadas de PyTorch. A diferencia de los frameworks que ocultan el bucle interno (como Keras o sklearn), PyTorch expone cada paso, lo que facilita la implementacion de logicas de entrenamiento no estandar.
+El ciclo de entrenamiento explicito es una de las caracteristicas mas apreciadas de PyTorch. A diferencia de los frameworks que ocultan el bucle interno (como Keras o sklearn), PyTorch expone cada paso, lo que facilita la implementacion de logicas de entrenamiento no estandar y permite debuggear exactamente que sucede en cada momento.
 
-```{python}
-#| code-fold: true
+#### El patron de 5 pasos
 
-# Patron ilustrativo — no ejecutar directamente
-import torch
-import torch.nn as nn
+El ciclo de entrenamiento en PyTorch sigue un patron rigido que se repite en cada epoch:
 
-def training_loop_example():
-    # Suponer que model, X_train, y_train ya estan definidos
-    model = MLP(2, [16], 1)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    criterion = nn.BCEWithLogitsLoss()
-    n_epochs = 10
-
-    for epoch in range(n_epochs):
-        model.train()
-        optimizer.zero_grad()           # limpiar gradientes acumulados
-        logits = model(torch.zeros(8, 2))  # forward pass
-        loss = criterion(logits, torch.zeros(8, 1))
-        loss.backward()                 # backward pass: calcula gradientes
-        optimizer.step()                # actualizar pesos: theta -= lr * grad
+```python
+for epoch in range(n_epochs):
+    model.train()            # Paso 1 — modo entrenamiento
+    optimizer.zero_grad()    # Paso 2 — limpiar gradientes
+    logits = model(X_train)  # Paso 3 — forward pass
+    loss = criterion(logits, y_train)
+    loss.backward()          # Paso 4 — backward pass
+    optimizer.step()         # Paso 5 — actualizar pesos
 ```
 
-Cada linea del bucle cumple una funcion especifica. `optimizer.zero_grad()` es necesario porque PyTorch acumula gradientes por defecto; llamarlo al inicio de cada paso garantiza que los gradientes del epoch anterior no contaminen el actual. `model.train()` activa el modo entrenamiento antes del paso hacia adelante. `loss.backward()` recorre el grafo computacional en sentido inverso y llena `.grad` en todos los parametros. `optimizer.step()` aplica la actualizacion: para Adam, esto implica mantener momentos de primer y segundo orden y calcular la actualizacion adaptativa.
+El siguiente widget interactivo muestra qué ocurre exactamente en cada paso:
 
-Se prefiere `nn.BCEWithLogitsLoss` sobre `nn.BCELoss` por razones numericas: la primera combina la sigmoide y la entropia cruzada en una sola operacion usando el truco log-sum-exp, lo que evita desbordamientos cuando el logit es muy grande o muy negativo. La formula interna es:
+```{=html}
+<div class="pytorch-stepper" style="
+  font-family: 'Fira Mono', monospace;
+  border: 1px solid #dee2e6;
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 1.5em 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+">
+  <!-- Step tabs -->
+  <div id="pt-tabs" style="display:flex; background:#f8f9fa; border-bottom:1px solid #dee2e6;">
+    <button class="pt-tab active" data-step="1" style="flex:1; padding:.6em .2em; border:none; background:none; cursor:pointer; font-size:.82em; font-weight:600; color:#495057; border-bottom:3px solid transparent; transition:all .2s;">① train()</button>
+    <button class="pt-tab" data-step="2" style="flex:1; padding:.6em .2em; border:none; background:none; cursor:pointer; font-size:.82em; font-weight:600; color:#495057; border-bottom:3px solid transparent; transition:all .2s;">② zero_grad()</button>
+    <button class="pt-tab" data-step="3" style="flex:1; padding:.6em .2em; border:none; background:none; cursor:pointer; font-size:.82em; font-weight:600; color:#495057; border-bottom:3px solid transparent; transition:all .2s;">③ forward</button>
+    <button class="pt-tab" data-step="4" style="flex:1; padding:.6em .2em; border:none; background:none; cursor:pointer; font-size:.82em; font-weight:600; color:#495057; border-bottom:3px solid transparent; transition:all .2s;">④ backward()</button>
+    <button class="pt-tab" data-step="5" style="flex:1; padding:.6em .2em; border:none; background:none; cursor:pointer; font-size:.82em; font-weight:600; color:#495057; border-bottom:3px solid transparent; transition:all .2s;">⑤ step()</button>
+  </div>
+  <!-- Step content panels -->
+  <div id="pt-content" style="padding:1.2em 1.5em; min-height:140px;">
+    <div class="pt-panel" data-step="1">
+      <p style="margin:0 0 .6em; font-size:.95em;"><strong>model.train()</strong> — Activa el modo entrenamiento.</p>
+      <p style="margin:0; font-size:.9em; color:#555;">Capas como <code>Dropout</code> y <code>BatchNorm</code> se comportan diferente según el modo. En <code>.train()</code>, Dropout apaga neuronas al azar y BatchNorm usa estadísticas del lote actual. Sin esta llamada, la regularización sería incorrecta.</p>
+    </div>
+    <div class="pt-panel" data-step="2" style="display:none;">
+      <p style="margin:0 0 .6em; font-size:.95em;"><strong>optimizer.zero_grad()</strong> — Limpia los gradientes del paso anterior.</p>
+      <p style="margin:0; font-size:.9em; color:#555;">PyTorch <em>acumula</em> gradientes — no los reemplaza. Si omites esta llamada, el gradiente del epoch <em>t</em> se sumará al del epoch <em>t‑1</em>, y los pesos recibirán actualizaciones cada vez más incorrectas. Es el error más frecuente en PyTorch.</p>
+    </div>
+    <div class="pt-panel" data-step="3" style="display:none;">
+      <p style="margin:0 0 .6em; font-size:.95em;"><strong>logits = model(X_train)</strong> — Forward pass.</p>
+      <p style="margin:0; font-size:.9em; color:#555;">El modelo propaga el lote completo hacia adelante, construyendo el grafo computacional dinámico. Para arquitectura [2→32→32→1] con lote de 480 muestras, la salida tiene shape <code>(480, 1)</code>. Los valores se llaman "logits" — son crudos, sin sigmoide aplicada.</p>
+    </div>
+    <div class="pt-panel" data-step="4" style="display:none;">
+      <p style="margin:0 0 .6em; font-size:.95em;"><strong>loss.backward()</strong> — Backward pass, calcula todos los gradientes.</p>
+      <p style="margin:0; font-size:.9em; color:#555;">Autograd recorre el grafo en sentido inverso aplicando la regla de la cadena. Tras esta llamada, <strong>todos</strong> los parámetros con <code>requires_grad=True</code> tienen su atributo <code>.grad</code> listo. No escribes un bucle — PyTorch lo hace por ti, para todas las capas a la vez.</p>
+    </div>
+    <div class="pt-panel" data-step="5" style="display:none;">
+      <p style="margin:0 0 .6em; font-size:.95em;"><strong>optimizer.step()</strong> — Aplica la actualización de pesos.</p>
+      <p style="margin:0; font-size:.9em; color:#555;">El optimizador lee los <code>.grad</code> de cada parámetro y calcula la actualización. Para Adam: mantiene medias móviles exponenciales de primer y segundo orden y escala el gradiente adaptivamente por parámetro. Para SGD simple: θ ← θ − η·∇L.</p>
+    </div>
+  </div>
+  <!-- Navigation -->
+  <div style="display:flex; justify-content:space-between; align-items:center; padding:.6em 1.2em; border-top:1px solid #dee2e6; background:#f8f9fa;">
+    <button id="pt-prev" onclick="ptNav(-1)" style="padding:.4em .9em; border:1px solid #adb5bd; border-radius:5px; background:white; cursor:pointer; font-size:.85em;">← Anterior</button>
+    <span id="pt-counter" style="font-size:.82em; color:#6c757d;">Paso 1 / 5</span>
+    <button id="pt-next" onclick="ptNav(+1)" style="padding:.4em .9em; border:1px solid #0d6efd; border-radius:5px; background:#0d6efd; color:white; cursor:pointer; font-size:.85em;">Siguiente →</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var current = 1;
+  var total = 5;
+  var accentColor = "#0d6efd";
+
+  function activate(step) {
+    current = step;
+    document.querySelectorAll(".pt-panel").forEach(function(p){
+      p.style.display = p.dataset.step == step ? "block" : "none";
+    });
+    document.querySelectorAll(".pt-tab").forEach(function(t){
+      var active = t.dataset.step == step;
+      t.style.borderBottomColor = active ? accentColor : "transparent";
+      t.style.color = active ? accentColor : "#495057";
+      t.classList.toggle("active", active);
+    });
+    document.getElementById("pt-counter").textContent = "Paso " + step + " / " + total;
+    document.getElementById("pt-prev").disabled = step === 1;
+    document.getElementById("pt-next").disabled = step === total;
+    document.getElementById("pt-prev").style.opacity = step === 1 ? ".4" : "1";
+    document.getElementById("pt-next").style.opacity = step === total ? ".4" : "1";
+  }
+
+  window.ptNav = function(dir) { activate(Math.min(Math.max(current + dir, 1), total)); };
+
+  document.querySelectorAll(".pt-tab").forEach(function(t){
+    t.addEventListener("click", function(){ activate(+this.dataset.step); });
+  });
+
+  activate(1);
+})();
+</script>
+```
+
+::: {.callout-warning appearance="minimal"}
+#### El error más frecuente: olvidar `optimizer.zero_grad()`
+
+PyTorch **acumula** gradientes: `.backward()` suma el gradiente calculado al valor existente en `.grad`. Si no limpias antes de cada paso:
+
+```python
+# BUG — gradientes se acumulan epoch tras epoch
+for epoch in range(300):
+    logits = model(X_tr)
+    loss = criterion(logits, y_tr)
+    loss.backward()   # .grad += nuevo_gradiente (no =)
+    optimizer.step()  # usa gradiente acumulado incorrecto
+```
+
+El gradiente crece iterativamente. Los pesos reciben actualizaciones enormes y el entrenamiento diverge o produce modelos completamente distintos de lo esperado. La corrección es siempre llamar `optimizer.zero_grad()` antes de `loss.backward()`.
+:::
+
+#### Paso 5: `optimizer.step()` — Usar gradientes para actualizar
+
+El optimizador lee los gradientes en `.grad` y actualiza los parametros. Para SGD simple:
+$$\theta := \theta - \eta \cdot \nabla \mathcal{L}(\theta)$$
+
+Para Adam (el optimizador que usamos), mantiene exponential moving averages de los gradientes y sus cuadrados, y calcula updates adaptativos por parametro.
+
+#### Función de pérdida numéricamente estable
+
+::: {.callout-tip appearance="minimal"}
+#### ¿Por qué `BCEWithLogitsLoss` y no `sigmoid` + `BCELoss`?
+
+Aplicar sigmoide manualmente y luego `BCELoss` produce desbordamientos cuando el logit es muy grande. Por ejemplo, con $z = 100$, `sigmoid(100)` devuelve exactamente `1.0` y `log(1.0) = 0` — pero internamente ya hubo overflow.
+
+`BCEWithLogitsLoss` combina ambas operaciones usando el truco log-sum-exp, que es numéricamente estable para cualquier valor:
 
 $$
 \mathcal{L} = \frac{1}{N} \sum_{i=1}^{N} \left[ \max(z_i, 0) - z_i y_i + \log\left(1 + e^{-|z_i|}\right) \right]
 $$ {#eq-bceloss}
 
-donde $z_i$ es el logit (salida antes de la sigmoide) e $y_i \in \{0, 1\}$ es la etiqueta.
+**Regla práctica:** siempre usa `BCEWithLogitsLoss` con logits crudos (sin aplicar sigmoide en `forward`).
+:::
 
 ## Clasificacion con PyTorch {#sec-pytorch-clasificacion}
+
+### Convertir arrays NumPy a tensores PyTorch
+
+El primer paso es convertir los arrays NumPy a tensores PyTorch. Los tensores permiten diferenciacion automatica (rastreo de gradientes) y pueden ejecutarse en GPU para velocidad.
+
+```{python}
+import torch
+import torch.nn as nn
+
+# Conversion a tensores — especificar dtype explicitamente
+X_tr = torch.tensor(X_train, dtype=torch.float32)
+y_tr = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)  # shape: (N, 1)
+X_vl = torch.tensor(X_val,   dtype=torch.float32)
+y_vl = torch.tensor(y_val,   dtype=torch.float32).unsqueeze(1)
+
+print(f"X_tr: {X_tr.shape}  y_tr: {y_tr.shape}")
+print(f"X_vl: {X_vl.shape}  y_vl: {y_vl.shape}")
+# Output:
+# X_tr: torch.Size([480, 2])  y_tr: torch.Size([480, 1])
+# X_vl: torch.Size([120, 2])  y_vl: torch.Size([120, 1])
+```
+
+#### ¿Por que `unsqueeze(1)`?
+
+Note que `y_train` comienza como un vector 1D de shape `(480,)`. Lo convertimos a shape `(480, 1)` con `.unsqueeze(1)`.
+
+**¿Por que?** Porque `nn.BCEWithLogitsLoss` espera que la prediccion del modelo y la etiqueta tengan exactamente la misma forma. Nuestro modelo es un MLP de arquitectura $[2 \to 32 \to 32 \to 1]$, que para un lote de $N=480$ produce un tensor de shape `(480, 1)`. Para que el calculo de perdida funcione correctamente, la etiqueta debe tener la misma forma.
+
+Sin el `unsqueeze(1)`, intentaras hacer `BCEWithLogitsLoss` con shapes `(480, 1)` y `(480,)`, que causaria un error de broadcasting.
+
+### Definicion del modelo MLP
+
+En PyTorch, todo modelo es una subclase de `nn.Module`. La arquitectura es $[2 \to 32 \to 32 \to 1]$ con activaciones ReLU en las capas ocultas y una salida lineal (logit).
+
+```{python}
+#| code-fold: true
+
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim):
+        super().__init__()
+        dims = [input_dim] + hidden_dims + [output_dim]
+        layers = []
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i+1]))
+            # Activacion ReLU en todas excepto la ultima capa
+            if i < len(dims) - 2:
+                layers.append(nn.ReLU())
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+# Instanciar
+torch.manual_seed(SEED)
+model_pt = MLP(2, [32, 32], 1)
+
+# Contar parametros
+n_params = sum(p.numel() for p in model_pt.parameters())
+print(f"Total de parametros: {n_params:,}")
+print(model_pt)
+```
+
+El modelo tiene: capa 1 ($2 \times 32 + 32$ parametros) + capa 2 ($32 \times 32 + 32$) + capa 3 ($32 \times 1 + 1$) = $64 + 32 + 1024 + 32 + 32 + 1 = 1185$ parametros en total.
+
+### Ciclo de entrenamiento con PyTorch
 
 Aplicamos el patron descrito en la seccion anterior a un problema de clasificacion binaria con `make_moons`. Este conjunto de datos es un clasico de prueba para fronteras de decision no lineales: dos semilunares entrelazadas que no son separables linealmente. Una red con dos capas ocultas de 32 neuronas con activacion ReLU deberia aprender la frontera correctamente.
 
 La arquitectura es $[2 \to 32 \to 32 \to 1]$: la capa de entrada recibe las dos coordenadas $(x_1, x_2)$, las dos capas ocultas aprenden representaciones no lineales, y la capa de salida produce un unico logit que se convierte en probabilidad mediante la sigmoide. Para la clasificacion, el umbral es 0.5: si $\sigma(z) > 0.5$ se predice clase 1, de lo contrario clase 0.
+
+El ciclo de entrenamiento sigue el patron de **cinco pasos** que se repite en cada epoch:
+
+```{python}
+#| code-fold: true
+
+torch.manual_seed(SEED)
+model_pt = MLP(2, [32, 32], 1)
+optimizer = torch.optim.Adam(model_pt.parameters(), lr=0.01)
+criterion = nn.BCEWithLogitsLoss()
+
+train_losses, val_losses = [], []
+train_accs, val_accs = [], []
+
+for epoch in range(300):
+    # ════ FASE DE ENTRENAMIENTO ════
+    model_pt.train()
+
+    # Paso 1 & 2: Limpiar y forward
+    optimizer.zero_grad()
+    logits = model_pt(X_tr)         # Shape: (480, 1) — predicciones del lote
+
+    # Paso 3: Calcular perdida
+    loss = criterion(logits, y_tr)  # Shape: escalar
+
+    # Paso 4: Backward — calcula gradientes automaticamente
+    loss.backward()
+
+    # Paso 5: Actualizar — los pesos se modifican usando los gradientes
+    optimizer.step()
+
+    # ════ FASE DE EVALUACION (sin gradientes) ════
+    with torch.no_grad():
+        model_pt.eval()
+        val_logits = model_pt(X_vl)  # Shape: (120, 1)
+        val_loss = criterion(val_logits, y_vl).item()  # .item() -> float escalar
+
+        # Convertir logits a probabilidades [0, 1] y luego a predicciones binarias
+        train_pred = (torch.sigmoid(logits) >= 0.5).float()  # Shape: (480, 1)
+        train_acc = (train_pred == y_tr).float().mean().item()
+
+        val_pred = (torch.sigmoid(val_logits) >= 0.5).float()
+        val_acc = (val_pred == y_vl).float().mean().item()
+
+    train_losses.append(loss.item())
+    val_losses.append(val_loss)
+    train_accs.append(train_acc)
+    val_accs.append(val_acc)
+
+print(f"Epoch 300 | Train acc: {train_accs[-1]:.3f} | Val acc: {val_accs[-1]:.3f}")
+```
+
+#### Desglose detallado de cada seccion
+
+**Fase de entrenamiento:**
+
+1. `model_pt.train()` — Activa modo entrenamiento para capas como Dropout.
+2. `optimizer.zero_grad()` — **Crucial:** Limpia los gradientes antiguos. Sin esto, `.backward()` acumularia gradientes sobre los anteriores.
+3. `logits = model_pt(X_tr)` — Forward pass: propaga el lote a traves de la red. Output shape `(480, 1)`.
+4. `loss = criterion(logits, y_tr)` — Calcula perdida comparando predicciones vs etiquetas verdaderas.
+5. `loss.backward()` — Backward pass: recorre el grafo en reversa, acumulando gradientes en `.grad` de cada parametro.
+6. `optimizer.step()` — Lee los gradientes y actualiza los pesos segun la regla del optimizador (Adam).
+
+**Fase de evaluacion:**
+
+- `with torch.no_grad()`: Desactiva el rastreo de gradientes. No necesitamos gradientes para evaluacion, asi que esto ahorra memoria y tiempo.
+- `model_pt.eval()`: Desactiva comportamientos aleatorios como Dropout y congela estadisticas de BatchNorm.
+- Convertimos logits a probabilidades con `torch.sigmoid()` y aplicamos umbral 0.5 para clasificacion binaria.
+- `.item()` convierte un tensor escalar a un numero Python para poder imprimir o almacenar.
+
+#### Puntos criticos para entender
+
+1. **Los gradientes solo se calculan en `loss.backward()`**, no en `loss.backward() + optimizer.step()`. `step()` solo lee los gradientes que ya fueron calculados.
+2. **`torch.no_grad()` es esencial en evaluacion** porque no necesitamos gradientes y ahorrar memoria/tiempo es importante con lotes grandes.
+3. **La evaluacion usa el mismo modelo pero modo diferente** (`model_pt.eval()` vs `model_pt.train()`), lo que afecta como se comportan capas especiales.
 
 ```{python}
 #| label: fig-fw-mlp-pytorch
@@ -753,11 +1143,43 @@ fig.show()
 
 ### Arquitectura CNN en PyTorch {#sec-cnn-arq}
 
-Para ilustrar las redes convolucionales en PyTorch utilizamos el conjunto de datos `digits` de sklearn, que contiene 1797 imagenes de digitos manuscritos en escala de grises de $8 \times 8$ pixeles y 10 clases (del 0 al 9). Aunque es considerablemente mas pequeno que MNIST ($28 \times 28$), es suficiente para demostrar la arquitectura CNN y su entrenamiento en un tiempo razonable.
+Para ilustrar las redes convolucionales en PyTorch utilizamos `digits` de sklearn: 1797 imágenes de dígitos manuscritos en escala de grises de $8 \times 8$ píxeles y 10 clases. Es considerablemente más pequeño que MNIST ($28 \times 28$), pero suficiente para demostrar la arquitectura sin tiempos de espera largos.
 
-PyTorch utiliza la convencion de canales primero (*channels-first*): los tensores de imagen tienen forma `(N, C, H, W)`, donde $N$ es el tamano del lote, $C$ es el numero de canales, $H$ es la altura y $W$ es el ancho. Para `digits`, las imagenes son escala de grises ($C=1$), por lo que la forma es `(N, 1, 8, 8)`.
+#### Convención de forma: channels-first
 
-`nn.Conv2d(in_channels, out_channels, kernel_size, padding)` implementa la convolucion discreta: aplica `out_channels` filtros de tamano `kernel_size x kernel_size` a la entrada, produciendo `out_channels` mapas de caracteristicas. Con `padding=1` y `kernel_size=3`, las dimensiones espaciales se conservan. `nn.MaxPool2d(2)` reduce las dimensiones a la mitad seleccionando el maximo en ventanas de $2 \times 2$. `nn.Flatten()` convierte el tensor multidimensional en un vector 1D para conectar con capas densas. `nn.Dropout(0.3)` desactiva aleatoriamente el 30% de las neuronas durante el entrenamiento para regularizar.
+::: {.callout-note appearance="minimal"}
+#### PyTorch es *channels-first*; JAX/Flax es *channels-last*
+
+PyTorch espera tensores de imagen con forma `(N, C, H, W)`:
+- `N` = tamaño del lote
+- `C` = canales (1 para escala de grises, 3 para RGB)
+- `H`, `W` = alto y ancho en píxeles
+
+Para `digits` en escala de grises: `(N, 1, 8, 8)`.
+
+JAX/Flax usa el orden opuesto `(N, H, W, C)`. Si portas código entre frameworks sin cambiar el reshape, obtendrás errores de forma confusos.
+:::
+
+Las capas clave de la arquitectura:
+
+- `nn.Conv2d(in, out, kernel_size, padding)` — aplica `out` filtros de `kernel × kernel` a la entrada. Con `padding=1` y `kernel_size=3`, las dimensiones espaciales se conservan.
+- `nn.MaxPool2d(2)` — reduce dimensiones a la mitad seleccionando el máximo en ventanas $2\times2$.
+- `nn.Flatten()` — convierte el tensor 4D a un vector 1D para capas densas.
+- `nn.Dropout(0.3)` — desactiva aleatoriamente el 30% de las neuronas. Solo activo en `model.train()`.
+
+El flujo de dimensiones con la arquitectura abajo es:
+
+```
+Entrada:         (N, 1, 8, 8)
+Conv1 + ReLU:    (N, 16, 8, 8)   ← 16 filtros 3×3, padding conserva tamaño
+MaxPool:         (N, 16, 4, 4)   ← reducción ×2
+Conv2 + ReLU:    (N, 32, 4, 4)   ← 32 filtros 3×3
+MaxPool:         (N, 32, 2, 2)   ← reducción ×2
+Flatten:         (N, 128)        ← 32 × 2 × 2 = 128
+Dense + ReLU:    (N, 64)
+Dropout:         (N, 64)
+Salida:          (N, 10)         ← 10 logits para 10 dígitos
+```
 
 ```{python}
 #| label: fig-fw-cnn-pytorch
@@ -973,29 +1395,184 @@ fig.show()
 
 ### El paradigma funcional {#sec-jax-funcional}
 
-JAX [@bradbury2018jax] redefine la relacion entre Python y el hardware de aceleracion. En lugar de un motor de ejecucion ansiosa con estado interno (como PyTorch en modo eager), JAX trata el codigo Python como una descripcion de un programa funcional que puede ser transformado, compilado y ejecutado de forma optima. La condicion es que las funciones sean puras: para los mismos argumentos, siempre devuelven los mismos resultados y no modifican ningun estado externo.
+JAX [@bradbury2018jax] redefine completamente la relación entre Python y el hardware de aceleración. La diferencia no es solo técnica; es una filosofía de programación fundamentalmente diferente.
 
-`jax.numpy` es un reemplazo casi identico a NumPy en terminos de API, pero sus operaciones pueden ejecutarse en GPU o TPU sin cambio de codigo. `jax.grad(f)(x)` calcula el gradiente de la funcion escalar `f` en el punto `x` usando diferenciacion automatica en modo inverso, analogamente al `.backward()` de PyTorch pero de forma completamente funcional. `jax.jit(f)` compila `f` con XLA: la primera llamada traza la funcion y genera codigo optimizado; las llamadas subsiguientes con argumentos de la misma forma reutilizan el codigo compilado y son significativamente mas rapidas. `jax.vmap(f)` transforma una funcion que opera sobre un solo ejemplo en una que opera sobre un lote, sin necesidad de escribir bucles o indices de lote manualmente.
+El siguiente widget interactivo muestra la diferencia central de forma concreta:
 
-```{python}
-#| code-fold: true
+```{=html}
+<div style="
+  border: 1px solid #dee2e6;
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 1.5em 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.07);
+">
+  <div style="display:flex; background:#f8f9fa; border-bottom:1px solid #dee2e6;">
+    <button id="jax-tab-pt" onclick="jaxToggle('pt')" style="flex:1; padding:.7em; border:none; background:none; cursor:pointer; font-weight:700; font-size:.92em; border-bottom:3px solid #ef553b; color:#ef553b; transition:all .2s;">PyTorch — imperativo</button>
+    <button id="jax-tab-jax" onclick="jaxToggle('jax')" style="flex:1; padding:.7em; border:none; background:none; cursor:pointer; font-weight:700; font-size:.92em; border-bottom:3px solid transparent; color:#6c757d; transition:all .2s;">JAX — funcional</button>
+  </div>
+  <div id="jax-panel-pt" style="padding:1.2em 1.5em;">
+    <p style="margin:0 0 .4em; font-size:.9em; color:#555; font-weight:600;">El modelo es un objeto con estado mutable.</p>
+    <pre style="background:#1e1e1e; color:#d4d4d4; border-radius:6px; padding:.9em 1em; font-size:.82em; overflow-x:auto; margin:.5em 0 0;">model = nn.Linear(5, 3)      # Crea objeto con pesos internos
+y = model(x)                 # Llama al objeto — pesos están DENTRO
 
-import jax
-import jax.numpy as jnp
+# Los pesos viven en el objeto
+print(model.weight)          # ✓ accesible
+print(model.weight.grad)     # ✓ gradientes también dentro
 
+# Actualizar = mutar el objeto
+optimizer.step()             # Modifica model.weight IN-PLACE
+print(model.weight)          # Cambió</pre>
+    <p style="margin:.8em 0 0; font-size:.85em; color:#6c757d;"><strong>Ventaja:</strong> intuitivo, debuggeable, pythonic. &nbsp; <strong>Costo:</strong> difícil de compilar y transformar.</p>
+  </div>
+  <div id="jax-panel-jax" style="display:none; padding:1.2em 1.5em;">
+    <p style="margin:0 0 .4em; font-size:.9em; color:#555; font-weight:600;">Las funciones son puras; el estado (pesos) vive fuera.</p>
+    <pre style="background:#1e1e1e; color:#d4d4d4; border-radius:6px; padding:.9em 1em; font-size:.82em; overflow-x:auto; margin:.5em 0 0;">params = model.init(key, x)  # Retorna pesos como diccionario
+y = model.apply(params, x)   # Función pura — params se PASAN
+
+# Los pesos son solo datos (pytree)
+print(params["Dense_0"]["kernel"])   # ✓ accesible como dict
+
+# Actualizar = producir nuevos params (sin mutar)
+new_params = optax.apply_updates(params, updates)
+# params NO cambió — new_params es distinto
+print(params["Dense_0"]["kernel"])   # Igual que antes</pre>
+    <p style="margin:.8em 0 0; font-size:.85em; color:#6c757d;"><strong>Ventaja:</strong> componible, compilable, reproducible. &nbsp; <strong>Costo:</strong> más verboso, debugging más difícil.</p>
+  </div>
+</div>
+
+<script>
+function jaxToggle(which) {
+  var isPT = which === 'pt';
+  document.getElementById('jax-panel-pt').style.display = isPT ? 'block' : 'none';
+  document.getElementById('jax-panel-jax').style.display = isPT ? 'none' : 'block';
+  document.getElementById('jax-tab-pt').style.borderBottomColor = isPT ? '#ef553b' : 'transparent';
+  document.getElementById('jax-tab-pt').style.color = isPT ? '#ef553b' : '#6c757d';
+  document.getElementById('jax-tab-jax').style.borderBottomColor = isPT ? 'transparent' : '#00cc96';
+  document.getElementById('jax-tab-jax').style.color = isPT ? '#6c757d' : '#00cc96';
+}
+</script>
+```
+
+#### ¿Que es programacion funcional pura?
+
+La diferencia central: en PyTorch el estado *vive dentro del objeto modelo* y muta con cada paso. En JAX el estado son *datos externos* que pasas explícitamente y que nunca se modifican — cada operación produce valores nuevos.
+
+#### Las cuatro transformaciones de JAX
+
+JAX proporciona cuatro transformaciones componibles:
+
+**1. `jax.grad(f)` — Diferenciación automática**
+```python
 def loss(w):
     return jnp.sum(w ** 2)
 
-grad_loss = jax.grad(loss)
-w = jnp.array([1.0, 2.0, 3.0])
-print("Gradiente de ||w||^2:", grad_loss(w))   # [2., 4., 6.]
+g = jax.grad(loss)(jnp.array([1., 2., 3.]))  # → [2., 4., 6.]
+```
+Retorna directamente los gradientes como pytree. No acumula en `.grad` — los gradientes son valores de retorno, no efectos secundarios.
+
+**2. `jax.jit(f)` — Compilación XLA**
+```python
+@jax.jit
+def forward(params, x):
+    return x @ params["W"] + params["b"]
+
+forward(params, x)  # Primera vez: traza + compila (lento)
+forward(params, x)  # Siguientes: ejecuta compilado (rápido)
 ```
 
-### Parametros como pytrees {#sec-jax-pytrees}
+**3. `jax.vmap(f)` — Vectorización automática**
 
-En JAX no existe un objeto "modelo" con estado interno. Los parametros son diccionarios de arrays de JAX que se pasan explicitamente como argumentos a la funcion de paso hacia adelante. Esta disciplina, aunque inicialmente extranya, tiene ventajas importantes: los parametros son inspeccionables en cualquier momento, se pueden guardar y cargar como diccionarios de Python, y las transformaciones de JAX pueden recorrerlos automaticamente.
+Transforma una función que opera sobre *un solo ejemplo* en una que opera sobre *un lote entero*, sin escribir índices de lote.
 
-Un pytree es cualquier estructura de datos de Python (diccionario, lista, tupla, o combinacion anidada) cuyos "hojas" son arrays de JAX. JAX sabe recorrer estas estructuras y aplicar transformaciones hoja a hoja. Por ejemplo, `jax.grad` sobre una funcion cuyo primer argumento es un diccionario de parametros devolvera un diccionario de gradientes con exactamente la misma estructura, lo que simplifica enormemente la implementacion del paso de actualizacion.
+**4. `jax.pmap(f)` — Paralelismo entre dispositivos**
+
+Ejecuta en paralelo sobre múltiples GPUs/TPUs. Poco común para usuarios nuevos.
+
+::: {.callout-note appearance="minimal"}
+#### La potencia de la composición funcional
+
+Porque todas las funciones JAX son puras, se pueden anidar libremente:
+
+```python
+# Gradiente de una función compilada con JIT
+grad_fn = jax.jit(jax.grad(loss_fn))
+
+# Gradiente vectorizado sobre un lote — ¡sin bucles!
+per_sample_grads = jax.vmap(jax.grad(loss_single))(X_batch)
+
+# Segunda derivada (Hessiano) — imposible en PyTorch sin config especial
+hessian_fn = jax.grad(jax.grad(loss_fn))
+```
+
+En PyTorch, componer estas operaciones requiere configuraciones no estándar. En JAX, es la forma natural de trabajar.
+:::
+
+### Parametros como pytrees: estado explícito {#sec-jax-pytrees}
+
+En JAX no existe un objeto "modelo" que contenga estado interno. En su lugar, los parametros son **estructuras de datos Python explicitas** (diccionarios, listas, tuplas, o combinaciones anidadas) que contienen los arrays de JAX. Estos se pasan explicitamente como argumentos a cada función.
+
+#### ¿Por qué es ventajoso?
+
+1. **Inspeccionables:** Puedes ver exactamente qué parametros tiene tu modelo en cualquier momento.
+2. **Serializables:** Guardar y cargar es trivial — solo serializa el diccionario.
+3. **Transformables:** JAX entiende estas estructuras y puede aplicar transformaciones automáticamente.
+
+#### Pytrees: contenedores anidados de datos
+
+Un pytree es cualquier estructura de datos Python donde las "hojas" (elementos más profundos) son arrays JAX. Ejemplos:
+
+```python
+# Pytree simple — diccionario
+params_simple = {
+    "W": [jnp.array([[1., 2.], [3., 4.]]),  # Layer 1 weights
+          jnp.array([[5., 6.], [7., 8.]])],  # Layer 2 weights
+    "b": [jnp.array([0.1, 0.2]),              # Layer 1 bias
+          jnp.array([0.3])]                   # Layer 2 bias
+}
+
+# Pytree más complejo — anidación arbitraria
+params_complex = {
+    "encoder": {
+        "dense1": {"W": jnp.array(...), "b": jnp.array(...)},
+        "dense2": {"W": jnp.array(...), "b": jnp.array(...)}
+    },
+    "decoder": {"W": jnp.array(...), "b": jnp.array(...)}
+}
+```
+
+#### JAX transforma automáticamente cada hoja
+
+La magia de JAX es que cuando usas transformaciones como `jax.grad()` sobre una función que recibe un pytree, **JAX retorna un pytree con la misma estructura**.
+
+```python
+def loss_fn(params, x, y):
+    # params es un pytree (diccionario)
+    yhat = mlp_forward(params, x)
+    return jnp.mean((yhat - y) ** 2)
+
+# jax.grad retorna una función que toma params y retorna gradientes
+grad_loss = jax.grad(loss_fn)
+
+grads = grad_loss(params, x, y)
+# grads es un pytree con EXACTAMENTE la misma estructura que params
+# Cada leaf es el gradiente del peso correspondiente
+```
+
+Esto significa que actualizaciones de parametros son triviales:
+
+```python
+# Actualización manual — iteraría sobre la estructura completa
+for layer_name in params.keys():
+    for param_name in params[layer_name].keys():
+        params[layer_name][param_name] -= learning_rate * grads[layer_name][param_name]
+
+# Con optax (optimizador JAX) — automático
+updates, new_opt_state = optimizer.update(grads, opt_state, params)
+new_params = optax.apply_updates(params, updates)
+```
+
+#### Ejemplo completo: forward pass con parametros pytree
 
 ```{python}
 #| code-fold: true
@@ -1004,11 +1581,19 @@ import jax
 import jax.numpy as jnp
 
 def mlp_forward(params, x):
+    """
+    Forward pass que usa un pytree de parametros.
+    params["W"] es una lista de matrices (capas)
+    params["b"] es una lista de vectores (biases)
+    """
+    # Capas ocultas con ReLU
     for i in range(len(params["W"]) - 1):
+        # x @ params["W"][i] hace: (batch, in) @ (in, out) -> (batch, out)
         x = jnp.maximum(0, x @ params["W"][i] + params["b"][i])
-    # last layer: no activation (logit)
+
+    # Capa final: sin activación (logit)
     x = x @ params["W"][-1] + params["b"][-1]
-    return x
+    return x.squeeze(-1)  # (batch, 1) -> (batch,)
 ```
 
 ### Visualizacion: grad de la entropia cruzada {#sec-jax-grad-viz}
@@ -1146,9 +1731,387 @@ fig.show()
 
 ## Clasificacion con JAX puro {#sec-jax-clasificacion}
 
+### Cambio de paradigma: funciones puras y pytrees
+
 Implementamos un MLP completo en JAX puro (sin Flax) sobre el mismo conjunto `make_moons` usado en la seccion de PyTorch. Esto permite una comparacion directa del codigo y los resultados. La arquitectura es identica: $[2 \to 32 \to 32 \to 1]$.
 
-En JAX puro, la inicializacion de parametros produce un diccionario Python con listas de matrices de pesos y vectores de bias. La clave de diseno es que este diccionario se pasa explicitamente a cada funcion que lo necesite. El optimizador de Optax [@deepmind2020optax] tambien es funcional: `optimizer.init(params)` devuelve el estado inicial del optimizador (momentos de Adam, contadores de paso), y `optimizer.update(grads, opt_state, params)` devuelve las actualizaciones y el nuevo estado, sin modificar nada in situ.
+En JAX puro, no existe un objeto "modelo" con estado interno. Los parametros son diccionarios Python (pytrees) que se pasan explicitamente como argumentos. Esta disciplina funcional tiene ventajas: los parametros son inspeccionables, se pueden serializar como dicts, y las transformaciones de JAX pueden recorrerlos automaticamente.
+
+### Inicializacion de parametros JAX
+
+En PyTorch, la inicializacion de pesos ocurre automaticamente dentro de `nn.Linear()`. En JAX puro, debes ser explícito y escribir tu propia función de inicializacion.
+
+#### ¿Por qué inicializacion explícita?
+
+Porque en JAX **no hay objeto modelo con estado**. Los parametros son solo datos que debes crear tú mismo. Esto parece verboso, pero te da control total.
+
+#### PRNG management — ¿Por qué `jax.random.split`?
+
+JAX requiere **determinismo puro**: la misma función con los mismos argumentos debe retornar exactamente lo mismo. Por eso no hay un generador global mutable como en NumPy — la aleatoriedad debe ser **explícita**.
+
+::: {.callout-warning appearance="minimal"}
+#### Error frecuente: reusar la misma key
+
+En JAX, si llamas `jax.random.normal` dos veces con la **misma** `key`, obtienes el **mismo** resultado — no valores distintos:
+
+```python
+key = jax.random.PRNGKey(42)
+W1 = jax.random.normal(key, (5, 10))
+W2 = jax.random.normal(key, (5, 10))  # ¡W2 == W1!
+```
+
+Para obtener valores independientes en cada capa, debes **dividir** la key:
+
+```python
+key = jax.random.PRNGKey(42)
+key1, key2 = jax.random.split(key)   # dos keys derivadas, distintas
+W1 = jax.random.normal(key1, (5, 10))
+W2 = jax.random.normal(key2, (5, 10))  # W1 ≠ W2 ✓
+```
+
+En un bucle de inicialización de capas, el patrón estándar es:
+
+```python
+for i in range(n_layers):
+    key, subkey = jax.random.split(key)  # avanzar key, extraer subkey
+    W = jax.random.normal(subkey, shape)
+```
+:::
+
+#### Función de inicializacion con He initialization
+
+```{python}
+#| code-fold: true
+
+import jax
+import jax.numpy as jnp
+import optax
+
+def init_params(layer_dims, key):
+    """
+    Inicializa los parametros del MLP con He initialization.
+
+    Args:
+        layer_dims: Lista de dimensiones, ej. [2, 32, 32, 1]
+        key: PRNG key de JAX
+
+    Returns:
+        Pytree (diccionario) con estructuras:
+        {"W": [matriz1, matriz2, ...], "b": [vector1, vector2, ...]}
+    """
+    params = {"W": [], "b": []}
+
+    for i in range(len(layer_dims) - 1):
+        # Dividir key para obtener una key única para esta capa
+        key, subkey = jax.random.split(key)
+
+        # He initialization: los pesos se escalan por sqrt(2 / fan_in)
+        # Esto ayuda a mantener la varianza consistente a traves de capas profundas
+        fan_in = layer_dims[i]
+        W = jax.random.normal(subkey, (layer_dims[i], layer_dims[i+1])) * jnp.sqrt(2.0 / fan_in)
+
+        # Biases iniciales en cero (convención)
+        b = jnp.zeros(layer_dims[i+1])
+
+        params["W"].append(W)
+        params["b"].append(b)
+
+    return params
+
+# Inicializar
+key = jax.random.PRNGKey(SEED)
+params_jax = init_params([2, 32, 32, 1], key)
+
+print(f"Numero de capas: {len(params_jax['W'])}")
+for i, (W, b) in enumerate(zip(params_jax["W"], params_jax["b"])):
+    print(f"  Capa {i+1}: W{W.shape}  b{b.shape}")
+# Output:
+# Numero de capas: 3
+#   Capa 1: W(2, 32)  b(32,)
+#   Capa 2: W(32, 32)  b(32,)
+#   Capa 3: W(32, 1)  b(1,)
+```
+
+#### He Initialization — ¿por qué?
+
+Sin inicializacion cuidadosa, los parametros pueden ser demasiado grandes o demasiado pequeños:
+- Si W es muy pequeño: las activaciones desaparecen (gradientes vanishing).
+- Si W es muy grande: las activaciones saturan o explotan.
+
+He initialization escala cada matriz de pesos para mantener una varianza consistente. Para ReLU, usamos $\text{std} = \sqrt{2 / \text{fan\_in}}$, donde `fan_in` es el número de entradas a la capa.
+
+**Comparacion: PyTorch vs JAX**
+
+| Aspecto | PyTorch | JAX |
+|---|---|---|
+| Inicializacion | Automatica en `nn.Linear()` | Manual con `init_params()` |
+| Acceso a parametros | `model.parameters()` | `params` diccionario |
+| Aleatoriedad | PRNG global implícito | PRNG key explícito |
+| Ventaja | Menos código | Mas control, reproducible |
+
+### Forward pass y funcion de perdida JAX
+
+#### Forward pass — operaciones lineales + activaciones
+
+```{python}
+#| code-fold: true
+
+def forward_jax(params, x):
+    """
+    Propagacion hacia adelante: MLPx de arquitectura [2 -> 32 -> 32 -> 1].
+
+    Capas ocultas: transformación lineal + ReLU
+    Capa final: transformación lineal + sigmoid (retorna probabilidades en [0, 1])
+    """
+    # Capas ocultas con ReLU
+    for i in range(len(params["W"]) - 1):
+        # x @ params["W"][i]: (batch, in) @ (in, out) -> (batch, out)
+        # + params["b"][i]: agregar bias
+        # jax.nn.relu: aplicar activación
+        x = jax.nn.relu(x @ params["W"][i] + params["b"][i])
+
+    # Capa final: sin activación (retorna logit)
+    logit = x @ params["W"][-1] + params["b"][-1]
+    # .squeeze(-1): convertir shape (batch, 1) -> (batch,)
+    return jax.nn.sigmoid(logit).squeeze(-1)
+```
+
+#### ¿Por qué `.squeeze(-1)`?
+
+La salida de la capa final antes del `squeeze` es shape `(batch, 1)`. En JAX, es convención que funciones de perdida escalar (como binary cross-entropy) reciben vectores 1D `(batch,)` para compatibilidad con operaciones de reducción.
+
+Comparacion de shapes a lo largo del forward pass con entrada `X_tr_j` de shape `(480, 2)`:
+
+```
+Entrada x:                  (480, 2)
+Despues de capa 1 + ReLU:  (480, 32)
+Despues de capa 2 + ReLU:  (480, 32)
+Despues de capa 3:         (480, 1)  ← logit antes de sigmoid
+Despues de sigmoid:        (480, 1)
+Despues de squeeze(-1):    (480,)    ← vector 1D de probabilidades
+```
+
+#### Loss function — binary cross-entropy
+
+```{python}
+#| code-fold: true
+
+def bce_loss_jax(params, x, y):
+    """
+    Binary cross-entropy loss.
+
+    L = -E[ y*log(yhat) + (1-y)*log(1-yhat) ]
+
+    donde yhat es la probabilidad predicha (0 a 1).
+    """
+    # Forward pass: obtener predicciones
+    yhat = forward_jax(params, x)  # Shape: (batch,)
+
+    # Clip para evitar log(0) — log(0) no está definido numericamente
+    eps = 1e-7
+    yhat = jnp.clip(yhat, eps, 1 - eps)  # yhat in [eps, 1-eps]
+
+    # BCE formula aplicada elemento a elemento
+    loss = -(y * jnp.log(yhat) + (1 - y) * jnp.log(1 - yhat))
+
+    # Retornar promedio sobre el lote
+    return jnp.mean(loss)
+```
+
+#### La forma de las variables
+
+Cuando llamas `bce_loss_jax(params, X_tr_j, y_tr_j)`:
+- `x` tiene shape `(480, 2)` — 480 ejemplos, 2 features
+- `y` tiene shape `(480,)` — 480 etiquetas binarias
+- `yhat` tiene shape `(480,)` — 480 predicciones
+- `loss` es un escalar — el promedio de la perdida de todos los ejemplos
+
+Este es el valor que luego diferenciaras con `jax.grad()` para obtener los gradientes.
+
+### Preparacion de datos JAX
+
+```{python}
+#| code-fold: true
+
+# Convertir datos a JAX arrays
+X_tr_j = jnp.array(X_train, dtype=jnp.float32)
+y_tr_j = jnp.array(y_train, dtype=jnp.float32)
+X_vl_j = jnp.array(X_val,   dtype=jnp.float32)
+y_vl_j = jnp.array(y_val,   dtype=jnp.float32)
+
+# Inicializar parametros con PRNG key
+key = jax.random.PRNGKey(42)
+params_jax = init_params([2, 32, 32, 1], key)
+
+# Prueba rapida con datos JAX
+y_pred_test = forward_jax(params_jax, X_tr_j[:5])
+loss_initial = bce_loss_jax(params_jax, X_tr_j, y_tr_j)
+print(f"Predicciones iniciales (primeras 5): {y_pred_test}")
+print(f"Perdida inicial: {float(loss_initial):.4f}")
+```
+
+### Paso de entrenamiento con JIT compilation
+
+#### Diferencia filosofica: PyTorch vs JAX
+
+**PyTorch:**
+```python
+for epoch in range(n_epochs):
+    optimizer.zero_grad()
+    logits = model(X_train)
+    loss = criterion(logits, y_train)
+    loss.backward()
+    optimizer.step()
+```
+- El bucle es imperativo — instrucciones paso a paso.
+- El estado del modelo y optimizador cambia en cada paso.
+- Facil de debuggear porque el estado es observable en cualquier momento.
+
+**JAX:**
+```python
+for epoch in range(n_epochs):
+    params, opt_state, loss = train_step(params, opt_state, X_train, y_train)
+```
+- Todo el paso está encapsulado en una funcion pura que retorna nuevos valores.
+- Ningun estado mutable — los parametros y estado del optimizador son argumentos de entrada y salida.
+- Se puede compilar con JIT para velocidad.
+
+#### El paso de entrenamiento JAX
+
+```{python}
+#| code-fold: true
+
+# Optimizador funcional — mantiene su estado externamente
+optimizer_jax = optax.adam(learning_rate=0.01)
+opt_state_jax = optimizer_jax.init(params_jax)  # Estado inicial del optimizador
+
+# Decorador @jax.jit: compila esta función con XLA
+@jax.jit
+def train_step_jax(params, opt_state, x, y):
+    """
+    Un paso de entrenamiento JAX.
+
+    Nota: Esta función es PURA — no modifica nada externamente.
+    Retorna nuevos valores para params, opt_state y la perdida.
+    """
+    # Paso 1: Calcular perdida Y gradientes simultaneamente
+    # jax.value_and_grad retorna (pérdida_escalar, gradientes_como_pytree)
+    loss, grads = jax.value_and_grad(bce_loss_jax)(params, x, y)
+
+    # Paso 2: Obtener updates del optimizador
+    # El optimizador lee los gradientes y retorna direcciones de actualización
+    # (updates pueden ser diferentes de gradientes — Adam, por ejemplo, modifica los gradientes)
+    updates, new_opt_state = optimizer_jax.update(grads, opt_state, params)
+
+    # Paso 3: Aplicar updates a los parametros
+    # new_params = params + updates (aproximadamente)
+    new_params = optax.apply_updates(params, updates)
+
+    # Retornar nuevos valores — NADA se modificó internamente
+    return new_params, new_opt_state, loss
+
+# Prueba: un paso de entrenamiento
+params_test, state_test, loss_test = train_step_jax(
+    params_jax, opt_state_jax, X_tr_j, y_tr_j
+)
+print(f"Perdida despues de 1 paso: {float(loss_test):.4f}")
+```
+
+#### Desglose línea por línea
+
+**`loss, grads = jax.value_and_grad(bce_loss_jax)(params, x, y)`**
+
+Esto es equivalente a lo que PyTorch hace en dos llamadas separadas:
+
+```python
+# PyTorch
+loss = criterion(logits, y_train)  # Paso 1: calcular pérdida
+loss.backward()                     # Paso 2: calcular gradientes (acumula en .grad)
+
+# JAX — en una sola operación
+loss, grads = jax.value_and_grad(bce_loss_jax)(params, x, y)
+# loss: escalar
+# grads: pytree con misma estructura que params, pero contiene gradientes
+```
+
+**`updates, new_opt_state = optimizer_jax.update(grads, opt_state, params)`**
+
+El optimizador Lee los gradientes e internamente mantiene momentos (moving averages). Para Adam, computa:
+
+$$m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t \quad \text{(first moment)}$$
+$$v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2 \quad \text{(second moment)}$$
+$$\text{update} = \frac{m_t}{\sqrt{v_t} + \epsilon}$$
+
+Esto es todo lo que PyTorch hace en `optimizer.step()`, pero de forma explícita y retornando los valores.
+
+**`new_params = optax.apply_updates(params, updates)`**
+
+Aplica los updates:
+$$\theta_{\text{new}} = \theta_{\text{old}} + \text{learning_rate} \times \text{updates}$$
+
+#### ¿Por qué `@jax.jit`?
+
+El decorador `@jax.jit` compila la función con XLA la primera vez que se llama:
+- **Primera llamada:** JAX traza la función, observa las formas de entrada, y genera código XLA optimizado. Lento — puede tomar varios segundos.
+- **Llamadas subsiguientes con mismas formas:** Reutilizan el código compilado. Mucho más rápido.
+
+Para datos de tamaño fijo (como en este ejemplo), la compilación ocurre una sola vez y los 299 epochs siguientes son significativamente más rápidos que en PyTorch eager.
+
+::: {.callout-tip appearance="minimal"}
+#### Cuando `@jax.jit` sorprende — tracing y efectos secundarios
+
+Dentro de una función JIT-compilada, `print()` **no funciona como esperas**. JAX traza la función estáticamente, y `print` solo se ejecuta una vez durante el trazado, no en cada llamada:
+
+```python
+@jax.jit
+def myfn(x):
+    print("hola")   # Solo se imprime durante la compilación, no en cada llamada
+    return x ** 2
+
+myfn(jnp.array(2.0))   # Imprime "hola" — primera vez (trazado)
+myfn(jnp.array(3.0))   # NO imprime — usa código compilado
+```
+
+Para debuggear dentro de JIT, usa `jax.debug.print(...)` que sí propaga el valor real en cada ejecución.
+:::
+
+### Bucle de entrenamiento completo
+
+```{python}
+#| code-fold: true
+
+# Reinicializar para partir desde cero
+params_jax = init_params([2, 32, 32, 1], key)
+opt_state_jax = optimizer_jax.init(params_jax)
+
+jax_tr_losses, jax_vl_losses = [], []
+jax_tr_accs, jax_vl_accs = [], []
+
+for epoch in range(300):
+    # Paso de entrenamiento (JIT-compilado)
+    params_jax, opt_state_jax, tr_loss = train_step_jax(
+        params_jax, opt_state_jax, X_tr_j, y_tr_j
+    )
+
+    # Metricas de validacion (sin compilar, solo para monitoreo)
+    vl_loss = float(bce_loss_jax(params_jax, X_vl_j, y_vl_j))
+
+    # Obtener predicciones (jax.device_get trae del dispositivo acelerado a CPU)
+    tr_preds = jax.device_get(forward_jax(params_jax, X_tr_j))
+    vl_preds = jax.device_get(forward_jax(params_jax, X_vl_j))
+
+    tr_acc = np.mean((tr_preds >= 0.5).astype(int) == np.array(y_tr_j))
+    vl_acc = np.mean((vl_preds >= 0.5).astype(int) == np.array(y_vl_j))
+
+    jax_tr_losses.append(float(tr_loss))
+    jax_vl_losses.append(vl_loss)
+    jax_tr_accs.append(tr_acc)
+    jax_vl_accs.append(vl_acc)
+
+print(f"Epoch 300 | Train acc: {jax_tr_accs[-1]:.3f} | Val acc: {jax_vl_accs[-1]:.3f}")
+```
+
+En JAX puro, cada transformacion es explícita: compilacion (`@jax.jit`), diferenciacion (`jax.grad`), vectorizacion (`jax.vmap`). Esto da total control pero requiere verbosidad. El optimizador `optax` es funcional: mantiene su estado en `opt_state` en lugar de modificar un objeto.
 
 ```{python}
 #| label: fig-fw-mlp-jax
@@ -1341,11 +2304,25 @@ La frontera aprendida por JAX captura la misma estructura curvilinea que la de P
 
 ### flax.linen.Module {#sec-flax-module}
 
-Flax [@heek2023flax] ofrece una API de modulos de nivel superior sobre JAX que es superficialmente similar a `nn.Module` de PyTorch, pero mantiene el paradigma funcional en su nucleo. La diferencia clave es que una instancia de `flax.linen.Module` no almacena los parametros en su interior: es simplemente una descripcion del computo. Los parametros se obtienen llamando a `model.init(key, x)` (que devuelve un diccionario de parametros inicializados) y se pasan explicitamente a `model.apply(params, x)` en cada evaluacion.
+Flax [@heek2023flax] ofrece una API de módulos sobre JAX que es **superficialmente** similar a `nn.Module` de PyTorch, pero mantiene la disciplina funcional en su núcleo.
 
-El decorador `@nn.compact` permite definir el computo en un unico metodo `__call__`, declarando las capas inline en lugar de en `__init__`. Flax nombra automaticamente cada sublayer segun su posicion en el codigo, lo que produce un diccionario de parametros con claves como `"Conv_0"`, `"Dense_1"`, etc.
+La diferencia clave: una instancia de `flax.linen.Module` **no almacena parámetros**. Es solo una descripción del cómputo. Los parámetros se obtienen con `model.init(key, x)` y se pasan explícitamente en cada `model.apply(params, x)`.
 
-Una diferencia crucial respecto a PyTorch es la convencion de forma para tensores de imagen. Mientras que PyTorch usa *channels-first* `(N, C, H, W)`, JAX/Flax usa *channels-last* `(N, H, W, C)`. Para el conjunto `digits` de $8 \times 8$ pixeles con un canal, la forma correcta en Flax es `(N, 8, 8, 1)` en lugar de `(N, 1, 8, 8)`. Esta distincion es facil de olvidar al portar codigo entre frameworks y causa errores de forma confusos.
+El decorador `@nn.compact` permite declarar las capas inline en `__call__` en lugar de en `__init__`. Flax nombra automáticamente cada capa según su posición, produciendo claves como `"Conv_0"`, `"Dense_1"`.
+
+::: {.callout-warning appearance="minimal"}
+#### Error frecuente al portar código PyTorch → Flax: el orden de canales
+
+PyTorch espera `(N, C, H, W)` — canales primero.
+JAX/Flax espera `(N, H, W, C)` — canales último.
+
+| Framework | Formato | Reshape correcto |
+|---|---|---|
+| PyTorch | `(N, 1, 8, 8)` | `.reshape(-1, 1, 8, 8)` |
+| JAX/Flax | `(N, 8, 8, 1)` | `.reshape(-1, 8, 8, 1)` |
+
+Si olvidas este cambio, obtendrás un error de forma confuso en `nn.Conv` porque el número de canales no coincide con el esperado.
+:::
 
 ```{python}
 #| label: fig-fw-cnn-flax
@@ -1473,27 +2450,267 @@ El flujo de trabajo con Flax merece un comentario adicional. La llamada `model_f
 
 ## Comparativa PyTorch vs JAX {#sec-comparativa}
 
-### Filosofia de diseno {#sec-filosofia}
+### Filosofia de diseno: Imperative vs Functional {#sec-filosofia}
 
-La diferencia mas profunda entre PyTorch y JAX no es tecnica sino filosofica. PyTorch adopta el paradigma imperativo orientado a objetos: un modelo es un objeto que encapsula sus parametros, y el ciclo de entrenamiento es un bucle Python ordinario donde el programador invoca metodos sobre objetos. Esta filosofia maximiza la ergonomia y la facilidad de debugging: se puede insertar un `print` o un punto de ruptura en cualquier lugar del codigo y el estado del sistema es inmediatamente inspeccionable.
+La diferencia mas profunda entre PyTorch y JAX no es tecnica sino **filosofica de programacion**. Estos dos frameworks encarnan dos paradigmas completamente diferentes.
 
-JAX adopta el paradigma funcional: los modelos son funciones, los parametros son datos externos (pytrees) y las transformaciones (`grad`, `jit`, `vmap`) son operaciones de alto orden sobre funciones. Esta filosofia maximiza la componibilidad: cualquier transformacion se puede aplicar a cualquier funcion pura, incluyendo combinaciones como `jax.jit(jax.grad(loss))` o `jax.vmap(jax.grad(loss))` (gradiente por elemento para un lote de datos). El precio es la curva de aprendizaje mas empinada y la mayor dificultad para debuggear codigo dentro de una region `jit`-compilada (los efectos secundarios como `print` no funcionan dentro de `jax.jit`).
+#### PyTorch: Programacion Imperativa Orientada a Objetos
+
+PyTorch sigue el paradigma imperativo: escribes instrucciones paso a paso sobre objetos que tienen estado mutable.
+
+```python
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layer1 = nn.Linear(10, 5)  # Objeto que contiene parametros
+        self.layer2 = nn.Linear(5, 1)
+
+model = MyModel()  # Instancia
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+for epoch in range(100):
+    optimizer.zero_grad()       # Modificar estado: limpiar gradientes
+    loss = criterion(model(X), y)  # Obtener predicción del objeto
+    loss.backward()             # Modificar estado: llenar .grad
+    optimizer.step()            # Modificar estado: actualizar weights
+    # Después de cada paso, model.layer1.weight ha cambiado
+
+print(model.layer1.weight)  # Inspecciona en cualquier momento — fácil de debuggear
+```
+
+**Ventajas:**
+- Ergonomía excelente — el código se lee como una serie natural de instrucciones.
+- Debugging fácil — inspecciona el estado en cualquier momento con `print` o un debugger.
+- Curva de aprendizaje suave para programadores acostumbrados a OOP.
+
+**Desventajas:**
+- No es composable con transformaciones automáticas (diferenciar través de múltiples pasos es complicado).
+- El estado mutable hace difícil razonar sobre que código hace que.
+
+#### JAX: Programacion Funcional Pura
+
+JAX implementa programacion funcional: las funciones no tienen estado, siempre retornan lo mismo para los mismos argumentos, y se pueden transformar de forma automática.
+
+```python
+# Los parámetros son datos (diccionarios), no objetos con estado
+params = {
+    "layer1_W": jnp.array(...),
+    "layer1_b": jnp.array(...),
+    "layer2_W": jnp.array(...),
+    "layer2_b": jnp.array(...)
+}
+
+def forward(params, x):
+    x = jax.nn.relu(x @ params["layer1_W"] + params["layer1_b"])
+    return x @ params["layer2_W"] + params["layer2_b"]
+
+# Entrenamiento: todos los pasos retornan nuevos valores
+optimizer_state = optimizer.init(params)
+
+for epoch in range(100):
+    loss, grads = jax.value_and_grad(lambda p: loss_fn(forward(p, X), y))(params)
+    updates, optimizer_state = optimizer.update(grads, optimizer_state, params)
+    params = optax.apply_updates(params, updates)
+    # params es NUEVO — el antiguo sigue existiendo si lo guardaste
+
+# Para inspeccionar, accedes a params como diccionario
+print(params["layer1_W"])
+```
+
+**Ventajas:**
+- Composición de transformaciones — puedes anidar `jax.grad`, `jax.jit`, `jax.vmap` libremente.
+- Compilación automática con XLA — velocidad.
+- Determinismo garantizado — mismos argumentos → mismo resultado.
+- Paralelización automática posible.
+
+**Desventajas:**
+- Curva de aprendizaje más empinada — requiere cambiar tu forma de pensar.
+- Debugging más difícil — no puedes poner `print` dentro de `@jax.jit`.
+- Más verboso — tienes que ser explícito con el estado (parámetros, keys PRNG, etc).
+
+#### Tabla comparativa de mentalidad
+
+| Aspecto | PyTorch | JAX |
+|---|---|---|
+| Modelo | Objeto con estado mutable | Función pura + datos externos |
+| Parámetros | Encapsulados en `model.parameters()` | Datos explícitos (pytrees) |
+| Ciclo de entrenamiento | Instrucciones imperativas | Transformación de datos |
+| Debugging | Trivial — inspecciona en cualquier punto | Difícil dentro de `@jax.jit` |
+| Composición | Limitada | Ilimitada |
+| Velocidad | Eager por defecto, JIT opcional | JIT por defecto |
+| Uso típico | La mayoría de practicionantes | Investigación, TPUs, órdenes altas |
 
 ### Flujo de trabajo tipico {#sec-workflow}
 
-La siguiente tabla resume las diferencias practicas entre los dos frameworks para las operaciones mas comunes en el desarrollo de redes neuronales.
+Veamos las operaciones mas comunes lado a lado.
 
-| Aspecto | PyTorch | JAX / Flax |
+#### 1. Definicion del modelo
+
+**PyTorch:**
+```python
+class MyNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(10, 5)
+        self.fc2 = nn.Linear(5, 1)
+
+    def forward(self, x):
+        return self.fc2(torch.relu(self.fc1(x)))
+
+model = MyNet()  # Los parámetros se crean automáticamente
+```
+
+**JAX / Flax:**
+```python
+class MyNet(fnn.Module):
+    @fnn.compact
+    def __call__(self, x):
+        x = fnn.Dense(5)(x)
+        x = fnn.relu(x)
+        x = fnn.Dense(1)(x)
+        return x
+
+model = MyNet()
+params = model.init(key, x_example)  # Los parámetros se crean explícitamente
+```
+
+#### 2. Forward pass
+
+**PyTorch:**
+```python
+output = model(x)  # Los parámetros están dentro del modelo
+```
+
+**JAX / Flax:**
+```python
+output = model.apply(params, x)  # Los parámetros se pasan explícitamente
+```
+
+#### 3. Cálculo de gradientes
+
+**PyTorch:**
+```python
+loss = criterion(model(x), y)
+loss.backward()  # Gradientes se acumulan en model.parameters()[...].grad
+# Acceso: for p in model.parameters(): print(p.grad)
+```
+
+**JAX:**
+```python
+def loss_fn(params):
+    logits = model.apply(params, x)
+    return criterion(logits, y)
+
+grads = jax.grad(loss_fn)(params)  # Retorna un pytree de gradientes
+# grads tiene la misma estructura que params
+```
+
+#### 4. Optimizador
+
+**PyTorch:**
+```python
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+# El optimizador mantiene estado internamente (momentos de Adam)
+# optimizer.zero_grad() y optimizer.step() modifican el modelo
+```
+
+**JAX:**
+```python
+optimizer = optax.adam(learning_rate=0.001)
+opt_state = optimizer.init(params)  # Estado del optimizador debe ser trackeo
+# optimizer.update() retorna nuevos updates y nuevo opt_state
+```
+
+#### 5. Compilacion
+
+**PyTorch:**
+```python
+model = MyNet()
+# Ejecuta en eager por defecto (traza cada operación)
+output = model(x)  # Rápido para prototiping, más lento que compilado
+
+# Opcional:
+model = torch.compile(model)  # Intenta compilar con compiler nativo
+output = model(x)  # Potencialmente más rápido
+```
+
+**JAX:**
+```python
+model = MyNet()
+
+@jax.jit
+def forward(params, x):
+    return model.apply(params, x)
+
+# Primera llamada: JAX traza y compila con XLA (lento)
+output = forward(params, x)
+# Llamadas subsiguientes: ejecutan código compilado (rápido)
+output = forward(params, x)  # Significativamente más rápido
+```
+
+#### 6. Debugging
+
+**PyTorch — fácil:**
+```python
+model = MyNet()
+x = torch.randn(32, 10)
+
+# Inspeccionar en cualquier punto
+print(f"Input shape: {x.shape}")
+h = model.fc1(x)
+print(f"After fc1: {h.shape}")  # ← Puedes inspeccionar aquí
+# Puedes insertar breakpoints debugger sin problemas
+```
+
+**JAX — más complejo:**
+```python
+@jax.jit
+def forward(params, x):
+    x = fnn.Dense(5)(x)
+    print(x.shape)  # ← NO FUNCIONA dentro de jit!
+    return x
+
+# Solución: extraer funciones sin jit para debugging
+def forward_debug(params, x):
+    x = model.apply(params, x)
+    print(x.shape)  # Funciona aquí
+    return x
+
+forward_debug(params, x)  # Debugging
+```
+
+#### Resumen de flujos de trabajo
+
+| Operacion | PyTorch | JAX |
 |---|---|---|
-| Definicion del modelo | `nn.Module` con estado | `flax.linen.Module` + params externos |
-| Forward pass | `model(x)` | `model.apply(params, x)` |
-| Gradientes | `loss.backward()` automatico | `jax.grad(loss_fn)(params)` explicito |
-| Optimizador | `torch.optim.Adam` | `optax.adam` |
-| Compilacion | Eager por defecto, `torch.compile` opcional | `jax.jit` explicito, XLA siempre |
-| Debugging | Facil (eager, pythonic) | Mas complejo (trazado estatico en jit) |
-| Ecosistema | Vasto (torchvision, HuggingFace) | Creciente (Flax, Optax, Haiku, Equinox) |
+| Crear modelo | `MyNet()` | `MyNet()` + `model.init(key, x)` |
+| Forward | `model(x)` | `model.apply(params, x)` |
+| Gradientes | `loss.backward()` | `jax.grad(loss_fn)(params)` |
+| Optimizador | `optimizer.step()` | `optimizer.update(grads, state)` |
+| Compilacion | `torch.compile()` (opcional) | `@jax.jit` (automática internamente) |
+| Debugging | Trivial | Requiere técnicas especiales |
 
-Ninguno de los dos frameworks es objetivamente superior. PyTorch es la mejor opcion por defecto para la mayoria de los practicantes: su ecosistema es mucho mas amplio (modelos preentrenados, datasets, herramientas de deployment), su curva de aprendizaje es mas suave y su comunidad es enorme. JAX es la opcion preferida cuando se necesita diferenciacion de orden superior, vectorizacion automatica eficiente o integracion nativa con TPUs de Google Cloud. En los ultimos anyos, proyectos como Equinox han emergido para ofrecer en JAX una experiencia de usuario mas cercana a PyTorch, mientras que `torch.compile` ha acercado PyTorch a la velocidad de JAX para los casos de uso comunes.
+#### ¿Cuál elegir?
+
+::: {.callout-tip appearance="minimal"}
+#### Regla práctica para elegir framework
+
+**Empieza con PyTorch** si:
+
+- Estás aprendiendo aprendizaje profundo por primera vez.
+- Necesitas modelos preentrenados (HuggingFace Transformers, torchvision).
+- Quieres debuggear con `print()` y puntos de ruptura normales.
+- Trabajas en equipo donde PyTorch ya es el estándar.
+
+**Considera JAX** si:
+
+- Necesitas diferenciación de orden superior (Hessiano, derivadas de derivadas).
+- Quieres vectorización automática eficiente con `jax.vmap`.
+- Trabajas con TPUs de Google Cloud (JAX tiene integración nativa).
+- Investigas meta-aprendizaje, NTK o algoritmos que diferencian a través del entrenamiento.
+
+**La realidad del mercado (2025):** ~80% del código de investigación publicado usa PyTorch. JAX es dominante en DeepMind/Google y en investigación teórica. Para la industria general, PyTorch es la elección casi universal.
+:::
 
 ### Comparativa cuantitativa {#sec-comparativa-cuantitativa}
 
@@ -1614,12 +2831,285 @@ fig.update_layout(
 fig.show()
 ```
 
+## Ejercicios {#sec-ejercicios}
+
+Los siguientes ejercicios están diseñados para profundizar tu comprensión de PyTorch y JAX experimentando con variaciones de arquitecturas e hiperparámetros. El objetivo no es solo "hacer que funcione", sino entender **qué sucede** cuando cambias cosas.
+
+### Ejercicio 1: Sensibilidad a la tasa de aprendizaje {#sec-ej1-lr}
+
+**Concepto:** La tasa de aprendizaje $\eta$ es el hiperparámetro más crítico. Controla qué tan grandes son los pasos que toma el optimizador:
+- Demasiado bajo → Convergencia lentísima (podrías esperar para siempre).
+- Demasiado alto → Oscilaciones o divergencia (los pesos saltan sin control).
+
+**Tarea:**
+Entrena el MLP de PyTorch con cuatro tasas diferentes: `lr ∈ [0.0005, 0.005, 0.05, 0.5]`. Grafica las curvas de `val_loss` para las cuatro en la misma figura, asegurándote de usar colores distintos para cada una.
+
+**Pasos sugeridos:**
+1. Define una función `train_with_lr(lr, n_epochs=300)` que devuelva las listas `val_losses`.
+2. Itera sobre `learning_rates` y acumula los resultados.
+3. Grafica con Plotly (puedes usar `go.Scatter` y agregar múltiples traces).
+
+**Observaciones esperadas:**
+- Con `lr = 0.0005`: Curva plana durante muchos epochs — convergencia extremadamente lenta.
+- Con `lr = 0.005` y `lr = 0.05`: Curvas suaves y decrecientes — zona dorada.
+- Con `lr = 0.5`: Oscilaciones erráticas o divergencia — la pérdida aumenta en lugar de disminuir.
+
+**Pregunta de reflexión:** ¿Por qué Adam es más robusto a tasas de aprendizaje altas que SGD simple?
+
+```{python}
+#| code-fold: true
+#| label: ex-lr-sensitivity
+
+# Esqueleto de solución
+import torch
+import torch.nn as nn
+import plotly.graph_objects as go
+
+learning_rates = [0.0005, 0.005, 0.05, 0.5]
+colors = ["steelblue", "mediumseagreen", "tomato", "purple"]
+
+def train_with_lr(lr, n_epochs=300):
+    """Entrena MLP con una tasa de aprendizaje específica."""
+    torch.manual_seed(SEED)
+    model = MLP(2, [32, 32], 1)  # Reutiliza la clase MLP definida arriba
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.BCEWithLogitsLoss()
+
+    val_losses = []
+    for epoch in range(n_epochs):
+        # TODO: implementar ciclo de entrenamiento
+        # TODO: evaluar en validación
+        # TODO: agregar val_loss a val_losses
+        pass
+
+    return val_losses
+
+# TODO: Entrenar para cada lr
+results = {}
+for lr in learning_rates:
+    results[lr] = train_with_lr(lr)
+
+# TODO: Crear figura con go.Figure() y agregar traces
+# fig = go.Figure()
+# for lr, color in zip(learning_rates, colors):
+#     fig.add_trace(go.Scatter(x=list(range(300)), y=results[lr],
+#         name=f"lr = {lr}", line=dict(color=color, width=2)))
+# fig.update_layout(xaxis_title="Epoch", yaxis_title="Val Loss", ...)
+# fig.show()
+```
+
+### Ejercicio 2: Efecto del Dropout en regularización {#sec-ej2-dropout}
+
+**Concepto:** Dropout es una técnica de regularización que desactiva aleatoriamente neuronas durante el entrenamiento. La idea es prevenir que el modelo "memorice" patrones raros y, en su lugar, aprenda características más robustas.
+
+**Pregunta:** ¿Reduce realmente la brecha entre pérdida de entrenamiento y validación?
+
+**Tarea:**
+Define una clase `MLPWithDropout` que agregue `nn.Dropout(p=0.3)` **después de cada activación ReLU** (excepto la última capa). Entrena tanto el MLP original como la versión con Dropout durante 300 epochs, y grafica `train_loss` y `val_loss` para ambos modelos en la misma figura.
+
+**Pasos sugeridos:**
+1. Define `MLPWithDropout` con la arquitectura `[2 -> 32 -> 32 -> 1]` y `Dropout(0.3)` después de cada ReLU.
+2. Entrena ambos modelos con la misma semilla y tasa de aprendizaje.
+3. Grafica las 4 curvas: `train_loss (sin dropout)`, `val_loss (sin dropout)`, `train_loss (con dropout)`, `val_loss (con dropout)`.
+4. Calcula el gap final: `gap = val_loss_final - train_loss_final` para ambos modelos.
+
+**Observaciones esperadas:**
+- **Sin Dropout:** La pérdida de entrenamiento desciende rápidamente pero el gap con validación puede ser grande (sobreajuste).
+- **Con Dropout:** Ambas curvas convergen más juntas porque el modelo está más regularizado.
+
+```{python}
+#| code-fold: true
+#| label: ex-dropout
+
+class MLPWithDropout(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, dropout_p=0.3):
+        super().__init__()
+        dims = [input_dim] + hidden_dims + [output_dim]
+        layers = []
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i+1]))
+            # Agregar Dropout después de ReLU en capas ocultas
+            if i < len(dims) - 2:
+                layers.append(nn.ReLU())
+                layers.append(nn.Dropout(dropout_p))  # ← Aquí!
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+# Función auxiliar para entrenar
+def train_model(model, X_train, y_train, X_val, y_val, n_epochs=300, lr=0.01):
+    """Entrena un modelo y retorna las listas de pérdidas."""
+    torch.manual_seed(SEED)  # Reproducibilidad
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.BCEWithLogitsLoss()
+
+    train_losses, val_losses = [], []
+
+    for epoch in range(n_epochs):
+        # TODO: implementar ciclo de entrenamiento
+        # Recuerda: model.train() y model.eval() para modo correcto
+        pass
+
+    return train_losses, val_losses
+
+# TODO: Entrenar sin y con Dropout
+# TODO: Graficar ambas en la misma figura
+# TODO: Comparar el gap final: gap = val_loss_final - train_loss_final
+```
+
+### Ejercicio 3: Cambiar el dataset: make_circles {#sec-ej3-circles}
+
+**Concepto:** Diferentes datasets requieren diferentes arquitecturas. `make_circles` es fundamentalmente diferente a `make_moons`: los datos forman dos círculos concéntricos, no semilunares. Esto requiere capas más poderosas.
+
+**Pregunta:** ¿Es suficiente una red pequeña `[32, 32]` o necesitamos una arquitectura más grande?
+
+**Tarea:**
+1. Crea el dataset: `X_c, y_c = make_circles(n_samples=600, noise=0.1, factor=0.5, random_state=42)`
+2. Haz train/test split (80/20) como lo hiciste con `make_moons`.
+3. Entrena **tres** modelos:
+   - `MLP(2, [16, 16], 1)` — arquitectura pequeña
+   - `MLP(2, [32, 32], 1)` — arquitectura mediana
+   - `MLP(2, [64, 64], 1)` — arquitectura grande
+4. Para cada modelo, calcula la exactitud final en validación.
+5. Visualiza las tres fronteras de decisión lado a lado usando tres subplots.
+
+**Observaciones esperadas:**
+- `[16, 16]` - Posiblemente insuficiente; el modelo podría no capturar bien la estructura radial.
+- `[32, 32]` - Debería funcionar bastante bien.
+- `[64, 64]` - Captura los círculos con mayor precisión.
+
+```{python}
+#| code-fold: true
+#| label: ex-make-circles
+
+from sklearn.datasets import make_circles
+
+# Crear dataset
+X_c, y_c = make_circles(n_samples=600, noise=0.1, factor=0.5, random_state=SEED)
+
+# TODO: hacer train_test_split (80/20)
+
+# TODO: Definir función para entrenar y visualizar
+def train_and_visualize_circle(hidden_dims, X_train, y_train, X_val, y_val, X_full):
+    """Entrena un MLP y retorna su exactitud en validación."""
+    torch.manual_seed(SEED)
+    model = MLP(2, hidden_dims, 1)
+    # TODO: implementar entrenamiento (300 epochs)
+    # TODO: retornar val_acc final
+
+# TODO: Entrenar los tres modelos
+# TODO: Crear figura con 3 subplots — uno por modelo
+# TODO: En cada subplot, graficar la frontera de decisión + puntos de datos
+```
+
+### Ejercicio 4: Derivadas de orden superior en JAX — Una exclusiva de JAX {#sec-ej4-jax-hessian}
+
+**Concepto:** JAX permite componer `jax.grad` de forma ilimitada. Puedes calcular:
+- Primera derivada: `grad1 = jax.grad(f)`
+- Segunda derivada: `grad2 = jax.grad(jax.grad(f))`
+- Tercera, cuarta, ... — tantas como quieras.
+
+Esto es **casi imposible** en PyTorch sin configuración especial, pero en JAX es completamente natural.
+
+**Por qué importa:** Las derivadas de segundo orden (Hessiano) son fundamentales para:
+- Optimizadores de segundo orden (Newton-Raphson).
+- Análisis de curvatura del paisaje de optimización.
+- Meta-aprendizaje (diferenciar a través de un bucle de entrenamiento completo).
+
+**Tarea:**
+Define la pérdida BCE con un solo peso escalar: `bce_escalar(w)` con entrada fija `x=1` y etiqueta `y=1`. Luego:
+1. Calcula `grad1 = jax.grad(bce_escalar)` — primera derivada.
+2. Calcula `grad2 = jax.grad(grad1)` — segunda derivada (Hessiano).
+3. Evalúa las tres funciones para `w ∈ [-5, 5]` con 300 puntos.
+4. Grafica en tres subplots:
+   - Arriba: Pérdida `L(w)`
+   - Medio: Primera derivada `dL/dw`
+   - Abajo: Segunda derivada `d²L/dw²`
+
+**Observaciones esperadas:**
+- La pérdida es **convexa** — forma de U.
+- El gradiente es **siempre negativo** para `y=1` — descenso por gradiente siempre incrementa `w`.
+- La curvatura es **máxima en `w=0`** — máxima incertidumbre.
+- En `w → ±∞`, la curvatura se aproxima a cero — la función se vuelve plana.
+
+```{python}
+#| code-fold: true
+#| label: ex-jax-hessian
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def bce_escalar(w):
+    """
+    Binary Cross-Entropy para un solo peso escalar.
+    Con entrada fija x=1 y etiqueta y=1.
+    """
+    sigma = jax.nn.sigmoid(w)
+    return -jnp.log(jnp.clip(sigma, 1e-7, 1.0 - 1e-7))
+
+# TODO: Definir las derivadas
+# grad1 = jax.grad(bce_escalar)
+# grad2 = jax.grad(grad1)
+
+# TODO: Evaluar en rango w ∈ [-5, 5]
+# w_vals = np.linspace(-5, 5, 300)
+# loss_vals = [float(bce_escalar(jnp.array(w))) for w in w_vals]
+# g1_vals = [float(grad1(jnp.array(w))) for w in w_vals]
+# g2_vals = [float(grad2(jnp.array(w))) for w in w_vals]
+
+# TODO: Crear figura con 3 subplots verticales
+# fig = make_subplots(rows=3, cols=1,
+#     subplot_titles=["Perdida L(w)", "Primera derivada dL/dw", "Segunda derivada d²L/dw²"])
+# ... agregar traces para cada subplot ...
+
+# TODO: Reflexión: ¿Dónde es máxima la curvatura? ¿Qué significa esto para optimización?
+```
+
+**Pregunta de reflexión:**
+En un optimizador de segundo orden (como Newton-Raphson), usarías la Hessiana para dar pasos más grandes donde la curvatura es pequeña y pasos más pequeños donde es grande. ¿Tiene sentido esto intuitivamente? ¿Por qué?
+
 ## Resumen {#sec-resumen}
 
-Este capitulo presento la implementacion practica de redes neuronales utilizando tres frameworks: scikit-learn [@pedregosa2011scikit], PyTorch [@paszke2019pytorch] y JAX [@bradbury2018jax] con Flax [@heek2023flax] y Optax [@deepmind2020optax].
+Este capítulo presentó la implementación práctica de redes neuronales en tres frameworks — scikit-learn, PyTorch y JAX+Flax — con énfasis en entender *por qué* funciona cada pieza, no solo *cómo* usarla.
 
-Los puntos clave son los siguientes. En PyTorch, el patron central es: definir una subclase de `nn.Module` con `forward`, instanciar un optimizador con `model.parameters()`, y escribir el bucle de entrenamiento con `zero_grad()` / `backward()` / `step()`. En JAX, el patron es: los parametros son pytrees externos, las funciones son puras, `jax.value_and_grad` computa la perdida y los gradientes en un solo paso, y `@jax.jit` compila el paso de entrenamiento para ejecucion eficiente. Flax provee un nivel de abstraccion sobre JAX que simplifica la definicion de arquitecturas manteniendo la disciplina funcional.
+**PyTorch — el patrón central:**
 
-Los resultados experimentales confirman que ambos frameworks producen modelos equivalentes bajo las mismas condiciones: el MLP sobre `make_moons` y la CNN sobre `digits` alcanzan exactitudes de validacion similares con las mismas arquitecturas y optimizadores. La eleccion entre frameworks es principalmente una decision de ergonomia y ecosistema para la mayoria de los casos de uso, y una decision de rendimiento y expresividad funcional para casos avanzados.
+```python
+for epoch in range(n_epochs):
+    model.train()          # activar modo entrenamiento
+    optimizer.zero_grad()  # limpiar gradientes (obligatorio)
+    loss = criterion(model(X), y)
+    loss.backward()        # backward pass — llena .grad en todos los params
+    optimizer.step()       # actualiza pesos usando .grad
+```
+
+**JAX — el patrón central:**
+
+```python
+@jax.jit
+def train_step(params, opt_state, x, y):
+    loss, grads = jax.value_and_grad(loss_fn)(params, x, y)
+    updates, new_state = optimizer.update(grads, opt_state, params)
+    return optax.apply_updates(params, updates), new_state, loss
+
+for epoch in range(n_epochs):
+    params, opt_state, loss = train_step(params, opt_state, X, y)
+```
+
+**La diferencia filosófica que importa:**
+
+| | PyTorch | JAX |
+|---|---|---|
+| Estado del modelo | Dentro del objeto | Datos externos (pytree) |
+| Gradientes | Acumulan en `.grad` | Valores de retorno |
+| Aleatoriedad | Generador global | PRNG key explícita |
+| Compilación | Eager por defecto | `@jax.jit` explícito |
+| Debugging | Trivial | Requiere `jax.debug` |
+
+Los experimentos confirman que ambos frameworks producen modelos equivalentes con la misma arquitectura y optimizador. La elección es principalmente una decisión de ergonomía y ecosistema (PyTorch) versus expresividad funcional y velocidad en hardware especializado (JAX).
 
 ## Referencias {-}
