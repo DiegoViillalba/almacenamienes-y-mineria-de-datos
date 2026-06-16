@@ -22,386 +22,219 @@ book:
     - index.qmd
 
     # ══════════════════════════════════════════════════════════════════════
-    # PARTE I — ALMACENES DE DATOS
+    # FLUJO GENERAL DEL CURSO
+    #   Fuentes OLTP ──► ETL/ELT ──► Data Warehouse ──► OLAP
+    #                                       │
+    #                              Proceso de Minería
+    #                    EDA ──► Preprocesamiento ──► Modelado
+    #                                       │
+    #                    Clasificación / Clustering / Patrones
     #
-    # Flujo de datos en la empresa:
-    #   Fuentes OLTP ──► ETL/ELT ──► Data Warehouse ──► OLAP / Minería
-    #
-    # DISTINCIÓN CLAVE CON LA PARTE II:
-    #   • ETL (aquí): perspectiva de ingeniería de datos. Mover, integrar
-    #     y limpiar datos a escala empresarial para poblar el DW.
-    #     Herramientas: PySpark, dbt, Airflow, Kafka. Operación recurrente,
-    #     programada, sobre terabytes.
-    #   • Preprocesamiento (Parte II): perspectiva analítica. Transformar
-    #     la "vista analítica" ya limpia del DW para hacerla apta para un
-    #     modelo específico. Herramientas: pandas, scikit-learn, Polars.
-    #     Operación ad-hoc, orientada al experimento.
-    #   El DW es el punto de transferencia: el alumno debe entender que
-    #   lo que Preprocesamiento recibe como input ya pasó por ETL.
+    # DISTINCIÓN ETL vs PREPROCESAMIENTO:
+    #   • ETL (Parte I)  — ingeniería de datos, escala empresarial,
+    #     PySpark/dbt/Airflow, produce el DW.
+    #   • Preprocesamiento (Parte II) — análisis experimental sobre una
+    #     vista del DW, pandas/sklearn/Polars, produce features para un modelo.
+    #   El DW es el punto de transferencia entre ambas perspectivas.
     # ══════════════════════════════════════════════════════════════════════
+
+    # ──────────────────────────────────────────────────────────────────────
+    # PARTE I — ALMACENES DE DATOS
+    # Objetivo: entender cómo se construye y consulta un DW empresarial.
+    # Progresión: arquitectura → modelo dimensional → ETL → consulta OLAP
+    # ──────────────────────────────────────────────────────────────────────
     - part: "Almacenes de Datos"
       contents:
 
-        # ── 1. Arquitectura y modelo multidimensional ────────────────────
-        - section: "Fundamentos"
+        # 1 ── Arquitectura del Data Warehouse ─────────────────────────────
+        # ¿Qué es un DW? OLTP vs OLAP; Kimball vs Inmon; ACID vs BASE;
+        # data lake vs lakehouse. Punto de partida para toda la Parte I.
+        - section: "Arquitectura del DW"
           contents:
-            # ¿Qué es un DW? OLTP vs OLAP; arquitecturas Kimball/Inmon;
-            # propiedades ACID vs BASE; data lake vs data lakehouse.
-            # Conectar con Parte II: el DW es la fuente de la que
-            # Preprocesamiento parte; no son etapas duplicadas.
-            - unidades/almacenes/1-1-introduccion.qmd
-            # Dimensiones, hechos, granularidad, jerarquías, medidas aditivas
-            - unidades/almacenes/1-2-modelo-multidim.qmd
-            # TODO: Modelado dimensional avanzado
-            #   Esquemas estrella, copo de nieve y constelación;
-            #   dimensiones conformadas; slowly-changing dimensions (SCD Tipo 1/2/3).
-            #   Herramienta sugerida: dbt (data build tool) para definir
-            #   modelos dimensionales como SQL + versionado en git.
-            #   → unidades/almacenes/1-3-esquemas-dimensionales.qmd
+            - unidades/almacenes/1-1-introduccion.qmd      # fundamentos y arquitecturas
+            - unidades/almacenes/1-2-modelo-multidim.qmd   # dimensiones, hechos, jerarquías
+            # TODO: esquemas estrella/copo de nieve, SCD Tipo 1/2/3, dbt
+            # → unidades/almacenes/1-3-esquemas-dimensionales.qmd
 
-        # ── 2. ETL / ELT ────────────────────────────────────────────────
-        # NOTA PARA EL DOCENTE: este capítulo cubre la limpieza e
-        # integración *a escala de pipeline*, diferente al capítulo de
-        # "Calidad y Limpieza" de la Parte II, que trabaja *a escala de
-        # DataFrame analítico*. El primero produce el DW; el segundo
-        # prepara la vista analítica para un modelo concreto.
-        # Conviene referirse explícitamente a esta distinción en ambos.
-        #
-        # Contenido: ETL clásico vs ELT; PySpark (extract/transform/load);
-        # Delta Lake (ACID, upsert, time travel); dbt (transformaciones SQL
-        # versionadas); Great Expectations (validación); Airflow/Prefect
-        # (orquestación); 6 ejercicios con NYC Taxi y TPC-H sintético.
-        - unidades/almacenes/1-4-etl.qmd
+        # 2 ── ETL / ELT a escala ──────────────────────────────────────────
+        # Cómo se puebla el DW desde las fuentes OLTP.
+        # PySpark · integración de fuentes heterogéneas (JSON/CSV/JDBC) ·
+        # Delta Lake · Great Expectations · dbt · Airflow/Prefect.
+        # DIFERENTE al preprocesamiento analítico de la Parte II:
+        # aquí el output ES el DW; allá el input ES el DW.
+        - section: "ETL / ELT con PySpark"
+          contents:
+            - unidades/almacenes/1-4-etl.qmd
+            # TODO: modelado dimensional avanzado y carga incremental
+            # → unidades/almacenes/1-5-cubos-practica.qmd
 
-        # ── 3. Cubos de datos y OLAP ─────────────────────────────────────
-        # OLAP es la capa de consulta analítica del DW; su salida puede
-        # servir como punto de partida para minería de datos agregados.
+        # 3 ── Cubos OLAP ──────────────────────────────────────────────────
+        # Capa de consulta analítica sobre el DW.
+        # Roll-up, drill-down, slice, dice, pivot · MOLAP/ROLAP/HOLAP.
+        # Herramientas: DuckDB, BigQuery, Snowflake, dbt + Metabase.
         - section: "Cubos de Datos y OLAP"
           contents:
-            # Operaciones OLAP: roll-up, drill-down, slice, dice, pivot;
-            # MOLAP / ROLAP / HOLAP; MDX básico; tablas de hechos agregadas
             - unidades/OLAP/capitulo_cubos_olap.qmd
-            # TODO: Implementación práctica de cubos
-            #   Herramientas contemporáneas:
-            #     - DuckDB: motor OLAP en proceso, ideal para notebooks
-            #       (ejecuta SQL columnares sobre Parquet/CSV sin servidor)
-            #     - Google BigQuery / Snowflake / Redshift: DW en la nube
-            #     - dbt + Metabase/Superset: pipeline analítico open-source
-            #   Patrones de consulta: star-schema joins, window functions,
-            #   particionamiento y clustering de tablas, vistas materializadas.
-            #   Ejercicio sugerido: construir un mini-DW con DuckDB sobre
-            #   datos públicos (p. ej. NYC Taxi o TPC-H).
-            #   → unidades/almacenes/1-5-cubos-practica.qmd
+            # TODO: práctica con DuckDB sobre NYC Taxi / TPC-H
+            # → unidades/almacenes/1-5-cubos-practica.qmd
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────────────
     # PARTE II — PROCESO DE MINERÍA DE DATOS
-    #
-    # PUNTO DE ENTRADA: el analista recibe datos del DW (ya integrados
-    # y limpios por el pipeline ETL de la Parte I) y los prepara para
-    # un experimento analítico concreto. La distinción con ETL:
-    #   • ETL trabaja sobre flujos de producción, terabytes, esquemas
-    #     fijos; su output es reproducible y automatizado.
-    #   • EDA + Preprocesamiento aquí trabajan sobre una "vista analítica"
-    #     (una tabla o vista extraída del DW), típicamente en memoria,
-    #     con pandas / Polars / scikit-learn, orientados al experimento.
-    # Ambas partes deben verse como etapas del mismo flujo,
-    # no como disciplinas separadas.
-    # ══════════════════════════════════════════════════════════════════════
+    # Objetivo: transformar la vista analítica del DW en conocimiento.
+    # Progresión: marco metodológico → entender los datos (EDA) →
+    #             prepararlos (preprocesamiento) → modelar (Partes III–V).
+    # ──────────────────────────────────────────────────────────────────────
     - part: "Proceso de Minería de Datos"
       contents:
 
-        # ── 1. Introducción y marco metodológico ─────────────────────────
-        # CRISP-DM: Business Understanding → Data Understanding →
-        # Data Preparation → Modeling → Evaluation → Deployment.
-        # Subrayar dónde encajan la Parte I (Data Understanding desde el DW)
-        # y este capítulo (Data Preparation para el modelo).
-        # TODO: agregar ética y sesgo algorítmico, regulación (GDPR, LFPDPPP).
-        - unidades/intro_mineria/2-1-introduccion.qmd
-
-        # ── 2. Análisis exploratorio de datos ───────────────────────────
-        # Objetivo: entender la vista analítica *antes* de transformarla.
-        # El EDA descubre qué preprocesamiento será necesario.
-        - section: "Análisis Exploratorio"
+        # 1 ── Marco metodológico ──────────────────────────────────────────
+        # CRISP-DM: fases, roles, entregables. Dónde encajan el DW (Parte I)
+        # y el modelado (Partes III–V) dentro del proceso completo.
+        # TODO: añadir ética, sesgo algorítmico, GDPR, LFPDPPP.
+        - section: "Marco Metodológico"
           contents:
-            # Estadísticas descriptivas, distribuciones, visualización.
-            # Herramientas contemporáneas:
-            #   - pandas + matplotlib/seaborn (base)
-            #   - Polars (DataFrames ultrarrápidos, lazy evaluation, ideal
-            #     para datos que no caben en RAM pero sí en disco)
-            #   - ydata-profiling / sweetviz (EDA automatizado como HTML)
-            #   - plotly / altair (visualizaciones interactivas en notebooks)
-            - unidades/intro_mineria/2-2-eda_exploratorio.qmd
-            - section: "Casos BigMart"
-              contents:
-                - unidades/intro_mineria/2-10-CRISP_DM_bigmart.qmd
-                - unidades/intro_mineria/2-3-example_localizacion_bigmart.qmd
-                - unidades/intro_mineria/2-4-variabilidad_bigmart.qmd
-                - unidades/intro_mineria/2-5-forma_bigmart.qmd
-                - unidades/intro_mineria/2-6-heterogeneidad_bigmart.qmd
-                - unidades/intro_mineria/2-7-concentracion_bigmart.qmd
-                - unidades/intro_mineria/2-9-correlacion_bigmart.qmd
-            # Análisis multivariado: correlación, PCA exploratorio,
-            # scatter matrix, heatmaps de covarianza
-            - unidades/intro_mineria/multivariado/2-11-analisis-multivariado.qmd
-            - unidades/intro_mineria/multivariado/2-12-analisis-multivariado-examples.qmd
+            - unidades/intro_mineria/2-1-introduccion.qmd           # CRISP-DM y proceso general
+            - unidades/intro_mineria/2-10-CRISP_DM_bigmart.qmd     # CRISP-DM aplicado: BigMart
 
-        # ── 3. Preprocesamiento ──────────────────────────────────────────
-        # NOTA PARA EL DOCENTE: este capítulo complementa —no duplica—
-        # al ETL de la Parte I. Aquí el foco es el pipeline de sklearn
-        # (Pipeline, ColumnTransformer, FunctionTransformer) que prepara
-        # una vista analítica para un estimador concreto. Los alumnos
-        # deben saber que en producción este pipeline se serializa (joblib/
-        # MLflow) y se integra como paso posterior al ETL empresarial.
+        # 2 ── Análisis Exploratorio (EDA) ─────────────────────────────────
+        # Entender la vista analítica ANTES de transformarla.
+        # El EDA revela qué preprocesamiento será necesario.
+        # Herramientas: pandas · Polars · ydata-profiling · plotly/altair.
+        - section: "Análisis Exploratorio (EDA)"
+          contents:
+            - unidades/intro_mineria/2-2-eda_exploratorio.qmd                          # estadísticas, distribuciones, visualización
+            - unidades/intro_mineria/2-3-example_localizacion_bigmart.qmd              # tendencia central y localización
+            - unidades/intro_mineria/2-4-variabilidad_bigmart.qmd                      # dispersión y variabilidad
+            - unidades/intro_mineria/2-5-forma_bigmart.qmd                             # asimetría y curtosis
+            - unidades/intro_mineria/2-6-heterogeneidad_bigmart.qmd                    # heterogeneidad entre grupos
+            - unidades/intro_mineria/2-7-concentracion_bigmart.qmd                     # concentración y Lorenz
+            - unidades/intro_mineria/2-9-correlacion_bigmart.qmd                       # correlación y scatter matrix
+            - unidades/intro_mineria/multivariado/2-11-analisis-multivariado.qmd       # PCA exploratorio, heatmaps
+            - unidades/intro_mineria/multivariado/2-12-analisis-multivariado-examples.qmd  # casos multivariados
+
+        # 3 ── Preprocesamiento ────────────────────────────────────────────
+        # Transformar la vista analítica para hacerla apta para un estimador.
+        # DIFERENTE al ETL de la Parte I: aquí el foco es sklearn Pipeline,
+        # escala de DataFrame, orientado al experimento.
+        # Progresión: visión general → tipos/codificación → limpieza → selección.
         - section: "Preprocesamiento"
           contents:
-            # Visión general: sklearn Pipeline y ColumnTransformer;
-            # diferencia entre preprocessing de ingeniería (ETL) y de
-            # modelado (este capítulo); reproducibilidad con random seeds.
-            - unidades/preprocesamiento/4-1-introduccion.qmd
+            - unidades/preprocesamiento/4-1-introduccion.qmd   # sklearn Pipeline, ColumnTransformer
+            - unidades/preprocesamiento/4-3-conversion.qmd     # tipos, OHE, escalado, joins
+            - unidades/preprocesamiento/4-6-ruido.qmd          # suavizado, binning, ruido vs outlier
+            - unidades/preprocesamiento/4-2-datos-faltantes.qmd # imputación: media/KNN/MICE
+            - unidades/preprocesamiento/4-4-PCA.qmd            # reducción lineal, scree plot
+            - unidades/preprocesamiento/4-5-chi2.qmd           # selección: Chi², ANOVA F
+            # TODO: outliers multivariados (Mahalanobis, Isolation Forest, LOF)
+            # → unidades/preprocesamiento/4-7-outliers.qmd
+            # TODO: feature selection (RFE, SHAP, Featuretools, Feast)
+            # → unidades/preprocesamiento/4-8-feature-selection.qmd
+            # TODO: pipelines a escala (Polars, Dask, PySpark, MLflow/BentoML)
+            # → unidades/preprocesamiento/4-9-preprocesamiento-escala.qmd
 
-            - section: "Integración y Transformación"
-              contents:
-                # Conversión de tipos, codificación categórica (OrdinalEncoder,
-                # OneHotEncoder, TargetEncoder), normalización (StandardScaler,
-                # MinMaxScaler, RobustScaler), joins entre tablas de la vista.
-                # TODO: ampliar con transformaciones de fecha/hora y
-                # embeddings de categorías de alta cardinalidad (hashing trick,
-                # category_encoders con leave-one-out o binary encoding).
-                - unidades/preprocesamiento/4-3-conversion.qmd
-
-            - section: "Calidad y Limpieza"
-              contents:
-                # Ruido: suavizado, binning, filtros (Savitzky-Golay);
-                # distinguir ruido de outliers conceptualmente.
-                # ENLACE CON ETL: el ruido sistemático debería haberse
-                # tratado allá; aquí se abordan anomalías estadísticas
-                # residuales en la vista analítica.
-                - unidades/preprocesamiento/4-6-ruido.qmd
-                # Imputación: media/mediana/moda, KNN-imputer, MICE
-                # (IterativeImputer), indicadores de missingness.
-                # Herramienta sugerida: missingno para visualizar patrones.
-                - unidades/preprocesamiento/4-2-datos-faltantes.qmd
-                # TODO: Detección y tratamiento de valores atípicos
-                #   Univariado: Z-score, IQR, Winsorización.
-                #   Multivariado: Mahalanobis, Isolation Forest, LOF,
-                #   Elliptic Envelope (todos disponibles en sklearn).
-                #   Estrategias: eliminar, imputar, transformar (log, Box-Cox),
-                #   o modelar separadamente con un flag de outlier.
-                #   Conectar con Parte III (Detección de anomalías) donde
-                #   el outlier *es* el objeto de interés, no un problema.
-                #   → unidades/preprocesamiento/4-7-outliers.qmd
-
-            - section: "Selección y Reducción"
-              contents:
-                # PCA: varianza explicada, loadings, biplot, scree plot.
-                # Conectar con t-SNE/UMAP de la Parte V: PCA es el paso
-                # previo recomendado antes de aplicar t-SNE/UMAP.
-                - unidades/preprocesamiento/4-4-PCA.qmd
-                # Chi² y ANOVA F para selección en clasificación/regresión.
-                # Complementa el capítulo de Feature Selection pendiente.
-                - unidades/preprocesamiento/4-5-chi2.qmd
-                # TODO: Selección de características (feature selection)
-                #   Filter: varianza, correlación, mutual information (sklearn).
-                #   Wrapper: RFE, SequentialFeatureSelector.
-                #   Embedded: Lasso (L1), ElasticNet, árboles con importancias.
-                #   Post-hoc: SHAP values para selección basada en el modelo.
-                #   Herramienta contemporánea: Featuretools (automated feature
-                #   engineering desde tablas relacionales, integra con DW).
-                #   Feature Store: Feast o Hopsworks para reutilizar features
-                #   entre proyectos sin recomputar desde el DW cada vez.
-                #   → unidades/preprocesamiento/4-8-feature-selection.qmd
-
-            # TODO: Pipelines de preprocesamiento a escala
-            #   Cuándo pandas ya no alcanza: Polars (lazy API, multi-hilo),
-            #   PySpark (distribuido), Dask (paralelo en un cluster).
-            #   Patrón de producción: serializar el Pipeline de sklearn con
-            #   joblib o MLflow Model, versionarlo y desplegarlo con
-            #   FastAPI / BentoML / Seldon Core.
-            #   → unidades/preprocesamiento/4-9-preprocesamiento-escala.qmd
-
-    # ══════════════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────────────
     # PARTE III — EXTRACCIÓN DE PATRONES
-    # Minería descriptiva: descubrir estructura sin variable objetivo.
-    # El alumno ya sabe explorar (Parte II); ahora aprende a resumir
-    # comportamientos frecuentes con métodos formales.
-    # ══════════════════════════════════════════════════════════════════════
+    # Objetivo: descubrir estructura frecuente sin variable objetivo.
+    # Progresión: itemsets frecuentes → reglas → métricas → algoritmos eficientes.
+    # ──────────────────────────────────────────────────────────────────────
     - part: "Extracción de Patrones"
       contents:
 
-        # ── Reglas de asociación ─────────────────────────────────────────
+        # Reglas de asociación ────────────────────────────────────────────
+        # Soporte, confianza, lift, Apriori → FP-Growth.
+        # Herramientas: mlxtend · Spark MLlib FP-Growth (escala).
         - section: "Reglas de Asociación"
           contents:
-            # Soporte, confianza, lift; Apriori; market-basket analysis.
-            # Herramienta: mlxtend (implementación en pandas, fácil de usar).
-            - unidades/reglas_asociacion/5-1-introduccion.qmd
-            # Métricas avanzadas: conviction, leverage, Zhang, cosine.
-            - unidades/reglas_asociacion/5-2-metricas-extra.qmd
-            # FP-Growth: árbol de prefijos, minería sin candidatos explícitos.
-            # Herramienta: pyfpgrowth o mlxtend.frequent_patterns.fpgrowth.
-            # Para escala: Spark MLlib incluye FP-Growth distribuido.
-            - unidades/reglas_asociacion/5-3-fp_growth.qmd
+            - unidades/reglas_asociacion/5-1-introduccion.qmd     # soporte, confianza, lift, Apriori
+            - unidades/reglas_asociacion/5-2-metricas-extra.qmd   # conviction, leverage, Zhang, cosine
+            - unidades/reglas_asociacion/5-3-fp_growth.qmd        # FP-Growth: árbol de prefijos
+            # TODO: minería de secuencias (PrefixSpan, GSP, clickstream)
+            # → unidades/patrones/capitulo_secuencias.qmd
+            # TODO: detección de anomalías (PyOD, alibi-detect, Isolation Forest)
+            # → unidades/patrones/capitulo_anomalias.qmd
+            # TODO: minería de texto (TF-IDF, LDA, sentence-transformers, BERTopic)
+            # → unidades/patrones/capitulo_texto.qmd
 
-        # TODO: Minería de secuencias
-        #   Conceptos: itemsets secuenciales, soporte de secuencia,
-        #   algoritmos PrefixSpan y GSP.
-        #   Aplicaciones: análisis de clickstream (Adobe / GA4),
-        #   secuencias genómicas, logs de sistemas, rutas de usuario.
-        #   Herramientas: prefixspan (Python), SPMF (Java con wrapper Python).
-        #   → unidades/patrones/capitulo_secuencias.qmd
-
-        # TODO: Detección de anomalías (outlier como señal, no como ruido)
-        #   DISTINGUIR del capítulo de outliers de Preprocesamiento:
-        #   allá el outlier era un problema a corregir; aquí ES el hallazgo.
-        #   Métodos no supervisados: Isolation Forest, LOF, One-Class SVM,
-        #   Autoencoder de reconstrucción, COPOD.
-        #   Métricas con ground truth escaso: precisión-recall a distintos
-        #   umbrales, AUC-PR (más informativa que AUC-ROC con clases desbalanceadas).
-        #   Casos de uso: detección de fraude, intrusión en redes,
-        #   fallo predictivo de maquinaria, anomalías en series temporales.
-        #   Herramientas: PyOD (librería especializada con 40+ algoritmos),
-        #   alibi-detect (Seldon, para producción), sklearn (Isolation Forest).
-        #   → unidades/patrones/capitulo_anomalias.qmd
-
-        # TODO: Minería de texto (NLP básico aplicado a minería)
-        #   Bag-of-words, TF-IDF, topic modeling (LDA con gensim),
-        #   embeddings de palabras (Word2Vec, FastText) y de oraciones
-        #   (sentence-transformers / SBERT para similitud semántica).
-        #   Aplicación: clasificación de reseñas, clustering de documentos,
-        #   detección de duplicados en bases de datos del DW.
-        #   Herramientas: NLTK, spaCy, Hugging Face transformers, BERTopic.
-        #   → unidades/patrones/capitulo_texto.qmd
-
-    # ══════════════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────────────
     # PARTE IV — CLASIFICACIÓN (aprendizaje supervisado)
-    # Variable objetivo discreta conocida en entrenamiento.
-    # ══════════════════════════════════════════════════════════════════════
+    # Objetivo: predecir una clase discreta a partir de features.
+    # Progresión: evaluación → árboles → lineal → probabilístico → redes.
+    # ──────────────────────────────────────────────────────────────────────
     - part: "Clasificación"
       contents:
 
-        # ── 1. Introducción y evaluación ────────────────────────────────
+        # 1 ── Introducción y evaluación ───────────────────────────────────
+        # Cómo se mide el desempeño de un clasificador ANTES de elegirlo.
         - section: "Introducción y Evaluación"
           contents:
-            - unidades/clasificadores/6-1-clasificacion_arboles.qmd
-            - unidades/clasificadores/6-2-metricas_clasificacion.qmd
-            # Holdout, k-fold, ROC, AUC, matriz de confusión
-            - unidades/clasificadores/capitulo_evaluacion_modelos_clasificacion.qmd
+            - unidades/clasificadores/6-1-clasificacion_arboles.qmd              # problema de clasificación
+            - unidades/clasificadores/6-2-metricas_clasificacion.qmd             # precisión, recall, F1
+            - unidades/clasificadores/capitulo_evaluacion_modelos_clasificacion.qmd  # k-fold, ROC, AUC
 
-        # ── 2. Árboles de decisión y ensambles ──────────────────────────
+        # 2 ── Árboles de decisión y ensambles ────────────────────────────
+        # De un árbol simple a métodos que combinan cientos.
         - section: "Árboles y Ensambles"
           contents:
-            # CART: construcción, poda, criterios (Gini, entropía, RSS)
-            - unidades/clasificadores/6-1-clasificacion_cart.qmd
-            # Árboles de regresión · Bagging · Random Forests · Boosting · k-NN
-            - unidades/clasificadores/capitulo_arboles_regresion_lineal.qmd
-            # XGBoost: objetivo regularizado, Taylor 2°, importancia, SHAP
-            - unidades/clasificadores/capitulo_xgboost.qmd
-            # Laboratorio comparativo de clasificadores
-            - unidades/clasificadores/6-3-ejercicio.qmd
+            - unidades/clasificadores/6-1-clasificacion_cart.qmd              # CART: Gini, entropía, poda
+            - unidades/clasificadores/capitulo_arboles_regresion_lineal.qmd   # Bagging, RF, Boosting, k-NN
+            - unidades/clasificadores/capitulo_xgboost.qmd                    # XGBoost: Taylor 2°, SHAP
+            - unidades/clasificadores/6-3-ejercicio.qmd                       # laboratorio comparativo
 
-        # ── 3. Modelos lineales ─────────────────────────────────────────
+        # 3 ── Modelos lineales ────────────────────────────────────────────
+        # Frontera de decisión lineal: del perceptrón al kernel SVM.
         - section: "Modelos Lineales"
           contents:
-            # Regresión lineal → clasificación; perceptrón; LDA/Fisher
-            - unidades/clasificadores/capitulo_regresion_clasificadores_lineales.qmd
-            # Sigmoide, MLE, odds ratio, regularización L1/L2, softmax
-            - unidades/clasificadores/capitulo_regresion_logistica.qmd
-            # Margen máximo, kernel trick (lineal, RBF, polinomial), C y γ, SVR
-            - unidades/clasificadores/capitulo_svm.qmd
+            - unidades/clasificadores/capitulo_regresion_clasificadores_lineales.qmd  # LDA/Fisher, perceptrón
+            - unidades/clasificadores/capitulo_regresion_logistica.qmd               # sigmoide, L1/L2, softmax
+            - unidades/clasificadores/capitulo_svm.qmd                               # margen máximo, kernel trick
 
-        # ── 4. Clasificadores probabilísticos ───────────────────────────
+        # 4 ── Clasificadores probabilísticos ─────────────────────────────
+        # Modelar P(clase | datos) explícitamente.
         - section: "Clasificadores Probabilísticos"
           contents:
-            # Teorema de Bayes, MAP, Naïve Bayes, decisión con costos, minimax
-            - unidades/clasificadores/capitulo_clasificadores_bayesianos.qmd
-            # GMM: algoritmo EM, asignación blanda, BIC
-            - unidades/clasificadores/capitulo_gmm.qmd
+            - unidades/clasificadores/capitulo_clasificadores_bayesianos.qmd  # Bayes, MAP, costos, minimax
+            - unidades/clasificadores/capitulo_gmm.qmd                        # GMM: EM, asignación blanda, BIC
 
-        # ── 5. Redes Neuronales ─────────────────────────────────────────
+        # 5 ── Redes Neuronales ────────────────────────────────────────────
+        # De MLP a CNN; implementación en PyTorch y JAX.
         - section: "Redes Neuronales"
           contents:
-            # Perceptrón, MLP, backprop, CNN, Dropout, Batch Norm
-            - unidades/clasificadores/capitulo_redes_neuronales.qmd
-            # PyTorch y JAX/Flax: implementación práctica y comparativa
-            - unidades/clasificadores/capitulo_pytorch_jax.qmd
+            - unidades/clasificadores/capitulo_redes_neuronales.qmd   # MLP, backprop, CNN, Dropout
+            - unidades/clasificadores/capitulo_pytorch_jax.qmd        # PyTorch vs JAX/Flax en práctica
+            # TODO: Transformers (BERT, TabTransformer, PEFT/LoRA, W&B)
+            # → unidades/clasificadores/capitulo_transformers.qmd
+            # TODO: MLOps (MLflow, FastAPI, Evidently AI, BentoML/Seldon)
+            # → unidades/clasificadores/capitulo_mlops.qmd
 
-        # TODO: Transformers y aprendizaje por transferencia
-        #   Atención multi-cabeza, self-attention, positional encoding.
-        #   Fine-tuning de BERT/DistilBERT/RoBERTa con HuggingFace Transformers
-        #   para clasificación de texto (sentiment, intención, categoría).
-        #   Datos tabulares: TabTransformer, FT-Transformer, TabNet.
-        #   Herramientas: transformers + datasets + PEFT (LoRA para fine-tuning
-        #   eficiente), accelerate (multi-GPU), Weights & Biases (tracking).
-        #   → unidades/clasificadores/capitulo_transformers.qmd
-
-        # TODO: MLOps y despliegue de modelos
-        #   Ciclo de vida del modelo: experimento → registro → despliegue
-        #   → monitoreo → reentrenamiento.
-        #   Herramientas clave: MLflow (tracking + model registry),
-        #   FastAPI (servicio REST), Docker + Kubernetes (contenedores),
-        #   Evidently AI (drift detection), BentoML o Seldon Core (serving).
-        #   Conectar con ETL (Parte I): el pipeline de producción combina
-        #   el ETL del DW con la inferencia del modelo en tiempo real o batch.
-        #   → unidades/clasificadores/capitulo_mlops.qmd
-
-    # ══════════════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────────────
     # PARTE V — APRENDIZAJE NO SUPERVISADO
-    # Sin variable objetivo: descubrir estructura latente.
-    # Conectar con Parte II: la reducción de dimensionalidad aquí
-    # (UMAP, t-SNE) complementa la de Preprocesamiento (PCA, Chi²);
-    # PCA es lineal y reversible (útil antes del modelo), mientras que
-    # t-SNE/UMAP son no lineales e irreversibles (útiles para visualizar).
-    # ══════════════════════════════════════════════════════════════════════
+    # Objetivo: descubrir estructura latente sin variable objetivo.
+    # Progresión: métricas de clustering → partitivo → jerárquico →
+    #             basado en densidad → reducción de dimensionalidad.
+    # Conectar con Parte II: PCA (lineal, reversible) se usa antes del
+    # modelo; t-SNE/UMAP (no lineal, irreversible) se usa para visualizar.
+    # ──────────────────────────────────────────────────────────────────────
     - part: "Aprendizaje No Supervisado"
       contents:
 
-        # ── Clustering ───────────────────────────────────────────────────
+        # 1 ── Clustering ──────────────────────────────────────────────────
         - section: "Clustering"
           contents:
-            # Distancias, silueta, Davies-Bouldin, CH, ARI.
-            # Herramientas: sklearn.metrics, scipy.spatial.distance.
-            - unidades/clustering/capitulo_clustering_intro.qmd
-            # K-Means (Lloyd / K-Means++), K-Medoids (PAM), método del codo.
-            # A escala: MiniBatchKMeans (sklearn), Spark MLlib KMeans.
-            - unidades/clustering/capitulo_kmeans.qmd
-            # Aglomerativo: simple/completo/Ward/promedio, dendrograma,
-            # correlación cofenética. scipy.cluster.hierarchy + sklearn.
-            - unidades/clustering/capitulo_jerarquico.qmd
-            # DBSCAN / HDBSCAN: forma arbitraria, ruido, eps y minPts.
-            # hdbscan (Python) o sklearn.cluster.HDBSCAN (sklearn ≥ 1.3).
-            - unidades/clustering/capitulo_dbscan.qmd
+            - unidades/clustering/capitulo_clustering_intro.qmd   # distancias, silueta, DB, CH, ARI
+            - unidades/clustering/capitulo_kmeans.qmd             # K-Means++, K-Medoids, codo
+            - unidades/clustering/capitulo_jerarquico.qmd         # Ward/promedio, dendrograma, cofenético
+            - unidades/clustering/capitulo_dbscan.qmd             # DBSCAN/HDBSCAN: eps, minPts, ruido
 
-        # ── Reducción de dimensionalidad ─────────────────────────────────
+        # 2 ── Reducción de Dimensionalidad ────────────────────────────────
         - section: "Reducción de Dimensionalidad"
           contents:
-            # t-SNE (perplejidad, crowding), UMAP (n_neighbors, min_dist),
-            # autoencoder básico con PyTorch.
-            # Herramientas: sklearn.manifold.TSNE, umap-learn.
-            - unidades/clustering/capitulo_tsne_umap.qmd
-            # TODO: Métodos espectrales y manifold learning
-            #   Isomap, LLE, Spectral Embedding, Diffusion Maps.
-            #   Cuándo preferirlos sobre UMAP/t-SNE: cuando la topología
-            #   global importa y se necesita un mapeo reproducible.
-            #   Herramientas: sklearn.manifold, PyGSP (graph signal processing).
-            #   → unidades/clustering/capitulo_manifold.qmd
-
-        # TODO: Modelos generativos (síntesis y aumentación de datos)
-        #   VAE: espacio latente continuo, reparametrización, ELBO.
-        #   GAN básico: generador + discriminador, entrenamiento adversarial.
-        #   Aplicaciones prácticas para minería: data augmentation para
-        #   clases minoritarias (alternativa a SMOTE), síntesis de datos
-        #   tabulares privados (CTGAN, TabDDPM).
-        #   Herramientas: PyTorch, SDV (Synthetic Data Vault) para datos
-        #   tabulares sin escribir GAN/VAE desde cero.
-        #   → unidades/clustering/capitulo_generativos.qmd
-
-        # TODO: Aprendizaje auto-supervisado y por contraste
-        #   SimCLR, MoCo, BYOL: aprender representaciones sin etiquetas
-        #   usando pares de vistas aumentadas.
-        #   Aplicación en minería: pre-entrenar representaciones de tablas
-        #   o series temporales para clasificación con pocas etiquetas.
-        #   Herramientas: lightly (framework Python para SSL con imágenes
-        #   y series), ts2vec (series temporales).
-        #   → unidades/clustering/capitulo_ssl.qmd
+            - unidades/clustering/capitulo_tsne_umap.qmd   # t-SNE, UMAP, autoencoder PyTorch
+            # TODO: Isomap, LLE, Spectral Embedding, Diffusion Maps (sklearn.manifold)
+            # → unidades/clustering/capitulo_manifold.qmd
+            # TODO: Modelos generativos (VAE, GAN, CTGAN/TabDDPM con SDV)
+            # → unidades/clustering/capitulo_generativos.qmd
+            # TODO: Aprendizaje auto-supervisado (SimCLR, ts2vec, lightly)
+            # → unidades/clustering/capitulo_ssl.qmd
 
     # ══════════════════════════════════════════════════════════════════════
     # Recurso externo sugerido: anomalías GPS en la capa de ozono
