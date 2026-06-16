@@ -1,0 +1,743 @@
+# Extracción y Fuentes Heterogéneas {#sec-etl-extraccion-cap}
+
+::: {.callout-note}
+Este capítulo asume que tienes Databricks Community Edition configurado y los datasets cargados en DBFS según el capítulo anterior.
+:::
+
+## 1. Extracción (*Extract*) {#sec-etl-extract}
+
+### 4.1 Lectura de formatos comunes
+
+```python
+# CSV
+df_csv = spark.read.csv("data/trips.csv", header=True, schema=schema)
+
+# Parquet (columnar, comprimido — el formato preferido para DW)
+df_pq = spark.read.parquet("data/trips.parquet")
+
+# JSON (líneas)
+df_json = spark.read.json("data/reviews.jsonl")
+
+# Directorio completo de Parquet (Spark los une automáticamente)
+df_all = spark.read.parquet("data/trips/year=2023/")
+
+# JDBC (base de datos relacional)
+df_jdbc = (spark.read
+    .format("jdbc")
+    .option("url",      "jdbc:postgresql://host:5432/ventas")
+    .option("dbtable",  "public.pedidos")
+    .option("user",     "etl_user")
+    .option("password", "secret")
+    .option("numPartitionColumns", "pedido_id")  # paralelismo
+    .option("lowerBound", "1")
+    .option("upperBound", "10000000")
+    .option("numPartitions", "16")
+    .load())
+```
+
+### 4.2 Particionamiento y paralelismo en la lectura
+
+```python
+# Ver cuántas particiones tiene el DataFrame
+print(f"Particiones: {df_pq.rdd.getNumPartitions()}")
+
+# Reparticionar para balancear carga
+df_balanced = df_pq.repartition(32)
+
+# Coalesce — reduce particiones sin shuffle (para escribir pocos archivos)
+df_small = df_balanced.coalesce(4)
+```
+
+### 4.3 Ejercicio E-1 — Ingestar NYC Taxi {#sec-ej-e1}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-1: Lectura y exploración básica**
+
+```bash
+# Descargar 1 mes de datos (≈ 500 MB)
+wget https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet \
+     -O data/yellow_tripdata_2023-01.parquet
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, mean, min, max, stddev
+
+spark = SparkSession.builder.appName("E1-NYC").master("local[*]").getOrCreate()
+
+df = spark.read.parquet("data/yellow_tripdata_2023-01.parquet")
+
+# 1. ¿Cuántos registros y columnas tiene el archivo?
+print(f"Filas: {df.count():,}  Columnas: {len(df.columns)}")
+
+# 2. Muestra el esquema inferido
+df.printSchema()
+
+# 3. Estadísticas descriptivas de las variables numéricas
+df.select("trip_distance","fare_amount","tip_amount","total_amount")\
+  .describe().show()
+
+# 4. ¿Cuántos viajes por tipo de pago?
+df.groupBy("payment_type").count().orderBy("count", ascending=False).show()
+
+# 5. ¿Cuántas particiones usa Spark al leer el Parquet?
+print(f"Particiones: {df.rdd.getNumPartitions()}")
+```
+
+**Entregable:** tabla con estadísticas y respuesta a las 5 preguntas.
+:::
+
+---
+
+## 2. Integración de fuentes heterogéneas: Data Lake → DW {#sec-etl-heterogeneo}
+
+En la práctica, los datos llegan en formatos distintos, con nombres de columnas
+inconsistentes, tipos incompatibles y niveles de anidamiento variables. Esta
+sección cubre el conjunto de técnicas que permiten **homologar** esas fuentes
+antes de cargarlas al DW.
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM — Capas del Data Lake visualizadas
+     ═══════════════════════════════════════════════════════ -->
+<div id="lake-wrap" style="margin:2rem 0">
+<canvas id="lake-cv" width="700" height="260"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block;cursor:pointer"
+  onclick="lakeViz.click(event)"></canvas>
+<p id="lake-info" style="text-align:center;margin-top:.5rem;font-size:.88rem;
+   color:#94a3b8;min-height:1.4em">Haz clic en una capa para ver qué contiene y qué problema resuelve el ETL ahí.</p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('lake-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=260;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const layers = [
+    { y:20, h:48, color:'#ef4444', label:'Zona RAW (Bronce)',
+      formats:['CSV','JSON','Avro','XML','Parquet sin schema'],
+      info:'Datos crudos tal como llegan. Nunca se modifican. Formato heterogéneo, esquema inconsistente, posibles duplicados.' },
+    { y:80, h:48, color:'#f59e0b', label:'Zona STAGING (Plata)',
+      formats:['JSON aplanado','CSV normalizado','Parquet tipado'],
+      info:'Datos parseados, tipos corregidos, JSON aplanado, columnas renombradas. Aún puede haber nulos y outliers.' },
+    { y:140, h:48, color:'#10b981', label:'Zona CURATED (Oro)',
+      formats:['Parquet particionado','Delta Lake','Tablas DW'],
+      info:'Datos limpios, deduplificados, validados. Listos para consultas analíticas y modelos ML.' },
+    { y:200, h:48, color:'#3b82f6', label:'Data Warehouse / Lakehouse',
+      formats:['Esquema estrella','Tablas de hechos','Dimensiones SCD'],
+      info:'Modelo dimensional. Las tablas de hechos y dimensiones conformadas sirven a BI, OLAP y minería.' },
+  ];
+
+  let sel = -1;
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // grid bg
+    ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+    // arrows between layers
+    layers.forEach((_,i)=>{
+      if(i===layers.length-1) return;
+      const ay = layers[i].y + layers[i].h;
+      ctx.strokeStyle = '#334155'; ctx.lineWidth = 2;
+      ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(W/2,ay+2); ctx.lineTo(W/2,layers[i+1].y-2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='#475569';
+      ctx.beginPath();
+      ctx.moveTo(W/2,layers[i+1].y-2);
+      ctx.lineTo(W/2-6,layers[i+1].y-10);
+      ctx.lineTo(W/2+6,layers[i+1].y-10);
+      ctx.fill();
+    });
+
+    layers.forEach((l,i)=>{
+      const hi = i===sel;
+      ctx.shadowColor = hi ? l.color : 'transparent';
+      ctx.shadowBlur  = hi ? 16 : 0;
+      ctx.fillStyle   = hi ? l.color : l.color+'33';
+      ctx.beginPath(); ctx.roundRect(20, l.y, W-40, l.h, 8); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = l.color; ctx.lineWidth = hi ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(20, l.y, W-40, l.h, 8); ctx.stroke();
+
+      // label
+      ctx.fillStyle   = hi ? '#fff' : '#cbd5e1';
+      ctx.font        = `bold ${hi?14:13}px sans-serif`;
+      ctx.textAlign   = 'left';
+      ctx.fillText(l.label, 36, l.y + 20);
+
+      // format chips
+      ctx.font = '11px monospace';
+      ctx.fillStyle = hi ? '#fef3c7' : '#64748b';
+      ctx.fillText(l.formats.join('  ·  '), 36, l.y + 38);
+    });
+  }
+
+  function click(e){
+    const r = cv.getBoundingClientRect();
+    const my = (e.clientY - r.top)*(H/r.height);
+    const i  = layers.findIndex(l=>my>=l.y&&my<=l.y+l.h);
+    sel = (i===sel) ? -1 : i;
+    draw();
+    document.getElementById('lake-info').textContent =
+      i>=0 ? layers[i].info : 'Haz clic en una capa para ver qué contiene y qué problema resuelve el ETL ahí.';
+  }
+
+  window.lakeViz = {click};
+  draw();
+})();
+</script>
+```
+
+### 5.1 El problema: fuentes heterogéneas en la Zona RAW
+
+Cuando un Data Lake acumula datos de múltiples fuentes, los problemas típicos son:
+
+| Problema | Ejemplo real |
+|---|---|
+| **Formatos distintos** | ventas en CSV, eventos en JSON, catálogo en XML |
+| **Nombres de columna inconsistentes** | `customer_id` vs `cust_id` vs `clienteId` |
+| **Tipos incompatibles** | `"2024-01-15"` (string) vs `1705276800` (epoch) vs `20240115` (int) |
+| **Anidamiento en JSON** | `{"usuario": {"nombre": "Ana", "dir": {"ciudad": "CDMX"}}}` |
+| **Encodings distintos** | UTF-8 vs Latin-1 vs CP1252 |
+| **Delimitadores no estándar** | `;` en CSV europeo, `|` en dumps de bases de datos |
+| **Nulos representados distinto** | `""`, `"NULL"`, `"N/A"`, `"\\N"`, `None` |
+| **Unidades distintas** | distancia en km vs millas, precios en MXN vs USD |
+
+### 5.2 JSON anidado: aplanar para el DW
+
+El JSON es el formato más común en APIs y event streams, pero el DW necesita
+una tabla **plana** (filas × columnas escalares). PySpark ofrece tres
+herramientas para esto:
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, get_json_object, from_json, to_json,
+    explode, explode_outer, inline, flatten,
+    struct, to_timestamp
+)
+from pyspark.sql.types import *
+
+spark = SparkSession.builder.appName("ETL-JSON").master("local[*]").getOrCreate()
+
+# ── Ejemplo: eventos de compra (JSON lines) ───────────────────────────────
+# Cada línea es un JSON con objetos anidados y arrays
+# {"event_id":"e1","ts":"2024-01-15T10:30:00Z",
+#  "user":{"id":42,"city":"CDMX","segment":"premium"},
+#  "items":[{"sku":"A01","qty":2,"price":199.0},
+#           {"sku":"B03","qty":1,"price":89.5}]}
+
+df_raw = spark.read.json("data/lake/eventos_compra.jsonl")
+df_raw.printSchema()
+# root
+#  |-- event_id: string
+#  |-- ts: string
+#  |-- user: struct
+#  |    |-- id: long
+#  |    |-- city: string
+#  |    |-- segment: string
+#  |-- items: array
+#  |    |-- element: struct
+#  |    |    |-- sku: string
+#  |    |    |-- qty: long
+#  |    |    |-- price: double
+```
+
+**Técnica 1: acceder a campos anidados con notación punto**
+
+```python
+# Struct → columnas individuales con notación punto
+df_flat = df_raw.select(
+    col("event_id"),
+    to_timestamp(col("ts")).alias("evento_ts"),
+    col("user.id").alias("usuario_id"),
+    col("user.city").alias("ciudad"),
+    col("user.segment").alias("segmento"),
+    col("items")   # el array queda como columna de tipo array
+)
+```
+
+**Técnica 2: `explode` — un array → una fila por elemento**
+
+```python
+# Cada item del array se convierte en una fila independiente
+df_items = (df_raw
+    .select(
+        col("event_id"),
+        to_timestamp(col("ts")).alias("evento_ts"),
+        col("user.id").alias("usuario_id"),
+        explode(col("items")).alias("item")   # <- desdobla el array
+    )
+    .select(
+        col("event_id"),
+        col("evento_ts"),
+        col("usuario_id"),
+        col("item.sku").alias("sku"),
+        col("item.qty").alias("cantidad"),
+        col("item.price").alias("precio_unitario"),
+        (col("item.qty") * col("item.price")).alias("subtotal")
+    )
+)
+df_items.show(5)
+# +--------+-------------------+----------+----+--------+---------------+--------+
+# |event_id|evento_ts          |usuario_id|sku |cantidad|precio_unitario|subtotal|
+# +--------+-------------------+----------+----+--------+---------------+--------+
+# |e1      |2024-01-15 10:30:00|42        |A01 |2       |199.0          |398.0   |
+# |e1      |2024-01-15 10:30:00|42        |B03 |1       |89.5           |89.5    |
+```
+
+::: {.callout-note}
+`explode` elimina filas con array vacío o nulo.
+Usa `explode_outer` si quieres conservarlas como fila con `item = null`.
+:::
+
+**Técnica 3: JSON embebido como string → parsear con esquema explícito**
+
+En muchos pipelines el JSON llega como una columna de texto dentro de otro
+CSV o tabla (columna tipo `STRING` con JSON serializado):
+
+```python
+# CSV con una columna "payload" que es un JSON serializado como string
+# event_id,payload
+# e1,"{\"user_id\":42,\"amount\":288.5,\"currency\":\"MXN\"}"
+
+df_csv = spark.read.csv("data/lake/events_flat.csv", header=True)
+
+# Definir el esquema del JSON embebido
+payload_schema = StructType([
+    StructField("user_id",  LongType(),   True),
+    StructField("amount",   DoubleType(), True),
+    StructField("currency", StringType(), True),
+])
+
+# Parsear la columna string → struct tipado
+df_parsed = (df_csv
+    .withColumn("payload_struct",
+                from_json(col("payload"), payload_schema))
+    .select(
+        col("event_id"),
+        col("payload_struct.user_id").alias("usuario_id"),
+        col("payload_struct.amount").alias("monto"),
+        col("payload_struct.currency").alias("moneda")
+    )
+)
+```
+
+**Técnica 4: `get_json_object` — extracción selectiva con JSONPath**
+
+Cuando solo necesitas algunos campos de un JSON muy profundo sin parsear
+el esquema completo:
+
+```python
+df_select = df_csv.select(
+    col("event_id"),
+    get_json_object(col("payload"), "$.user_id").cast("long").alias("usuario_id"),
+    get_json_object(col("payload"), "$.amount").cast("double").alias("monto"),
+    get_json_object(col("payload"), "$.currency").alias("moneda"),
+)
+```
+
+### 5.3 CSV heterogéneo: normalización de esquema entre fuentes
+
+Un escenario muy común: el mismo tipo de dato llega de tres sistemas distintos
+con nombres de columna y tipos diferentes. El ETL debe producir una tabla
+unificada.
+
+```python
+# ── Fuente 1: sistema ERP (México) ───────────────────────────────────────
+# cust_id,fecha_pedido,monto_mxn,desc_pct
+# 1001,15/01/2024,3500.00,0.10
+
+# ── Fuente 2: sistema CRM (EE.UU.) ───────────────────────────────────────
+# CustomerID,OrderDate,AmountUSD,Discount
+# 1001,2024-01-15,175.00,10
+
+# ── Fuente 3: event log (JSON lines) ─────────────────────────────────────
+# {"cliente":1001,"ts":"2024-01-15T10:30:00Z","total":{"mxn":3500,"usd":175},"dcto":0.10}
+
+from pyspark.sql.functions import (
+    col, to_date, to_timestamp, lit, round as spark_round
+)
+
+TIPO_CAMBIO_MXN_USD = 17.0  # tasa de ejemplo
+
+# Fuente 1: ERP
+df_erp = (spark.read
+    .option("header", True)
+    .option("encoding", "UTF-8")
+    .csv("data/lake/erp_pedidos.csv")
+    .select(
+        col("cust_id").cast("long").alias("cliente_id"),
+        to_date(col("fecha_pedido"), "dd/MM/yyyy").alias("fecha"),
+        col("monto_mxn").cast("double").alias("monto_mxn"),
+        spark_round(col("monto_mxn").cast("double") / TIPO_CAMBIO_MXN_USD, 2).alias("monto_usd"),
+        col("desc_pct").cast("double").alias("descuento"),
+        lit("ERP").alias("fuente")
+    )
+)
+
+# Fuente 2: CRM
+df_crm = (spark.read
+    .option("header", True)
+    .option("encoding", "Latin-1")   # encoding diferente
+    .csv("data/lake/crm_orders.csv")
+    .select(
+        col("CustomerID").cast("long").alias("cliente_id"),
+        to_date(col("OrderDate"), "yyyy-MM-dd").alias("fecha"),
+        spark_round(col("AmountUSD").cast("double") * TIPO_CAMBIO_MXN_USD, 2).alias("monto_mxn"),
+        col("AmountUSD").cast("double").alias("monto_usd"),
+        (col("Discount").cast("double") / 100).alias("descuento"),  # % → fracción
+        lit("CRM").alias("fuente")
+    )
+)
+
+# Fuente 3: Event log JSON
+payload_schema_ev = StructType([
+    StructField("cliente",  LongType(), True),
+    StructField("ts",       StringType(), True),
+    StructField("total",    StructType([
+        StructField("mxn", DoubleType(), True),
+        StructField("usd", DoubleType(), True),
+    ]), True),
+    StructField("dcto",     DoubleType(), True),
+])
+
+df_events = (spark.read.schema(payload_schema_ev).json("data/lake/events.jsonl")
+    .select(
+        col("cliente").alias("cliente_id"),
+        to_date(to_timestamp(col("ts"))).alias("fecha"),
+        col("total.mxn").alias("monto_mxn"),
+        col("total.usd").alias("monto_usd"),
+        col("dcto").alias("descuento"),
+        lit("EVENT").alias("fuente")
+    )
+)
+
+# ── Unión de las tres fuentes con esquema homologado ──────────────────────
+df_unificado = df_erp.unionByName(df_crm).unionByName(df_events)
+
+print(f"ERP:    {df_erp.count():>8,} registros")
+print(f"CRM:    {df_crm.count():>8,} registros")
+print(f"Events: {df_events.count():>8,} registros")
+print(f"Total:  {df_unificado.count():>8,} registros")
+
+df_unificado.printSchema()
+df_unificado.groupBy("fuente").count().show()
+```
+
+::: {.callout-warning}
+`unionByName` une columnas **por nombre**, no por posición. Si una fuente
+tiene una columna extra que las otras no, usa
+`unionByName(df2, allowMissingColumns=True)` para rellenarla con `null`.
+:::
+
+### 5.4 Normalización de tipos y valores nulos heterogéneos
+
+```python
+from pyspark.sql.functions import (
+    when, trim, upper, lower, regexp_replace,
+    coalesce, nanvl, col
+)
+
+# ── Nulos representados como strings ─────────────────────────────────────
+NULLS_COMO_STRING = ["NULL", "N/A", "\\N", "None", "nan", "", " "]
+
+def limpiar_nulos(df):
+    for c in df.columns:
+        if dict(df.dtypes)[c] == "string":
+            df = df.withColumn(c,
+                when(trim(col(c)).isin(NULLS_COMO_STRING), None)
+                .otherwise(trim(col(c)))
+            )
+    return df
+
+df_limpio = limpiar_nulos(df_unificado)
+
+# ── Normalización de texto ────────────────────────────────────────────────
+df_texto = (df_limpio
+    # quitar acentos y caracteres especiales en columnas de texto
+    .withColumn("ciudad",
+        regexp_replace(upper(trim(col("ciudad"))),
+                       "[ÁÉÍÓÚÜ]", lambda m: {"Á":"A","É":"E","Í":"I",
+                                               "Ó":"O","Ú":"U","Ü":"U"}
+                                              .get(m.group(), m.group())))
+    # normalizar segmentos a minúsculas sin espacios extra
+    .withColumn("segmento", lower(trim(col("segmento"))))
+)
+
+# ── Conversión de unidades heterogéneas ──────────────────────────────────
+# Distancias en distintas unidades según la fuente
+df_distancias = df_raw.withColumn("distancia_km",
+    when(col("unidad") == "mi",  col("distancia") * 1.60934)
+    .when(col("unidad") == "km", col("distancia"))
+    .when(col("unidad") == "m",  col("distancia") / 1000.0)
+    .otherwise(None)
+)
+
+# ── Fechas en múltiples formatos → timestamp estándar ────────────────────
+from pyspark.sql.functions import coalesce, to_timestamp
+
+def parse_fecha_multiple(col_name):
+    formatos = [
+        "yyyy-MM-dd'T'HH:mm:ssX",   # ISO 8601 con timezone
+        "yyyy-MM-dd HH:mm:ss",       # datetime sin timezone
+        "dd/MM/yyyy",                # fecha europea
+        "MM/dd/yyyy",                # fecha americana
+        "yyyyMMdd",                  # compacto
+    ]
+    return coalesce(*[to_timestamp(col(col_name), fmt) for fmt in formatos])
+
+df_fechas = df_raw.withColumn("fecha_std", parse_fecha_multiple("fecha_raw"))
+```
+
+### 5.5 CSV con delimitadores no estándar y encodings
+
+```python
+# Archivo con delimitador | y encoding Latin-1 (típico de dumps de SAP/Oracle)
+df_sap = (spark.read
+    .option("sep", "|")
+    .option("encoding", "ISO-8859-1")
+    .option("header", True)
+    .option("quote", '"')
+    .option("escape", "\\")
+    .option("multiLine", False)
+    .option("nullValue", "")
+    .csv("data/lake/sap_export.txt")
+)
+
+# Archivo XML — requiere la librería spark-xml
+# spark-submit --packages com.databricks:spark-xml_2.12:0.17.0
+df_xml = (spark.read
+    .format("com.databricks.spark.xml")
+    .option("rowTag", "pedido")      # tag que define una fila
+    .load("data/lake/pedidos.xml")
+)
+
+# Avro — requiere spark-avro (incluido en Spark 3.x)
+df_avro = spark.read.format("avro").load("data/lake/eventos.avro")
+```
+
+### 5.6 Conversión JSON (Data Lake) → Parquet (DW): pipeline completo {#sec-lake-to-dw}
+
+Este es el patrón más frecuente en la industria: el Data Lake almacena
+eventos en JSON; el DW los consume como Parquet particionado y tipado.
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, explode, to_timestamp, to_date,
+    lit, trim, when, coalesce
+)
+from pyspark.sql.types import *
+
+spark = (SparkSession.builder
+    .appName("lake-to-dw")
+    .master("local[*]")
+    .config("spark.sql.shuffle.partitions", "8")
+    .getOrCreate())
+
+# ─── EXTRACT ──────────────────────────────────────────────────────────────
+# Data Lake: JSON semiestructurado con anidamiento
+schema_raw = StructType([
+    StructField("event_id",   StringType(),  False),
+    StructField("ts",         StringType(),  True),
+    StructField("version",    IntegerType(), True),
+    StructField("user", StructType([
+        StructField("id",       LongType(),   True),
+        StructField("city",     StringType(), True),
+        StructField("segment",  StringType(), True),
+        StructField("country",  StringType(), True),
+    ]), True),
+    StructField("items", ArrayType(StructType([
+        StructField("sku",      StringType(), True),
+        StructField("category", StringType(), True),
+        StructField("qty",      IntegerType(), True),
+        StructField("price_usd",DoubleType(),  True),
+    ])), True),
+    StructField("payment", StructType([
+        StructField("method",   StringType(), True),
+        StructField("currency", StringType(), True),
+        StructField("fx_rate",  DoubleType(),  True),  # tasa vs USD
+    ]), True),
+])
+
+df_raw = spark.read.schema(schema_raw).json("data/lake/raw/eventos/")
+
+print(f"Registros en lago: {df_raw.count():,}")
+
+
+# ─── TRANSFORM: aplanar + normalizar + explode ────────────────────────────
+df_items = (df_raw
+    # Explotar el array de items (1 evento → N filas)
+    .withColumn("item", explode(col("items")))
+    # Aplanar structs anidados
+    .select(
+        col("event_id"),
+        to_timestamp(col("ts")).alias("evento_ts"),
+        to_date(to_timestamp(col("ts"))).alias("fecha"),
+        col("user.id").cast("long").alias("usuario_id"),
+        trim(col("user.city")).alias("ciudad"),
+        trim(col("user.segment")).alias("segmento"),
+        coalesce(col("user.country"), lit("MX")).alias("pais"),
+        col("item.sku").alias("sku"),
+        col("item.category").alias("categoria"),
+        col("item.qty").cast("integer").alias("cantidad"),
+        col("item.price_usd").alias("precio_usd"),
+        # Convertir a moneda local usando la tasa del evento
+        (col("item.price_usd") * col("payment.fx_rate")).alias("precio_local"),
+        col("payment.method").alias("metodo_pago"),
+        col("payment.currency").alias("moneda"),
+        # Subtotales
+        (col("item.qty") * col("item.price_usd")).alias("subtotal_usd"),
+        (col("item.qty") * col("item.price_usd") *
+         col("payment.fx_rate")).alias("subtotal_local"),
+    )
+    # Filtros de calidad
+    .filter(col("cantidad") > 0)
+    .filter(col("precio_usd") > 0)
+    .filter(col("evento_ts").isNotNull())
+)
+
+# Añadir columnas de particionamiento derivadas del timestamp
+from pyspark.sql.functions import year, month, dayofmonth
+df_final = (df_items
+    .withColumn("anio",  year("fecha"))
+    .withColumn("mes",   month("fecha"))
+    .withColumn("dia",   dayofmonth("fecha"))
+)
+
+
+# ─── LOAD: Parquet particionado en el DW ─────────────────────────────────
+DW_PATH = "output/dw/hechos_ventas_items/"
+
+(df_final
+    .write
+    .mode("overwrite")
+    .partitionBy("anio", "mes", "dia")
+    .parquet(DW_PATH))
+
+# Verificar
+df_dw = spark.read.parquet(DW_PATH)
+print(f"\nRegistros en DW:   {df_dw.count():,}")
+print(f"Columnas:          {len(df_dw.columns)}")
+df_dw.printSchema()
+
+# Vista rápida de calidad
+df_dw.createOrReplaceTempView("hechos")
+spark.sql("""
+    SELECT
+        pais, segmento, moneda,
+        COUNT(*)             AS n_items,
+        SUM(subtotal_usd)    AS ingreso_usd,
+        AVG(precio_usd)      AS precio_prom_usd
+    FROM hechos
+    GROUP BY pais, segmento, moneda
+    ORDER BY ingreso_usd DESC
+""").show(truncate=False)
+
+spark.stop()
+```
+
+### 5.7 Reconciliación de esquemas con `mergeSchema`
+
+Cuando el JSON evoluciona con el tiempo y los archivos del lago tienen
+esquemas distintos (una columna nueva apareció en febrero, otra se renombró
+en marzo), Spark puede reconciliarlos automáticamente:
+
+```python
+# Leer múltiples versiones de Parquet con esquemas que evolucionaron
+df_historico = (spark.read
+    .option("mergeSchema", "true")   # une el superset de columnas
+    .parquet("data/lake/parquet/historico/"))
+
+# Las columnas que no existían en versiones antiguas aparecen como null
+df_historico.printSchema()
+
+# Para Delta Lake: evolución de esquema está integrada
+(df_nuevo.write
+    .format("delta")
+    .option("mergeSchema", "true")   # permite agregar columnas nuevas
+    .mode("append")
+    .save("output/delta/hechos/"))
+```
+
+### 5.8 Ejercicio E-1b — JSON a Parquet del Data Lake al DW {#sec-ej-e1b}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-1b: Integración de fuentes heterogéneas**
+
+Descarga los datos de GitHub Archive (eventos de un día, ≈ 2 GB en JSON
+comprimido) y conviértelos a una tabla de hechos Parquet en el DW.
+
+```bash
+# Descargar un día de eventos de GitHub (JSON gzippeado por hora)
+for HORA in $(seq -w 0 23); do
+  wget "https://data.gharchive.org/2024-01-15-${HORA}.json.gz" \
+       -P data/lake/gharchive/
+done
+# Total: ~2 GB, ~3–4 M eventos
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, to_timestamp, get_json_object, explode_outer
+
+spark = SparkSession.builder.appName("E1b-GitHub").master("local[*]")\
+        .config("spark.sql.shuffle.partitions","8").getOrCreate()
+
+# GitHub Archive: cada línea es un JSON de evento
+# Campos clave: id, type, actor.login, repo.name, created_at, payload (objeto)
+df_raw = spark.read.json("data/lake/gharchive/*.json.gz")
+
+# TODO 1: ¿Cuántos tipos de evento hay? ¿Cuál es el más frecuente?
+tipos = ...  # ← completa
+
+# TODO 2: Extrae una tabla plana con:
+#   evento_id, tipo, actor, repo, fecha (date), hora (int)
+df_plano = (df_raw.select(
+    col("id").alias("evento_id"),
+    col("type").alias("tipo"),
+    col("actor.login").alias("actor"),
+    col("repo.name").alias("repo"),
+    to_timestamp(col("created_at")).alias("evento_ts"),
+    # ← añade fecha y hora derivados del timestamp
+))  # completa
+
+# TODO 3: Filtra solo eventos "PushEvent" y extrae el número de commits
+#   del payload (payload.commits es un array; usa size() o explode_outer)
+df_push = ...  # ← completa
+
+# TODO 4: Escribe df_plano como Parquet particionado por tipo y fecha
+...  # ← completa
+
+# TODO 5: Consulta con Spark SQL:
+#   Los 10 repos con más pushes en el día, con el total de commits
+...  # ← completa
+
+spark.stop()
+```
+
+**Preguntas:**
+a) ¿Cuántos eventos totales hay en el día? ¿Qué fracción son PushEvents?
+b) El campo `payload` es diferente para cada tipo de evento. ¿Cómo
+   manejarías esto si quisieras modelar cada tipo como su propia tabla de hechos?
+c) ¿Qué ventaja tiene Parquet vs JSON para consultas repetidas sobre estos datos?
+   Compara el tiempo de `COUNT(*)` sobre el JSON original vs el Parquet.
+:::
+
+---
+
+
+---
+
+## Referencias de este capítulo {#sec-etl-refs-ext}
+
+- [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
+- [GitHub Archive](https://www.gharchive.org/)

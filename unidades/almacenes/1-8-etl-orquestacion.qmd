@@ -1,0 +1,263 @@
+# Orquestación y Herramientas Modernas {#sec-etl-orquestacion-cap}
+
+Una vez dominado PySpark, el siguiente paso es automatizar los pipelines
+y adoptar las herramientas que usa la industria para transformaciones
+declarativas y scheduling de producción.
+
+## 1. ETL moderno: dbt + PySpark {#sec-dbt}
+
+**dbt** (*data build tool*) separa la *transformación* del pipeline técnico:
+defines las transformaciones como modelos SQL, y dbt se encarga de
+ejecutarlos en el orden correcto, con pruebas automáticas y documentación.
+
+```bash
+pip install dbt-spark
+dbt init mi_proyecto_etl
+```
+
+```sql
+-- models/staging/stg_viajes.sql
+-- dbt materializa esto como una tabla o vista en Spark/DW
+SELECT
+    VendorID                    AS vendor_id,
+    tpep_pickup_datetime        AS pickup_at,
+    trip_distance,
+    fare_amount,
+    tip_amount,
+    total_amount,
+    payment_type
+FROM {{ source('raw', 'yellow_taxi') }}
+WHERE trip_distance > 0
+  AND fare_amount   > 2.5
+```
+
+```sql
+-- models/marts/fct_viajes_diarios.sql
+SELECT
+    DATE(pickup_at)             AS fecha,
+    HOUR(pickup_at)             AS hora,
+    COUNT(*)                    AS n_viajes,
+    AVG(total_amount)           AS ticket_prom,
+    SUM(total_amount)           AS ingreso_total
+FROM {{ ref('stg_viajes') }}
+GROUP BY 1, 2
+```
+
+```yaml
+# models/schema.yml — pruebas automáticas de calidad
+models:
+  - name: stg_viajes
+    columns:
+      - name: vendor_id
+        tests: [not_null]
+      - name: total_amount
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+```
+
+```bash
+dbt run      # ejecuta los modelos
+dbt test     # corre las pruebas de calidad
+dbt docs generate && dbt docs serve   # abre documentación interactiva
+```
+
+---
+
+## 2. Orquestación con Apache Airflow {#sec-airflow}
+
+En producción, los pipelines ETL se ejecutan automáticamente según un
+calendario. **Airflow** define estos flujos como DAGs de Python:
+
+```python
+# dags/etl_taxi_mensual.py
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from datetime import datetime, timedelta
+
+def extraer(**ctx):
+    mes = ctx['logical_date'].strftime("%Y-%m")
+    print(f"Extrayendo mes {mes}...")
+    # aquí va el código de extracción
+
+def transformar(**ctx): ...
+def cargar(**ctx): ...
+def validar(**ctx): ...
+
+with DAG(
+    dag_id="etl_nyc_taxi_mensual",
+    start_date=datetime(2023, 1, 1),
+    schedule_interval="0 3 1 * *",  # el día 1 de cada mes a las 3 AM
+    catchup=False,
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
+) as dag:
+
+    t_extract   = PythonOperator(task_id="extraer",     python_callable=extraer)
+    t_transform = PythonOperator(task_id="transformar", python_callable=transformar)
+    t_load      = PythonOperator(task_id="cargar",      python_callable=cargar)
+    t_validate  = PythonOperator(task_id="validar",     python_callable=validar)
+
+    t_extract >> t_transform >> t_load >> t_validate
+```
+
+::: {.callout-tip}
+**Alternativas a Airflow:**
+- **Prefect** — más Python-nativo, sin XML/YAML, fácil para equipos pequeños.
+- **Dagster** — fuerte en observabilidad y gestión de assets de datos.
+- Para empezar: **Prefect** + **PySpark local** → luego migrar a Airflow en producción.
+:::
+
+---
+
+## 3. Resumen y mapa de herramientas {#sec-etl-resumen}
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM 3 — Mapa de herramientas ETL interactivo
+     ═══════════════════════════════════════════════════════ -->
+<div id="tools-wrap" style="margin:2rem 0">
+<canvas id="tools-cv" width="700" height="360"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block;cursor:pointer"
+  onclick="toolsMap.click(event)"></canvas>
+<p id="tools-info" style="text-align:center;margin-top:.5rem;font-size:.9rem;
+   color:#94a3b8;min-height:1.6em">Haz clic en una herramienta para ver cuándo usarla.</p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('tools-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=360;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const tools = [
+    // Extract
+    {x:80,y:80,w:120,h:44,color:'#0ea5e9',label:'PySpark',
+     info:'Extracción distribuida: CSV, Parquet, JSON, JDBC sobre TB de datos.'},
+    {x:80,y:140,w:120,h:44,color:'#0ea5e9',label:'Kafka',
+     info:'Streaming ETL en tiempo real: eventos de usuarios, IoT, logs.'},
+    {x:80,y:200,w:120,h:44,color:'#0ea5e9',label:'Debezium',
+     info:'Change Data Capture (CDC): captura cambios en BD OLTP sin polling.'},
+    // Transform
+    {x:280,y:80,w:130,h:44,color:'#a855f7',label:'Spark SQL',
+     info:'Transformaciones SQL sobre DataFrames: joins, agregaciones, ventanas.'},
+    {x:280,y:140,w:130,h:44,color:'#a855f7',label:'dbt',
+     info:'Transformaciones SQL versionadas y testeadas dentro del DW (ELT).'},
+    {x:280,y:200,w:130,h:44,color:'#a855f7',label:'Delta Lake',
+     info:'ACID sobre Parquet: upsert, time travel, compaction automática.'},
+    {x:280,y:260,w:130,h:44,color:'#a855f7',label:'Great Expectations',
+     info:'Validación de calidad de datos: expectativas declarativas, alertas.'},
+    // Load
+    {x:490,y:80,w:130,h:44,color:'#10b981',label:'Parquet / Iceberg',
+     info:'Formato columnar de destino. Iceberg añade gestión de particiones.'},
+    {x:490,y:140,w:130,h:44,color:'#10b981',label:'BigQuery / Snowflake',
+     info:'DW cloud columnares: escala infinita, SQL estándar, pago por uso.'},
+    {x:490,y:200,w:130,h:44,color:'#10b981',label:'DuckDB',
+     info:'DW en proceso: perfecto para notebooks y entornos sin clúster.'},
+    // Orchestration
+    {x:185,y:300,w:120,h:44,color:'#f43f5e',label:'Airflow',
+     info:'Orquestación por DAGs: scheduling, reintentos, monitoreo de pipelines.'},
+    {x:355,y:300,w:120,h:44,color:'#f43f5e',label:'Prefect',
+     info:'Alternativa a Airflow más Python-nativa; ideal para equipos pequeños.'},
+  ];
+
+  const headers = [
+    {x:80,y:30,w:120,label:'EXTRACT',color:'#0ea5e9'},
+    {x:280,y:30,w:130,label:'TRANSFORM',color:'#a855f7'},
+    {x:490,y:30,w:130,label:'LOAD',color:'#10b981'},
+    {x:185,y:270,w:290,label:'ORQUESTACIÓN',color:'#f43f5e'},
+  ];
+
+  let hovered = -1;
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // bg grid
+    ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+    // section lines
+    [210, 420].forEach(x=>{
+      ctx.strokeStyle='#334155'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(x,15); ctx.lineTo(x,260); ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    headers.forEach(h=>{
+      ctx.fillStyle = h.color+'33';
+      ctx.beginPath(); ctx.roundRect(h.x, h.y, h.w, 28, 6); ctx.fill();
+      ctx.fillStyle = h.color;
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(h.label, h.x+h.w/2, h.y+18);
+    });
+
+    tools.forEach((t,i)=>{
+      const hi = i===hovered;
+      ctx.shadowColor = hi ? t.color : 'transparent';
+      ctx.shadowBlur  = hi ? 14 : 0;
+      ctx.fillStyle   = hi ? t.color : t.color+'44';
+      ctx.beginPath(); ctx.roundRect(t.x, t.y, t.w, t.h, 8); ctx.fill();
+      ctx.shadowBlur  = 0;
+      ctx.strokeStyle = t.color;
+      ctx.lineWidth   = hi ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(t.x, t.y, t.w, t.h, 8); ctx.stroke();
+      ctx.fillStyle   = hi ? '#fff' : '#cbd5e1';
+      ctx.font        = `${hi?'bold ':' '}12px sans-serif`;
+      ctx.textAlign   = 'center';
+      ctx.fillText(t.label, t.x+t.w/2, t.y+t.h/2+4);
+    });
+  }
+
+  cv.addEventListener('mousemove', e=>{
+    const r = cv.getBoundingClientRect();
+    const mx = (e.clientX-r.left)*(W/r.width);
+    const my = (e.clientY-r.top)*(H/r.height);
+    hovered = tools.findIndex(t=>mx>=t.x&&mx<=t.x+t.w&&my>=t.y&&my<=t.y+t.h);
+    draw();
+  });
+  cv.addEventListener('mouseleave',()=>{ hovered=-1; draw(); });
+
+  function click(e){
+    const r = cv.getBoundingClientRect();
+    const mx = (e.clientX-r.left)*(W/r.width);
+    const my = (e.clientY-r.top)*(H/r.height);
+    const i = tools.findIndex(t=>mx>=t.x&&mx<=t.x+t.w&&my>=t.y&&my<=t.y+t.h);
+    document.getElementById('tools-info').textContent =
+      i>=0 ? `${tools[i].label}: ${tools[i].info}` : 'Haz clic en una herramienta para ver cuándo usarla.';
+  }
+
+  window.toolsMap = {click};
+  draw();
+})();
+</script>
+```
+
+| Etapa | Herramienta | Cuándo usarla |
+|---|---|---|
+| **Extract** | PySpark | Archivos grandes (>1 GB), clústeres, Parquet/JDBC |
+| **Extract** | Kafka + Debezium | Streaming en tiempo real, CDC |
+| **Transform** | Spark SQL / DataFrame API | Joins complejos, window functions, ML features |
+| **Transform** | dbt | Transformaciones SQL versionadas sobre DW cloud |
+| **Quality** | Great Expectations | Validación declarativa antes de la carga |
+| **Load** | Delta Lake / Iceberg | ACID, upsert, time travel en el lakehouse |
+| **Load** | BigQuery / Snowflake | DW cloud sin gestión de infraestructura |
+| **Load** | DuckDB | Notebooks, sin clúster, prototipos rápidos |
+| **Orquestar** | Airflow | Pipelines de producción complejos con SLA |
+| **Orquestar** | Prefect | Equipos pequeños, Python-native, simplicidad |
+
+---
+
+## 4. Referencias y recursos adicionales {#sec-etl-refs}
+
+- Chambers & Zaharia. *Spark: The Definitive Guide*. O'Reilly, 2018.
+- [PySpark Documentation](https://spark.apache.org/docs/latest/api/python/) — API reference completa.
+- [Delta Lake Documentation](https://docs.delta.io/) — ACID y time travel.
+- [dbt Documentation](https://docs.getdbt.com/) — transformaciones SQL versionadas.
+- [Great Expectations](https://greatexpectations.io/) — validación de calidad.
+- [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) — dataset de ejercicios.
+- [TPC-H Benchmark](http://www.tpc.org/tpch/) — esquema de referencia para DW.

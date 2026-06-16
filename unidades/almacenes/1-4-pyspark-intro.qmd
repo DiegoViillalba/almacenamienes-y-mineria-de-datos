@@ -1,0 +1,285 @@
+# Introducción a PySpark y Fundamentos ETL {#sec-etl-intro-cap}
+
+## 1. ¿Qué es el ETL y por qué importa? {#sec-etl-intro}
+
+**ETL** (*Extract, Transform, Load*) es el proceso que mueve datos desde los
+sistemas operacionales (OLTP, APIs, logs, archivos) hacia el Data Warehouse,
+transformándolos en el camino para que sean consistentes, limpios y aptos para
+el análisis.
+
+::: {.callout-note}
+**Distinción con el Preprocesamiento (Parte II)**
+ETL es ingeniería de datos: opera sobre flujos de producción, terabytes,
+esquemas fijos, y su salida es reproducible y automatizada.
+El preprocesamiento analítico (Parte II) toma una *vista ya limpia* del DW
+y la transforma para un experimento concreto.
+El DW es el punto de transferencia entre ambos.
+:::
+
+### 1.1 ETL clásico vs ELT moderno
+
+| | ETL clásico | ELT moderno |
+|---|---|---|
+| Orden | Extraer → Transformar → Cargar | Extraer → Cargar → Transformar |
+| Dónde transforma | Motor ETL externo | Dentro del DW / lakehouse |
+| Herramientas | Informatica, SSIS, Talend | dbt + BigQuery / Snowflake / DuckDB |
+| Ventaja | Datos siempre limpios al llegar | Aprovechar la potencia del DW columnares |
+| Desventaja | Cuello de botella en el motor | El DW necesita ser potente y barato |
+
+### 1.2 ¿Por qué PySpark?
+
+Cuando los datos superan la memoria RAM de una sola máquina, pandas deja de
+ser suficiente. **Apache Spark** divide el trabajo en particiones que se
+procesan en paralelo sobre un clúster de nodos, usando un plan de ejecución
+optimizado (DAG — *Directed Acyclic Graph*).
+
+PySpark es la API Python de Spark. Con ella puedes escribir transformaciones
+que escalan de un laptop (modo local) a cientos de nodos (AWS EMR, Databricks,
+GCP Dataproc) sin cambiar el código.
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM — Arquitectura Spark: DAG interactivo
+     ═══════════════════════════════════════════════════════ -->
+<div id="spark-arch-wrap" style="margin:2rem 0">
+<canvas id="spark-arch-cv" width="700" height="320"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block"></canvas>
+<div style="margin-top:.6rem;display:flex;gap:.8rem;flex-wrap:wrap;justify-content:center">
+  <button onclick="sparkArch.step()" style="padding:.4rem 1.2rem;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-size:.9rem">▶ Siguiente etapa</button>
+  <button onclick="sparkArch.reset()" style="padding:.4rem 1.2rem;border-radius:6px;border:none;background:#475569;color:#fff;cursor:pointer;font-size:.9rem">↺ Reiniciar</button>
+</div>
+<p id="spark-arch-msg" style="text-align:center;margin-top:.5rem;font-size:.9rem;color:#94a3b8;min-height:1.4em"></p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('spark-arch-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=320;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+  const stages = [
+    { label:'Fuentes de datos', color:'#0ea5e9', nodes:[
+        {x:60,y:80,txt:'CSV/JSON'},{x:60,y:160,txt:'Base OLTP'},{x:60,y:240,txt:'API/Kafka'}
+      ], arrows:[], msg:'Los datos llegan de múltiples fuentes heterogéneas.' },
+    { label:'SparkContext / Driver', color:'#a855f7', nodes:[{x:220,y:160,txt:'Driver\nProgram'}],
+      arrows:[{fx:60,fy:80,tx:220,ty:160},{fx:60,fy:160,tx:220,ty:160},{fx:60,fy:240,tx:220,ty:160}],
+      msg:'El Driver recibe el código Python y construye el plan lógico (DAG).' },
+    { label:'Plan lógico → físico', color:'#f59e0b',
+      nodes:[{x:370,y:100,txt:'Stage 1'},{x:370,y:220,txt:'Stage 2'}],
+      arrows:[{fx:220,fy:160,tx:370,ty:100},{fx:220,fy:160,tx:370,ty:220}],
+      msg:'El Catalyst Optimizer convierte el plan lógico en stages físicos paralelos.' },
+    { label:'Executors (workers)', color:'#10b981',
+      nodes:[{x:540,y:70,txt:'Exec 1\nPart A'},{x:540,y:160,txt:'Exec 2\nPart B'},{x:540,y:250,txt:'Exec 3\nPart C'}],
+      arrows:[{fx:370,fy:100,tx:540,ty:70},{fx:370,fy:100,tx:540,ty:160},{fx:370,fy:220,tx:540,ty:250}],
+      msg:'Cada Executor procesa una partición en paralelo sobre su nodo del clúster.' },
+    { label:'Resultado / escritura', color:'#f43f5e', nodes:[{x:650,y:160,txt:'DW /\nParquet'}],
+      arrows:[{fx:540,fy:70,tx:650,ty:160},{fx:540,fy:160,tx:650,ty:160},{fx:540,fy:250,tx:650,ty:160}],
+      msg:'Los resultados se reúnen y se escriben al destino (Parquet, Delta, JDBC…).' }
+  ];
+  let currentStage=-1; const allNodes=[]; const allArrows=[];
+  function drawNode(x,y,txt,color,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color;
+    ctx.beginPath(); ctx.roundRect(x-42,y-22,84,44,8); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+    txt.split('\n').forEach((line,i,arr)=>{ ctx.fillText(line,x,y-(arr.length-1)*7+i*14); });
+    ctx.restore();
+  }
+  function drawArrow(fx,fy,tx,ty,color,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=2;
+    ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.setLineDash([]);
+    const angle=Math.atan2(ty-fy,tx-fx); ctx.fillStyle=color; ctx.beginPath();
+    ctx.moveTo(tx,ty); ctx.lineTo(tx-12*Math.cos(angle-0.35),ty-12*Math.sin(angle-0.35));
+    ctx.lineTo(tx-12*Math.cos(angle+0.35),ty-12*Math.sin(angle+0.35)); ctx.fill(); ctx.restore();
+  }
+  function render(){
+    ctx.clearRect(0,0,W,H); ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    allArrows.forEach(a=>drawArrow(a.fx,a.fy,a.tx,a.ty,a.color,a.alpha));
+    allNodes.forEach(n=>drawNode(n.x,n.y,n.txt,n.color,n.alpha));
+  }
+  function animatePush(items,isArrow,color){
+    let i=0;
+    function tick(){
+      if(i>=items.length){render();return;}
+      const it=items[i++];
+      const obj=isArrow?{fx:it.fx,fy:it.fy,tx:it.tx,ty:it.ty,color,alpha:0}:{x:it.x,y:it.y,txt:it.txt,color,alpha:0};
+      (isArrow?allArrows:allNodes).push(obj);
+      let t=0;
+      function fade(){obj.alpha=Math.min(1,t+=0.08);render();if(obj.alpha<1)requestAnimationFrame(fade);else tick();}
+      fade();
+    }
+    tick();
+  }
+  function step(){
+    if(currentStage>=stages.length-1)return;
+    currentStage++;
+    const s=stages[currentStage];
+    document.getElementById('spark-arch-msg').textContent=s.msg;
+    animatePush(s.arrows||[],true,s.color);
+    setTimeout(()=>animatePush(s.nodes,false,s.color),(s.arrows||[]).length*120+100);
+  }
+  function reset(){
+    currentStage=-1;allNodes.length=0;allArrows.length=0;render();
+    document.getElementById('spark-arch-msg').textContent='Presiona "Siguiente etapa" para ver el flujo de Spark.';
+  }
+  window.sparkArch={step,reset};
+  reset();
+})();
+</script>
+```
+
+---
+
+## 2. Entorno de prácticas: Databricks Community Edition {#sec-databricks}
+
+Todas las prácticas de este bloque se realizan en **Databricks Community
+Edition**, que proporciona un clúster Spark gratuito sin necesidad de
+instalación local.
+
+### 2.1 Configurar la cuenta
+
+1. Ir a [community.cloud.databricks.com](https://community.cloud.databricks.com)
+   y crear una cuenta gratuita.
+2. En el menú lateral: **Compute → Create compute** → elegir el runtime
+   **Databricks Runtime 14.x LTS (Spark 3.5, Python 3.11)**.
+3. Crear un **Notebook** (lenguaje: Python).
+
+::: {.callout-important}
+En Databricks, `spark` ya existe como variable global — **no** crees un
+`SparkSession` manual. Simplemente empieza con `spark.read...`
+:::
+
+### 2.2 Cargar datasets a DBFS
+
+```python
+# Databricks File System (DBFS) — sistema de archivos del clúster
+# Opción A: subir archivo desde la UI (File → Upload data)
+
+# Opción B: descargar directamente desde el notebook con dbutils
+dbutils.fs.mkdirs("dbfs:/datasets/taxi/")
+
+# Descargar NYC Taxi (Parquet, ~500 MB por mes)
+import urllib.request
+url = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet"
+urllib.request.urlretrieve(url, "/tmp/yellow_2023_01.parquet")
+dbutils.fs.mv("file:/tmp/yellow_2023_01.parquet", "dbfs:/datasets/taxi/yellow_2023_01.parquet")
+
+# Verificar
+display(dbutils.fs.ls("dbfs:/datasets/taxi/"))
+```
+
+```python
+# Leer desde DBFS en Databricks
+df = spark.read.parquet("dbfs:/datasets/taxi/yellow_2023_01.parquet")
+display(df.limit(5))   # display() es el equivalente de show() en Databricks
+```
+
+### 2.3 Comandos específicos de Databricks
+
+| Comando | Descripción |
+|---|---|
+| `display(df)` | Tabla interactiva con gráficos integrados |
+| `dbutils.fs.ls("dbfs:/ruta/")` | Listar archivos en DBFS |
+| `dbutils.fs.mkdirs("dbfs:/ruta/")` | Crear directorio en DBFS |
+| `dbutils.fs.rm("dbfs:/ruta/", True)` | Eliminar archivo o directorio |
+| `%sql SELECT ...` | Celda SQL sobre tablas registradas |
+| `spark.catalog.listTables()` | Ver tablas disponibles en el metastore |
+
+::: {.callout-tip}
+**Delta Lake está preinstalado en Databricks.** No necesitas `pip install delta-spark` — simplemente usa `.format("delta")` directamente.
+:::
+
+### 2.4 Datasets para las prácticas
+
+| Dataset | Tamaño | Dónde obtenerlo en Databricks |
+|---|---|---|
+| **NYC Taxi** (1 mes) | ~500 MB | Descargar con `urllib` (ver §2.2) |
+| **NYC Taxi** (todo 2023) | ~6 GB | Bucle sobre los 12 meses |
+| **TPC-H sintético** | Configurable | `%pip install tpch` + `python -m tpch generate` |
+| **Databricks sample data** | Varios | `dbfs:/databricks-datasets/` (preinstalado) |
+
+```python
+# Explorar los datasets de muestra de Databricks
+display(dbutils.fs.ls("dbfs:/databricks-datasets/"))
+# Incluye: nyctaxi, airlines, wine-quality, iot-stream, retail-org, etc.
+
+# Leer el dataset de ejemplo de taxis (ya disponible)
+df_sample = spark.read.format("delta")\
+    .load("dbfs:/databricks-datasets/nyctaxi/tables/nyctaxi_yellow")
+display(df_sample.limit(10))
+```
+
+---
+
+## 3. PySpark: Fundamentos {#sec-pyspark-fundamentos}
+
+### 3.1 SparkSession
+
+En **Databricks** el `SparkSession` ya existe como `spark`. En entorno local:
+
+```python
+from pyspark.sql import SparkSession
+
+# Solo necesario fuera de Databricks
+spark = (SparkSession.builder
+    .appName("ETL-Mineria-Datos")
+    .master("local[*]")
+    .config("spark.sql.shuffle.partitions", "8")
+    .getOrCreate())
+```
+
+### 3.2 El DataFrame de Spark: lazy vs eager
+
+```python
+# Transformaciones (lazy) — solo construyen el plan, no ejecutan nada
+df = spark.read.parquet("dbfs:/datasets/taxi/yellow_2023_01.parquet")
+df2 = df.filter(df.trip_distance > 1.0)
+df3 = df2.select("tpep_pickup_datetime", "trip_distance", "total_amount")
+
+# Acción — dispara la ejecución del DAG completo
+df3.show(5)    # o display(df3) en Databricks
+df3.count()
+```
+
+| Concepto | Significado |
+|---|---|
+| **Transformación** | `filter`, `select`, `groupBy`, `join` — construyen el DAG |
+| **Acción** | `show`, `count`, `collect`, `write` — ejecutan el DAG |
+| **Partición** | Unidad de paralelismo; un archivo Parquet por partición típicamente |
+| **RDD** | Capa de bajo nivel; usa DataFrame salvo casos especiales |
+
+### 3.3 Esquema explícito (mejor práctica)
+
+```python
+from pyspark.sql.types import *
+
+schema = StructType([
+    StructField("tpep_pickup_datetime",  TimestampType(), True),
+    StructField("tpep_dropoff_datetime", TimestampType(), True),
+    StructField("passenger_count",       IntegerType(),   True),
+    StructField("trip_distance",         DoubleType(),    True),
+    StructField("fare_amount",           DoubleType(),    True),
+    StructField("tip_amount",            DoubleType(),    True),
+    StructField("total_amount",          DoubleType(),    True),
+    StructField("payment_type",          IntegerType(),   True),
+])
+
+df = spark.read.parquet("dbfs:/datasets/taxi/yellow_2023_01.parquet")
+# Parquet guarda el schema; con CSV/JSON conviene declararlo explícito:
+# df = spark.read.csv("dbfs:/ruta.csv", header=True, schema=schema)
+```
+
+`inferSchema=True` hace una pasada completa del archivo; con esquema
+explícito la lectura es más rápida y sin sorpresas de tipos.
+
+---
+
+## Referencias de este capítulo {#sec-etl-refs-intro}
+
+- Chambers & Zaharia. *Spark: The Definitive Guide*. O'Reilly, 2018.
+- [PySpark Documentation](https://spark.apache.org/docs/latest/api/python/)
+- [Databricks Community Edition](https://community.cloud.databricks.com)
+- [Databricks Free Training](https://www.databricks.com/learn/training/home) — cursos oficiales gratuitos.
