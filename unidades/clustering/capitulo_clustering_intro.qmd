@@ -1,0 +1,531 @@
+---
+title: "Introducción al clustering y métricas de evaluación"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clustering.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+El aprendizaje supervisado parte de un conjunto de observaciones etiquetadas para aprender una función que generalice a datos nuevos. El aprendizaje no supervisado, en cambio, trabaja sin etiquetas: el objetivo es descubrir estructura interna en los datos, ya sea agrupando observaciones similares, identificando componentes latentes o reduciendo la dimensión de representación [@hastie2009elements; @bishop2006pattern].
+
+El clustering —o agrupamiento— es la tarea no supervisada más estudiada. Dado un conjunto de observaciones $\mathbf{x}_1,\dots,\mathbf{x}_n\in\mathbb{R}^p$, el objetivo es particionarlas en grupos $C_1,\dots,C_k$ de modo que las observaciones dentro de cada grupo sean más similares entre sí que con las de otros grupos. Esta noción de similitud no está predefinida: el analista debe elegir una medida de distancia y un criterio de agrupamiento adecuados al problema [@aggarwal2013].
+
+Este capítulo desarrolla los fundamentos del clustering: medidas de distancia y similitud, propiedades formales que deben cumplir, y métricas de evaluación que permiten comparar particiones cuando no se dispone de etiquetas verdaderas. Los capítulos siguientes desarrollan los algoritmos más importantes: K-Means, clustering jerárquico, DBSCAN y reducción de dimensionalidad no lineal.
+
+## El problema de clustering
+
+Sea $\mathcal{D}=\{\mathbf{x}_1,\dots,\mathbf{x}_n\}$ un conjunto de $n$ observaciones en $\mathbb{R}^p$. Un clustering de $\mathcal{D}$ en $k$ grupos es una función de asignación
+
+$$
+\ell:\{1,\dots,n\}\to\{1,\dots,k\},
+$$
+
+donde $\ell(i)$ indica el grupo al que pertenece la observación $\mathbf{x}_i$. El grupo $C_j$ es el subconjunto de observaciones asignadas a la etiqueta $j$:
+
+$$
+C_j=\{\mathbf{x}_i\mid \ell(i)=j\}.
+$$
+
+La función de asignación óptima depende del criterio elegido. Distintos algoritmos minimizan distintos objetivos, y no existe un único criterio universal. El número de particiones posibles en $k$ grupos de $n$ objetos crece exponencialmente con $n$, por lo que los algoritmos eficientes explotan heurísticas o restricciones geométricas.
+
+## Medidas de distancia y similitud
+
+La noción de similitud entre observaciones se formaliza mediante funciones de distancia. Una función $d:\mathbb{R}^p\times\mathbb{R}^p\to\mathbb{R}_{\geq 0}$ es una distancia si satisface cuatro propiedades.
+
+::: {.callout-note appearance="minimal"}
+Definición. Una función $d$ es una métrica si para todo $\mathbf{x},\mathbf{y},\mathbf{z}\in\mathbb{R}^p$:
+
+1. $d(\mathbf{x},\mathbf{y})\geq 0$ y $d(\mathbf{x},\mathbf{y})=0\Leftrightarrow\mathbf{x}=\mathbf{y}$ (positividad definida),
+2. $d(\mathbf{x},\mathbf{y})=d(\mathbf{y},\mathbf{x})$ (simetría),
+3. $d(\mathbf{x},\mathbf{z})\leq d(\mathbf{x},\mathbf{y})+d(\mathbf{y},\mathbf{z})$ (desigualdad triangular).
+:::
+
+### Distancias de Minkowski
+
+La familia de distancias de Minkowski unifica varias métricas clásicas mediante un parámetro $p\geq 1$.
+
+::: {.callout-note appearance="minimal"}
+Definición. La distancia de Minkowski de orden $p$ entre $\mathbf{x}=(x_1,\dots,x_d)$ y $\mathbf{y}=(y_1,\dots,y_d)$ es
+$$
+d_p(\mathbf{x},\mathbf{y}) = \left(\sum_{j=1}^{d}|x_j-y_j|^p\right)^{1/p}.
+$$ {#eq-minkowski}
+:::
+
+Los casos más comunes son:
+
+- $p=1$: distancia Manhattan o $L^1$, $d_1(\mathbf{x},\mathbf{y})=\sum_j|x_j-y_j|$.
+- $p=2$: distancia Euclídea o $L^2$, $d_2(\mathbf{x},\mathbf{y})=\sqrt{\sum_j(x_j-y_j)^2}$.
+- $p\to\infty$: distancia de Chebyshev, $d_\infty(\mathbf{x},\mathbf{y})=\max_j|x_j-y_j|$.
+
+La elección de $p$ determina qué tipo de diferencias entre coordenadas se penalizan más. La distancia Manhattan es menos sensible a diferencias grandes en una sola coordenada; la Euclídea las amplifica mediante el cuadrado; la de Chebyshev las ignora excepto en la coordenada de mayor diferencia.
+
+### Distancias para datos no vectoriales
+
+Cuando los datos no son vectores en $\mathbb{R}^p$, se usan distancias específicas al tipo de dato.
+
+**Distancia del coseno.** Para vectores $\mathbf{x},\mathbf{y}\neq\mathbf{0}$, mide el ángulo entre ellos y es frecuente en texto:
+$$
+d_{\cos}(\mathbf{x},\mathbf{y}) = 1 - \frac{\mathbf{x}^T\mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|}.
+$$
+
+**Distancia de Jaccard.** Para conjuntos $A$ y $B$, mide la proporción de elementos que no comparten:
+$$
+d_J(A,B) = 1 - \frac{|A\cap B|}{|A\cup B|}.
+$$
+
+**Distancia de edición (Levenshtein).** Para cadenas de texto o secuencias, cuenta el número mínimo de operaciones de inserción, eliminación y sustitución para transformar una cadena en la otra.
+
+### Importancia de la escala
+
+Las distancias basadas en normas son sensibles a la escala de las variables. Si una variable mide gramos y otra mide kilómetros, la segunda dominará la distancia Euclídea. Por ello, antes de aplicar algoritmos de clustering es habitual estandarizar los datos dividiendo cada variable por su desviación estándar, o aplicar otra normalización adecuada al dominio.
+
+```{python}
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import euclidean_distances, manhattan_distances, cosine_distances
+
+rng = np.random.default_rng(42)
+X = rng.normal(loc=[0, 0], scale=[1, 100], size=(50, 2))  # escala muy distinta
+
+X_std = StandardScaler().fit_transform(X)
+
+print("Sin escalar — distancia media:", euclidean_distances(X).mean().round(2))
+print("Escalado    — distancia media:", euclidean_distances(X_std).mean().round(2))
+```
+
+```{=html}
+<div id="dist-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Explorador de métricas de distancia</span><br>
+    <span style="font-size:0.81em;color:#666;">Mueve los puntos A y B con los sliders; ajusta p para comparar distancias de Minkowski</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+    <div><label style="font-size:0.79em;color:#2563eb;">A = (<strong id="dax-v">1</strong>, <strong id="day-v">1</strong>)</label><br>
+      <input id="dax" type="range" min="-4" max="4" step="0.25" value="1" style="width:100%;accent-color:#2563eb;">
+      <input id="day" type="range" min="-4" max="4" step="0.25" value="1" style="width:100%;accent-color:#2563eb;margin-top:4px;"></div>
+    <div><label style="font-size:0.79em;color:#dc2626;">B = (<strong id="dbx-v">3</strong>, <strong id="dby-v">-1</strong>)</label><br>
+      <input id="dbx" type="range" min="-4" max="4" step="0.25" value="3" style="width:100%;accent-color:#dc2626;">
+      <input id="dby" type="range" min="-4" max="4" step="0.25" value="-1" style="width:100%;accent-color:#dc2626;margin-top:4px;"></div>
+    <div><label style="font-size:0.79em;color:#444;">p = <strong id="dp-v">2</strong> <span id="dp-name" style="font-style:italic;"></span></label><br>
+      <input id="dp" type="range" min="1" max="20" step="1" value="2" style="width:100%;accent-color:#1a3a5c;margin-top:18px;"></div>
+  </div>
+  <canvas id="dist-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div id="dist-info" style="text-align:center;font-size:0.82em;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:8px;"></div>
+</div>
+<script>
+(function(){
+  const cv=document.getElementById('dist-cv');
+  const W=680,H=320,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:50,r:20,t:20,b:36};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=-5,xMx=5,yMn=-5,yMx=5;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+
+  function mink(a,b,p){
+    const ac=Math.abs(a[0]-b[0]),bc=Math.abs(a[1]-b[1]);
+    if(p>=18)return Math.max(ac,bc);
+    return Math.pow(Math.pow(ac,p)+Math.pow(bc,p),1/p);
+  }
+
+  function draw(){
+    const ax=parseFloat(document.getElementById('dax').value);
+    const ay=parseFloat(document.getElementById('day').value);
+    const bx=parseFloat(document.getElementById('dbx').value);
+    const by=parseFloat(document.getElementById('dby').value);
+    const p=parseInt(document.getElementById('dp').value);
+    const A=[ax,ay],B=[bx,by];
+
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
+    [-4,-2,0,2,4].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();
+    });
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(sx(0),PAD.t);ctx.lineTo(sx(0),PAD.t+CH);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(PAD.l,sy(0));ctx.lineTo(PAD.l+CW,sy(0));ctx.stroke();
+    ctx.fillStyle='#999';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    [-4,-2,0,2,4].forEach(v=>{
+      ctx.fillText(v,sx(v),PAD.t+CH+14);
+      ctx.textAlign='right';ctx.fillText(v,PAD.l-5,sy(v)+3);ctx.textAlign='center';
+    });
+
+    // Manhattan path
+    ctx.strokeStyle='rgba(245,158,11,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
+    ctx.beginPath();ctx.moveTo(sx(ax),sy(ay));ctx.lineTo(sx(bx),sy(ay));ctx.lineTo(sx(bx),sy(by));ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Chebyshev square
+    const ch=Math.max(Math.abs(bx-ax),Math.abs(by-ay));
+    const cx2=(ax+bx)/2,cy2=(ay+by)/2;
+    ctx.strokeStyle='rgba(124,58,237,0.4)';ctx.lineWidth=1.5;
+    ctx.strokeRect(sx(cx2-ch),sy(cy2+ch),sx(cx2+ch)-sx(cx2-ch),sy(cy2-ch)-sy(cy2+ch));
+
+    // Euclidean line
+    ctx.strokeStyle='rgba(22,163,74,0.7)';ctx.lineWidth=2;ctx.setLineDash([]);
+    ctx.beginPath();ctx.moveTo(sx(ax),sy(ay));ctx.lineTo(sx(bx),sy(by));ctx.stroke();
+
+    // Minkowski ball at A with radius = d(A,B)
+    const r=mink(A,B,p);
+    const SCALE=CW/(xMx-xMn);
+    ctx.strokeStyle='#1a3a5c';ctx.lineWidth=2;ctx.globalAlpha=0.5;
+    ctx.beginPath();
+    const N=360;
+    for(let i=0;i<=N;i++){
+      const th=i/N*2*Math.PI;
+      const ac=Math.abs(Math.cos(th)),as=Math.abs(Math.sin(th));
+      const rr=p>=18?r/Math.max(ac,as):r/Math.pow(Math.pow(ac,p)+Math.pow(as,p),1/p);
+      const px2=ax+rr*Math.cos(th),py2=ay+rr*Math.sin(th);
+      i===0?ctx.moveTo(sx(px2),sy(py2)):ctx.lineTo(sx(px2),sy(py2));
+    }
+    ctx.closePath();ctx.stroke();ctx.globalAlpha=1;
+
+    // Points
+    [[ax,ay,'#2563eb','A'],[bx,by,'#dc2626','B']].forEach(([x,y,col,lbl])=>{
+      ctx.beginPath();ctx.arc(sx(x),sy(y),7,0,2*Math.PI);
+      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle=col;ctx.font='bold 12px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(lbl,sx(x),sy(y)-12);
+    });
+
+    const dE=mink(A,B,2),dM=mink(A,B,1),dC=mink(A,B,Infinity),dP=mink(A,B,p);
+    const pname=p>=18?'∞ (Chebyshev)':p===1?'1 (Manhattan)':p===2?'2 (Euclídea)':p;
+    document.getElementById('dp-name').textContent='';
+    document.getElementById('dist-info').innerHTML=
+      `<span style="color:#16a34a">Euclídea (p=2)</span>: <strong>${dE.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#f59e0b">Manhattan (p=1)</span>: <strong>${dM.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#7c3aed">Chebyshev (p→∞)</span>: <strong>${dC.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#1a3a5c">Minkowski (p=${pname})</span>: <strong>${dP.toFixed(3)}</strong>`;
+  }
+
+  ['dax','day','dbx','dby','dp'].forEach(id=>{
+    document.getElementById(id).addEventListener('input',function(){
+      const v=parseFloat(this.value);
+      const vid={dax:'dax-v',day:'day-v',dbx:'dbx-v',dby:'dby-v'}[id];
+      if(vid)document.getElementById(vid).textContent=v.toFixed(2);
+      if(id==='dp'){
+        const pv=parseInt(this.value);
+        document.getElementById('dp-v').textContent=pv>=18?'∞':pv;
+      }
+      draw();
+    });
+  });
+  draw();
+})();
+</script>
+```
+
+## Evaluación de clustering sin etiquetas verdaderas
+
+En la mayoría de las aplicaciones de clustering no se dispone de una partición verdadera contra la que comparar. Las métricas internas evalúan la calidad de la partición usando únicamente las distancias entre los puntos.
+
+### Índice de silueta
+
+El índice de silueta mide, para cada observación, qué tan bien encaja en su propio grupo comparado con el grupo más cercano [@rousseeuw1987].
+
+::: {.callout-note appearance="minimal"}
+Definición. Para la observación $\mathbf{x}_i$ asignada al grupo $C_{\ell(i)}$, se definen:
+- $a(i)$: distancia media a todos los demás puntos del mismo grupo,
+- $b(i)$: distancia media al grupo más cercano distinto del propio.
+
+La silueta de $i$ es:
+$$
+s(i) = \frac{b(i)-a(i)}{\max\{a(i),b(i)\}}.
+$$ {#eq-silhouette}
+:::
+
+El valor de $s(i)$ está en $[-1,1]$. Un valor cercano a 1 indica que $\mathbf{x}_i$ está bien asignada: está lejos de los demás grupos. Un valor cercano a 0 indica que está en la frontera. Un valor negativo indica que $\mathbf{x}_i$ probablemente está mal asignada.
+
+El índice de silueta global es el promedio de $s(i)$ sobre todas las observaciones:
+$$
+S = \frac{1}{n}\sum_{i=1}^n s(i).
+$$
+
+### Índice Davies-Bouldin
+
+El índice Davies-Bouldin mide la compacidad de cada grupo relativa a la separación entre grupos [@davies1979].
+
+::: {.callout-note appearance="minimal"}
+Definición. Sea $\bar{d}_k$ el diámetro promedio del grupo $k$ (distancia media de sus puntos al centroide) y $d(k,l)$ la distancia entre los centroides de los grupos $k$ y $l$. El índice Davies-Bouldin es:
+$$
+\text{DB} = \frac{1}{K}\sum_{k=1}^{K}\max_{l\neq k}\frac{\bar{d}_k+\bar{d}_l}{d(k,l)}.
+$$ {#eq-davies-bouldin}
+:::
+
+Un valor menor de DB indica mejor clustering: grupos compactos y bien separados. El índice penaliza tanto la dispersión interna como la falta de separación entre grupos.
+
+### Índice Calinski-Harabasz
+
+El índice Calinski-Harabasz, también llamado criterio de varianza entre/intra grupos, compara la dispersión entre grupos con la dispersión dentro de los grupos [@calinski1974].
+
+::: {.callout-note appearance="minimal"}
+Definición. Sea $\text{SS}_B$ la suma de cuadrados entre grupos y $\text{SS}_W$ la suma de cuadrados dentro de grupos. El índice Calinski-Harabasz es:
+$$
+\text{CH} = \frac{\text{SS}_B/(K-1)}{\text{SS}_W/(n-K)}.
+$$ {#eq-calinski-harabasz}
+:::
+
+Un valor mayor de CH indica mejor clustering. Esta métrica favorece grupos compactos y bien separados, similar a Davies-Bouldin pero en sentido opuesto.
+
+```{python}
+from sklearn.datasets import make_blobs
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+
+X, y_true = make_blobs(n_samples=300, centers=4, cluster_std=0.8, random_state=42)
+
+results = []
+for k in range(2, 8):
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    labels = km.fit_predict(X)
+    results.append({
+        "k": k,
+        "silhouette": silhouette_score(X, labels).round(4),
+        "davies_bouldin": davies_bouldin_score(X, labels).round(4),
+        "calinski_harabasz": calinski_harabasz_score(X, labels).round(2),
+    })
+
+for r in results:
+    print(r)
+```
+
+```{=html}
+<div id="sil-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Índice de silueta — visualizador</span><br>
+    <span style="font-size:0.81em;color:#666;">Ajusta el número de grupos k y observa cómo cambia la silueta de cada punto</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">k = <strong id="sk-v">3</strong></label>
+    <input id="sk-sl" type="range" min="2" max="7" step="1" value="3" style="flex:1;min-width:150px;accent-color:#1a3a5c;">
+  </div>
+  <div id="sil-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="sil-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  // Pre-generated 60-point blob dataset (3 natural clusters)
+  const PTS=[
+    [0.8,1.2],[1.2,0.9],[0.5,1.5],[1.0,0.7],[1.4,1.3],[0.7,0.8],[1.1,1.6],[0.9,1.0],[1.3,0.6],[0.6,1.1],
+    [1.5,1.8],[0.4,1.3],[1.0,1.4],[1.2,1.1],[0.8,0.6],[1.6,1.0],[0.5,0.9],[1.3,1.5],[0.7,1.3],[1.1,0.8],
+    [4.2,4.5],[4.8,4.1],[3.9,4.7],[4.5,4.3],[5.0,4.6],[4.1,3.9],[4.7,4.8],[4.3,4.2],[4.6,3.8],[4.0,4.4],
+    [5.1,4.7],[3.8,4.0],[4.4,4.9],[4.9,4.5],[4.2,3.7],[4.6,4.1],[3.9,4.6],[4.8,4.3],[4.1,4.8],[4.5,4.0],
+    [7.5,1.5],[7.0,2.0],[7.8,1.2],[7.3,1.8],[6.8,1.6],[7.6,2.2],[7.1,1.0],[7.4,1.9],[7.7,1.4],[6.9,2.1],
+    [8.0,1.7],[7.2,1.3],[7.5,2.3],[7.0,1.1],[7.8,1.8],[7.3,2.0],[6.8,1.4],[7.6,1.6],[7.1,2.2],[7.4,1.2]
+  ];
+  const N=PTS.length;
+  const cv=document.getElementById('sil-cv');
+  const W=680,H=300,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2','#be185d'];
+
+  function dist2(a,b){return Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2);}
+
+  function kmeans(k,iters=40){
+    let cents=PTS.slice(0,k).map(p=>[...p]);
+    let labels=new Array(N).fill(0);
+    for(let it=0;it<iters;it++){
+      labels=PTS.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
+      cents=Array.from({length:k},(_,ci)=>{
+        const cl=PTS.filter((_,i)=>labels[i]===ci);
+        if(!cl.length)return cents[ci];
+        return[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length];
+      });
+    }
+    return{labels,cents};
+  }
+
+  function silhouette(labels,k){
+    return PTS.map((p,i)=>{
+      const same=PTS.filter((_,j)=>j!==i&&labels[j]===labels[i]);
+      const a=same.length?same.reduce((s,q)=>s+dist2(p,q),0)/same.length:0;
+      let b=Infinity;
+      for(let c=0;c<k;c++){
+        if(c===labels[i])continue;
+        const cl=PTS.filter((_,j)=>labels[j]===c);
+        if(!cl.length)continue;
+        const mb=cl.reduce((s,q)=>s+dist2(p,q),0)/cl.length;
+        if(mb<b)b=mb;
+      }
+      return(b-a)/Math.max(a,b);
+    });
+  }
+
+  function draw(k){
+    const{labels,cents}=kmeans(k);
+    const sils=silhouette(labels,k);
+    const avgSil=sils.reduce((s,v)=>s+v,0)/N;
+    ctx.clearRect(0,0,W,H);
+
+    // Left: scatter
+    const LP={l:44,r:W/2-8,t:20,b:H-30};
+    const LW=LP.r-LP.l,LH=LP.b-LP.t;
+    const xMn=0,xMx=9,yMn=0,yMx=6;
+    const sx=x=>LP.l+(x-xMn)/xMx*LW,sy=y=>LP.t+LH-(y-yMn)/yMx*LH;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW,LH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;
+    ctx.strokeRect(LP.l,LP.t,LW,LH);
+    PTS.forEach((p,i)=>{
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5,0,2*Math.PI);
+      ctx.fillStyle=COLS[labels[i]]+'cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();
+    });
+    cents.forEach((c,i)=>{
+      ctx.beginPath();ctx.arc(sx(c[0]),sy(c[1]),9,0,2*Math.PI);
+      ctx.fillStyle=COLS[i];ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(i+1,sx(c[0]),sy(c[1])+3);
+    });
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Scatter (k='+k+')',LP.l+LW/2,LP.t-6);
+
+    // Right: silhouette bars
+    const RP={l:W/2+8,r:W-10,t:20,b:H-30};
+    const RW=RP.r-RP.l,RH=RP.b-RP.t;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
+
+    // Sort by cluster then by silhouette
+    const sorted=sils.map((s,i)=>({s,c:labels[i]})).sort((a,b)=>a.c-b.c||b.s-a.s);
+    const bh=RH/N;
+    const midX=RP.l+RW/2;
+    sorted.forEach((d,i)=>{
+      const bw=Math.abs(d.s)*RW*0.45;
+      const by=RP.t+i*bh;
+      ctx.fillStyle=COLS[d.c]+(d.s<0?'88':'cc');
+      if(d.s>=0)ctx.fillRect(midX,by,bw,bh-0.5);
+      else ctx.fillRect(midX-bw,by,bw,bh-0.5);
+    });
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(midX,RP.t);ctx.lineTo(midX,RP.b);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='9px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('-1',RP.l+4,RP.b+12);ctx.fillText('0',midX,RP.b+12);ctx.fillText('1',RP.r-4,RP.b+12);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Siluetas por punto',RP.l+RW/2,RP.t-6);
+
+    document.getElementById('sil-info').innerHTML=
+      `k = <strong>${k}</strong>&ensp;·&ensp;`+
+      `Silueta media = <strong style="color:${avgSil>0.5?'#16a34a':avgSil>0.25?'#ca8a04':'#dc2626'}">${avgSil.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `Puntos negativos = <strong>${sils.filter(s=>s<0).length}</strong>`;
+  }
+
+  document.getElementById('sk-sl').addEventListener('input',function(){
+    const k=parseInt(this.value);
+    document.getElementById('sk-v').textContent=k;
+    draw(k);
+  });
+  draw(3);
+})();
+</script>
+```
+
+## Evaluación con etiquetas verdaderas
+
+Cuando se dispone de etiquetas externas —por ejemplo en un experimento controlado— es posible medir cuánto se parece la partición encontrada a la partición de referencia. Estas métricas son externas.
+
+### Índice de Rand ajustado
+
+El índice de Rand considera todos los pares de observaciones y cuenta cuántos pares están en el mismo grupo en ambas particiones, o en grupos distintos en ambas [@hubert1985].
+
+::: {.callout-note appearance="minimal"}
+Definición. El índice de Rand ajustado (ARI) corrige el índice de Rand por la coincidencia esperada bajo asignación aleatoria:
+$$
+\text{ARI} = \frac{\text{RI} - \mathbb{E}[\text{RI}]}{\max(\text{RI}) - \mathbb{E}[\text{RI}]}.
+$$ {#eq-ari}
+:::
+
+El ARI está en $[-1,1]$. Un valor de 1 indica concordancia perfecta; un valor de 0 indica lo esperado por azar. Se prefiere sobre el índice de Rand sin ajustar porque no crece artificialmente con $n$ o $k$.
+
+```{python}
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+
+X, y_true = make_blobs(n_samples=200, centers=3, cluster_std=1.0, random_state=0)
+
+for k in [2, 3, 4]:
+    km = KMeans(n_clusters=k, random_state=0, n_init=10)
+    pred = km.fit_predict(X)
+    ari = adjusted_rand_score(y_true, pred)
+    nmi = normalized_mutual_info_score(y_true, pred)
+    print(f"k={k}  ARI={ari:.4f}  NMI={nmi:.4f}")
+```
+
+## Preprocesamiento antes de clustering
+
+Antes de aplicar cualquier algoritmo de clustering conviene realizar algunas verificaciones y transformaciones.
+
+**Estandarización.** Variables con rangos muy distintos dominarán la distancia. Usar `StandardScaler` o `RobustScaler` antes de aplicar algoritmos basados en distancias euclídeas.
+
+**Reducción de dimensión.** En espacios de alta dimensión, todas las distancias tienden a igualarse (maldición de la dimensionalidad). Aplicar PCA u otras técnicas antes de clustering puede mejorar los resultados.
+
+**Detección de valores atípicos.** Los algoritmos como K-Means son sensibles a outliers porque los centroides son promedios. Conviene identificarlos y decidir si excluirlos o usar algoritmos más robustos.
+
+**Codificación de variables categóricas.** Las distancias estándar no aplican directamente a variables nominales. Se pueden usar codificación one-hot con distancia euclídea, o la distancia de Gower que maneja mezclas de tipos.
+
+```{python}
+import pandas as pd
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+rng = np.random.default_rng(0)
+X_raw = rng.normal(loc=[0, 0, 100, 100], scale=[1, 1, 50, 50], size=(300, 4))
+
+pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("pca", PCA(n_components=2)),
+    ("km", KMeans(n_clusters=3, random_state=0, n_init=10)),
+])
+
+labels = pipeline.fit_predict(X_raw)
+print("Distribución de grupos:", np.bincount(labels))
+```
+
+## Selección del número de grupos
+
+Una de las decisiones más difíciles en clustering es el número de grupos $k$. No existe una respuesta única, pero varias heurísticas son útiles:
+
+- **Método del codo**: graficar el WCSS o el índice de silueta en función de $k$ y buscar un punto de inflexión.
+- **Índice de silueta**: maximizar $S(k)$ sobre valores candidatos de $k$.
+- **Davies-Bouldin**: minimizar DB$(k)$.
+- **Calinski-Harabasz**: maximizar CH$(k)$.
+- **Conocimiento del dominio**: en muchos problemas, el número razonable de grupos se puede restringir con información previa.
+
+Ninguna métrica interna puede reemplazar la interpretación del analista. El mejor $k$ estadístico puede no ser el más útil para el objetivo de negocio.

@@ -1,0 +1,487 @@
+---
+title: "K-Means y K-Medoids"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clustering.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+K-Means es el algoritmo de clustering más ampliamente usado en la práctica. Su popularidad se debe a su simplicidad conceptual, su eficiencia computacional y la facilidad de interpretar sus resultados: cada grupo queda representado por un centroide, que es el punto promedio de las observaciones asignadas [@macqueen1967; @lloyd1982].
+
+El algoritmo alterna entre dos pasos: asignar cada punto al centroide más cercano, y actualizar los centroides como el promedio de los puntos asignados. Estos dos pasos se repiten hasta que las asignaciones no cambian. A pesar de su elegancia, K-Means tiene limitaciones importantes: converge a óptimos locales, asume que los grupos son convexos y similares en tamaño, y es sensible a valores atípicos y a la escala de las variables.
+
+Este capítulo desarrolla el algoritmo K-Means, su análisis teórico, la inicialización inteligente K-Means++, el método del codo para elegir $k$, y el algoritmo K-Medoids, que es más robusto a outliers.
+
+## El objetivo de K-Means
+
+K-Means busca una partición de $n$ observaciones en $k$ grupos $C_1,\dots,C_k$ que minimice la suma de cuadrados intra-grupo, también llamada WCSS (within-cluster sum of squares).
+
+::: {.callout-note appearance="minimal"}
+Definición. El objetivo de K-Means es minimizar
+$$
+J(C_1,\dots,C_k) = \sum_{j=1}^{k}\sum_{\mathbf{x}\in C_j}\|\mathbf{x}-\boldsymbol{\mu}_j\|^2,
+$$ {#eq-kmeans-obj}
+donde $\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\mathbf{x}\in C_j}\mathbf{x}$ es el centroide del grupo $j$.
+:::
+
+Minimizar $J$ sobre todas las particiones posibles es un problema NP-complejo cuando $k$ y $p$ son arbitrarios. El algoritmo de Lloyd encuentra un mínimo local mediante dos pasos de coordinación alternada.
+
+## Algoritmo de Lloyd
+
+::: {.callout-note appearance="minimal"}
+**Algoritmo K-Means (Lloyd).**
+
+**Entrada:** observaciones $\mathbf{x}_1,\dots,\mathbf{x}_n$, número de grupos $k$.
+
+1. Inicializar $k$ centroides $\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k$ (por ejemplo, eligiendo $k$ observaciones al azar).
+2. **Asignación.** Para cada $i$, asignar $\ell(i) = \arg\min_j \|\mathbf{x}_i-\boldsymbol{\mu}_j\|^2$.
+3. **Actualización.** Para cada $j$, actualizar $\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\ell(i)=j}\mathbf{x}_i$.
+4. Repetir los pasos 2 y 3 hasta que las asignaciones no cambien.
+
+**Salida:** asignación $\ell$ y centroides finales $\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k$.
+:::
+
+Cada iteración del algoritmo reduce o mantiene $J$, y como el número de particiones posibles es finito, el algoritmo converge en un número finito de iteraciones. Sin embargo, no se garantiza convergencia al mínimo global.
+
+### Complejidad computacional
+
+El paso de asignación requiere $O(nk)$ cálculos de distancia por iteración. El paso de actualización requiere $O(n)$. En la práctica, K-Means converge en pocas iteraciones relativas a $n$. Para datos en alta dimensión o $k$ grande, existen variantes más eficientes basadas en estructuras de árbol o aproximaciones.
+
+## Inicialización K-Means++
+
+La solución encontrada por K-Means depende fuertemente de la inicialización. Una inicialización aleatoria puede dar lugar a centroides iniciales mal distribuidos, lo que lleva a soluciones de baja calidad. K-Means++ [@arthur2007] proporciona una inicialización probabilística que garantiza una solución esperada dentro de un factor logarítmico del óptimo global.
+
+::: {.callout-note appearance="minimal"}
+**Algoritmo K-Means++.**
+
+1. Elegir el primer centroide $\boldsymbol{\mu}_1$ uniformemente al azar entre $\mathbf{x}_1,\dots,\mathbf{x}_n$.
+2. Para $j=2,\dots,k$:
+   - Para cada punto $\mathbf{x}_i$, calcular $D(\mathbf{x}_i)=\min_{l<j}\|\mathbf{x}_i-\boldsymbol{\mu}_l\|^2$.
+   - Elegir $\boldsymbol{\mu}_j=\mathbf{x}_i$ con probabilidad proporcional a $D(\mathbf{x}_i)$.
+3. Continuar con el algoritmo de Lloyd estándar.
+:::
+
+La idea es que los centroides iniciales estén bien distribuidos: cada centroide nuevo se elige con mayor probabilidad en zonas alejadas de los centroides ya elegidos. `scikit-learn` usa K-Means++ por defecto.
+
+```{=html}
+<div id="km-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">K-Means — animación paso a paso</span><br>
+    <span style="font-size:0.81em;color:#666;">Observa cómo los centroides se mueven y los grupos cambian en cada iteración</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">k = <strong id="km-kv">3</strong></label>
+    <input id="km-ksl" type="range" min="2" max="6" step="1" value="3" style="flex:1;min-width:120px;accent-color:#1a3a5c;">
+    <button onclick="window.kmReset()" style="font-size:0.8em;padding:4px 12px;border:1px solid #d0d7e3;border-radius:5px;background:#fff;cursor:pointer;">Reiniciar</button>
+    <button onclick="window.kmStep()" style="font-size:0.8em;padding:4px 14px;border:1px solid #1a3a5c;border-radius:5px;background:#1a3a5c;color:#fff;cursor:pointer;">Paso ▶</button>
+    <button onclick="window.kmRun()" style="font-size:0.8em;padding:4px 14px;border:1px solid #16a34a;border-radius:5px;background:#16a34a;color:#fff;cursor:pointer;">Ejecutar ⟳</button>
+  </div>
+  <div id="km-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="km-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+  // 40 points in 3 natural clusters
+  const SEED=[
+    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],
+    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],
+    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],
+    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],
+    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1]
+  ];
+  const cv=document.getElementById('km-cv');
+  const W=680,H=380,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:44,r:16,t:20,b:30};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=0,xMx=9,yMn=0,yMx=7;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+
+  let k=3,cents=[],labels=[],phase='init',iter=0,converged=false;
+
+  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}
+
+  function initCents(k){
+    const idx=[];
+    while(idx.length<k){const r=Math.floor(Math.random()*SEED.length);if(!idx.includes(r))idx.push(r);}
+    return idx.map(i=>[...SEED[i]]);
+  }
+
+  function assign(){
+    return SEED.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
+  }
+
+  function update(labels){
+    return Array.from({length:k},(_,ci)=>{
+      const cl=SEED.filter((_,i)=>labels[i]===ci);
+      if(!cl.length)return cents[ci];
+      return[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length];
+    });
+  }
+
+  function wcss(labels){
+    return SEED.reduce((s,p,i)=>s+dist2(p,cents[labels[i]]),0);
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
+    [1,2,3,4,5,6,7,8].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();
+    });
+    [1,2,3,4,5,6].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();
+    });
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
+
+    // Voronoi regions (background color strips)
+    const step=6;
+    for(let px=PAD.l;px<PAD.l+CW;px+=step){
+      for(let py=PAD.t;py<PAD.t+CH;py+=step){
+        const gx=xMn+(px-PAD.l)/CW*(xMx-xMn),gy=yMn+(1-(py-PAD.t)/CH)*(yMx-yMn);
+        let bi=0,bd=Infinity;
+        cents.forEach((c,i)=>{const d=dist2([gx,gy],c);if(d<bd){bd=d;bi=i;}});
+        ctx.fillStyle=COLS[bi]+'18';ctx.fillRect(px,py,step,step);
+      }
+    }
+
+    // Points
+    SEED.forEach((p,i)=>{
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5.5,0,2*Math.PI);
+      ctx.fillStyle=labels.length?COLS[labels[i]]+'cc':'#94a3b8cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    });
+
+    // Centroids
+    cents.forEach((c,i)=>{
+      ctx.beginPath();ctx.arc(sx(c[0]),sy(c[1]),10,0,2*Math.PI);
+      ctx.fillStyle=COLS[i];ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(i+1,sx(c[0]),sy(c[1])+3);
+    });
+
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('K-Means — iteración '+iter,PAD.l+CW/2,PAD.t-6);
+  }
+
+  window.kmReset=function(){
+    k=parseInt(document.getElementById('km-ksl').value);
+    cents=initCents(k);labels=[];iter=0;converged=false;phase='init';
+    draw();
+    document.getElementById('km-info').innerHTML='Centroides inicializados aleatoriamente. Presiona <strong>Paso</strong> para asignar.';
+  };
+
+  window.kmStep=function(){
+    if(converged){document.getElementById('km-info').innerHTML='<strong style="color:#16a34a">Convergido.</strong> K-Means terminó.';return;}
+    if(phase==='init'||phase==='update'){
+      const newL=assign();
+      const same=labels.length&&newL.every((l,i)=>l===labels[i]);
+      labels=newL;phase='assign';iter++;
+      draw();
+      const w=wcss(labels);
+      if(same){converged=true;document.getElementById('km-info').innerHTML=`Iteración ${iter} — <strong style="color:#16a34a">Convergido</strong>. WCSS = ${w.toFixed(2)}`;}
+      else document.getElementById('km-info').innerHTML=`Iteración ${iter}: asignación actualizada. WCSS = <strong>${w.toFixed(2)}</strong>`;
+    } else {
+      const prev=cents.map(c=>[...c]);cents=update(labels);phase='update';
+      draw();
+      const moved=cents.reduce((s,c,i)=>s+Math.sqrt(dist2(c,prev[i])),0);
+      document.getElementById('km-info').innerHTML=`Iteración ${iter}: centroides actualizados. Desplazamiento total = <strong>${moved.toFixed(4)}</strong>`;
+    }
+  };
+
+  window.kmRun=function(){
+    const run=()=>{if(!converged){window.kmStep();setTimeout(run,400);}};
+    run();
+  };
+
+  document.getElementById('km-ksl').addEventListener('input',function(){
+    document.getElementById('km-kv').textContent=this.value;
+    window.kmReset();
+  });
+
+  window.kmReset();
+})();
+</script>
+```
+
+## Limitaciones de K-Means
+
+K-Means tiene varios supuestos implícitos que, cuando no se cumplen, producen clustering de baja calidad:
+
+**Grupos convexos y esféricos.** K-Means minimiza distancias Euclídeas, lo que favorece grupos circulares en 2D o elipsoidales alineados con los ejes en alta dimensión. Grupos con formas no convexas —anillos, medias lunas, espirales— no pueden segmentarse correctamente.
+
+**Grupos de tamaño similar.** El centroide de un grupo pequeño puede ser "absorbido" por un grupo grande. Esto puede mitigarse con K-Medoids o con restricciones de tamaño.
+
+**Sensibilidad a outliers.** El centroide es la media, que puede desplazarse considerablemente ante un solo punto extremo. K-Medoids es más robusto porque usa medianas en vez de medias.
+
+**Número de grupos fijo.** K-Means requiere especificar $k$ de antemano. La elección adecuada de $k$ es un problema abierto que se aborda con heurísticas como el método del codo.
+
+## Método del codo
+
+Una heurística clásica para elegir $k$ es graficar el WCSS en función de $k$ y buscar un codo: el punto donde la reducción marginal de WCSS disminuye al agregar otro grupo.
+
+```{python}
+from sklearn.datasets import make_blobs
+from sklearn.cluster import KMeans
+import numpy as np
+
+X, _ = make_blobs(n_samples=300, centers=4, cluster_std=0.7, random_state=7)
+
+wcss = []
+for k in range(1, 11):
+    km = KMeans(n_clusters=k, random_state=0, n_init=10)
+    km.fit(X)
+    wcss.append(km.inertia_)
+
+for k, w in enumerate(wcss, 1):
+    print(f"k={k:2d}  WCSS={w:10.2f}")
+```
+
+```{=html}
+<div id="elbow-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Método del codo y silueta — selección de k</span><br>
+    <span style="font-size:0.81em;color:#666;">Haz clic en un k para ver el clustering y sus métricas</span>
+  </div>
+  <canvas id="elbow-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;cursor:pointer;"></canvas>
+  <div id="elbow-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:10px;min-height:22px;"></div>
+</div>
+<script>
+(function(){
+  const PTS=[
+    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],
+    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],[1.9,1.3],[0.4,1.4],
+    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],
+    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],[5.4,4.8],[3.9,4.3],[4.5,5.0],[5.0,4.5],
+    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1],[8.2,2.0],[7.1,1.5],
+    [7.4,2.5],[7.7,1.3],[8.0,1.9],[7.2,2.3],[7.5,1.6],[7.8,2.2],[7.0,1.2],[7.6,1.8],[8.1,2.3],[7.3,1.9]
+  ];
+  const N=PTS.length;
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+  const cv=document.getElementById('elbow-cv');
+  const W=680,H=400,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+
+  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}
+  function kmeans(k){
+    let cents=[];
+    const taken=new Set();
+    while(cents.length<k){const r=Math.floor(Math.random()*N);if(!taken.has(r)){taken.add(r);cents.push([...PTS[r]]);}}
+    let labels=new Array(N).fill(0);
+    for(let it=0;it<50;it++){
+      const nl=PTS.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
+      cents=Array.from({length:k},(_,ci)=>{const cl=PTS.filter((_,i)=>nl[i]===ci);return cl.length?[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length]:cents[ci];});
+      labels=nl;
+    }
+    const wcss=PTS.reduce((s,p,i)=>s+dist2(p,cents[labels[i]]),0);
+    return{labels,cents,wcss};
+  }
+
+  function silScore(labels,k){
+    const sils=PTS.map((p,i)=>{
+      const same=PTS.filter((_,j)=>j!==i&&labels[j]===labels[i]);
+      const a=same.length?same.reduce((s,q)=>s+Math.sqrt(dist2(p,q)),0)/same.length:0;
+      let b=Infinity;
+      for(let c=0;c<k;c++){if(c===labels[i])continue;const cl=PTS.filter((_,j)=>labels[j]===c);if(!cl.length)continue;const mb=cl.reduce((s,q)=>s+Math.sqrt(dist2(p,q)),0)/cl.length;if(mb<b)b=mb;}
+      return(b-a)/Math.max(a,b);
+    });
+    return sils.reduce((s,v)=>s+v,0)/N;
+  }
+
+  const KS=[2,3,4,5,6,7];
+  const cache=KS.map(k=>{let best=null;for(let t=0;t<5;t++){const r=kmeans(k);if(!best||r.wcss<best.wcss)best=r;}return{...best,k,sil:k>1?silScore(best.labels,k):0};});
+  const maxW=cache[0].wcss*1.05;
+  let sel=1;// index into cache
+
+  function drawChart(selIdx){
+    ctx.clearRect(0,0,W,H);
+    const CH2=H/2-10;
+    // Top: WCSS chart
+    const LP={l:52,r:W-16,t:12,b:CH2};
+    const LW2=LP.r-LP.l,LH=LP.b-LP.t;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW2,LH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(LP.l,LP.t,LW2,LH);
+    const xStep=LW2/(KS.length+1);
+    cache.forEach((d,i)=>{
+      const bx=LP.l+xStep*(i+0.5),bh=d.wcss/maxW*LH*0.85;
+      const isS=i===selIdx;
+      ctx.fillStyle=isS?'#1a3a5c':'#94a3b8';ctx.fillRect(bx-xStep*0.28,LP.b-bh,xStep*0.56,bh);
+      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
+      ctx.fillText('k='+d.k,bx,LP.b+13);
+      ctx.fillStyle=isS?'#1a3a5c':'#6b7280';
+      ctx.fillText((d.wcss/1000).toFixed(0)+'k',bx,LP.b-bh-5);
+    });
+    // WCSS line
+    ctx.beginPath();ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;
+    cache.forEach((d,i)=>{const bx=LP.l+xStep*(i+0.5),by=LP.b-d.wcss/maxW*LH*0.85;i===0?ctx.moveTo(bx,by):ctx.lineTo(bx,by);});
+    ctx.stroke();
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('WCSS por k (método del codo)',LP.l+4,LP.t+12);
+
+    // Bottom: Silhouette chart
+    const RP={l:52,r:W-16,t:H/2+8,b:H-20};
+    const RW=RP.r-RP.l,RH=RP.b-RP.t;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
+    const maxS=0.8;
+    cache.forEach((d,i)=>{
+      const bx=RP.l+xStep*(i+0.5),bh=d.sil/maxS*RH*0.85;
+      const isS=i===selIdx;
+      const col=d.sil>0.5?'#16a34a':d.sil>0.25?'#f59e0b':'#dc2626';
+      ctx.fillStyle=(isS?col:'#94a3b8');ctx.fillRect(bx-xStep*0.28,RP.b-bh,xStep*0.56,bh);
+      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
+      ctx.fillText('k='+d.k,bx,RP.b+13);
+      ctx.fillStyle=(isS?col:'#6b7280');
+      ctx.fillText(d.sil.toFixed(3),bx,RP.b-bh-5);
+    });
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('Silueta por k',RP.l+4,RP.t+12);
+
+    const d=cache[selIdx];
+    document.getElementById('elbow-info').innerHTML=
+      `k = <strong>${d.k}</strong>&ensp;·&ensp;WCSS = <strong>${d.wcss.toFixed(1)}</strong>&ensp;·&ensp;`+
+      `Silueta = <strong style="color:${d.sil>0.5?'#16a34a':d.sil>0.25?'#ca8a04':'#dc2626'}">${d.sil.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `Haz clic en las barras para seleccionar k`;
+  }
+
+  cv.addEventListener('click',function(e){
+    const rect=cv.getBoundingClientRect();
+    const px=e.clientX-rect.left;
+    const xStep=(W-68)/(KS.length+1);
+    const i=Math.round((px-52)/xStep)-1;
+    if(i>=0&&i<KS.length){sel=i;drawChart(sel);}
+  });
+
+  drawChart(sel);
+})();
+</script>
+```
+
+## K-Medoids (PAM)
+
+K-Medoids es una variante de K-Means que, en vez de representar cada grupo por su media, lo representa por una observación real llamada medoide [@kaufman1990]. Esto lo hace más robusto a outliers, porque los medoides son puntos del conjunto de datos y no pueden ser arrastrados por valores extremos.
+
+::: {.callout-note appearance="minimal"}
+Definición. Un medoide del grupo $C_j$ es la observación $\mathbf{m}_j\in C_j$ que minimiza la suma de distancias a los demás puntos del grupo:
+$$
+\mathbf{m}_j = \arg\min_{\mathbf{x}\in C_j}\sum_{\mathbf{x}'\in C_j}d(\mathbf{x},\mathbf{x}').
+$$ {#eq-medoid}
+:::
+
+El algoritmo PAM (Partitioning Around Medoids) itera intercambiando medoides con no-medoides y aceptando los cambios que reducen el costo total. PAM es más costoso que K-Means ($O(k(n-k)^2)$ por iteración), pero produce resultados más robustos ante outliers.
+
+```{python}
+from sklearn.datasets import make_blobs
+import numpy as np
+
+rng = np.random.default_rng(42)
+X, _ = make_blobs(n_samples=200, centers=3, cluster_std=0.8, random_state=42)
+
+# Agregar outliers
+X = np.vstack([X, [[10, 10], [10, -10], [-10, 10]]])
+
+from sklearn.cluster import KMeans
+
+km = KMeans(n_clusters=3, random_state=0, n_init=10)
+labels_km = km.fit_predict(X)
+print("K-Means centroides:\n", km.cluster_centers_.round(3))
+
+# Implementación simple de K-Medoids
+def kmedoids_simple(X, k, seed=0):
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(X), k, replace=False)
+    medoids = list(idx)
+
+    for _ in range(100):
+        D = np.array([[np.linalg.norm(X[i] - X[m]) for m in medoids] for i in range(len(X))])
+        labels = D.argmin(axis=1)
+        new_medoids = []
+        for j in range(k):
+            cluster = np.where(labels == j)[0]
+            if len(cluster) == 0:
+                new_medoids.append(medoids[j])
+                continue
+            sub_D = np.array([[np.linalg.norm(X[a] - X[b]) for b in cluster] for a in cluster])
+            new_medoids.append(int(cluster[sub_D.sum(axis=1).argmin()]))
+        if new_medoids == medoids:
+            break
+        medoids = new_medoids
+    return np.array(medoids), labels
+
+medoids_idx, labels_kmed = kmedoids_simple(X, 3)
+print("\nK-Medoids medoides (índices):", medoids_idx)
+print("K-Medoids medoides (valores):\n", X[medoids_idx].round(3))
+```
+
+## Implementación con scikit-learn
+
+```{python}
+from sklearn.datasets import make_blobs
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+
+X, y_true = make_blobs(
+    n_samples=400, centers=[[-3, -3], [0, 0], [3, 3], [0, 5]],
+    cluster_std=[0.8, 1.0, 0.7, 0.9], random_state=42
+)
+
+X_std = StandardScaler().fit_transform(X)
+
+km = KMeans(
+    n_clusters=4,
+    init="k-means++",
+    n_init=20,
+    max_iter=300,
+    random_state=42
+)
+labels = km.fit_predict(X_std)
+
+print("Inercia (WCSS):", round(km.inertia_, 4))
+print("Iteraciones hasta convergencia:", km.n_iter_)
+print("Silueta:", round(silhouette_score(X_std, labels), 4))
+print("Distribución:", np.bincount(labels))
+```
+
+## Consideraciones prácticas
+
+- Ejecutar K-Means múltiples veces (`n_init`) y quedarse con la solución de menor WCSS reduce el riesgo de caer en mínimos locales pobres.
+- Estandarizar siempre los datos antes de aplicar K-Means, a menos que las distintas escalas tengan significado conceptual.
+- En espacios de muy alta dimensión, considerar primero reducción de dimensión (PCA, UMAP) antes de aplicar K-Means.
+- K-Means no es adecuado para datos con clusters de forma irregular; en ese caso preferir DBSCAN o clustering espectral.

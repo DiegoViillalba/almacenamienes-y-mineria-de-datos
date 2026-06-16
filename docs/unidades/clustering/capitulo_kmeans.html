@@ -1,0 +1,2288 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="es" xml:lang="es"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.8.27">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Diego Villalba">
+
+<title>40&nbsp; K-Means y K-Medoids – Almacenes y Minería de Datos</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+/* CSS for citations */
+div.csl-bib-body { }
+div.csl-entry {
+  clear: both;
+  margin-bottom: 0em;
+}
+.hanging-indent div.csl-entry {
+  margin-left:2em;
+  text-indent:-2em;
+}
+div.csl-left-margin {
+  min-width:2em;
+  float:left;
+}
+div.csl-right-inline {
+  margin-left:2em;
+  padding-left:1em;
+}
+div.csl-indent {
+  margin-left: 2em;
+}</style>
+
+
+<script src="../../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../../">
+<link href="../../unidades/clustering/capitulo_jerarquico.html" rel="next">
+<link href="../../unidades/clustering/capitulo_clustering_intro.html" rel="prev">
+<script src="../../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../../site_libs/quarto-html/axe/axe-check.js" type="module"></script>
+<script src="../../site_libs/quarto-html/popper.min.js"></script>
+<script src="../../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting-8b4baf804e461d9b72633f0de59a0cac.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../../site_libs/bootstrap/bootstrap-6a3675c0e035c7c845d48363a35eb454.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "textbox",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No se han encontrado resultados",
+    "search-matching-documents-text": "documentos encontrados",
+    "search-copy-link-title": "Copiar el enlace en la búsqueda",
+    "search-hide-matches-text": "Ocultar resultados adicionales",
+    "search-more-match-text": "resultado adicional en este documento",
+    "search-more-matches-text": "resultados adicionales en este documento",
+    "search-clear-button-title": "Borrar",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancelar",
+    "search-submit-button-title": "Enviar",
+    "search-label": "Buscar"
+  }
+}</script>
+<style>html{ scroll-behavior: smooth; }</style>
+<!-- Google Tag Manager -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-NQJGJRC5');</script>
+<!-- End Google Tag Manager -->
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="../../visionbook.css">
+</head>
+
+<body class="nav-sidebar floating quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Alternar barra lateral" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item">Aprendizaje No Supervisado</li><li class="breadcrumb-item"><a href="../../unidades/clustering/capitulo_clustering_intro.html">Clustering</a></li><li class="breadcrumb-item"><a href="../../unidades/clustering/capitulo_kmeans.html"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">K-Means y K-Medoids</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Alternar barra lateral" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="Buscar" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="../../">Almacenes y Minería de Datos</a> 
+        <div class="sidebar-tools-main tools-wide">
+    <a href="https://github.com/DiegoViillalba/almacenamienes-y-mineria-de-datos" title="Source Code" class="quarto-navigation-tool px-1" aria-label="Source Code"><i class="bi bi-github"></i></a>
+    <div class="dropdown">
+      <a href="" title="Download" id="quarto-navigation-tool-dropdown-0" class="quarto-navigation-tool dropdown-toggle px-1" data-bs-toggle="dropdown" aria-expanded="false" role="link" aria-label="Download"><i class="bi bi-download"></i></a>
+      <ul class="dropdown-menu" aria-labelledby="quarto-navigation-tool-dropdown-0">
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="../../Almacenes-y-Minería-de-Datos.pdf">
+              <i class="bi bi-file-pdf pe-1"></i>
+            Download PDF
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="../../Almacenes-y-Minería-de-Datos.epub">
+              <i class="bi bi-journal pe-1"></i>
+            Download ePub
+            </a>
+          </li>
+      </ul>
+    </div>
+    <div class="dropdown">
+      <a href="" title="Share" id="quarto-navigation-tool-dropdown-1" class="quarto-navigation-tool dropdown-toggle px-1" data-bs-toggle="dropdown" aria-expanded="false" role="link" aria-label="Share"><i class="bi bi-share"></i></a>
+      <ul class="dropdown-menu" aria-labelledby="quarto-navigation-tool-dropdown-1">
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="https://twitter.com/intent/tweet?url=|url|">
+              <i class="bi bi-twitter pe-1"></i>
+            Twitter
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="https://www.facebook.com/sharer/sharer.php?u=|url|">
+              <i class="bi bi-facebook pe-1"></i>
+            Facebook
+            </a>
+          </li>
+      </ul>
+    </div>
+</div>
+    </div>
+      </div>
+        <div class="mt-2 flex-shrink-0 align-items-center">
+        <div class="sidebar-search">
+        <div id="quarto-search" class="" title="Buscar"></div>
+        </div>
+        </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Prefacio</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Almacenes de Datos</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="false">
+ <span class="menu-text">Fundamentos</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">Introducción a los Almacenes de Datos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-2-modelo-multidim.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Modelado Multidimensional</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-4-etl.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">ETL / ELT con PySpark</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="false">
+ <span class="menu-text">Cubos de Datos y OLAP</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/OLAP/capitulo_cubos_olap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Computación de cubos de datos OLAP</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Proceso de Minería de Datos</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Introducción a Minería de Datos y Frameworks de Proceso</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="false">
+ <span class="menu-text">Análisis Exploratorio</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-2-eda_exploratorio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Análisis Exploratorio de Datos (EDA): teoría, medidas y visualización</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="false">
+ <span class="menu-text">Casos BigMart</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth3 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-10-CRISP_DM_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Business Understanding - Caso BigMart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-3-example_localizacion_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Medidas de localización en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-4-variabilidad_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">Medidas de variabilidad en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-5-forma_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Medidas de forma en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-6-heterogeneidad_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Medidas de heterogeneidad en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-7-concentracion_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Medidas de concentración en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-9-correlacion_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Medidas de correlación en Big Mart Sales</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/multivariado/2-11-analisis-multivariado.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Análisis Exploratorio de Datos Multivariado: Teoría y Visualización</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/multivariado/2-12-analisis-multivariado-examples.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">Análisis Exploratorio de Datos Multivariado: Ejemplos prácticos</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="false">
+ <span class="menu-text">Preprocesamiento</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Introducción a Preprocesamiento de Datos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="false">
+ <span class="menu-text">Integración y Transformación</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth3 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-3-conversion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Conversión y Transformación de Datos</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="false">
+ <span class="menu-text">Calidad y Limpieza</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth3 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-6-ruido.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Reducción de ruido</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-2-datos-faltantes.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Procesamiento de Datos Faltantes</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="false">
+ <span class="menu-text">Selección y Reducción</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth3 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-4-PCA.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">Reducción de Dimensionalidad con PCA</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-5-chi2.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Reducción de variables categóricas con χ²</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="true">
+ <span class="menu-text">Extracción de Patrones</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-11" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="false">
+ <span class="menu-text">Reglas de Asociación</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-12" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/reglas_asociacion/5-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Reglas de Asociación: Fundamentos, Interpretación y Selección</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/reglas_asociacion/5-2-metricas-extra.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Más Allá del Lift: Métricas Avanzadas, Sensibilidad y Estructura de Reglas</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/reglas_asociacion/5-3-fp_growth.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">FP-Growth y minería de patrones frecuentes</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-13" role="navigation" aria-expanded="true">
+ <span class="menu-text">Clasificación</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-13" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-13" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-14" role="navigation" aria-expanded="false">
+ <span class="menu-text">Introducción y Evaluación</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-14" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-14" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-1-clasificacion_arboles.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Clasificación y árboles de decisión</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-2-metricas_clasificacion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Evaluación de Clasificadores: Métricas Esenciales y su Interpretación</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_evaluacion_modelos_clasificacion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Evaluación de un modelo de clasificación</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-15" role="navigation" aria-expanded="false">
+ <span class="menu-text">Árboles y Ensambles</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-15" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-15" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-1-clasificacion_cart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Arboles CART: árboles de clasificación y regresión</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_arboles_regresion_lineal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Árboles de regresión lineal, ensambles y vecinos cercanos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_xgboost.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Gradient Boosting y XGBoost</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-3-ejercicio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Clasificadores Supervisados: Experimento Práctico</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-16" role="navigation" aria-expanded="false">
+ <span class="menu-text">Modelos Lineales</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-16" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-16" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_regresion_clasificadores_lineales.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Regresión y clasificadores lineales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_regresion_logistica.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">Regresión Logística</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_svm.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">34</span>&nbsp; <span class="chapter-title">Máquinas de Soporte Vectorial</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-17" role="navigation" aria-expanded="false">
+ <span class="menu-text">Clasificadores Probabilísticos</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-17" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-17" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_clasificadores_bayesianos.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">35</span>&nbsp; <span class="chapter-title">Clasificadores bayesianos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_gmm.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">36</span>&nbsp; <span class="chapter-title">Modelos de Mezcla Gaussiana</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-18" role="navigation" aria-expanded="false">
+ <span class="menu-text">Redes Neuronales</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-18" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-18" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_redes_neuronales.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">37</span>&nbsp; <span class="chapter-title">Redes Neuronales para Clasificacion</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_pytorch_jax.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">38</span>&nbsp; <span class="chapter-title">Implementacion Practica: PyTorch y JAX</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-19" role="navigation" aria-expanded="true">
+ <span class="menu-text">Aprendizaje No Supervisado</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-19" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-19" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-20" role="navigation" aria-expanded="true">
+ <span class="menu-text">Clustering</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-20" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-20" class="collapse list-unstyled sidebar-section depth2 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_clustering_intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">39</span>&nbsp; <span class="chapter-title">Introducción al clustering y métricas de evaluación</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_kmeans.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">K-Means y K-Medoids</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_jerarquico.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">41</span>&nbsp; <span class="chapter-title">Clustering jerárquico</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_dbscan.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">42</span>&nbsp; <span class="chapter-title">DBSCAN y HDBSCAN</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-21" role="navigation" aria-expanded="false">
+ <span class="menu-text">Reducción de Dimensionalidad</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-21" role="navigation" aria-expanded="false" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-21" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_tsne_umap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">43</span>&nbsp; <span class="chapter-title">t-SNE, UMAP y reducción de dimensionalidad no lineal</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-22" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-22" role="navigation" aria-expanded="true" aria-label="Alternar sección">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-22" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../presentaciones.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">Presentaciones de clase</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Contenido</h2>
+   
+  <ul>
+  <li><a href="#el-objetivo-de-k-means" id="toc-el-objetivo-de-k-means" class="nav-link active" data-scroll-target="#el-objetivo-de-k-means"><span class="header-section-number">1</span> El objetivo de K-Means</a></li>
+  <li><a href="#algoritmo-de-lloyd" id="toc-algoritmo-de-lloyd" class="nav-link" data-scroll-target="#algoritmo-de-lloyd"><span class="header-section-number">2</span> Algoritmo de Lloyd</a>
+  <ul class="collapse">
+  <li><a href="#complejidad-computacional" id="toc-complejidad-computacional" class="nav-link" data-scroll-target="#complejidad-computacional"><span class="header-section-number">2.1</span> Complejidad computacional</a></li>
+  </ul></li>
+  <li><a href="#inicialización-k-means" id="toc-inicialización-k-means" class="nav-link" data-scroll-target="#inicialización-k-means"><span class="header-section-number">3</span> Inicialización K-Means++</a></li>
+  <li><a href="#limitaciones-de-k-means" id="toc-limitaciones-de-k-means" class="nav-link" data-scroll-target="#limitaciones-de-k-means"><span class="header-section-number">4</span> Limitaciones de K-Means</a></li>
+  <li><a href="#método-del-codo" id="toc-método-del-codo" class="nav-link" data-scroll-target="#método-del-codo"><span class="header-section-number">5</span> Método del codo</a></li>
+  <li><a href="#k-medoids-pam" id="toc-k-medoids-pam" class="nav-link" data-scroll-target="#k-medoids-pam"><span class="header-section-number">6</span> K-Medoids (PAM)</a></li>
+  <li><a href="#implementación-con-scikit-learn" id="toc-implementación-con-scikit-learn" class="nav-link" data-scroll-target="#implementación-con-scikit-learn"><span class="header-section-number">7</span> Implementación con scikit-learn</a></li>
+  <li><a href="#consideraciones-prácticas" id="toc-consideraciones-prácticas" class="nav-link" data-scroll-target="#consideraciones-prácticas"><span class="header-section-number">8</span> Consideraciones prácticas</a></li>
+  </ul>
+<div class="toc-actions"><ul><li><a href="https://github.com/DiegoViillalba/almacenamienes-y-mineria-de-datos/edit/main/unidades/clustering/capitulo_kmeans.qmd" class="toc-action"><i class="bi bi-github"></i>Editar esta página</a></li></ul></div><div class="quarto-other-links"><h2>Otros Enlaces</h2><ul><li><a href="mailto:diego.villalba@ciencias.unam.mx"><i class="bi bi-envelope"></i>Contáctame</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item">Aprendizaje No Supervisado</li><li class="breadcrumb-item"><a href="../../unidades/clustering/capitulo_clustering_intro.html">Clustering</a></li><li class="breadcrumb-item"><a href="../../unidades/clustering/capitulo_kmeans.html"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">K-Means y K-Medoids</span></a></li></ol></nav>
+<div class="quarto-title">
+<div class="quarto-title-block"><div><h1 class="title"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">K-Means y K-Medoids</span></h1><button type="button" class="btn code-tools-button dropdown-toggle" id="quarto-code-tools-menu" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi"></i> Código</button><ul class="dropdown-menu dropdown-menu-end" aria-labelelledby="quarto-code-tools-menu"><li><a id="quarto-show-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Mostrar todo el código</a></li><li><a id="quarto-hide-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Ocultar todo el código</a></li><li><hr class="dropdown-divider"></li><li><a id="quarto-view-source" class="dropdown-item" href="javascript:void(0)" role="button">Ver el código fuente</a></li></ul></div></div>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Autor/a</div>
+    <div class="quarto-title-meta-contents">
+             <p>Diego Villalba </p>
+          </div>
+  </div>
+    
+    <div>
+    <div class="quarto-title-meta-heading">Fecha de publicación</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">15 de junio de 2026</p>
+    </div>
+  </div>
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>K-Means es el algoritmo de clustering más ampliamente usado en la práctica. Su popularidad se debe a su simplicidad conceptual, su eficiencia computacional y la facilidad de interpretar sus resultados: cada grupo queda representado por un centroide, que es el punto promedio de las observaciones asignadas <span class="citation" data-cites="macqueen1967 lloyd1982">(<a href="../OLAP/capitulo_cubos_olap.html#ref-macqueen1967" role="doc-biblioref">MacQueen 1967</a>; <a href="../OLAP/capitulo_cubos_olap.html#ref-lloyd1982" role="doc-biblioref">Lloyd 1982</a>)</span>.</p>
+<p>El algoritmo alterna entre dos pasos: asignar cada punto al centroide más cercano, y actualizar los centroides como el promedio de los puntos asignados. Estos dos pasos se repiten hasta que las asignaciones no cambian. A pesar de su elegancia, K-Means tiene limitaciones importantes: converge a óptimos locales, asume que los grupos son convexos y similares en tamaño, y es sensible a valores atípicos y a la escala de las variables.</p>
+<p>Este capítulo desarrolla el algoritmo K-Means, su análisis teórico, la inicialización inteligente K-Means++, el método del codo para elegir <span class="math inline">\(k\)</span>, y el algoritmo K-Medoids, que es más robusto a outliers.</p>
+<section id="el-objetivo-de-k-means" class="level2" data-number="1">
+<h2 data-number="1" class="anchored" data-anchor-id="el-objetivo-de-k-means"><span class="header-section-number">1</span> El objetivo de K-Means</h2>
+<p>K-Means busca una partición de <span class="math inline">\(n\)</span> observaciones en <span class="math inline">\(k\)</span> grupos <span class="math inline">\(C_1,\dots,C_k\)</span> que minimice la suma de cuadrados intra-grupo, también llamada WCSS (within-cluster sum of squares).</p>
+<div class="callout callout-style-simple callout-note no-icon">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon no-icon"></i>
+</div>
+<div class="callout-body-container">
+<p>Definición. El objetivo de K-Means es minimizar <span id="eq-kmeans-obj"><span class="math display">\[
+J(C_1,\dots,C_k) = \sum_{j=1}^{k}\sum_{\mathbf{x}\in C_j}\|\mathbf{x}-\boldsymbol{\mu}_j\|^2,
+\tag{1}\]</span></span> donde <span class="math inline">\(\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\mathbf{x}\in C_j}\mathbf{x}\)</span> es el centroide del grupo <span class="math inline">\(j\)</span>.</p>
+</div>
+</div>
+</div>
+<p>Minimizar <span class="math inline">\(J\)</span> sobre todas las particiones posibles es un problema NP-complejo cuando <span class="math inline">\(k\)</span> y <span class="math inline">\(p\)</span> son arbitrarios. El algoritmo de Lloyd encuentra un mínimo local mediante dos pasos de coordinación alternada.</p>
+</section>
+<section id="algoritmo-de-lloyd" class="level2" data-number="2">
+<h2 data-number="2" class="anchored" data-anchor-id="algoritmo-de-lloyd"><span class="header-section-number">2</span> Algoritmo de Lloyd</h2>
+<div class="callout callout-style-simple callout-note no-icon">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon no-icon"></i>
+</div>
+<div class="callout-body-container">
+<p><strong>Algoritmo K-Means (Lloyd).</strong></p>
+<p><strong>Entrada:</strong> observaciones <span class="math inline">\(\mathbf{x}_1,\dots,\mathbf{x}_n\)</span>, número de grupos <span class="math inline">\(k\)</span>.</p>
+<ol type="1">
+<li>Inicializar <span class="math inline">\(k\)</span> centroides <span class="math inline">\(\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k\)</span> (por ejemplo, eligiendo <span class="math inline">\(k\)</span> observaciones al azar).</li>
+<li><strong>Asignación.</strong> Para cada <span class="math inline">\(i\)</span>, asignar <span class="math inline">\(\ell(i) = \arg\min_j \|\mathbf{x}_i-\boldsymbol{\mu}_j\|^2\)</span>.</li>
+<li><strong>Actualización.</strong> Para cada <span class="math inline">\(j\)</span>, actualizar <span class="math inline">\(\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\ell(i)=j}\mathbf{x}_i\)</span>.</li>
+<li>Repetir los pasos 2 y 3 hasta que las asignaciones no cambien.</li>
+</ol>
+<p><strong>Salida:</strong> asignación <span class="math inline">\(\ell\)</span> y centroides finales <span class="math inline">\(\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k\)</span>.</p>
+</div>
+</div>
+</div>
+<p>Cada iteración del algoritmo reduce o mantiene <span class="math inline">\(J\)</span>, y como el número de particiones posibles es finito, el algoritmo converge en un número finito de iteraciones. Sin embargo, no se garantiza convergencia al mínimo global.</p>
+<section id="complejidad-computacional" class="level3" data-number="2.1">
+<h3 data-number="2.1" class="anchored" data-anchor-id="complejidad-computacional"><span class="header-section-number">2.1</span> Complejidad computacional</h3>
+<p>El paso de asignación requiere <span class="math inline">\(O(nk)\)</span> cálculos de distancia por iteración. El paso de actualización requiere <span class="math inline">\(O(n)\)</span>. En la práctica, K-Means converge en pocas iteraciones relativas a <span class="math inline">\(n\)</span>. Para datos en alta dimensión o <span class="math inline">\(k\)</span> grande, existen variantes más eficientes basadas en estructuras de árbol o aproximaciones.</p>
+</section>
+</section>
+<section id="inicialización-k-means" class="level2" data-number="3">
+<h2 data-number="3" class="anchored" data-anchor-id="inicialización-k-means"><span class="header-section-number">3</span> Inicialización K-Means++</h2>
+<p>La solución encontrada por K-Means depende fuertemente de la inicialización. Una inicialización aleatoria puede dar lugar a centroides iniciales mal distribuidos, lo que lleva a soluciones de baja calidad. K-Means++ <span class="citation" data-cites="arthur2007">(<a href="../OLAP/capitulo_cubos_olap.html#ref-arthur2007" role="doc-biblioref">Arthur y Vassilvitskii 2007</a>)</span> proporciona una inicialización probabilística que garantiza una solución esperada dentro de un factor logarítmico del óptimo global.</p>
+<div class="callout callout-style-simple callout-note no-icon">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon no-icon"></i>
+</div>
+<div class="callout-body-container">
+<p><strong>Algoritmo K-Means++.</strong></p>
+<ol type="1">
+<li>Elegir el primer centroide <span class="math inline">\(\boldsymbol{\mu}_1\)</span> uniformemente al azar entre <span class="math inline">\(\mathbf{x}_1,\dots,\mathbf{x}_n\)</span>.</li>
+<li>Para <span class="math inline">\(j=2,\dots,k\)</span>:
+<ul>
+<li>Para cada punto <span class="math inline">\(\mathbf{x}_i\)</span>, calcular <span class="math inline">\(D(\mathbf{x}_i)=\min_{l&lt;j}\|\mathbf{x}_i-\boldsymbol{\mu}_l\|^2\)</span>.</li>
+<li>Elegir <span class="math inline">\(\boldsymbol{\mu}_j=\mathbf{x}_i\)</span> con probabilidad proporcional a <span class="math inline">\(D(\mathbf{x}_i)\)</span>.</li>
+</ul></li>
+<li>Continuar con el algoritmo de Lloyd estándar.</li>
+</ol>
+</div>
+</div>
+</div>
+<p>La idea es que los centroides iniciales estén bien distribuidos: cada centroide nuevo se elige con mayor probabilidad en zonas alejadas de los centroides ya elegidos. <code>scikit-learn</code> usa K-Means++ por defecto.</p>
+<div id="km-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">K-Means — animación paso a paso</span><br>
+    <span style="font-size:0.81em;color:#666;">Observa cómo los centroides se mueven y los grupos cambian en cada iteración</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">k = <strong id="km-kv">3</strong></label>
+    <input id="km-ksl" type="range" min="2" max="6" step="1" value="3" style="flex:1;min-width:120px;accent-color:#1a3a5c;">
+    <button onclick="window.kmReset()" style="font-size:0.8em;padding:4px 12px;border:1px solid #d0d7e3;border-radius:5px;background:#fff;cursor:pointer;">Reiniciar</button>
+    <button onclick="window.kmStep()" style="font-size:0.8em;padding:4px 14px;border:1px solid #1a3a5c;border-radius:5px;background:#1a3a5c;color:#fff;cursor:pointer;">Paso ▶</button>
+    <button onclick="window.kmRun()" style="font-size:0.8em;padding:4px 14px;border:1px solid #16a34a;border-radius:5px;background:#16a34a;color:#fff;cursor:pointer;">Ejecutar ⟳</button>
+  </div>
+  <div id="km-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="km-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+  // 40 points in 3 natural clusters
+  const SEED=[
+    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],
+    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],
+    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],
+    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],
+    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1]
+  ];
+  const cv=document.getElementById('km-cv');
+  const W=680,H=380,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:44,r:16,t:20,b:30};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=0,xMx=9,yMn=0,yMx=7;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+
+  let k=3,cents=[],labels=[],phase='init',iter=0,converged=false;
+
+  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}
+
+  function initCents(k){
+    const idx=[];
+    while(idx.length<k){const r=Math.floor(Math.random()*SEED.length);if(!idx.includes(r))idx.push(r);}
+    return idx.map(i=>[...SEED[i]]);
+  }
+
+  function assign(){
+    return SEED.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
+  }
+
+  function update(labels){
+    return Array.from({length:k},(_,ci)=>{
+      const cl=SEED.filter((_,i)=>labels[i]===ci);
+      if(!cl.length)return cents[ci];
+      return[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length];
+    });
+  }
+
+  function wcss(labels){
+    return SEED.reduce((s,p,i)=>s+dist2(p,cents[labels[i]]),0);
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
+    [1,2,3,4,5,6,7,8].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();
+    });
+    [1,2,3,4,5,6].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();
+    });
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
+
+    // Voronoi regions (background color strips)
+    const step=6;
+    for(let px=PAD.l;px<PAD.l+CW;px+=step){
+      for(let py=PAD.t;py<PAD.t+CH;py+=step){
+        const gx=xMn+(px-PAD.l)/CW*(xMx-xMn),gy=yMn+(1-(py-PAD.t)/CH)*(yMx-yMn);
+        let bi=0,bd=Infinity;
+        cents.forEach((c,i)=>{const d=dist2([gx,gy],c);if(d<bd){bd=d;bi=i;}});
+        ctx.fillStyle=COLS[bi]+'18';ctx.fillRect(px,py,step,step);
+      }
+    }
+
+    // Points
+    SEED.forEach((p,i)=>{
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5.5,0,2*Math.PI);
+      ctx.fillStyle=labels.length?COLS[labels[i]]+'cc':'#94a3b8cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    });
+
+    // Centroids
+    cents.forEach((c,i)=>{
+      ctx.beginPath();ctx.arc(sx(c[0]),sy(c[1]),10,0,2*Math.PI);
+      ctx.fillStyle=COLS[i];ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(i+1,sx(c[0]),sy(c[1])+3);
+    });
+
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('K-Means — iteración '+iter,PAD.l+CW/2,PAD.t-6);
+  }
+
+  window.kmReset=function(){
+    k=parseInt(document.getElementById('km-ksl').value);
+    cents=initCents(k);labels=[];iter=0;converged=false;phase='init';
+    draw();
+    document.getElementById('km-info').innerHTML='Centroides inicializados aleatoriamente. Presiona <strong>Paso</strong> para asignar.';
+  };
+
+  window.kmStep=function(){
+    if(converged){document.getElementById('km-info').innerHTML='<strong style="color:#16a34a">Convergido.</strong> K-Means terminó.';return;}
+    if(phase==='init'||phase==='update'){
+      const newL=assign();
+      const same=labels.length&&newL.every((l,i)=>l===labels[i]);
+      labels=newL;phase='assign';iter++;
+      draw();
+      const w=wcss(labels);
+      if(same){converged=true;document.getElementById('km-info').innerHTML=`Iteración ${iter} — <strong style="color:#16a34a">Convergido</strong>. WCSS = ${w.toFixed(2)}`;}
+      else document.getElementById('km-info').innerHTML=`Iteración ${iter}: asignación actualizada. WCSS = <strong>${w.toFixed(2)}</strong>`;
+    } else {
+      const prev=cents.map(c=>[...c]);cents=update(labels);phase='update';
+      draw();
+      const moved=cents.reduce((s,c,i)=>s+Math.sqrt(dist2(c,prev[i])),0);
+      document.getElementById('km-info').innerHTML=`Iteración ${iter}: centroides actualizados. Desplazamiento total = <strong>${moved.toFixed(4)}</strong>`;
+    }
+  };
+
+  window.kmRun=function(){
+    const run=()=>{if(!converged){window.kmStep();setTimeout(run,400);}};
+    run();
+  };
+
+  document.getElementById('km-ksl').addEventListener('input',function(){
+    document.getElementById('km-kv').textContent=this.value;
+    window.kmReset();
+  });
+
+  window.kmReset();
+})();
+</script>
+</section>
+<section id="limitaciones-de-k-means" class="level2" data-number="4">
+<h2 data-number="4" class="anchored" data-anchor-id="limitaciones-de-k-means"><span class="header-section-number">4</span> Limitaciones de K-Means</h2>
+<p>K-Means tiene varios supuestos implícitos que, cuando no se cumplen, producen clustering de baja calidad:</p>
+<p><strong>Grupos convexos y esféricos.</strong> K-Means minimiza distancias Euclídeas, lo que favorece grupos circulares en 2D o elipsoidales alineados con los ejes en alta dimensión. Grupos con formas no convexas —anillos, medias lunas, espirales— no pueden segmentarse correctamente.</p>
+<p><strong>Grupos de tamaño similar.</strong> El centroide de un grupo pequeño puede ser “absorbido” por un grupo grande. Esto puede mitigarse con K-Medoids o con restricciones de tamaño.</p>
+<p><strong>Sensibilidad a outliers.</strong> El centroide es la media, que puede desplazarse considerablemente ante un solo punto extremo. K-Medoids es más robusto porque usa medianas en vez de medias.</p>
+<p><strong>Número de grupos fijo.</strong> K-Means requiere especificar <span class="math inline">\(k\)</span> de antemano. La elección adecuada de <span class="math inline">\(k\)</span> es un problema abierto que se aborda con heurísticas como el método del codo.</p>
+</section>
+<section id="método-del-codo" class="level2" data-number="5">
+<h2 data-number="5" class="anchored" data-anchor-id="método-del-codo"><span class="header-section-number">5</span> Método del codo</h2>
+<p>Una heurística clásica para elegir <span class="math inline">\(k\)</span> es graficar el WCSS en función de <span class="math inline">\(k\)</span> y buscar un codo: el punto donde la reducción marginal de WCSS disminuye al agregar otro grupo.</p>
+<div id="3a22436d" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Mostrar código</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.datasets <span class="im">import</span> make_blobs</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.cluster <span class="im">import</span> KMeans</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>X, _ <span class="op">=</span> make_blobs(n_samples<span class="op">=</span><span class="dv">300</span>, centers<span class="op">=</span><span class="dv">4</span>, cluster_std<span class="op">=</span><span class="fl">0.7</span>, random_state<span class="op">=</span><span class="dv">7</span>)</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>wcss <span class="op">=</span> []</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">11</span>):</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    km <span class="op">=</span> KMeans(n_clusters<span class="op">=</span>k, random_state<span class="op">=</span><span class="dv">0</span>, n_init<span class="op">=</span><span class="dv">10</span>)</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    km.fit(X)</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    wcss.append(km.inertia_)</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k, w <span class="kw">in</span> <span class="bu">enumerate</span>(wcss, <span class="dv">1</span>):</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"k=</span><span class="sc">{</span>k<span class="sc">:2d}</span><span class="ss">  WCSS=</span><span class="sc">{</span>w<span class="sc">:10.2f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copiar al portapapeles" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output cell-output-stdout">
+<pre><code>k= 1  WCSS=  21990.36
+k= 2  WCSS=   8805.13
+k= 3  WCSS=   2236.26
+k= 4  WCSS=    279.94
+k= 5  WCSS=    250.42
+k= 6  WCSS=    223.32
+k= 7  WCSS=    197.53
+k= 8  WCSS=    171.05
+k= 9  WCSS=    154.82
+k=10  WCSS=    140.95</code></pre>
+</div>
+</div>
+<div id="elbow-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Método del codo y silueta — selección de k</span><br>
+    <span style="font-size:0.81em;color:#666;">Haz clic en un k para ver el clustering y sus métricas</span>
+  </div>
+  <canvas id="elbow-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;cursor:pointer;"></canvas>
+  <div id="elbow-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:10px;min-height:22px;"></div>
+</div>
+<script>
+(function(){
+  const PTS=[
+    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],
+    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],[1.9,1.3],[0.4,1.4],
+    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],
+    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],[5.4,4.8],[3.9,4.3],[4.5,5.0],[5.0,4.5],
+    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1],[8.2,2.0],[7.1,1.5],
+    [7.4,2.5],[7.7,1.3],[8.0,1.9],[7.2,2.3],[7.5,1.6],[7.8,2.2],[7.0,1.2],[7.6,1.8],[8.1,2.3],[7.3,1.9]
+  ];
+  const N=PTS.length;
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+  const cv=document.getElementById('elbow-cv');
+  const W=680,H=400,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+
+  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}
+  function kmeans(k){
+    let cents=[];
+    const taken=new Set();
+    while(cents.length<k){const r=Math.floor(Math.random()*N);if(!taken.has(r)){taken.add(r);cents.push([...PTS[r]]);}}
+    let labels=new Array(N).fill(0);
+    for(let it=0;it<50;it++){
+      const nl=PTS.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
+      cents=Array.from({length:k},(_,ci)=>{const cl=PTS.filter((_,i)=>nl[i]===ci);return cl.length?[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length]:cents[ci];});
+      labels=nl;
+    }
+    const wcss=PTS.reduce((s,p,i)=>s+dist2(p,cents[labels[i]]),0);
+    return{labels,cents,wcss};
+  }
+
+  function silScore(labels,k){
+    const sils=PTS.map((p,i)=>{
+      const same=PTS.filter((_,j)=>j!==i&&labels[j]===labels[i]);
+      const a=same.length?same.reduce((s,q)=>s+Math.sqrt(dist2(p,q)),0)/same.length:0;
+      let b=Infinity;
+      for(let c=0;c<k;c++){if(c===labels[i])continue;const cl=PTS.filter((_,j)=>labels[j]===c);if(!cl.length)continue;const mb=cl.reduce((s,q)=>s+Math.sqrt(dist2(p,q)),0)/cl.length;if(mb<b)b=mb;}
+      return(b-a)/Math.max(a,b);
+    });
+    return sils.reduce((s,v)=>s+v,0)/N;
+  }
+
+  const KS=[2,3,4,5,6,7];
+  const cache=KS.map(k=>{let best=null;for(let t=0;t<5;t++){const r=kmeans(k);if(!best||r.wcss<best.wcss)best=r;}return{...best,k,sil:k>1?silScore(best.labels,k):0};});
+  const maxW=cache[0].wcss*1.05;
+  let sel=1;// index into cache
+
+  function drawChart(selIdx){
+    ctx.clearRect(0,0,W,H);
+    const CH2=H/2-10;
+    // Top: WCSS chart
+    const LP={l:52,r:W-16,t:12,b:CH2};
+    const LW2=LP.r-LP.l,LH=LP.b-LP.t;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW2,LH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(LP.l,LP.t,LW2,LH);
+    const xStep=LW2/(KS.length+1);
+    cache.forEach((d,i)=>{
+      const bx=LP.l+xStep*(i+0.5),bh=d.wcss/maxW*LH*0.85;
+      const isS=i===selIdx;
+      ctx.fillStyle=isS?'#1a3a5c':'#94a3b8';ctx.fillRect(bx-xStep*0.28,LP.b-bh,xStep*0.56,bh);
+      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
+      ctx.fillText('k='+d.k,bx,LP.b+13);
+      ctx.fillStyle=isS?'#1a3a5c':'#6b7280';
+      ctx.fillText((d.wcss/1000).toFixed(0)+'k',bx,LP.b-bh-5);
+    });
+    // WCSS line
+    ctx.beginPath();ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;
+    cache.forEach((d,i)=>{const bx=LP.l+xStep*(i+0.5),by=LP.b-d.wcss/maxW*LH*0.85;i===0?ctx.moveTo(bx,by):ctx.lineTo(bx,by);});
+    ctx.stroke();
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('WCSS por k (método del codo)',LP.l+4,LP.t+12);
+
+    // Bottom: Silhouette chart
+    const RP={l:52,r:W-16,t:H/2+8,b:H-20};
+    const RW=RP.r-RP.l,RH=RP.b-RP.t;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
+    const maxS=0.8;
+    cache.forEach((d,i)=>{
+      const bx=RP.l+xStep*(i+0.5),bh=d.sil/maxS*RH*0.85;
+      const isS=i===selIdx;
+      const col=d.sil>0.5?'#16a34a':d.sil>0.25?'#f59e0b':'#dc2626';
+      ctx.fillStyle=(isS?col:'#94a3b8');ctx.fillRect(bx-xStep*0.28,RP.b-bh,xStep*0.56,bh);
+      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
+      ctx.fillText('k='+d.k,bx,RP.b+13);
+      ctx.fillStyle=(isS?col:'#6b7280');
+      ctx.fillText(d.sil.toFixed(3),bx,RP.b-bh-5);
+    });
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('Silueta por k',RP.l+4,RP.t+12);
+
+    const d=cache[selIdx];
+    document.getElementById('elbow-info').innerHTML=
+      `k = <strong>${d.k}</strong>&ensp;·&ensp;WCSS = <strong>${d.wcss.toFixed(1)}</strong>&ensp;·&ensp;`+
+      `Silueta = <strong style="color:${d.sil>0.5?'#16a34a':d.sil>0.25?'#ca8a04':'#dc2626'}">${d.sil.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `Haz clic en las barras para seleccionar k`;
+  }
+
+  cv.addEventListener('click',function(e){
+    const rect=cv.getBoundingClientRect();
+    const px=e.clientX-rect.left;
+    const xStep=(W-68)/(KS.length+1);
+    const i=Math.round((px-52)/xStep)-1;
+    if(i>=0&&i<KS.length){sel=i;drawChart(sel);}
+  });
+
+  drawChart(sel);
+})();
+</script>
+</section>
+<section id="k-medoids-pam" class="level2" data-number="6">
+<h2 data-number="6" class="anchored" data-anchor-id="k-medoids-pam"><span class="header-section-number">6</span> K-Medoids (PAM)</h2>
+<p>K-Medoids es una variante de K-Means que, en vez de representar cada grupo por su media, lo representa por una observación real llamada medoide <span class="citation" data-cites="kaufman1990">(<a href="../OLAP/capitulo_cubos_olap.html#ref-kaufman1990" role="doc-biblioref">Kaufman y Rousseeuw 1990</a>)</span>. Esto lo hace más robusto a outliers, porque los medoides son puntos del conjunto de datos y no pueden ser arrastrados por valores extremos.</p>
+<div class="callout callout-style-simple callout-note no-icon">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon no-icon"></i>
+</div>
+<div class="callout-body-container">
+<p>Definición. Un medoide del grupo <span class="math inline">\(C_j\)</span> es la observación <span class="math inline">\(\mathbf{m}_j\in C_j\)</span> que minimiza la suma de distancias a los demás puntos del grupo: <span id="eq-medoid"><span class="math display">\[
+\mathbf{m}_j = \arg\min_{\mathbf{x}\in C_j}\sum_{\mathbf{x}'\in C_j}d(\mathbf{x},\mathbf{x}').
+\tag{2}\]</span></span></p>
+</div>
+</div>
+</div>
+<p>El algoritmo PAM (Partitioning Around Medoids) itera intercambiando medoides con no-medoides y aceptando los cambios que reducen el costo total. PAM es más costoso que K-Means (<span class="math inline">\(O(k(n-k)^2)\)</span> por iteración), pero produce resultados más robustos ante outliers.</p>
+<div id="6015758c" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Mostrar código</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.datasets <span class="im">import</span> make_blobs</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>rng <span class="op">=</span> np.random.default_rng(<span class="dv">42</span>)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>X, _ <span class="op">=</span> make_blobs(n_samples<span class="op">=</span><span class="dv">200</span>, centers<span class="op">=</span><span class="dv">3</span>, cluster_std<span class="op">=</span><span class="fl">0.8</span>, random_state<span class="op">=</span><span class="dv">42</span>)</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Agregar outliers</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> np.vstack([X, [[<span class="dv">10</span>, <span class="dv">10</span>], [<span class="dv">10</span>, <span class="op">-</span><span class="dv">10</span>], [<span class="op">-</span><span class="dv">10</span>, <span class="dv">10</span>]]])</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.cluster <span class="im">import</span> KMeans</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>km <span class="op">=</span> KMeans(n_clusters<span class="op">=</span><span class="dv">3</span>, random_state<span class="op">=</span><span class="dv">0</span>, n_init<span class="op">=</span><span class="dv">10</span>)</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>labels_km <span class="op">=</span> km.fit_predict(X)</span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"K-Means centroides:</span><span class="ch">\n</span><span class="st">"</span>, km.cluster_centers_.<span class="bu">round</span>(<span class="dv">3</span>))</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Implementación simple de K-Medoids</span></span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> kmedoids_simple(X, k, seed<span class="op">=</span><span class="dv">0</span>):</span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> np.random.default_rng(seed)</span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>    idx <span class="op">=</span> rng.choice(<span class="bu">len</span>(X), k, replace<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>    medoids <span class="op">=</span> <span class="bu">list</span>(idx)</span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">100</span>):</span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>        D <span class="op">=</span> np.array([[np.linalg.norm(X[i] <span class="op">-</span> X[m]) <span class="cf">for</span> m <span class="kw">in</span> medoids] <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="bu">len</span>(X))])</span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>        labels <span class="op">=</span> D.argmin(axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a>        new_medoids <span class="op">=</span> []</span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> j <span class="kw">in</span> <span class="bu">range</span>(k):</span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true" tabindex="-1"></a>            cluster <span class="op">=</span> np.where(labels <span class="op">==</span> j)[<span class="dv">0</span>]</span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> <span class="bu">len</span>(cluster) <span class="op">==</span> <span class="dv">0</span>:</span>
+<span id="cb3-29"><a href="#cb3-29" aria-hidden="true" tabindex="-1"></a>                new_medoids.append(medoids[j])</span>
+<span id="cb3-30"><a href="#cb3-30" aria-hidden="true" tabindex="-1"></a>                <span class="cf">continue</span></span>
+<span id="cb3-31"><a href="#cb3-31" aria-hidden="true" tabindex="-1"></a>            sub_D <span class="op">=</span> np.array([[np.linalg.norm(X[a] <span class="op">-</span> X[b]) <span class="cf">for</span> b <span class="kw">in</span> cluster] <span class="cf">for</span> a <span class="kw">in</span> cluster])</span>
+<span id="cb3-32"><a href="#cb3-32" aria-hidden="true" tabindex="-1"></a>            new_medoids.append(<span class="bu">int</span>(cluster[sub_D.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">1</span>).argmin()]))</span>
+<span id="cb3-33"><a href="#cb3-33" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> new_medoids <span class="op">==</span> medoids:</span>
+<span id="cb3-34"><a href="#cb3-34" aria-hidden="true" tabindex="-1"></a>            <span class="cf">break</span></span>
+<span id="cb3-35"><a href="#cb3-35" aria-hidden="true" tabindex="-1"></a>        medoids <span class="op">=</span> new_medoids</span>
+<span id="cb3-36"><a href="#cb3-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.array(medoids), labels</span>
+<span id="cb3-37"><a href="#cb3-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-38"><a href="#cb3-38" aria-hidden="true" tabindex="-1"></a>medoids_idx, labels_kmed <span class="op">=</span> kmedoids_simple(X, <span class="dv">3</span>)</span>
+<span id="cb3-39"><a href="#cb3-39" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"</span><span class="ch">\n</span><span class="st">K-Medoids medoides (índices):"</span>, medoids_idx)</span>
+<span id="cb3-40"><a href="#cb3-40" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"K-Medoids medoides (valores):</span><span class="ch">\n</span><span class="st">"</span>, X[medoids_idx].<span class="bu">round</span>(<span class="dv">3</span>))</span></code></pre></div><button title="Copiar al portapapeles" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output cell-output-stdout">
+<pre><code>K-Means centroides:
+ [[ 4.789  2.015]
+ [-6.772 -6.857]
+ [-2.737  8.984]]
+
+K-Medoids medoides (índices): [74  7 24]
+K-Medoids medoides (valores):
+ [[-1.387  7.893]
+ [-7.256 -6.694]
+ [-6.334 -7.128]]</code></pre>
+</div>
+</div>
+</section>
+<section id="implementación-con-scikit-learn" class="level2" data-number="7">
+<h2 data-number="7" class="anchored" data-anchor-id="implementación-con-scikit-learn"><span class="header-section-number">7</span> Implementación con scikit-learn</h2>
+<div id="e3f14f92" class="cell" data-execution_count="3">
+<details class="code-fold">
+<summary>Mostrar código</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.datasets <span class="im">import</span> make_blobs</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.cluster <span class="im">import</span> KMeans</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.preprocessing <span class="im">import</span> StandardScaler</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.metrics <span class="im">import</span> silhouette_score</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>X, y_true <span class="op">=</span> make_blobs(</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    n_samples<span class="op">=</span><span class="dv">400</span>, centers<span class="op">=</span>[[<span class="op">-</span><span class="dv">3</span>, <span class="op">-</span><span class="dv">3</span>], [<span class="dv">0</span>, <span class="dv">0</span>], [<span class="dv">3</span>, <span class="dv">3</span>], [<span class="dv">0</span>, <span class="dv">5</span>]],</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    cluster_std<span class="op">=</span>[<span class="fl">0.8</span>, <span class="fl">1.0</span>, <span class="fl">0.7</span>, <span class="fl">0.9</span>], random_state<span class="op">=</span><span class="dv">42</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>X_std <span class="op">=</span> StandardScaler().fit_transform(X)</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>km <span class="op">=</span> KMeans(</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    n_clusters<span class="op">=</span><span class="dv">4</span>,</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>    init<span class="op">=</span><span class="st">"k-means++"</span>,</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    n_init<span class="op">=</span><span class="dv">20</span>,</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>    max_iter<span class="op">=</span><span class="dv">300</span>,</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    random_state<span class="op">=</span><span class="dv">42</span></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>labels <span class="op">=</span> km.fit_predict(X_std)</span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Inercia (WCSS):"</span>, <span class="bu">round</span>(km.inertia_, <span class="dv">4</span>))</span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Iteraciones hasta convergencia:"</span>, km.n_iter_)</span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Silueta:"</span>, <span class="bu">round</span>(silhouette_score(X_std, labels), <span class="dv">4</span>))</span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Distribución:"</span>, np.bincount(labels))</span></code></pre></div><button title="Copiar al portapapeles" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output cell-output-stdout">
+<pre><code>Inercia (WCSS): 76.5005
+Iteraciones hasta convergencia: 4
+Silueta: 0.6207
+Distribución: [ 95 106 102  97]</code></pre>
+</div>
+</div>
+</section>
+<section id="consideraciones-prácticas" class="level2" data-number="8">
+<h2 data-number="8" class="anchored" data-anchor-id="consideraciones-prácticas"><span class="header-section-number">8</span> Consideraciones prácticas</h2>
+<ul>
+<li>Ejecutar K-Means múltiples veces (<code>n_init</code>) y quedarse con la solución de menor WCSS reduce el riesgo de caer en mínimos locales pobres.</li>
+<li>Estandarizar siempre los datos antes de aplicar K-Means, a menos que las distintas escalas tengan significado conceptual.</li>
+<li>En espacios de muy alta dimensión, considerar primero reducción de dimensión (PCA, UMAP) antes de aplicar K-Means.</li>
+<li>K-Means no es adecuado para datos con clusters de forma irregular; en ese caso preferir DBSCAN o clustering espectral.</li>
+</ul>
+
+
+<!-- -->
+
+<div id="refs" class="references csl-bib-body hanging-indent" data-entry-spacing="0" role="list" style="display: none">
+<div id="ref-arthur2007" class="csl-entry" role="listitem">
+Arthur, David, y Sergei Vassilvitskii. 2007. <span>«k-means++: the advantages of careful seeding»</span>. En <em>Proceedings of the Eighteenth Annual ACM-SIAM Symposium on Discrete Algorithms</em>, 1027-35.
+</div>
+<div id="ref-kaufman1990" class="csl-entry" role="listitem">
+Kaufman, Leonard, y Peter J. Rousseeuw. 1990. <em>Finding Groups in Data: An Introduction to Cluster Analysis</em>. New York: Wiley.
+</div>
+<div id="ref-lloyd1982" class="csl-entry" role="listitem">
+Lloyd, Stuart P. 1982. <span>«Least squares quantization in <span>PCM</span>»</span>. <em>IEEE Transactions on Information Theory</em> 28 (2): 129-37.
+</div>
+<div id="ref-macqueen1967" class="csl-entry" role="listitem">
+MacQueen, James. 1967. <span>«Some methods for classification and analysis of multivariate observations»</span>. <em>Proceedings of the Fifth Berkeley Symposium on Mathematical Statistics and Probability</em> 1: 281-97.
+</div>
+</div>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copiado");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copiado");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+    const viewSource = window.document.getElementById('quarto-view-source') ||
+                       window.document.getElementById('quarto-code-tools-source');
+    if (viewSource) {
+      const sourceUrl = viewSource.getAttribute("data-quarto-source-url");
+      viewSource.addEventListener("click", function(e) {
+        if (sourceUrl) {
+          // rstudio viewer pane
+          if (/\bcapabilities=\b/.test(window.location)) {
+            window.open(sourceUrl);
+          } else {
+            window.location.href = sourceUrl;
+          }
+        } else {
+          const modal = new bootstrap.Modal(document.getElementById('quarto-embedded-source-code-modal'));
+          modal.show();
+        }
+        return false;
+      });
+    }
+    function toggleCodeHandler(show) {
+      return function(e) {
+        const detailsSrc = window.document.querySelectorAll(".cell > details > .sourceCode");
+        for (let i=0; i<detailsSrc.length; i++) {
+          const details = detailsSrc[i].parentElement;
+          if (show) {
+            details.open = true;
+          } else {
+            details.removeAttribute("open");
+          }
+        }
+        const cellCodeDivs = window.document.querySelectorAll(".cell > .sourceCode");
+        const fromCls = show ? "hidden" : "unhidden";
+        const toCls = show ? "unhidden" : "hidden";
+        for (let i=0; i<cellCodeDivs.length; i++) {
+          const codeDiv = cellCodeDivs[i];
+          if (codeDiv.classList.contains(fromCls)) {
+            codeDiv.classList.remove(fromCls);
+            codeDiv.classList.add(toCls);
+          } 
+        }
+        return false;
+      }
+    }
+    const hideAllCode = window.document.getElementById("quarto-hide-all-code");
+    if (hideAllCode) {
+      hideAllCode.addEventListener("click", toggleCodeHandler(false));
+    }
+    const showAllCode = window.document.getElementById("quarto-show-all-code");
+    if (showAllCode) {
+      showAllCode.addEventListener("click", toggleCodeHandler(true));
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../../unidades/clustering/capitulo_clustering_intro.html" class="pagination-link" aria-label="Introducción al clustering y métricas de evaluación">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">39</span>&nbsp; <span class="chapter-title">Introducción al clustering y métricas de evaluación</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../../unidades/clustering/capitulo_jerarquico.html" class="pagination-link" aria-label="Clustering jerárquico">
+        <span class="nav-page-text"><span class="chapter-number">41</span>&nbsp; <span class="chapter-title">Clustering jerárquico</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Ejecutar el código</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="an">title:</span><span class="co"> "K-Means y K-Medoids"</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="an">author:</span><span class="co"> "Diego Villalba"</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="an">date:</span><span class="co"> today</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="an">lang:</span><span class="co"> es</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="an">format:</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="co">  html:</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="co">    toc: true</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="co">    toc-depth: 3</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co">    toc-title: "Contenido"</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="co">    number-sections: true</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="co">    code-fold: true</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="co">    code-tools: true</span></span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="co">    code-summary: "Mostrar código"</span></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="co">    fig-align: center</span></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="co">    theme: cosmo</span></span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="co">    highlight-style: github</span></span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="co">    smooth-scroll: true</span></span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="co">  pdf:</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="co">    toc: true</span></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="co">    toc-depth: 3</span></span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a><span class="co">    number-sections: true</span></span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a><span class="co">    documentclass: scrbook</span></span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a><span class="co">    papersize: letter</span></span>
+<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a><span class="co">    fontsize: 11pt</span></span>
+<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a><span class="co">    geometry: margin=2.5cm</span></span>
+<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a><span class="co">    keep-tex: false</span></span>
+<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a><span class="an">execute:</span></span>
+<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a><span class="co">  echo: true</span></span>
+<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a><span class="co">  warning: false</span></span>
+<span id="cb7-31"><a href="#cb7-31" aria-hidden="true" tabindex="-1"></a><span class="co">  message: false</span></span>
+<span id="cb7-32"><a href="#cb7-32" aria-hidden="true" tabindex="-1"></a><span class="co">  cache: false</span></span>
+<span id="cb7-33"><a href="#cb7-33" aria-hidden="true" tabindex="-1"></a><span class="an">bibliography:</span><span class="co"> referencias_clustering.bib</span></span>
+<span id="cb7-34"><a href="#cb7-34" aria-hidden="true" tabindex="-1"></a><span class="an">crossref:</span></span>
+<span id="cb7-35"><a href="#cb7-35" aria-hidden="true" tabindex="-1"></a><span class="co">  fig-title: "Figura"</span></span>
+<span id="cb7-36"><a href="#cb7-36" aria-hidden="true" tabindex="-1"></a><span class="co">  tbl-title: "Tabla"</span></span>
+<span id="cb7-37"><a href="#cb7-37" aria-hidden="true" tabindex="-1"></a><span class="co">  eq-prefix: "Ec."</span></span>
+<span id="cb7-38"><a href="#cb7-38" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb7-39"><a href="#cb7-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-40"><a href="#cb7-40" aria-hidden="true" tabindex="-1"></a>K-Means es el algoritmo de clustering más ampliamente usado en la práctica. Su popularidad se debe a su simplicidad conceptual, su eficiencia computacional y la facilidad de interpretar sus resultados: cada grupo queda representado por un centroide, que es el punto promedio de las observaciones asignadas <span class="co">[</span><span class="ot">@macqueen1967; @lloyd1982</span><span class="co">]</span>.</span>
+<span id="cb7-41"><a href="#cb7-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-42"><a href="#cb7-42" aria-hidden="true" tabindex="-1"></a>El algoritmo alterna entre dos pasos: asignar cada punto al centroide más cercano, y actualizar los centroides como el promedio de los puntos asignados. Estos dos pasos se repiten hasta que las asignaciones no cambian. A pesar de su elegancia, K-Means tiene limitaciones importantes: converge a óptimos locales, asume que los grupos son convexos y similares en tamaño, y es sensible a valores atípicos y a la escala de las variables.</span>
+<span id="cb7-43"><a href="#cb7-43" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-44"><a href="#cb7-44" aria-hidden="true" tabindex="-1"></a>Este capítulo desarrolla el algoritmo K-Means, su análisis teórico, la inicialización inteligente K-Means++, el método del codo para elegir $k$, y el algoritmo K-Medoids, que es más robusto a outliers.</span>
+<span id="cb7-45"><a href="#cb7-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-46"><a href="#cb7-46" aria-hidden="true" tabindex="-1"></a><span class="fu">## El objetivo de K-Means</span></span>
+<span id="cb7-47"><a href="#cb7-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-48"><a href="#cb7-48" aria-hidden="true" tabindex="-1"></a>K-Means busca una partición de $n$ observaciones en $k$ grupos $C_1,\dots,C_k$ que minimice la suma de cuadrados intra-grupo, también llamada WCSS (within-cluster sum of squares).</span>
+<span id="cb7-49"><a href="#cb7-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-50"><a href="#cb7-50" aria-hidden="true" tabindex="-1"></a>::: {.callout-note appearance="minimal"}</span>
+<span id="cb7-51"><a href="#cb7-51" aria-hidden="true" tabindex="-1"></a>Definición. El objetivo de K-Means es minimizar</span>
+<span id="cb7-52"><a href="#cb7-52" aria-hidden="true" tabindex="-1"></a>$$</span>
+<span id="cb7-53"><a href="#cb7-53" aria-hidden="true" tabindex="-1"></a>J(C_1,\dots,C_k) = \sum_{j=1}^{k}\sum_{\mathbf{x}\in C_j}<span class="sc">\|</span>\mathbf{x}-\boldsymbol{\mu}_j<span class="sc">\|</span>^2,</span>
+<span id="cb7-54"><a href="#cb7-54" aria-hidden="true" tabindex="-1"></a>$$ {#eq-kmeans-obj}</span>
+<span id="cb7-55"><a href="#cb7-55" aria-hidden="true" tabindex="-1"></a>donde $\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\mathbf{x}\in C_j}\mathbf{x}$ es el centroide del grupo $j$.</span>
+<span id="cb7-56"><a href="#cb7-56" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb7-57"><a href="#cb7-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-58"><a href="#cb7-58" aria-hidden="true" tabindex="-1"></a>Minimizar $J$ sobre todas las particiones posibles es un problema NP-complejo cuando $k$ y $p$ son arbitrarios. El algoritmo de Lloyd encuentra un mínimo local mediante dos pasos de coordinación alternada.</span>
+<span id="cb7-59"><a href="#cb7-59" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-60"><a href="#cb7-60" aria-hidden="true" tabindex="-1"></a><span class="fu">## Algoritmo de Lloyd</span></span>
+<span id="cb7-61"><a href="#cb7-61" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-62"><a href="#cb7-62" aria-hidden="true" tabindex="-1"></a>::: {.callout-note appearance="minimal"}</span>
+<span id="cb7-63"><a href="#cb7-63" aria-hidden="true" tabindex="-1"></a>**Algoritmo K-Means (Lloyd).**</span>
+<span id="cb7-64"><a href="#cb7-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-65"><a href="#cb7-65" aria-hidden="true" tabindex="-1"></a>**Entrada:** observaciones $\mathbf{x}_1,\dots,\mathbf{x}_n$, número de grupos $k$.</span>
+<span id="cb7-66"><a href="#cb7-66" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-67"><a href="#cb7-67" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>Inicializar $k$ centroides $\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k$ (por ejemplo, eligiendo $k$ observaciones al azar).</span>
+<span id="cb7-68"><a href="#cb7-68" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>**Asignación.** Para cada $i$, asignar $\ell(i) = \arg\min_j <span class="sc">\|</span>\mathbf{x}_i-\boldsymbol{\mu}_j<span class="sc">\|</span>^2$.</span>
+<span id="cb7-69"><a href="#cb7-69" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>**Actualización.** Para cada $j$, actualizar $\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\ell(i)=j}\mathbf{x}_i$.</span>
+<span id="cb7-70"><a href="#cb7-70" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>Repetir los pasos 2 y 3 hasta que las asignaciones no cambien.</span>
+<span id="cb7-71"><a href="#cb7-71" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-72"><a href="#cb7-72" aria-hidden="true" tabindex="-1"></a>**Salida:** asignación $\ell$ y centroides finales $\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k$.</span>
+<span id="cb7-73"><a href="#cb7-73" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb7-74"><a href="#cb7-74" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-75"><a href="#cb7-75" aria-hidden="true" tabindex="-1"></a>Cada iteración del algoritmo reduce o mantiene $J$, y como el número de particiones posibles es finito, el algoritmo converge en un número finito de iteraciones. Sin embargo, no se garantiza convergencia al mínimo global.</span>
+<span id="cb7-76"><a href="#cb7-76" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-77"><a href="#cb7-77" aria-hidden="true" tabindex="-1"></a><span class="fu">### Complejidad computacional</span></span>
+<span id="cb7-78"><a href="#cb7-78" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-79"><a href="#cb7-79" aria-hidden="true" tabindex="-1"></a>El paso de asignación requiere $O(nk)$ cálculos de distancia por iteración. El paso de actualización requiere $O(n)$. En la práctica, K-Means converge en pocas iteraciones relativas a $n$. Para datos en alta dimensión o $k$ grande, existen variantes más eficientes basadas en estructuras de árbol o aproximaciones.</span>
+<span id="cb7-80"><a href="#cb7-80" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-81"><a href="#cb7-81" aria-hidden="true" tabindex="-1"></a><span class="fu">## Inicialización K-Means++</span></span>
+<span id="cb7-82"><a href="#cb7-82" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-83"><a href="#cb7-83" aria-hidden="true" tabindex="-1"></a>La solución encontrada por K-Means depende fuertemente de la inicialización. Una inicialización aleatoria puede dar lugar a centroides iniciales mal distribuidos, lo que lleva a soluciones de baja calidad. K-Means++ <span class="co">[</span><span class="ot">@arthur2007</span><span class="co">]</span> proporciona una inicialización probabilística que garantiza una solución esperada dentro de un factor logarítmico del óptimo global.</span>
+<span id="cb7-84"><a href="#cb7-84" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-85"><a href="#cb7-85" aria-hidden="true" tabindex="-1"></a>::: {.callout-note appearance="minimal"}</span>
+<span id="cb7-86"><a href="#cb7-86" aria-hidden="true" tabindex="-1"></a>**Algoritmo K-Means++.**</span>
+<span id="cb7-87"><a href="#cb7-87" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-88"><a href="#cb7-88" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>Elegir el primer centroide $\boldsymbol{\mu}_1$ uniformemente al azar entre $\mathbf{x}_1,\dots,\mathbf{x}_n$.</span>
+<span id="cb7-89"><a href="#cb7-89" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>Para $j=2,\dots,k$:</span>
+<span id="cb7-90"><a href="#cb7-90" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Para cada punto $\mathbf{x}_i$, calcular $D(\mathbf{x}_i)=\min_{l&lt;j}<span class="sc">\|</span>\mathbf{x}_i-\boldsymbol{\mu}_l<span class="sc">\|</span>^2$.</span>
+<span id="cb7-91"><a href="#cb7-91" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Elegir $\boldsymbol{\mu}_j=\mathbf{x}_i$ con probabilidad proporcional a $D(\mathbf{x}_i)$.</span>
+<span id="cb7-92"><a href="#cb7-92" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>Continuar con el algoritmo de Lloyd estándar.</span>
+<span id="cb7-93"><a href="#cb7-93" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb7-94"><a href="#cb7-94" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-95"><a href="#cb7-95" aria-hidden="true" tabindex="-1"></a>La idea es que los centroides iniciales estén bien distribuidos: cada centroide nuevo se elige con mayor probabilidad en zonas alejadas de los centroides ya elegidos. <span class="in">`scikit-learn`</span> usa K-Means++ por defecto.</span>
+<span id="cb7-96"><a href="#cb7-96" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-97"><a href="#cb7-97" aria-hidden="true" tabindex="-1"></a><span class="in">```{=html}</span></span>
+<span id="cb7-98"><a href="#cb7-98" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;div id="km-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);"&gt;</span></span>
+<span id="cb7-99"><a href="#cb7-99" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;div style="text-align:center;margin-bottom:12px;"&gt;</span></span>
+<span id="cb7-100"><a href="#cb7-100" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;span style="font-size:1.05em;font-weight:bold;color:#1a2e45;"&gt;K-Means — animación paso a paso&lt;/span&gt;&lt;br&gt;</span></span>
+<span id="cb7-101"><a href="#cb7-101" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;span style="font-size:0.81em;color:#666;"&gt;Observa cómo los centroides se mueven y los grupos cambian en cada iteración&lt;/span&gt;</span></span>
+<span id="cb7-102"><a href="#cb7-102" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;/div&gt;</span></span>
+<span id="cb7-103"><a href="#cb7-103" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;"&gt;</span></span>
+<span id="cb7-104"><a href="#cb7-104" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;label style="font-size:0.83em;color:#444;"&gt;k = &lt;strong id="km-kv"&gt;3&lt;/strong&gt;&lt;/label&gt;</span></span>
+<span id="cb7-105"><a href="#cb7-105" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;input id="km-ksl" type="range" min="2" max="6" step="1" value="3" style="flex:1;min-width:120px;accent-color:#1a3a5c;"&gt;</span></span>
+<span id="cb7-106"><a href="#cb7-106" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;button onclick="window.kmReset()" style="font-size:0.8em;padding:4px 12px;border:1px solid #d0d7e3;border-radius:5px;background:#fff;cursor:pointer;"&gt;Reiniciar&lt;/button&gt;</span></span>
+<span id="cb7-107"><a href="#cb7-107" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;button onclick="window.kmStep()" style="font-size:0.8em;padding:4px 14px;border:1px solid #1a3a5c;border-radius:5px;background:#1a3a5c;color:#fff;cursor:pointer;"&gt;Paso ▶&lt;/button&gt;</span></span>
+<span id="cb7-108"><a href="#cb7-108" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;button onclick="window.kmRun()" style="font-size:0.8em;padding:4px 14px;border:1px solid #16a34a;border-radius:5px;background:#16a34a;color:#fff;cursor:pointer;"&gt;Ejecutar ⟳&lt;/button&gt;</span></span>
+<span id="cb7-109"><a href="#cb7-109" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;/div&gt;</span></span>
+<span id="cb7-110"><a href="#cb7-110" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;div id="km-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"&gt;&lt;/div&gt;</span></span>
+<span id="cb7-111"><a href="#cb7-111" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;canvas id="km-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"&gt;&lt;/canvas&gt;</span></span>
+<span id="cb7-112"><a href="#cb7-112" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;/div&gt;</span></span>
+<span id="cb7-113"><a href="#cb7-113" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;script&gt;</span></span>
+<span id="cb7-114"><a href="#cb7-114" aria-hidden="true" tabindex="-1"></a><span class="in">(function(){</span></span>
+<span id="cb7-115"><a href="#cb7-115" aria-hidden="true" tabindex="-1"></a><span class="in">  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];</span></span>
+<span id="cb7-116"><a href="#cb7-116" aria-hidden="true" tabindex="-1"></a><span class="in">  // 40 points in 3 natural clusters</span></span>
+<span id="cb7-117"><a href="#cb7-117" aria-hidden="true" tabindex="-1"></a><span class="in">  const SEED=[</span></span>
+<span id="cb7-118"><a href="#cb7-118" aria-hidden="true" tabindex="-1"></a><span class="in">    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],</span></span>
+<span id="cb7-119"><a href="#cb7-119" aria-hidden="true" tabindex="-1"></a><span class="in">    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],</span></span>
+<span id="cb7-120"><a href="#cb7-120" aria-hidden="true" tabindex="-1"></a><span class="in">    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],</span></span>
+<span id="cb7-121"><a href="#cb7-121" aria-hidden="true" tabindex="-1"></a><span class="in">    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],</span></span>
+<span id="cb7-122"><a href="#cb7-122" aria-hidden="true" tabindex="-1"></a><span class="in">    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1]</span></span>
+<span id="cb7-123"><a href="#cb7-123" aria-hidden="true" tabindex="-1"></a><span class="in">  ];</span></span>
+<span id="cb7-124"><a href="#cb7-124" aria-hidden="true" tabindex="-1"></a><span class="in">  const cv=document.getElementById('km-cv');</span></span>
+<span id="cb7-125"><a href="#cb7-125" aria-hidden="true" tabindex="-1"></a><span class="in">  const W=680,H=380,DPR=window.devicePixelRatio||1;</span></span>
+<span id="cb7-126"><a href="#cb7-126" aria-hidden="true" tabindex="-1"></a><span class="in">  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';</span></span>
+<span id="cb7-127"><a href="#cb7-127" aria-hidden="true" tabindex="-1"></a><span class="in">  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);</span></span>
+<span id="cb7-128"><a href="#cb7-128" aria-hidden="true" tabindex="-1"></a><span class="in">  const PAD={l:44,r:16,t:20,b:30};</span></span>
+<span id="cb7-129"><a href="#cb7-129" aria-hidden="true" tabindex="-1"></a><span class="in">  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;</span></span>
+<span id="cb7-130"><a href="#cb7-130" aria-hidden="true" tabindex="-1"></a><span class="in">  const xMn=0,xMx=9,yMn=0,yMx=7;</span></span>
+<span id="cb7-131"><a href="#cb7-131" aria-hidden="true" tabindex="-1"></a><span class="in">  const sx=x=&gt;PAD.l+(x-xMn)/(xMx-xMn)*CW;</span></span>
+<span id="cb7-132"><a href="#cb7-132" aria-hidden="true" tabindex="-1"></a><span class="in">  const sy=y=&gt;PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;</span></span>
+<span id="cb7-133"><a href="#cb7-133" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-134"><a href="#cb7-134" aria-hidden="true" tabindex="-1"></a><span class="in">  let k=3,cents=[],labels=[],phase='init',iter=0,converged=false;</span></span>
+<span id="cb7-135"><a href="#cb7-135" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-136"><a href="#cb7-136" aria-hidden="true" tabindex="-1"></a><span class="in">  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}</span></span>
+<span id="cb7-137"><a href="#cb7-137" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-138"><a href="#cb7-138" aria-hidden="true" tabindex="-1"></a><span class="in">  function initCents(k){</span></span>
+<span id="cb7-139"><a href="#cb7-139" aria-hidden="true" tabindex="-1"></a><span class="in">    const idx=[];</span></span>
+<span id="cb7-140"><a href="#cb7-140" aria-hidden="true" tabindex="-1"></a><span class="in">    while(idx.length&lt;k){const r=Math.floor(Math.random()*SEED.length);if(!idx.includes(r))idx.push(r);}</span></span>
+<span id="cb7-141"><a href="#cb7-141" aria-hidden="true" tabindex="-1"></a><span class="in">    return idx.map(i=&gt;[...SEED[i]]);</span></span>
+<span id="cb7-142"><a href="#cb7-142" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-143"><a href="#cb7-143" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-144"><a href="#cb7-144" aria-hidden="true" tabindex="-1"></a><span class="in">  function assign(){</span></span>
+<span id="cb7-145"><a href="#cb7-145" aria-hidden="true" tabindex="-1"></a><span class="in">    return SEED.map(p=&gt;{let bi=0,bd=Infinity;cents.forEach((c,i)=&gt;{const d=dist2(p,c);if(d&lt;bd){bd=d;bi=i;}});return bi;});</span></span>
+<span id="cb7-146"><a href="#cb7-146" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-147"><a href="#cb7-147" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-148"><a href="#cb7-148" aria-hidden="true" tabindex="-1"></a><span class="in">  function update(labels){</span></span>
+<span id="cb7-149"><a href="#cb7-149" aria-hidden="true" tabindex="-1"></a><span class="in">    return Array.from({length:k},(_,ci)=&gt;{</span></span>
+<span id="cb7-150"><a href="#cb7-150" aria-hidden="true" tabindex="-1"></a><span class="in">      const cl=SEED.filter((_,i)=&gt;labels[i]===ci);</span></span>
+<span id="cb7-151"><a href="#cb7-151" aria-hidden="true" tabindex="-1"></a><span class="in">      if(!cl.length)return cents[ci];</span></span>
+<span id="cb7-152"><a href="#cb7-152" aria-hidden="true" tabindex="-1"></a><span class="in">      return[cl.reduce((s,p)=&gt;s+p[0],0)/cl.length,cl.reduce((s,p)=&gt;s+p[1],0)/cl.length];</span></span>
+<span id="cb7-153"><a href="#cb7-153" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-154"><a href="#cb7-154" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-155"><a href="#cb7-155" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-156"><a href="#cb7-156" aria-hidden="true" tabindex="-1"></a><span class="in">  function wcss(labels){</span></span>
+<span id="cb7-157"><a href="#cb7-157" aria-hidden="true" tabindex="-1"></a><span class="in">    return SEED.reduce((s,p,i)=&gt;s+dist2(p,cents[labels[i]]),0);</span></span>
+<span id="cb7-158"><a href="#cb7-158" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-159"><a href="#cb7-159" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-160"><a href="#cb7-160" aria-hidden="true" tabindex="-1"></a><span class="in">  function draw(){</span></span>
+<span id="cb7-161"><a href="#cb7-161" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.clearRect(0,0,W,H);</span></span>
+<span id="cb7-162"><a href="#cb7-162" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);</span></span>
+<span id="cb7-163"><a href="#cb7-163" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;</span></span>
+<span id="cb7-164"><a href="#cb7-164" aria-hidden="true" tabindex="-1"></a><span class="in">    [1,2,3,4,5,6,7,8].forEach(v=&gt;{</span></span>
+<span id="cb7-165"><a href="#cb7-165" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();</span></span>
+<span id="cb7-166"><a href="#cb7-166" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-167"><a href="#cb7-167" aria-hidden="true" tabindex="-1"></a><span class="in">    [1,2,3,4,5,6].forEach(v=&gt;{</span></span>
+<span id="cb7-168"><a href="#cb7-168" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();</span></span>
+<span id="cb7-169"><a href="#cb7-169" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-170"><a href="#cb7-170" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;</span></span>
+<span id="cb7-171"><a href="#cb7-171" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();</span></span>
+<span id="cb7-172"><a href="#cb7-172" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-173"><a href="#cb7-173" aria-hidden="true" tabindex="-1"></a><span class="in">    // Voronoi regions (background color strips)</span></span>
+<span id="cb7-174"><a href="#cb7-174" aria-hidden="true" tabindex="-1"></a><span class="in">    const step=6;</span></span>
+<span id="cb7-175"><a href="#cb7-175" aria-hidden="true" tabindex="-1"></a><span class="in">    for(let px=PAD.l;px&lt;PAD.l+CW;px+=step){</span></span>
+<span id="cb7-176"><a href="#cb7-176" aria-hidden="true" tabindex="-1"></a><span class="in">      for(let py=PAD.t;py&lt;PAD.t+CH;py+=step){</span></span>
+<span id="cb7-177"><a href="#cb7-177" aria-hidden="true" tabindex="-1"></a><span class="in">        const gx=xMn+(px-PAD.l)/CW*(xMx-xMn),gy=yMn+(1-(py-PAD.t)/CH)*(yMx-yMn);</span></span>
+<span id="cb7-178"><a href="#cb7-178" aria-hidden="true" tabindex="-1"></a><span class="in">        let bi=0,bd=Infinity;</span></span>
+<span id="cb7-179"><a href="#cb7-179" aria-hidden="true" tabindex="-1"></a><span class="in">        cents.forEach((c,i)=&gt;{const d=dist2([gx,gy],c);if(d&lt;bd){bd=d;bi=i;}});</span></span>
+<span id="cb7-180"><a href="#cb7-180" aria-hidden="true" tabindex="-1"></a><span class="in">        ctx.fillStyle=COLS[bi]+'18';ctx.fillRect(px,py,step,step);</span></span>
+<span id="cb7-181"><a href="#cb7-181" aria-hidden="true" tabindex="-1"></a><span class="in">      }</span></span>
+<span id="cb7-182"><a href="#cb7-182" aria-hidden="true" tabindex="-1"></a><span class="in">    }</span></span>
+<span id="cb7-183"><a href="#cb7-183" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-184"><a href="#cb7-184" aria-hidden="true" tabindex="-1"></a><span class="in">    // Points</span></span>
+<span id="cb7-185"><a href="#cb7-185" aria-hidden="true" tabindex="-1"></a><span class="in">    SEED.forEach((p,i)=&gt;{</span></span>
+<span id="cb7-186"><a href="#cb7-186" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5.5,0,2*Math.PI);</span></span>
+<span id="cb7-187"><a href="#cb7-187" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle=labels.length?COLS[labels[i]]+'cc':'#94a3b8cc';ctx.fill();</span></span>
+<span id="cb7-188"><a href="#cb7-188" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();</span></span>
+<span id="cb7-189"><a href="#cb7-189" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-190"><a href="#cb7-190" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-191"><a href="#cb7-191" aria-hidden="true" tabindex="-1"></a><span class="in">    // Centroids</span></span>
+<span id="cb7-192"><a href="#cb7-192" aria-hidden="true" tabindex="-1"></a><span class="in">    cents.forEach((c,i)=&gt;{</span></span>
+<span id="cb7-193"><a href="#cb7-193" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.beginPath();ctx.arc(sx(c[0]),sy(c[1]),10,0,2*Math.PI);</span></span>
+<span id="cb7-194"><a href="#cb7-194" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle=COLS[i];ctx.fill();</span></span>
+<span id="cb7-195"><a href="#cb7-195" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();</span></span>
+<span id="cb7-196"><a href="#cb7-196" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle='#fff';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';</span></span>
+<span id="cb7-197"><a href="#cb7-197" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillText(i+1,sx(c[0]),sy(c[1])+3);</span></span>
+<span id="cb7-198"><a href="#cb7-198" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-199"><a href="#cb7-199" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-200"><a href="#cb7-200" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';</span></span>
+<span id="cb7-201"><a href="#cb7-201" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillText('K-Means — iteración '+iter,PAD.l+CW/2,PAD.t-6);</span></span>
+<span id="cb7-202"><a href="#cb7-202" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-203"><a href="#cb7-203" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-204"><a href="#cb7-204" aria-hidden="true" tabindex="-1"></a><span class="in">  window.kmReset=function(){</span></span>
+<span id="cb7-205"><a href="#cb7-205" aria-hidden="true" tabindex="-1"></a><span class="in">    k=parseInt(document.getElementById('km-ksl').value);</span></span>
+<span id="cb7-206"><a href="#cb7-206" aria-hidden="true" tabindex="-1"></a><span class="in">    cents=initCents(k);labels=[];iter=0;converged=false;phase='init';</span></span>
+<span id="cb7-207"><a href="#cb7-207" aria-hidden="true" tabindex="-1"></a><span class="in">    draw();</span></span>
+<span id="cb7-208"><a href="#cb7-208" aria-hidden="true" tabindex="-1"></a><span class="in">    document.getElementById('km-info').innerHTML='Centroides inicializados aleatoriamente. Presiona &lt;strong&gt;Paso&lt;/strong&gt; para asignar.';</span></span>
+<span id="cb7-209"><a href="#cb7-209" aria-hidden="true" tabindex="-1"></a><span class="in">  };</span></span>
+<span id="cb7-210"><a href="#cb7-210" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-211"><a href="#cb7-211" aria-hidden="true" tabindex="-1"></a><span class="in">  window.kmStep=function(){</span></span>
+<span id="cb7-212"><a href="#cb7-212" aria-hidden="true" tabindex="-1"></a><span class="in">    if(converged){document.getElementById('km-info').innerHTML='&lt;strong style="color:#16a34a"&gt;Convergido.&lt;/strong&gt; K-Means terminó.';return;}</span></span>
+<span id="cb7-213"><a href="#cb7-213" aria-hidden="true" tabindex="-1"></a><span class="in">    if(phase==='init'||phase==='update'){</span></span>
+<span id="cb7-214"><a href="#cb7-214" aria-hidden="true" tabindex="-1"></a><span class="in">      const newL=assign();</span></span>
+<span id="cb7-215"><a href="#cb7-215" aria-hidden="true" tabindex="-1"></a><span class="in">      const same=labels.length&amp;&amp;newL.every((l,i)=&gt;l===labels[i]);</span></span>
+<span id="cb7-216"><a href="#cb7-216" aria-hidden="true" tabindex="-1"></a><span class="in">      labels=newL;phase='assign';iter++;</span></span>
+<span id="cb7-217"><a href="#cb7-217" aria-hidden="true" tabindex="-1"></a><span class="in">      draw();</span></span>
+<span id="cb7-218"><a href="#cb7-218" aria-hidden="true" tabindex="-1"></a><span class="in">      const w=wcss(labels);</span></span>
+<span id="cb7-219"><a href="#cb7-219" aria-hidden="true" tabindex="-1"></a><span class="in">      if(same){converged=true;document.getElementById('km-info').innerHTML=`Iteración ${iter} — &lt;strong style="color:#16a34a"&gt;Convergido&lt;/strong&gt;. WCSS = ${w.toFixed(2)}`;}</span></span>
+<span id="cb7-220"><a href="#cb7-220" aria-hidden="true" tabindex="-1"></a><span class="in">      else document.getElementById('km-info').innerHTML=`Iteración ${iter}: asignación actualizada. WCSS = &lt;strong&gt;${w.toFixed(2)}&lt;/strong&gt;`;</span></span>
+<span id="cb7-221"><a href="#cb7-221" aria-hidden="true" tabindex="-1"></a><span class="in">    } else {</span></span>
+<span id="cb7-222"><a href="#cb7-222" aria-hidden="true" tabindex="-1"></a><span class="in">      const prev=cents.map(c=&gt;[...c]);cents=update(labels);phase='update';</span></span>
+<span id="cb7-223"><a href="#cb7-223" aria-hidden="true" tabindex="-1"></a><span class="in">      draw();</span></span>
+<span id="cb7-224"><a href="#cb7-224" aria-hidden="true" tabindex="-1"></a><span class="in">      const moved=cents.reduce((s,c,i)=&gt;s+Math.sqrt(dist2(c,prev[i])),0);</span></span>
+<span id="cb7-225"><a href="#cb7-225" aria-hidden="true" tabindex="-1"></a><span class="in">      document.getElementById('km-info').innerHTML=`Iteración ${iter}: centroides actualizados. Desplazamiento total = &lt;strong&gt;${moved.toFixed(4)}&lt;/strong&gt;`;</span></span>
+<span id="cb7-226"><a href="#cb7-226" aria-hidden="true" tabindex="-1"></a><span class="in">    }</span></span>
+<span id="cb7-227"><a href="#cb7-227" aria-hidden="true" tabindex="-1"></a><span class="in">  };</span></span>
+<span id="cb7-228"><a href="#cb7-228" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-229"><a href="#cb7-229" aria-hidden="true" tabindex="-1"></a><span class="in">  window.kmRun=function(){</span></span>
+<span id="cb7-230"><a href="#cb7-230" aria-hidden="true" tabindex="-1"></a><span class="in">    const run=()=&gt;{if(!converged){window.kmStep();setTimeout(run,400);}};</span></span>
+<span id="cb7-231"><a href="#cb7-231" aria-hidden="true" tabindex="-1"></a><span class="in">    run();</span></span>
+<span id="cb7-232"><a href="#cb7-232" aria-hidden="true" tabindex="-1"></a><span class="in">  };</span></span>
+<span id="cb7-233"><a href="#cb7-233" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-234"><a href="#cb7-234" aria-hidden="true" tabindex="-1"></a><span class="in">  document.getElementById('km-ksl').addEventListener('input',function(){</span></span>
+<span id="cb7-235"><a href="#cb7-235" aria-hidden="true" tabindex="-1"></a><span class="in">    document.getElementById('km-kv').textContent=this.value;</span></span>
+<span id="cb7-236"><a href="#cb7-236" aria-hidden="true" tabindex="-1"></a><span class="in">    window.kmReset();</span></span>
+<span id="cb7-237"><a href="#cb7-237" aria-hidden="true" tabindex="-1"></a><span class="in">  });</span></span>
+<span id="cb7-238"><a href="#cb7-238" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-239"><a href="#cb7-239" aria-hidden="true" tabindex="-1"></a><span class="in">  window.kmReset();</span></span>
+<span id="cb7-240"><a href="#cb7-240" aria-hidden="true" tabindex="-1"></a><span class="in">})();</span></span>
+<span id="cb7-241"><a href="#cb7-241" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;/script&gt;</span></span>
+<span id="cb7-242"><a href="#cb7-242" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb7-243"><a href="#cb7-243" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-244"><a href="#cb7-244" aria-hidden="true" tabindex="-1"></a><span class="fu">## Limitaciones de K-Means</span></span>
+<span id="cb7-245"><a href="#cb7-245" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-246"><a href="#cb7-246" aria-hidden="true" tabindex="-1"></a>K-Means tiene varios supuestos implícitos que, cuando no se cumplen, producen clustering de baja calidad:</span>
+<span id="cb7-247"><a href="#cb7-247" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-248"><a href="#cb7-248" aria-hidden="true" tabindex="-1"></a>**Grupos convexos y esféricos.** K-Means minimiza distancias Euclídeas, lo que favorece grupos circulares en 2D o elipsoidales alineados con los ejes en alta dimensión. Grupos con formas no convexas —anillos, medias lunas, espirales— no pueden segmentarse correctamente.</span>
+<span id="cb7-249"><a href="#cb7-249" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-250"><a href="#cb7-250" aria-hidden="true" tabindex="-1"></a>**Grupos de tamaño similar.** El centroide de un grupo pequeño puede ser "absorbido" por un grupo grande. Esto puede mitigarse con K-Medoids o con restricciones de tamaño.</span>
+<span id="cb7-251"><a href="#cb7-251" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-252"><a href="#cb7-252" aria-hidden="true" tabindex="-1"></a>**Sensibilidad a outliers.** El centroide es la media, que puede desplazarse considerablemente ante un solo punto extremo. K-Medoids es más robusto porque usa medianas en vez de medias.</span>
+<span id="cb7-253"><a href="#cb7-253" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-254"><a href="#cb7-254" aria-hidden="true" tabindex="-1"></a>**Número de grupos fijo.** K-Means requiere especificar $k$ de antemano. La elección adecuada de $k$ es un problema abierto que se aborda con heurísticas como el método del codo.</span>
+<span id="cb7-255"><a href="#cb7-255" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-256"><a href="#cb7-256" aria-hidden="true" tabindex="-1"></a><span class="fu">## Método del codo</span></span>
+<span id="cb7-257"><a href="#cb7-257" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-258"><a href="#cb7-258" aria-hidden="true" tabindex="-1"></a>Una heurística clásica para elegir $k$ es graficar el WCSS en función de $k$ y buscar un codo: el punto donde la reducción marginal de WCSS disminuye al agregar otro grupo.</span>
+<span id="cb7-259"><a href="#cb7-259" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-262"><a href="#cb7-262" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb7-263"><a href="#cb7-263" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.datasets <span class="im">import</span> make_blobs</span>
+<span id="cb7-264"><a href="#cb7-264" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.cluster <span class="im">import</span> KMeans</span>
+<span id="cb7-265"><a href="#cb7-265" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb7-266"><a href="#cb7-266" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-267"><a href="#cb7-267" aria-hidden="true" tabindex="-1"></a>X, _ <span class="op">=</span> make_blobs(n_samples<span class="op">=</span><span class="dv">300</span>, centers<span class="op">=</span><span class="dv">4</span>, cluster_std<span class="op">=</span><span class="fl">0.7</span>, random_state<span class="op">=</span><span class="dv">7</span>)</span>
+<span id="cb7-268"><a href="#cb7-268" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-269"><a href="#cb7-269" aria-hidden="true" tabindex="-1"></a>wcss <span class="op">=</span> []</span>
+<span id="cb7-270"><a href="#cb7-270" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">11</span>):</span>
+<span id="cb7-271"><a href="#cb7-271" aria-hidden="true" tabindex="-1"></a>    km <span class="op">=</span> KMeans(n_clusters<span class="op">=</span>k, random_state<span class="op">=</span><span class="dv">0</span>, n_init<span class="op">=</span><span class="dv">10</span>)</span>
+<span id="cb7-272"><a href="#cb7-272" aria-hidden="true" tabindex="-1"></a>    km.fit(X)</span>
+<span id="cb7-273"><a href="#cb7-273" aria-hidden="true" tabindex="-1"></a>    wcss.append(km.inertia_)</span>
+<span id="cb7-274"><a href="#cb7-274" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-275"><a href="#cb7-275" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k, w <span class="kw">in</span> <span class="bu">enumerate</span>(wcss, <span class="dv">1</span>):</span>
+<span id="cb7-276"><a href="#cb7-276" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"k=</span><span class="sc">{</span>k<span class="sc">:2d}</span><span class="ss">  WCSS=</span><span class="sc">{</span>w<span class="sc">:10.2f}</span><span class="ss">"</span>)</span>
+<span id="cb7-277"><a href="#cb7-277" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb7-278"><a href="#cb7-278" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-279"><a href="#cb7-279" aria-hidden="true" tabindex="-1"></a><span class="in">```{=html}</span></span>
+<span id="cb7-280"><a href="#cb7-280" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;div id="elbow-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);"&gt;</span></span>
+<span id="cb7-281"><a href="#cb7-281" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;div style="text-align:center;margin-bottom:12px;"&gt;</span></span>
+<span id="cb7-282"><a href="#cb7-282" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;span style="font-size:1.05em;font-weight:bold;color:#1a2e45;"&gt;Método del codo y silueta — selección de k&lt;/span&gt;&lt;br&gt;</span></span>
+<span id="cb7-283"><a href="#cb7-283" aria-hidden="true" tabindex="-1"></a><span class="in">    &lt;span style="font-size:0.81em;color:#666;"&gt;Haz clic en un k para ver el clustering y sus métricas&lt;/span&gt;</span></span>
+<span id="cb7-284"><a href="#cb7-284" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;/div&gt;</span></span>
+<span id="cb7-285"><a href="#cb7-285" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;canvas id="elbow-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;cursor:pointer;"&gt;&lt;/canvas&gt;</span></span>
+<span id="cb7-286"><a href="#cb7-286" aria-hidden="true" tabindex="-1"></a><span class="in">  &lt;div id="elbow-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:10px;min-height:22px;"&gt;&lt;/div&gt;</span></span>
+<span id="cb7-287"><a href="#cb7-287" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;/div&gt;</span></span>
+<span id="cb7-288"><a href="#cb7-288" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;script&gt;</span></span>
+<span id="cb7-289"><a href="#cb7-289" aria-hidden="true" tabindex="-1"></a><span class="in">(function(){</span></span>
+<span id="cb7-290"><a href="#cb7-290" aria-hidden="true" tabindex="-1"></a><span class="in">  const PTS=[</span></span>
+<span id="cb7-291"><a href="#cb7-291" aria-hidden="true" tabindex="-1"></a><span class="in">    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],</span></span>
+<span id="cb7-292"><a href="#cb7-292" aria-hidden="true" tabindex="-1"></a><span class="in">    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],[1.9,1.3],[0.4,1.4],</span></span>
+<span id="cb7-293"><a href="#cb7-293" aria-hidden="true" tabindex="-1"></a><span class="in">    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],</span></span>
+<span id="cb7-294"><a href="#cb7-294" aria-hidden="true" tabindex="-1"></a><span class="in">    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],[5.4,4.8],[3.9,4.3],[4.5,5.0],[5.0,4.5],</span></span>
+<span id="cb7-295"><a href="#cb7-295" aria-hidden="true" tabindex="-1"></a><span class="in">    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1],[8.2,2.0],[7.1,1.5],</span></span>
+<span id="cb7-296"><a href="#cb7-296" aria-hidden="true" tabindex="-1"></a><span class="in">    [7.4,2.5],[7.7,1.3],[8.0,1.9],[7.2,2.3],[7.5,1.6],[7.8,2.2],[7.0,1.2],[7.6,1.8],[8.1,2.3],[7.3,1.9]</span></span>
+<span id="cb7-297"><a href="#cb7-297" aria-hidden="true" tabindex="-1"></a><span class="in">  ];</span></span>
+<span id="cb7-298"><a href="#cb7-298" aria-hidden="true" tabindex="-1"></a><span class="in">  const N=PTS.length;</span></span>
+<span id="cb7-299"><a href="#cb7-299" aria-hidden="true" tabindex="-1"></a><span class="in">  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];</span></span>
+<span id="cb7-300"><a href="#cb7-300" aria-hidden="true" tabindex="-1"></a><span class="in">  const cv=document.getElementById('elbow-cv');</span></span>
+<span id="cb7-301"><a href="#cb7-301" aria-hidden="true" tabindex="-1"></a><span class="in">  const W=680,H=400,DPR=window.devicePixelRatio||1;</span></span>
+<span id="cb7-302"><a href="#cb7-302" aria-hidden="true" tabindex="-1"></a><span class="in">  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';</span></span>
+<span id="cb7-303"><a href="#cb7-303" aria-hidden="true" tabindex="-1"></a><span class="in">  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);</span></span>
+<span id="cb7-304"><a href="#cb7-304" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-305"><a href="#cb7-305" aria-hidden="true" tabindex="-1"></a><span class="in">  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}</span></span>
+<span id="cb7-306"><a href="#cb7-306" aria-hidden="true" tabindex="-1"></a><span class="in">  function kmeans(k){</span></span>
+<span id="cb7-307"><a href="#cb7-307" aria-hidden="true" tabindex="-1"></a><span class="in">    let cents=[];</span></span>
+<span id="cb7-308"><a href="#cb7-308" aria-hidden="true" tabindex="-1"></a><span class="in">    const taken=new Set();</span></span>
+<span id="cb7-309"><a href="#cb7-309" aria-hidden="true" tabindex="-1"></a><span class="in">    while(cents.length&lt;k){const r=Math.floor(Math.random()*N);if(!taken.has(r)){taken.add(r);cents.push([...PTS[r]]);}}</span></span>
+<span id="cb7-310"><a href="#cb7-310" aria-hidden="true" tabindex="-1"></a><span class="in">    let labels=new Array(N).fill(0);</span></span>
+<span id="cb7-311"><a href="#cb7-311" aria-hidden="true" tabindex="-1"></a><span class="in">    for(let it=0;it&lt;50;it++){</span></span>
+<span id="cb7-312"><a href="#cb7-312" aria-hidden="true" tabindex="-1"></a><span class="in">      const nl=PTS.map(p=&gt;{let bi=0,bd=Infinity;cents.forEach((c,i)=&gt;{const d=dist2(p,c);if(d&lt;bd){bd=d;bi=i;}});return bi;});</span></span>
+<span id="cb7-313"><a href="#cb7-313" aria-hidden="true" tabindex="-1"></a><span class="in">      cents=Array.from({length:k},(_,ci)=&gt;{const cl=PTS.filter((_,i)=&gt;nl[i]===ci);return cl.length?[cl.reduce((s,p)=&gt;s+p[0],0)/cl.length,cl.reduce((s,p)=&gt;s+p[1],0)/cl.length]:cents[ci];});</span></span>
+<span id="cb7-314"><a href="#cb7-314" aria-hidden="true" tabindex="-1"></a><span class="in">      labels=nl;</span></span>
+<span id="cb7-315"><a href="#cb7-315" aria-hidden="true" tabindex="-1"></a><span class="in">    }</span></span>
+<span id="cb7-316"><a href="#cb7-316" aria-hidden="true" tabindex="-1"></a><span class="in">    const wcss=PTS.reduce((s,p,i)=&gt;s+dist2(p,cents[labels[i]]),0);</span></span>
+<span id="cb7-317"><a href="#cb7-317" aria-hidden="true" tabindex="-1"></a><span class="in">    return{labels,cents,wcss};</span></span>
+<span id="cb7-318"><a href="#cb7-318" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-319"><a href="#cb7-319" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-320"><a href="#cb7-320" aria-hidden="true" tabindex="-1"></a><span class="in">  function silScore(labels,k){</span></span>
+<span id="cb7-321"><a href="#cb7-321" aria-hidden="true" tabindex="-1"></a><span class="in">    const sils=PTS.map((p,i)=&gt;{</span></span>
+<span id="cb7-322"><a href="#cb7-322" aria-hidden="true" tabindex="-1"></a><span class="in">      const same=PTS.filter((_,j)=&gt;j!==i&amp;&amp;labels[j]===labels[i]);</span></span>
+<span id="cb7-323"><a href="#cb7-323" aria-hidden="true" tabindex="-1"></a><span class="in">      const a=same.length?same.reduce((s,q)=&gt;s+Math.sqrt(dist2(p,q)),0)/same.length:0;</span></span>
+<span id="cb7-324"><a href="#cb7-324" aria-hidden="true" tabindex="-1"></a><span class="in">      let b=Infinity;</span></span>
+<span id="cb7-325"><a href="#cb7-325" aria-hidden="true" tabindex="-1"></a><span class="in">      for(let c=0;c&lt;k;c++){if(c===labels[i])continue;const cl=PTS.filter((_,j)=&gt;labels[j]===c);if(!cl.length)continue;const mb=cl.reduce((s,q)=&gt;s+Math.sqrt(dist2(p,q)),0)/cl.length;if(mb&lt;b)b=mb;}</span></span>
+<span id="cb7-326"><a href="#cb7-326" aria-hidden="true" tabindex="-1"></a><span class="in">      return(b-a)/Math.max(a,b);</span></span>
+<span id="cb7-327"><a href="#cb7-327" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-328"><a href="#cb7-328" aria-hidden="true" tabindex="-1"></a><span class="in">    return sils.reduce((s,v)=&gt;s+v,0)/N;</span></span>
+<span id="cb7-329"><a href="#cb7-329" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-330"><a href="#cb7-330" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-331"><a href="#cb7-331" aria-hidden="true" tabindex="-1"></a><span class="in">  const KS=[2,3,4,5,6,7];</span></span>
+<span id="cb7-332"><a href="#cb7-332" aria-hidden="true" tabindex="-1"></a><span class="in">  const cache=KS.map(k=&gt;{let best=null;for(let t=0;t&lt;5;t++){const r=kmeans(k);if(!best||r.wcss&lt;best.wcss)best=r;}return{...best,k,sil:k&gt;1?silScore(best.labels,k):0};});</span></span>
+<span id="cb7-333"><a href="#cb7-333" aria-hidden="true" tabindex="-1"></a><span class="in">  const maxW=cache[0].wcss*1.05;</span></span>
+<span id="cb7-334"><a href="#cb7-334" aria-hidden="true" tabindex="-1"></a><span class="in">  let sel=1;// index into cache</span></span>
+<span id="cb7-335"><a href="#cb7-335" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-336"><a href="#cb7-336" aria-hidden="true" tabindex="-1"></a><span class="in">  function drawChart(selIdx){</span></span>
+<span id="cb7-337"><a href="#cb7-337" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.clearRect(0,0,W,H);</span></span>
+<span id="cb7-338"><a href="#cb7-338" aria-hidden="true" tabindex="-1"></a><span class="in">    const CH2=H/2-10;</span></span>
+<span id="cb7-339"><a href="#cb7-339" aria-hidden="true" tabindex="-1"></a><span class="in">    // Top: WCSS chart</span></span>
+<span id="cb7-340"><a href="#cb7-340" aria-hidden="true" tabindex="-1"></a><span class="in">    const LP={l:52,r:W-16,t:12,b:CH2};</span></span>
+<span id="cb7-341"><a href="#cb7-341" aria-hidden="true" tabindex="-1"></a><span class="in">    const LW2=LP.r-LP.l,LH=LP.b-LP.t;</span></span>
+<span id="cb7-342"><a href="#cb7-342" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW2,LH);</span></span>
+<span id="cb7-343"><a href="#cb7-343" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(LP.l,LP.t,LW2,LH);</span></span>
+<span id="cb7-344"><a href="#cb7-344" aria-hidden="true" tabindex="-1"></a><span class="in">    const xStep=LW2/(KS.length+1);</span></span>
+<span id="cb7-345"><a href="#cb7-345" aria-hidden="true" tabindex="-1"></a><span class="in">    cache.forEach((d,i)=&gt;{</span></span>
+<span id="cb7-346"><a href="#cb7-346" aria-hidden="true" tabindex="-1"></a><span class="in">      const bx=LP.l+xStep*(i+0.5),bh=d.wcss/maxW*LH*0.85;</span></span>
+<span id="cb7-347"><a href="#cb7-347" aria-hidden="true" tabindex="-1"></a><span class="in">      const isS=i===selIdx;</span></span>
+<span id="cb7-348"><a href="#cb7-348" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle=isS?'#1a3a5c':'#94a3b8';ctx.fillRect(bx-xStep*0.28,LP.b-bh,xStep*0.56,bh);</span></span>
+<span id="cb7-349"><a href="#cb7-349" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';</span></span>
+<span id="cb7-350"><a href="#cb7-350" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillText('k='+d.k,bx,LP.b+13);</span></span>
+<span id="cb7-351"><a href="#cb7-351" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle=isS?'#1a3a5c':'#6b7280';</span></span>
+<span id="cb7-352"><a href="#cb7-352" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillText((d.wcss/1000).toFixed(0)+'k',bx,LP.b-bh-5);</span></span>
+<span id="cb7-353"><a href="#cb7-353" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-354"><a href="#cb7-354" aria-hidden="true" tabindex="-1"></a><span class="in">    // WCSS line</span></span>
+<span id="cb7-355"><a href="#cb7-355" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.beginPath();ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;</span></span>
+<span id="cb7-356"><a href="#cb7-356" aria-hidden="true" tabindex="-1"></a><span class="in">    cache.forEach((d,i)=&gt;{const bx=LP.l+xStep*(i+0.5),by=LP.b-d.wcss/maxW*LH*0.85;i===0?ctx.moveTo(bx,by):ctx.lineTo(bx,by);});</span></span>
+<span id="cb7-357"><a href="#cb7-357" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.stroke();</span></span>
+<span id="cb7-358"><a href="#cb7-358" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('WCSS por k (método del codo)',LP.l+4,LP.t+12);</span></span>
+<span id="cb7-359"><a href="#cb7-359" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-360"><a href="#cb7-360" aria-hidden="true" tabindex="-1"></a><span class="in">    // Bottom: Silhouette chart</span></span>
+<span id="cb7-361"><a href="#cb7-361" aria-hidden="true" tabindex="-1"></a><span class="in">    const RP={l:52,r:W-16,t:H/2+8,b:H-20};</span></span>
+<span id="cb7-362"><a href="#cb7-362" aria-hidden="true" tabindex="-1"></a><span class="in">    const RW=RP.r-RP.l,RH=RP.b-RP.t;</span></span>
+<span id="cb7-363"><a href="#cb7-363" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);</span></span>
+<span id="cb7-364"><a href="#cb7-364" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);</span></span>
+<span id="cb7-365"><a href="#cb7-365" aria-hidden="true" tabindex="-1"></a><span class="in">    const maxS=0.8;</span></span>
+<span id="cb7-366"><a href="#cb7-366" aria-hidden="true" tabindex="-1"></a><span class="in">    cache.forEach((d,i)=&gt;{</span></span>
+<span id="cb7-367"><a href="#cb7-367" aria-hidden="true" tabindex="-1"></a><span class="in">      const bx=RP.l+xStep*(i+0.5),bh=d.sil/maxS*RH*0.85;</span></span>
+<span id="cb7-368"><a href="#cb7-368" aria-hidden="true" tabindex="-1"></a><span class="in">      const isS=i===selIdx;</span></span>
+<span id="cb7-369"><a href="#cb7-369" aria-hidden="true" tabindex="-1"></a><span class="in">      const col=d.sil&gt;0.5?'#16a34a':d.sil&gt;0.25?'#f59e0b':'#dc2626';</span></span>
+<span id="cb7-370"><a href="#cb7-370" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle=(isS?col:'#94a3b8');ctx.fillRect(bx-xStep*0.28,RP.b-bh,xStep*0.56,bh);</span></span>
+<span id="cb7-371"><a href="#cb7-371" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';</span></span>
+<span id="cb7-372"><a href="#cb7-372" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillText('k='+d.k,bx,RP.b+13);</span></span>
+<span id="cb7-373"><a href="#cb7-373" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillStyle=(isS?col:'#6b7280');</span></span>
+<span id="cb7-374"><a href="#cb7-374" aria-hidden="true" tabindex="-1"></a><span class="in">      ctx.fillText(d.sil.toFixed(3),bx,RP.b-bh-5);</span></span>
+<span id="cb7-375"><a href="#cb7-375" aria-hidden="true" tabindex="-1"></a><span class="in">    });</span></span>
+<span id="cb7-376"><a href="#cb7-376" aria-hidden="true" tabindex="-1"></a><span class="in">    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('Silueta por k',RP.l+4,RP.t+12);</span></span>
+<span id="cb7-377"><a href="#cb7-377" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-378"><a href="#cb7-378" aria-hidden="true" tabindex="-1"></a><span class="in">    const d=cache[selIdx];</span></span>
+<span id="cb7-379"><a href="#cb7-379" aria-hidden="true" tabindex="-1"></a><span class="in">    document.getElementById('elbow-info').innerHTML=</span></span>
+<span id="cb7-380"><a href="#cb7-380" aria-hidden="true" tabindex="-1"></a><span class="in">      `k = &lt;strong&gt;${d.k}&lt;/strong&gt;&amp;ensp;·&amp;ensp;WCSS = &lt;strong&gt;${d.wcss.toFixed(1)}&lt;/strong&gt;&amp;ensp;·&amp;ensp;`+</span></span>
+<span id="cb7-381"><a href="#cb7-381" aria-hidden="true" tabindex="-1"></a><span class="in">      `Silueta = &lt;strong style="color:${d.sil&gt;0.5?'#16a34a':d.sil&gt;0.25?'#ca8a04':'#dc2626'}"&gt;${d.sil.toFixed(3)}&lt;/strong&gt;&amp;ensp;·&amp;ensp;`+</span></span>
+<span id="cb7-382"><a href="#cb7-382" aria-hidden="true" tabindex="-1"></a><span class="in">      `Haz clic en las barras para seleccionar k`;</span></span>
+<span id="cb7-383"><a href="#cb7-383" aria-hidden="true" tabindex="-1"></a><span class="in">  }</span></span>
+<span id="cb7-384"><a href="#cb7-384" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-385"><a href="#cb7-385" aria-hidden="true" tabindex="-1"></a><span class="in">  cv.addEventListener('click',function(e){</span></span>
+<span id="cb7-386"><a href="#cb7-386" aria-hidden="true" tabindex="-1"></a><span class="in">    const rect=cv.getBoundingClientRect();</span></span>
+<span id="cb7-387"><a href="#cb7-387" aria-hidden="true" tabindex="-1"></a><span class="in">    const px=e.clientX-rect.left;</span></span>
+<span id="cb7-388"><a href="#cb7-388" aria-hidden="true" tabindex="-1"></a><span class="in">    const xStep=(W-68)/(KS.length+1);</span></span>
+<span id="cb7-389"><a href="#cb7-389" aria-hidden="true" tabindex="-1"></a><span class="in">    const i=Math.round((px-52)/xStep)-1;</span></span>
+<span id="cb7-390"><a href="#cb7-390" aria-hidden="true" tabindex="-1"></a><span class="in">    if(i&gt;=0&amp;&amp;i&lt;KS.length){sel=i;drawChart(sel);}</span></span>
+<span id="cb7-391"><a href="#cb7-391" aria-hidden="true" tabindex="-1"></a><span class="in">  });</span></span>
+<span id="cb7-392"><a href="#cb7-392" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-393"><a href="#cb7-393" aria-hidden="true" tabindex="-1"></a><span class="in">  drawChart(sel);</span></span>
+<span id="cb7-394"><a href="#cb7-394" aria-hidden="true" tabindex="-1"></a><span class="in">})();</span></span>
+<span id="cb7-395"><a href="#cb7-395" aria-hidden="true" tabindex="-1"></a><span class="in">&lt;/script&gt;</span></span>
+<span id="cb7-396"><a href="#cb7-396" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb7-397"><a href="#cb7-397" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-398"><a href="#cb7-398" aria-hidden="true" tabindex="-1"></a><span class="fu">## K-Medoids (PAM)</span></span>
+<span id="cb7-399"><a href="#cb7-399" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-400"><a href="#cb7-400" aria-hidden="true" tabindex="-1"></a>K-Medoids es una variante de K-Means que, en vez de representar cada grupo por su media, lo representa por una observación real llamada medoide <span class="co">[</span><span class="ot">@kaufman1990</span><span class="co">]</span>. Esto lo hace más robusto a outliers, porque los medoides son puntos del conjunto de datos y no pueden ser arrastrados por valores extremos.</span>
+<span id="cb7-401"><a href="#cb7-401" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-402"><a href="#cb7-402" aria-hidden="true" tabindex="-1"></a>::: {.callout-note appearance="minimal"}</span>
+<span id="cb7-403"><a href="#cb7-403" aria-hidden="true" tabindex="-1"></a>Definición. Un medoide del grupo $C_j$ es la observación $\mathbf{m}_j\in C_j$ que minimiza la suma de distancias a los demás puntos del grupo:</span>
+<span id="cb7-404"><a href="#cb7-404" aria-hidden="true" tabindex="-1"></a>$$</span>
+<span id="cb7-405"><a href="#cb7-405" aria-hidden="true" tabindex="-1"></a>\mathbf{m}_j = \arg\min_{\mathbf{x}\in C_j}\sum_{\mathbf{x}'\in C_j}d(\mathbf{x},\mathbf{x}').</span>
+<span id="cb7-406"><a href="#cb7-406" aria-hidden="true" tabindex="-1"></a>$$ {#eq-medoid}</span>
+<span id="cb7-407"><a href="#cb7-407" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb7-408"><a href="#cb7-408" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-409"><a href="#cb7-409" aria-hidden="true" tabindex="-1"></a>El algoritmo PAM (Partitioning Around Medoids) itera intercambiando medoides con no-medoides y aceptando los cambios que reducen el costo total. PAM es más costoso que K-Means ($O(k(n-k)^2)$ por iteración), pero produce resultados más robustos ante outliers.</span>
+<span id="cb7-410"><a href="#cb7-410" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-413"><a href="#cb7-413" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb7-414"><a href="#cb7-414" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.datasets <span class="im">import</span> make_blobs</span>
+<span id="cb7-415"><a href="#cb7-415" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb7-416"><a href="#cb7-416" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-417"><a href="#cb7-417" aria-hidden="true" tabindex="-1"></a>rng <span class="op">=</span> np.random.default_rng(<span class="dv">42</span>)</span>
+<span id="cb7-418"><a href="#cb7-418" aria-hidden="true" tabindex="-1"></a>X, _ <span class="op">=</span> make_blobs(n_samples<span class="op">=</span><span class="dv">200</span>, centers<span class="op">=</span><span class="dv">3</span>, cluster_std<span class="op">=</span><span class="fl">0.8</span>, random_state<span class="op">=</span><span class="dv">42</span>)</span>
+<span id="cb7-419"><a href="#cb7-419" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-420"><a href="#cb7-420" aria-hidden="true" tabindex="-1"></a><span class="co"># Agregar outliers</span></span>
+<span id="cb7-421"><a href="#cb7-421" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> np.vstack([X, [[<span class="dv">10</span>, <span class="dv">10</span>], [<span class="dv">10</span>, <span class="op">-</span><span class="dv">10</span>], [<span class="op">-</span><span class="dv">10</span>, <span class="dv">10</span>]]])</span>
+<span id="cb7-422"><a href="#cb7-422" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-423"><a href="#cb7-423" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.cluster <span class="im">import</span> KMeans</span>
+<span id="cb7-424"><a href="#cb7-424" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-425"><a href="#cb7-425" aria-hidden="true" tabindex="-1"></a>km <span class="op">=</span> KMeans(n_clusters<span class="op">=</span><span class="dv">3</span>, random_state<span class="op">=</span><span class="dv">0</span>, n_init<span class="op">=</span><span class="dv">10</span>)</span>
+<span id="cb7-426"><a href="#cb7-426" aria-hidden="true" tabindex="-1"></a>labels_km <span class="op">=</span> km.fit_predict(X)</span>
+<span id="cb7-427"><a href="#cb7-427" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"K-Means centroides:</span><span class="ch">\n</span><span class="st">"</span>, km.cluster_centers_.<span class="bu">round</span>(<span class="dv">3</span>))</span>
+<span id="cb7-428"><a href="#cb7-428" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-429"><a href="#cb7-429" aria-hidden="true" tabindex="-1"></a><span class="co"># Implementación simple de K-Medoids</span></span>
+<span id="cb7-430"><a href="#cb7-430" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> kmedoids_simple(X, k, seed<span class="op">=</span><span class="dv">0</span>):</span>
+<span id="cb7-431"><a href="#cb7-431" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> np.random.default_rng(seed)</span>
+<span id="cb7-432"><a href="#cb7-432" aria-hidden="true" tabindex="-1"></a>    idx <span class="op">=</span> rng.choice(<span class="bu">len</span>(X), k, replace<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb7-433"><a href="#cb7-433" aria-hidden="true" tabindex="-1"></a>    medoids <span class="op">=</span> <span class="bu">list</span>(idx)</span>
+<span id="cb7-434"><a href="#cb7-434" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-435"><a href="#cb7-435" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">100</span>):</span>
+<span id="cb7-436"><a href="#cb7-436" aria-hidden="true" tabindex="-1"></a>        D <span class="op">=</span> np.array([[np.linalg.norm(X[i] <span class="op">-</span> X[m]) <span class="cf">for</span> m <span class="kw">in</span> medoids] <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="bu">len</span>(X))])</span>
+<span id="cb7-437"><a href="#cb7-437" aria-hidden="true" tabindex="-1"></a>        labels <span class="op">=</span> D.argmin(axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb7-438"><a href="#cb7-438" aria-hidden="true" tabindex="-1"></a>        new_medoids <span class="op">=</span> []</span>
+<span id="cb7-439"><a href="#cb7-439" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> j <span class="kw">in</span> <span class="bu">range</span>(k):</span>
+<span id="cb7-440"><a href="#cb7-440" aria-hidden="true" tabindex="-1"></a>            cluster <span class="op">=</span> np.where(labels <span class="op">==</span> j)[<span class="dv">0</span>]</span>
+<span id="cb7-441"><a href="#cb7-441" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> <span class="bu">len</span>(cluster) <span class="op">==</span> <span class="dv">0</span>:</span>
+<span id="cb7-442"><a href="#cb7-442" aria-hidden="true" tabindex="-1"></a>                new_medoids.append(medoids[j])</span>
+<span id="cb7-443"><a href="#cb7-443" aria-hidden="true" tabindex="-1"></a>                <span class="cf">continue</span></span>
+<span id="cb7-444"><a href="#cb7-444" aria-hidden="true" tabindex="-1"></a>            sub_D <span class="op">=</span> np.array([[np.linalg.norm(X[a] <span class="op">-</span> X[b]) <span class="cf">for</span> b <span class="kw">in</span> cluster] <span class="cf">for</span> a <span class="kw">in</span> cluster])</span>
+<span id="cb7-445"><a href="#cb7-445" aria-hidden="true" tabindex="-1"></a>            new_medoids.append(<span class="bu">int</span>(cluster[sub_D.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">1</span>).argmin()]))</span>
+<span id="cb7-446"><a href="#cb7-446" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> new_medoids <span class="op">==</span> medoids:</span>
+<span id="cb7-447"><a href="#cb7-447" aria-hidden="true" tabindex="-1"></a>            <span class="cf">break</span></span>
+<span id="cb7-448"><a href="#cb7-448" aria-hidden="true" tabindex="-1"></a>        medoids <span class="op">=</span> new_medoids</span>
+<span id="cb7-449"><a href="#cb7-449" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.array(medoids), labels</span>
+<span id="cb7-450"><a href="#cb7-450" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-451"><a href="#cb7-451" aria-hidden="true" tabindex="-1"></a>medoids_idx, labels_kmed <span class="op">=</span> kmedoids_simple(X, <span class="dv">3</span>)</span>
+<span id="cb7-452"><a href="#cb7-452" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"</span><span class="ch">\n</span><span class="st">K-Medoids medoides (índices):"</span>, medoids_idx)</span>
+<span id="cb7-453"><a href="#cb7-453" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"K-Medoids medoides (valores):</span><span class="ch">\n</span><span class="st">"</span>, X[medoids_idx].<span class="bu">round</span>(<span class="dv">3</span>))</span>
+<span id="cb7-454"><a href="#cb7-454" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb7-455"><a href="#cb7-455" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-456"><a href="#cb7-456" aria-hidden="true" tabindex="-1"></a><span class="fu">## Implementación con scikit-learn</span></span>
+<span id="cb7-457"><a href="#cb7-457" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-460"><a href="#cb7-460" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb7-461"><a href="#cb7-461" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.datasets <span class="im">import</span> make_blobs</span>
+<span id="cb7-462"><a href="#cb7-462" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.cluster <span class="im">import</span> KMeans</span>
+<span id="cb7-463"><a href="#cb7-463" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.preprocessing <span class="im">import</span> StandardScaler</span>
+<span id="cb7-464"><a href="#cb7-464" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.metrics <span class="im">import</span> silhouette_score</span>
+<span id="cb7-465"><a href="#cb7-465" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-466"><a href="#cb7-466" aria-hidden="true" tabindex="-1"></a>X, y_true <span class="op">=</span> make_blobs(</span>
+<span id="cb7-467"><a href="#cb7-467" aria-hidden="true" tabindex="-1"></a>    n_samples<span class="op">=</span><span class="dv">400</span>, centers<span class="op">=</span>[[<span class="op">-</span><span class="dv">3</span>, <span class="op">-</span><span class="dv">3</span>], [<span class="dv">0</span>, <span class="dv">0</span>], [<span class="dv">3</span>, <span class="dv">3</span>], [<span class="dv">0</span>, <span class="dv">5</span>]],</span>
+<span id="cb7-468"><a href="#cb7-468" aria-hidden="true" tabindex="-1"></a>    cluster_std<span class="op">=</span>[<span class="fl">0.8</span>, <span class="fl">1.0</span>, <span class="fl">0.7</span>, <span class="fl">0.9</span>], random_state<span class="op">=</span><span class="dv">42</span></span>
+<span id="cb7-469"><a href="#cb7-469" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb7-470"><a href="#cb7-470" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-471"><a href="#cb7-471" aria-hidden="true" tabindex="-1"></a>X_std <span class="op">=</span> StandardScaler().fit_transform(X)</span>
+<span id="cb7-472"><a href="#cb7-472" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-473"><a href="#cb7-473" aria-hidden="true" tabindex="-1"></a>km <span class="op">=</span> KMeans(</span>
+<span id="cb7-474"><a href="#cb7-474" aria-hidden="true" tabindex="-1"></a>    n_clusters<span class="op">=</span><span class="dv">4</span>,</span>
+<span id="cb7-475"><a href="#cb7-475" aria-hidden="true" tabindex="-1"></a>    init<span class="op">=</span><span class="st">"k-means++"</span>,</span>
+<span id="cb7-476"><a href="#cb7-476" aria-hidden="true" tabindex="-1"></a>    n_init<span class="op">=</span><span class="dv">20</span>,</span>
+<span id="cb7-477"><a href="#cb7-477" aria-hidden="true" tabindex="-1"></a>    max_iter<span class="op">=</span><span class="dv">300</span>,</span>
+<span id="cb7-478"><a href="#cb7-478" aria-hidden="true" tabindex="-1"></a>    random_state<span class="op">=</span><span class="dv">42</span></span>
+<span id="cb7-479"><a href="#cb7-479" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb7-480"><a href="#cb7-480" aria-hidden="true" tabindex="-1"></a>labels <span class="op">=</span> km.fit_predict(X_std)</span>
+<span id="cb7-481"><a href="#cb7-481" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-482"><a href="#cb7-482" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Inercia (WCSS):"</span>, <span class="bu">round</span>(km.inertia_, <span class="dv">4</span>))</span>
+<span id="cb7-483"><a href="#cb7-483" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Iteraciones hasta convergencia:"</span>, km.n_iter_)</span>
+<span id="cb7-484"><a href="#cb7-484" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Silueta:"</span>, <span class="bu">round</span>(silhouette_score(X_std, labels), <span class="dv">4</span>))</span>
+<span id="cb7-485"><a href="#cb7-485" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Distribución:"</span>, np.bincount(labels))</span>
+<span id="cb7-486"><a href="#cb7-486" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb7-487"><a href="#cb7-487" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-488"><a href="#cb7-488" aria-hidden="true" tabindex="-1"></a><span class="fu">## Consideraciones prácticas</span></span>
+<span id="cb7-489"><a href="#cb7-489" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-490"><a href="#cb7-490" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Ejecutar K-Means múltiples veces (<span class="in">`n_init`</span>) y quedarse con la solución de menor WCSS reduce el riesgo de caer en mínimos locales pobres.</span>
+<span id="cb7-491"><a href="#cb7-491" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Estandarizar siempre los datos antes de aplicar K-Means, a menos que las distintas escalas tengan significado conceptual.</span>
+<span id="cb7-492"><a href="#cb7-492" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>En espacios de muy alta dimensión, considerar primero reducción de dimensión (PCA, UMAP) antes de aplicar K-Means.</span>
+<span id="cb7-493"><a href="#cb7-493" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>K-Means no es adecuado para datos con clusters de forma irregular; en ese caso preferir DBSCAN o clustering espectral.</span>
+</code></pre></div><button title="Copiar al portapapeles" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></div>
+</div></div></div></div></div>
+</div> <!-- /content -->
+<!-- Google Tag Manager (noscript) -->
+<footer class="footer"><div class="nav-footer"><div class="nav-footer-center"><div class="toc-actions d-sm-block d-md-none"><ul><li><a href="https://github.com/DiegoViillalba/almacenamienes-y-mineria-de-datos/edit/main/unidades/clustering/capitulo_kmeans.qmd" class="toc-action"><i class="bi bi-github"></i>Editar esta página</a></li></ul></div></div></div></footer><noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-NQJGJRC5" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
+
+
+
+
+<script src="../../site_libs/quarto-html/zenscroll-min.js"></script>
+</body></html>
