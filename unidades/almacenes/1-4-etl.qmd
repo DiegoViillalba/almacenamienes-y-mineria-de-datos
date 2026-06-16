@@ -1,0 +1,2006 @@
+# ETL / ELT con PySpark {#sec-etl}
+
+```{python}
+#| echo: false
+#| output: false
+# Verificar entorno (no se necesita Spark para leer el capítulo;
+# los bloques de código se pueden ejecutar con Spark instalado localmente
+# o en Google Colab / Databricks Community Edition — ver Sección 1.3)
+import sys
+print(f"Python {sys.version}")
+```
+
+## 1. ¿Qué es el ETL y por qué importa? {#sec-etl-intro}
+
+**ETL** (*Extract, Transform, Load*) es el proceso que mueve datos desde los
+sistemas operacionales (OLTP, APIs, logs, archivos) hacia el Data Warehouse,
+transformándolos en el camino para que sean consistentes, limpios y aptos para
+el análisis.
+
+::: {.callout-note}
+**Distinción con el Preprocesamiento (Parte II)**
+ETL es ingeniería de datos: opera sobre flujos de producción, terabytes,
+esquemas fijos, y su salida es reproducible y automatizada.
+El preprocesamiento analítico (Parte II) toma una *vista ya limpia* del DW
+y la transforma para un experimento concreto.
+El DW es el punto de transferencia entre ambos.
+:::
+
+### 1.1 ETL clásico vs ELT moderno
+
+| | ETL clásico | ELT moderno |
+|---|---|---|
+| Orden | Extraer → Transformar → Cargar | Extraer → Cargar → Transformar |
+| Dónde transforma | Motor ETL externo | Dentro del DW / lakehouse |
+| Herramientas | Informatica, SSIS, Talend | dbt + BigQuery / Snowflake / DuckDB |
+| Ventaja | Datos siempre limpios al llegar | Aprovechar la potencia del DW columnares |
+| Desventaja | Cuello de botella en el motor | El DW necesita ser potente y barato |
+
+### 1.2 ¿Por qué PySpark?
+
+Cuando los datos superan la memoria RAM de una sola máquina, pandas deja de
+ser suficiente. **Apache Spark** divide el trabajo en particiones que se
+procesan en paralelo sobre un clúster de nodos, usando un plan de ejecución
+optimizado (DAG — *Directed Acyclic Graph*).
+
+PySpark es la API Python de Spark. Con ella puedes escribir transformaciones
+que escalan de un laptop (modo local) a cientos de nodos (AWS EMR, Databricks,
+GCP Dataproc) sin cambiar el código.
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM 1 — Arquitectura Spark: DAG interactivo
+     ═══════════════════════════════════════════════════════ -->
+<div id="spark-arch-wrap" style="margin:2rem 0">
+<canvas id="spark-arch-cv" width="700" height="320"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block"></canvas>
+<div style="margin-top:.6rem;display:flex;gap:.8rem;flex-wrap:wrap;justify-content:center">
+  <button onclick="sparkArch.step()" style="padding:.4rem 1.2rem;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-size:.9rem">▶ Siguiente etapa</button>
+  <button onclick="sparkArch.reset()" style="padding:.4rem 1.2rem;border-radius:6px;border:none;background:#475569;color:#fff;cursor:pointer;font-size:.9rem">↺ Reiniciar</button>
+</div>
+<p id="spark-arch-msg" style="text-align:center;margin-top:.5rem;font-size:.9rem;color:#94a3b8;min-height:1.4em"></p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('spark-arch-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=320;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const stages = [
+    { label:'Fuentes de datos', color:'#0ea5e9', nodes:[
+        {x:60,y:80,txt:'CSV/JSON'},
+        {x:60,y:160,txt:'Base OLTP'},
+        {x:60,y:240,txt:'API/Kafka'}
+      ], arrows:[], msg:'Los datos llegan de múltiples fuentes heterogéneas.' },
+    { label:'SparkContext / Driver', color:'#a855f7', nodes:[
+        {x:220,y:160,txt:'Driver\nProgram'}
+      ], arrows:[
+        {fx:60,fy:80,tx:220,ty:160},
+        {fx:60,fy:160,tx:220,ty:160},
+        {fx:60,fy:240,tx:220,ty:160}
+      ], msg:'El Driver recibe el código Python y construye el plan lógico (DAG).' },
+    { label:'Plan lógico → físico', color:'#f59e0b', nodes:[
+        {x:370,y:100,txt:'Stage 1'},
+        {x:370,y:220,txt:'Stage 2'}
+      ], arrows:[
+        {fx:220,fy:160,tx:370,ty:100},
+        {fx:220,fy:160,tx:370,ty:220}
+      ], msg:'El Catalyst Optimizer convierte el plan lógico en stages físicos paralelos.' },
+    { label:'Executors (workers)', color:'#10b981', nodes:[
+        {x:540,y:70,txt:'Exec 1\nPart A'},
+        {x:540,y:160,txt:'Exec 2\nPart B'},
+        {x:540,y:250,txt:'Exec 3\nPart C'}
+      ], arrows:[
+        {fx:370,fy:100,tx:540,ty:70},
+        {fx:370,fy:100,tx:540,ty:160},
+        {fx:370,fy:220,tx:540,ty:250}
+      ], msg:'Cada Executor procesa una partición en paralelo sobre su nodo del clúster.' },
+    { label:'Resultado / escritura', color:'#f43f5e', nodes:[
+        {x:650,y:160,txt:'DW /\nParquet'}
+      ], arrows:[
+        {fx:540,fy:70,tx:650,ty:160},
+        {fx:540,fy:160,tx:650,ty:160},
+        {fx:540,fy:250,tx:650,ty:160}
+      ], msg:'Los resultados se reúnen y se escriben al destino (Parquet, Delta, JDBC…).' }
+  ];
+
+  let currentStage = -1;
+  const allNodes = [];
+  const allArrows = [];
+
+  function drawNode(x,y,txt,color,alpha){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x-42,y-22,84,44,8);
+    ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.font='bold 11px monospace';
+    ctx.textAlign='center';
+    txt.split('\n').forEach((line,i,arr)=>{
+      ctx.fillText(line,x,y - (arr.length-1)*7 + i*14);
+    });
+    ctx.restore();
+  }
+
+  function drawArrow(fx,fy,tx,ty,color,alpha){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5,4]);
+    ctx.beginPath();
+    ctx.moveTo(fx,fy); ctx.lineTo(tx,ty);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const angle = Math.atan2(ty-fy,tx-fx);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(tx,ty);
+    ctx.lineTo(tx-12*Math.cos(angle-0.35),ty-12*Math.sin(angle-0.35));
+    ctx.lineTo(tx-12*Math.cos(angle+0.35),ty-12*Math.sin(angle+0.35));
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function render(){
+    ctx.clearRect(0,0,W,H);
+    // grid
+    ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke(); }
+    for(let y=0;y<H;y+=40){ ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); }
+
+    allArrows.forEach(a=>drawArrow(a.fx,a.fy,a.tx,a.ty,a.color,a.alpha));
+    allNodes.forEach(n=>drawNode(n.x,n.y,n.txt,n.color,n.alpha));
+  }
+
+  function animatePush(items, isArrow, color){
+    let i=0;
+    function tick(){
+      if(i>=items.length){ render(); return; }
+      const it = items[i++];
+      const obj = isArrow
+        ? {fx:it.fx,fy:it.fy,tx:it.tx,ty:it.ty,color,alpha:0}
+        : {x:it.x,y:it.y,txt:it.txt,color,alpha:0};
+      (isArrow?allArrows:allNodes).push(obj);
+      let t=0;
+      function fade(){
+        obj.alpha = Math.min(1, t+=0.08);
+        render();
+        if(obj.alpha<1) requestAnimationFrame(fade);
+        else tick();
+      }
+      fade();
+    }
+    tick();
+  }
+
+  function step(){
+    if(currentStage >= stages.length-1) return;
+    currentStage++;
+    const s = stages[currentStage];
+    document.getElementById('spark-arch-msg').textContent = s.msg;
+    animatePush(s.arrows||[], true, s.color);
+    setTimeout(()=>animatePush(s.nodes, false, s.color), (s.arrows||[]).length*120+100);
+  }
+
+  function reset(){
+    currentStage=-1;
+    allNodes.length=0; allArrows.length=0;
+    render();
+    document.getElementById('spark-arch-msg').textContent='Presiona "Siguiente etapa" para ver el flujo de Spark.';
+  }
+
+  window.sparkArch = {step,reset};
+  reset();
+})();
+</script>
+```
+
+### 1.3 Dónde practicar con PySpark (sin clúster propio)
+
+| Plataforma | Costo | Spark | Ideal para |
+|---|---|---|---|
+| **Google Colab** | Gratis | `pip install pyspark` | Prácticas individuales |
+| **Databricks Community Edition** | Gratis | Preinstalado | Notebooks colaborativos |
+| **AWS EMR Serverless** | ~$0.01/vCPU-h | Preinstalado | Datasets reales grandes |
+| **GCP Dataproc** | ~$0.01/vCPU-h | Preinstalado | Integración con BigQuery |
+| **Local (Docker)** | Gratis | `bitnami/spark` | Desarrollo y debugging |
+
+```bash
+# Instalar PySpark en Colab o entorno local
+pip install pyspark==3.5.0
+```
+
+---
+
+## 2. Datasets masivos para practicar {#sec-etl-datasets}
+
+Los ejercicios de este capítulo usan datasets públicos que escalan de millones
+a miles de millones de registros:
+
+| Dataset | Tamaño | Registros | Fuente |
+|---|---|---|---|
+| **NYC Taxi Trips** | ~70 GB | 3 000 M | [nyc.gov/tlc](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) |
+| **Amazon Reviews** | ~34 GB (JSON) | 233 M | [huggingface datasets](https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023) |
+| **GitHub Archive** | ~10 GB/mes | — | [gharchive.org](https://www.gharchive.org/) |
+| **Wikipedia Dumps** | ~22 GB | 6 M artículos | [dumps.wikimedia.org](https://dumps.wikimedia.org/) |
+| **TPC-H (sintético)** | Configurable | Configurable | `tpch-kit` Python |
+| **Divvy Bike Trips** (Chicago) | ~1 GB | 13 M | [divvybikes.com/data](https://divvybikes.com/system-data) |
+
+::: {.callout-tip}
+Para las prácticas de clase se usa **NYC Taxi** (un mes ≈ 500 MB, fácil de
+descargar) y **TPC-H** (sintético, tamaño configurable). Los ejercicios
+incluyen instrucciones de descarga.
+:::
+
+---
+
+## 3. PySpark: Fundamentos {#sec-pyspark-fundamentos}
+
+### 3.1 SparkSession — el punto de entrada
+
+```python
+from pyspark.sql import SparkSession
+
+spark = (SparkSession.builder
+    .appName("ETL-Mineria-Datos")
+    .master("local[*]")       # local[*] = todos los núcleos de la máquina
+    .config("spark.sql.shuffle.partitions", "8")  # reducir para datos pequeños
+    .getOrCreate())
+
+spark.version   # '3.5.0'
+```
+
+::: {.callout-note}
+En producción (Databricks, EMR) el `SparkSession` ya existe como `spark`;
+no necesitas crearlo. El parámetro `.master()` lo da la plataforma.
+:::
+
+### 3.2 El DataFrame de Spark
+
+Igual que pandas, pero **lazy** (el cómputo no ocurre hasta que llamas una
+*acción*):
+
+```python
+# Transformaciones (lazy) — solo construyen el plan
+df = spark.read.csv("nyc_taxi.csv", header=True, inferSchema=True)
+df2 = df.filter(df.trip_distance > 1.0)
+df3 = df2.select("tpep_pickup_datetime", "trip_distance", "total_amount")
+
+# Acción — dispara la ejecución
+df3.show(5)
+df3.count()       # otro disparo
+```
+
+| Concepto | Significado |
+|---|---|
+| **Transformación** | `filter`, `select`, `groupBy`, `join` — construyen el DAG |
+| **Acción** | `show`, `count`, `collect`, `write` — ejecutan el DAG |
+| **Partición** | Unidad de paralelismo; típicamente un archivo Parquet por partición |
+| **RDD** | Capa de bajo nivel; prefiere DataFrame/Dataset salvo casos especiales |
+
+### 3.3 Esquema explícito (mejor práctica)
+
+```python
+from pyspark.sql.types import *
+
+schema = StructType([
+    StructField("pickup_datetime",  TimestampType(), True),
+    StructField("dropoff_datetime", TimestampType(), True),
+    StructField("passenger_count",  IntegerType(),   True),
+    StructField("trip_distance",    DoubleType(),    True),
+    StructField("fare_amount",      DoubleType(),    True),
+    StructField("tip_amount",       DoubleType(),    True),
+    StructField("total_amount",     DoubleType(),    True),
+    StructField("payment_type",     IntegerType(),   True),
+])
+
+df = spark.read.csv("yellow_tripdata_2023-01.csv",
+                    header=True, schema=schema)
+```
+
+`inferSchema=True` requiere una pasada completa del archivo; con esquema
+explícito el proceso es más rápido y sin sorpresas de tipos.
+
+---
+
+## 4. Extracción (*Extract*) {#sec-etl-extract}
+
+### 4.1 Lectura de formatos comunes
+
+```python
+# CSV
+df_csv = spark.read.csv("data/trips.csv", header=True, schema=schema)
+
+# Parquet (columnar, comprimido — el formato preferido para DW)
+df_pq = spark.read.parquet("data/trips.parquet")
+
+# JSON (líneas)
+df_json = spark.read.json("data/reviews.jsonl")
+
+# Directorio completo de Parquet (Spark los une automáticamente)
+df_all = spark.read.parquet("data/trips/year=2023/")
+
+# JDBC (base de datos relacional)
+df_jdbc = (spark.read
+    .format("jdbc")
+    .option("url",      "jdbc:postgresql://host:5432/ventas")
+    .option("dbtable",  "public.pedidos")
+    .option("user",     "etl_user")
+    .option("password", "secret")
+    .option("numPartitionColumns", "pedido_id")  # paralelismo
+    .option("lowerBound", "1")
+    .option("upperBound", "10000000")
+    .option("numPartitions", "16")
+    .load())
+```
+
+### 4.2 Particionamiento y paralelismo en la lectura
+
+```python
+# Ver cuántas particiones tiene el DataFrame
+print(f"Particiones: {df_pq.rdd.getNumPartitions()}")
+
+# Reparticionar para balancear carga
+df_balanced = df_pq.repartition(32)
+
+# Coalesce — reduce particiones sin shuffle (para escribir pocos archivos)
+df_small = df_balanced.coalesce(4)
+```
+
+### 4.3 Ejercicio E-1 — Ingestar NYC Taxi {#sec-ej-e1}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-1: Lectura y exploración básica**
+
+```bash
+# Descargar 1 mes de datos (≈ 500 MB)
+wget https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet \
+     -O data/yellow_tripdata_2023-01.parquet
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, mean, min, max, stddev
+
+spark = SparkSession.builder.appName("E1-NYC").master("local[*]").getOrCreate()
+
+df = spark.read.parquet("data/yellow_tripdata_2023-01.parquet")
+
+# 1. ¿Cuántos registros y columnas tiene el archivo?
+print(f"Filas: {df.count():,}  Columnas: {len(df.columns)}")
+
+# 2. Muestra el esquema inferido
+df.printSchema()
+
+# 3. Estadísticas descriptivas de las variables numéricas
+df.select("trip_distance","fare_amount","tip_amount","total_amount")\
+  .describe().show()
+
+# 4. ¿Cuántos viajes por tipo de pago?
+df.groupBy("payment_type").count().orderBy("count", ascending=False).show()
+
+# 5. ¿Cuántas particiones usa Spark al leer el Parquet?
+print(f"Particiones: {df.rdd.getNumPartitions()}")
+```
+
+**Entregable:** tabla con estadísticas y respuesta a las 5 preguntas.
+:::
+
+---
+
+## 5. Integración de fuentes heterogéneas: Data Lake → DW {#sec-etl-heterogeneo}
+
+En la práctica, los datos llegan en formatos distintos, con nombres de columnas
+inconsistentes, tipos incompatibles y niveles de anidamiento variables. Esta
+sección cubre el conjunto de técnicas que permiten **homologar** esas fuentes
+antes de cargarlas al DW.
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM — Capas del Data Lake visualizadas
+     ═══════════════════════════════════════════════════════ -->
+<div id="lake-wrap" style="margin:2rem 0">
+<canvas id="lake-cv" width="700" height="260"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block;cursor:pointer"
+  onclick="lakeViz.click(event)"></canvas>
+<p id="lake-info" style="text-align:center;margin-top:.5rem;font-size:.88rem;
+   color:#94a3b8;min-height:1.4em">Haz clic en una capa para ver qué contiene y qué problema resuelve el ETL ahí.</p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('lake-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=260;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const layers = [
+    { y:20, h:48, color:'#ef4444', label:'Zona RAW (Bronce)',
+      formats:['CSV','JSON','Avro','XML','Parquet sin schema'],
+      info:'Datos crudos tal como llegan. Nunca se modifican. Formato heterogéneo, esquema inconsistente, posibles duplicados.' },
+    { y:80, h:48, color:'#f59e0b', label:'Zona STAGING (Plata)',
+      formats:['JSON aplanado','CSV normalizado','Parquet tipado'],
+      info:'Datos parseados, tipos corregidos, JSON aplanado, columnas renombradas. Aún puede haber nulos y outliers.' },
+    { y:140, h:48, color:'#10b981', label:'Zona CURATED (Oro)',
+      formats:['Parquet particionado','Delta Lake','Tablas DW'],
+      info:'Datos limpios, deduplificados, validados. Listos para consultas analíticas y modelos ML.' },
+    { y:200, h:48, color:'#3b82f6', label:'Data Warehouse / Lakehouse',
+      formats:['Esquema estrella','Tablas de hechos','Dimensiones SCD'],
+      info:'Modelo dimensional. Las tablas de hechos y dimensiones conformadas sirven a BI, OLAP y minería.' },
+  ];
+
+  let sel = -1;
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // grid bg
+    ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+    // arrows between layers
+    layers.forEach((_,i)=>{
+      if(i===layers.length-1) return;
+      const ay = layers[i].y + layers[i].h;
+      ctx.strokeStyle = '#334155'; ctx.lineWidth = 2;
+      ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(W/2,ay+2); ctx.lineTo(W/2,layers[i+1].y-2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='#475569';
+      ctx.beginPath();
+      ctx.moveTo(W/2,layers[i+1].y-2);
+      ctx.lineTo(W/2-6,layers[i+1].y-10);
+      ctx.lineTo(W/2+6,layers[i+1].y-10);
+      ctx.fill();
+    });
+
+    layers.forEach((l,i)=>{
+      const hi = i===sel;
+      ctx.shadowColor = hi ? l.color : 'transparent';
+      ctx.shadowBlur  = hi ? 16 : 0;
+      ctx.fillStyle   = hi ? l.color : l.color+'33';
+      ctx.beginPath(); ctx.roundRect(20, l.y, W-40, l.h, 8); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = l.color; ctx.lineWidth = hi ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(20, l.y, W-40, l.h, 8); ctx.stroke();
+
+      // label
+      ctx.fillStyle   = hi ? '#fff' : '#cbd5e1';
+      ctx.font        = `bold ${hi?14:13}px sans-serif`;
+      ctx.textAlign   = 'left';
+      ctx.fillText(l.label, 36, l.y + 20);
+
+      // format chips
+      ctx.font = '11px monospace';
+      ctx.fillStyle = hi ? '#fef3c7' : '#64748b';
+      ctx.fillText(l.formats.join('  ·  '), 36, l.y + 38);
+    });
+  }
+
+  function click(e){
+    const r = cv.getBoundingClientRect();
+    const my = (e.clientY - r.top)*(H/r.height);
+    const i  = layers.findIndex(l=>my>=l.y&&my<=l.y+l.h);
+    sel = (i===sel) ? -1 : i;
+    draw();
+    document.getElementById('lake-info').textContent =
+      i>=0 ? layers[i].info : 'Haz clic en una capa para ver qué contiene y qué problema resuelve el ETL ahí.';
+  }
+
+  window.lakeViz = {click};
+  draw();
+})();
+</script>
+```
+
+### 5.1 El problema: fuentes heterogéneas en la Zona RAW
+
+Cuando un Data Lake acumula datos de múltiples fuentes, los problemas típicos son:
+
+| Problema | Ejemplo real |
+|---|---|
+| **Formatos distintos** | ventas en CSV, eventos en JSON, catálogo en XML |
+| **Nombres de columna inconsistentes** | `customer_id` vs `cust_id` vs `clienteId` |
+| **Tipos incompatibles** | `"2024-01-15"` (string) vs `1705276800` (epoch) vs `20240115` (int) |
+| **Anidamiento en JSON** | `{"usuario": {"nombre": "Ana", "dir": {"ciudad": "CDMX"}}}` |
+| **Encodings distintos** | UTF-8 vs Latin-1 vs CP1252 |
+| **Delimitadores no estándar** | `;` en CSV europeo, `|` en dumps de bases de datos |
+| **Nulos representados distinto** | `""`, `"NULL"`, `"N/A"`, `"\\N"`, `None` |
+| **Unidades distintas** | distancia en km vs millas, precios en MXN vs USD |
+
+### 5.2 JSON anidado: aplanar para el DW
+
+El JSON es el formato más común en APIs y event streams, pero el DW necesita
+una tabla **plana** (filas × columnas escalares). PySpark ofrece tres
+herramientas para esto:
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, get_json_object, from_json, to_json,
+    explode, explode_outer, inline, flatten,
+    struct, to_timestamp
+)
+from pyspark.sql.types import *
+
+spark = SparkSession.builder.appName("ETL-JSON").master("local[*]").getOrCreate()
+
+# ── Ejemplo: eventos de compra (JSON lines) ───────────────────────────────
+# Cada línea es un JSON con objetos anidados y arrays
+# {"event_id":"e1","ts":"2024-01-15T10:30:00Z",
+#  "user":{"id":42,"city":"CDMX","segment":"premium"},
+#  "items":[{"sku":"A01","qty":2,"price":199.0},
+#           {"sku":"B03","qty":1,"price":89.5}]}
+
+df_raw = spark.read.json("data/lake/eventos_compra.jsonl")
+df_raw.printSchema()
+# root
+#  |-- event_id: string
+#  |-- ts: string
+#  |-- user: struct
+#  |    |-- id: long
+#  |    |-- city: string
+#  |    |-- segment: string
+#  |-- items: array
+#  |    |-- element: struct
+#  |    |    |-- sku: string
+#  |    |    |-- qty: long
+#  |    |    |-- price: double
+```
+
+**Técnica 1: acceder a campos anidados con notación punto**
+
+```python
+# Struct → columnas individuales con notación punto
+df_flat = df_raw.select(
+    col("event_id"),
+    to_timestamp(col("ts")).alias("evento_ts"),
+    col("user.id").alias("usuario_id"),
+    col("user.city").alias("ciudad"),
+    col("user.segment").alias("segmento"),
+    col("items")   # el array queda como columna de tipo array
+)
+```
+
+**Técnica 2: `explode` — un array → una fila por elemento**
+
+```python
+# Cada item del array se convierte en una fila independiente
+df_items = (df_raw
+    .select(
+        col("event_id"),
+        to_timestamp(col("ts")).alias("evento_ts"),
+        col("user.id").alias("usuario_id"),
+        explode(col("items")).alias("item")   # <- desdobla el array
+    )
+    .select(
+        col("event_id"),
+        col("evento_ts"),
+        col("usuario_id"),
+        col("item.sku").alias("sku"),
+        col("item.qty").alias("cantidad"),
+        col("item.price").alias("precio_unitario"),
+        (col("item.qty") * col("item.price")).alias("subtotal")
+    )
+)
+df_items.show(5)
+# +--------+-------------------+----------+----+--------+---------------+--------+
+# |event_id|evento_ts          |usuario_id|sku |cantidad|precio_unitario|subtotal|
+# +--------+-------------------+----------+----+--------+---------------+--------+
+# |e1      |2024-01-15 10:30:00|42        |A01 |2       |199.0          |398.0   |
+# |e1      |2024-01-15 10:30:00|42        |B03 |1       |89.5           |89.5    |
+```
+
+::: {.callout-note}
+`explode` elimina filas con array vacío o nulo.
+Usa `explode_outer` si quieres conservarlas como fila con `item = null`.
+:::
+
+**Técnica 3: JSON embebido como string → parsear con esquema explícito**
+
+En muchos pipelines el JSON llega como una columna de texto dentro de otro
+CSV o tabla (columna tipo `STRING` con JSON serializado):
+
+```python
+# CSV con una columna "payload" que es un JSON serializado como string
+# event_id,payload
+# e1,"{\"user_id\":42,\"amount\":288.5,\"currency\":\"MXN\"}"
+
+df_csv = spark.read.csv("data/lake/events_flat.csv", header=True)
+
+# Definir el esquema del JSON embebido
+payload_schema = StructType([
+    StructField("user_id",  LongType(),   True),
+    StructField("amount",   DoubleType(), True),
+    StructField("currency", StringType(), True),
+])
+
+# Parsear la columna string → struct tipado
+df_parsed = (df_csv
+    .withColumn("payload_struct",
+                from_json(col("payload"), payload_schema))
+    .select(
+        col("event_id"),
+        col("payload_struct.user_id").alias("usuario_id"),
+        col("payload_struct.amount").alias("monto"),
+        col("payload_struct.currency").alias("moneda")
+    )
+)
+```
+
+**Técnica 4: `get_json_object` — extracción selectiva con JSONPath**
+
+Cuando solo necesitas algunos campos de un JSON muy profundo sin parsear
+el esquema completo:
+
+```python
+df_select = df_csv.select(
+    col("event_id"),
+    get_json_object(col("payload"), "$.user_id").cast("long").alias("usuario_id"),
+    get_json_object(col("payload"), "$.amount").cast("double").alias("monto"),
+    get_json_object(col("payload"), "$.currency").alias("moneda"),
+)
+```
+
+### 5.3 CSV heterogéneo: normalización de esquema entre fuentes
+
+Un escenario muy común: el mismo tipo de dato llega de tres sistemas distintos
+con nombres de columna y tipos diferentes. El ETL debe producir una tabla
+unificada.
+
+```python
+# ── Fuente 1: sistema ERP (México) ───────────────────────────────────────
+# cust_id,fecha_pedido,monto_mxn,desc_pct
+# 1001,15/01/2024,3500.00,0.10
+
+# ── Fuente 2: sistema CRM (EE.UU.) ───────────────────────────────────────
+# CustomerID,OrderDate,AmountUSD,Discount
+# 1001,2024-01-15,175.00,10
+
+# ── Fuente 3: event log (JSON lines) ─────────────────────────────────────
+# {"cliente":1001,"ts":"2024-01-15T10:30:00Z","total":{"mxn":3500,"usd":175},"dcto":0.10}
+
+from pyspark.sql.functions import (
+    col, to_date, to_timestamp, lit, round as spark_round
+)
+
+TIPO_CAMBIO_MXN_USD = 17.0  # tasa de ejemplo
+
+# Fuente 1: ERP
+df_erp = (spark.read
+    .option("header", True)
+    .option("encoding", "UTF-8")
+    .csv("data/lake/erp_pedidos.csv")
+    .select(
+        col("cust_id").cast("long").alias("cliente_id"),
+        to_date(col("fecha_pedido"), "dd/MM/yyyy").alias("fecha"),
+        col("monto_mxn").cast("double").alias("monto_mxn"),
+        spark_round(col("monto_mxn").cast("double") / TIPO_CAMBIO_MXN_USD, 2).alias("monto_usd"),
+        col("desc_pct").cast("double").alias("descuento"),
+        lit("ERP").alias("fuente")
+    )
+)
+
+# Fuente 2: CRM
+df_crm = (spark.read
+    .option("header", True)
+    .option("encoding", "Latin-1")   # encoding diferente
+    .csv("data/lake/crm_orders.csv")
+    .select(
+        col("CustomerID").cast("long").alias("cliente_id"),
+        to_date(col("OrderDate"), "yyyy-MM-dd").alias("fecha"),
+        spark_round(col("AmountUSD").cast("double") * TIPO_CAMBIO_MXN_USD, 2).alias("monto_mxn"),
+        col("AmountUSD").cast("double").alias("monto_usd"),
+        (col("Discount").cast("double") / 100).alias("descuento"),  # % → fracción
+        lit("CRM").alias("fuente")
+    )
+)
+
+# Fuente 3: Event log JSON
+payload_schema_ev = StructType([
+    StructField("cliente",  LongType(), True),
+    StructField("ts",       StringType(), True),
+    StructField("total",    StructType([
+        StructField("mxn", DoubleType(), True),
+        StructField("usd", DoubleType(), True),
+    ]), True),
+    StructField("dcto",     DoubleType(), True),
+])
+
+df_events = (spark.read.schema(payload_schema_ev).json("data/lake/events.jsonl")
+    .select(
+        col("cliente").alias("cliente_id"),
+        to_date(to_timestamp(col("ts"))).alias("fecha"),
+        col("total.mxn").alias("monto_mxn"),
+        col("total.usd").alias("monto_usd"),
+        col("dcto").alias("descuento"),
+        lit("EVENT").alias("fuente")
+    )
+)
+
+# ── Unión de las tres fuentes con esquema homologado ──────────────────────
+df_unificado = df_erp.unionByName(df_crm).unionByName(df_events)
+
+print(f"ERP:    {df_erp.count():>8,} registros")
+print(f"CRM:    {df_crm.count():>8,} registros")
+print(f"Events: {df_events.count():>8,} registros")
+print(f"Total:  {df_unificado.count():>8,} registros")
+
+df_unificado.printSchema()
+df_unificado.groupBy("fuente").count().show()
+```
+
+::: {.callout-warning}
+`unionByName` une columnas **por nombre**, no por posición. Si una fuente
+tiene una columna extra que las otras no, usa
+`unionByName(df2, allowMissingColumns=True)` para rellenarla con `null`.
+:::
+
+### 5.4 Normalización de tipos y valores nulos heterogéneos
+
+```python
+from pyspark.sql.functions import (
+    when, trim, upper, lower, regexp_replace,
+    coalesce, nanvl, col
+)
+
+# ── Nulos representados como strings ─────────────────────────────────────
+NULLS_COMO_STRING = ["NULL", "N/A", "\\N", "None", "nan", "", " "]
+
+def limpiar_nulos(df):
+    for c in df.columns:
+        if dict(df.dtypes)[c] == "string":
+            df = df.withColumn(c,
+                when(trim(col(c)).isin(NULLS_COMO_STRING), None)
+                .otherwise(trim(col(c)))
+            )
+    return df
+
+df_limpio = limpiar_nulos(df_unificado)
+
+# ── Normalización de texto ────────────────────────────────────────────────
+df_texto = (df_limpio
+    # quitar acentos y caracteres especiales en columnas de texto
+    .withColumn("ciudad",
+        regexp_replace(upper(trim(col("ciudad"))),
+                       "[ÁÉÍÓÚÜ]", lambda m: {"Á":"A","É":"E","Í":"I",
+                                               "Ó":"O","Ú":"U","Ü":"U"}
+                                              .get(m.group(), m.group())))
+    # normalizar segmentos a minúsculas sin espacios extra
+    .withColumn("segmento", lower(trim(col("segmento"))))
+)
+
+# ── Conversión de unidades heterogéneas ──────────────────────────────────
+# Distancias en distintas unidades según la fuente
+df_distancias = df_raw.withColumn("distancia_km",
+    when(col("unidad") == "mi",  col("distancia") * 1.60934)
+    .when(col("unidad") == "km", col("distancia"))
+    .when(col("unidad") == "m",  col("distancia") / 1000.0)
+    .otherwise(None)
+)
+
+# ── Fechas en múltiples formatos → timestamp estándar ────────────────────
+from pyspark.sql.functions import coalesce, to_timestamp
+
+def parse_fecha_multiple(col_name):
+    formatos = [
+        "yyyy-MM-dd'T'HH:mm:ssX",   # ISO 8601 con timezone
+        "yyyy-MM-dd HH:mm:ss",       # datetime sin timezone
+        "dd/MM/yyyy",                # fecha europea
+        "MM/dd/yyyy",                # fecha americana
+        "yyyyMMdd",                  # compacto
+    ]
+    return coalesce(*[to_timestamp(col(col_name), fmt) for fmt in formatos])
+
+df_fechas = df_raw.withColumn("fecha_std", parse_fecha_multiple("fecha_raw"))
+```
+
+### 5.5 CSV con delimitadores no estándar y encodings
+
+```python
+# Archivo con delimitador | y encoding Latin-1 (típico de dumps de SAP/Oracle)
+df_sap = (spark.read
+    .option("sep", "|")
+    .option("encoding", "ISO-8859-1")
+    .option("header", True)
+    .option("quote", '"')
+    .option("escape", "\\")
+    .option("multiLine", False)
+    .option("nullValue", "")
+    .csv("data/lake/sap_export.txt")
+)
+
+# Archivo XML — requiere la librería spark-xml
+# spark-submit --packages com.databricks:spark-xml_2.12:0.17.0
+df_xml = (spark.read
+    .format("com.databricks.spark.xml")
+    .option("rowTag", "pedido")      # tag que define una fila
+    .load("data/lake/pedidos.xml")
+)
+
+# Avro — requiere spark-avro (incluido en Spark 3.x)
+df_avro = spark.read.format("avro").load("data/lake/eventos.avro")
+```
+
+### 5.6 Conversión JSON (Data Lake) → Parquet (DW): pipeline completo {#sec-lake-to-dw}
+
+Este es el patrón más frecuente en la industria: el Data Lake almacena
+eventos en JSON; el DW los consume como Parquet particionado y tipado.
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, explode, to_timestamp, to_date,
+    lit, trim, when, coalesce
+)
+from pyspark.sql.types import *
+
+spark = (SparkSession.builder
+    .appName("lake-to-dw")
+    .master("local[*]")
+    .config("spark.sql.shuffle.partitions", "8")
+    .getOrCreate())
+
+# ─── EXTRACT ──────────────────────────────────────────────────────────────
+# Data Lake: JSON semiestructurado con anidamiento
+schema_raw = StructType([
+    StructField("event_id",   StringType(),  False),
+    StructField("ts",         StringType(),  True),
+    StructField("version",    IntegerType(), True),
+    StructField("user", StructType([
+        StructField("id",       LongType(),   True),
+        StructField("city",     StringType(), True),
+        StructField("segment",  StringType(), True),
+        StructField("country",  StringType(), True),
+    ]), True),
+    StructField("items", ArrayType(StructType([
+        StructField("sku",      StringType(), True),
+        StructField("category", StringType(), True),
+        StructField("qty",      IntegerType(), True),
+        StructField("price_usd",DoubleType(),  True),
+    ])), True),
+    StructField("payment", StructType([
+        StructField("method",   StringType(), True),
+        StructField("currency", StringType(), True),
+        StructField("fx_rate",  DoubleType(),  True),  # tasa vs USD
+    ]), True),
+])
+
+df_raw = spark.read.schema(schema_raw).json("data/lake/raw/eventos/")
+
+print(f"Registros en lago: {df_raw.count():,}")
+
+
+# ─── TRANSFORM: aplanar + normalizar + explode ────────────────────────────
+df_items = (df_raw
+    # Explotar el array de items (1 evento → N filas)
+    .withColumn("item", explode(col("items")))
+    # Aplanar structs anidados
+    .select(
+        col("event_id"),
+        to_timestamp(col("ts")).alias("evento_ts"),
+        to_date(to_timestamp(col("ts"))).alias("fecha"),
+        col("user.id").cast("long").alias("usuario_id"),
+        trim(col("user.city")).alias("ciudad"),
+        trim(col("user.segment")).alias("segmento"),
+        coalesce(col("user.country"), lit("MX")).alias("pais"),
+        col("item.sku").alias("sku"),
+        col("item.category").alias("categoria"),
+        col("item.qty").cast("integer").alias("cantidad"),
+        col("item.price_usd").alias("precio_usd"),
+        # Convertir a moneda local usando la tasa del evento
+        (col("item.price_usd") * col("payment.fx_rate")).alias("precio_local"),
+        col("payment.method").alias("metodo_pago"),
+        col("payment.currency").alias("moneda"),
+        # Subtotales
+        (col("item.qty") * col("item.price_usd")).alias("subtotal_usd"),
+        (col("item.qty") * col("item.price_usd") *
+         col("payment.fx_rate")).alias("subtotal_local"),
+    )
+    # Filtros de calidad
+    .filter(col("cantidad") > 0)
+    .filter(col("precio_usd") > 0)
+    .filter(col("evento_ts").isNotNull())
+)
+
+# Añadir columnas de particionamiento derivadas del timestamp
+from pyspark.sql.functions import year, month, dayofmonth
+df_final = (df_items
+    .withColumn("anio",  year("fecha"))
+    .withColumn("mes",   month("fecha"))
+    .withColumn("dia",   dayofmonth("fecha"))
+)
+
+
+# ─── LOAD: Parquet particionado en el DW ─────────────────────────────────
+DW_PATH = "output/dw/hechos_ventas_items/"
+
+(df_final
+    .write
+    .mode("overwrite")
+    .partitionBy("anio", "mes", "dia")
+    .parquet(DW_PATH))
+
+# Verificar
+df_dw = spark.read.parquet(DW_PATH)
+print(f"\nRegistros en DW:   {df_dw.count():,}")
+print(f"Columnas:          {len(df_dw.columns)}")
+df_dw.printSchema()
+
+# Vista rápida de calidad
+df_dw.createOrReplaceTempView("hechos")
+spark.sql("""
+    SELECT
+        pais, segmento, moneda,
+        COUNT(*)             AS n_items,
+        SUM(subtotal_usd)    AS ingreso_usd,
+        AVG(precio_usd)      AS precio_prom_usd
+    FROM hechos
+    GROUP BY pais, segmento, moneda
+    ORDER BY ingreso_usd DESC
+""").show(truncate=False)
+
+spark.stop()
+```
+
+### 5.7 Reconciliación de esquemas con `mergeSchema`
+
+Cuando el JSON evoluciona con el tiempo y los archivos del lago tienen
+esquemas distintos (una columna nueva apareció en febrero, otra se renombró
+en marzo), Spark puede reconciliarlos automáticamente:
+
+```python
+# Leer múltiples versiones de Parquet con esquemas que evolucionaron
+df_historico = (spark.read
+    .option("mergeSchema", "true")   # une el superset de columnas
+    .parquet("data/lake/parquet/historico/"))
+
+# Las columnas que no existían en versiones antiguas aparecen como null
+df_historico.printSchema()
+
+# Para Delta Lake: evolución de esquema está integrada
+(df_nuevo.write
+    .format("delta")
+    .option("mergeSchema", "true")   # permite agregar columnas nuevas
+    .mode("append")
+    .save("output/delta/hechos/"))
+```
+
+### 5.8 Ejercicio E-1b — JSON a Parquet del Data Lake al DW {#sec-ej-e1b}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-1b: Integración de fuentes heterogéneas**
+
+Descarga los datos de GitHub Archive (eventos de un día, ≈ 2 GB en JSON
+comprimido) y conviértelos a una tabla de hechos Parquet en el DW.
+
+```bash
+# Descargar un día de eventos de GitHub (JSON gzippeado por hora)
+for HORA in $(seq -w 0 23); do
+  wget "https://data.gharchive.org/2024-01-15-${HORA}.json.gz" \
+       -P data/lake/gharchive/
+done
+# Total: ~2 GB, ~3–4 M eventos
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, to_timestamp, get_json_object, explode_outer
+
+spark = SparkSession.builder.appName("E1b-GitHub").master("local[*]")\
+        .config("spark.sql.shuffle.partitions","8").getOrCreate()
+
+# GitHub Archive: cada línea es un JSON de evento
+# Campos clave: id, type, actor.login, repo.name, created_at, payload (objeto)
+df_raw = spark.read.json("data/lake/gharchive/*.json.gz")
+
+# TODO 1: ¿Cuántos tipos de evento hay? ¿Cuál es el más frecuente?
+tipos = ...  # ← completa
+
+# TODO 2: Extrae una tabla plana con:
+#   evento_id, tipo, actor, repo, fecha (date), hora (int)
+df_plano = (df_raw.select(
+    col("id").alias("evento_id"),
+    col("type").alias("tipo"),
+    col("actor.login").alias("actor"),
+    col("repo.name").alias("repo"),
+    to_timestamp(col("created_at")).alias("evento_ts"),
+    # ← añade fecha y hora derivados del timestamp
+))  # completa
+
+# TODO 3: Filtra solo eventos "PushEvent" y extrae el número de commits
+#   del payload (payload.commits es un array; usa size() o explode_outer)
+df_push = ...  # ← completa
+
+# TODO 4: Escribe df_plano como Parquet particionado por tipo y fecha
+...  # ← completa
+
+# TODO 5: Consulta con Spark SQL:
+#   Los 10 repos con más pushes en el día, con el total de commits
+...  # ← completa
+
+spark.stop()
+```
+
+**Preguntas:**
+a) ¿Cuántos eventos totales hay en el día? ¿Qué fracción son PushEvents?
+b) El campo `payload` es diferente para cada tipo de evento. ¿Cómo
+   manejarías esto si quisieras modelar cada tipo como su propia tabla de hechos?
+c) ¿Qué ventaja tiene Parquet vs JSON para consultas repetidas sobre estos datos?
+   Compara el tiempo de `COUNT(*)` sobre el JSON original vs el Parquet.
+:::
+
+---
+
+## 6. Transformación (*Transform*) {#sec-etl-transform}
+
+### 5.1 Funciones de columna (`pyspark.sql.functions`)
+
+```python
+from pyspark.sql.functions import (
+    col, lit, when, coalesce,
+    to_timestamp, date_format, hour, dayofweek, month,
+    regexp_replace, trim, upper, lower,
+    round as spark_round, abs as spark_abs,
+    log1p, sqrt,
+    sum as spark_sum, avg, count, countDistinct,
+    lag, lead, rank, dense_rank,
+    window
+)
+```
+
+### 5.2 Limpieza de datos a escala
+
+```python
+# Filtrar viajes imposibles (distancia negativa, tarifa negativa, etc.)
+df_clean = (df
+    .filter(col("trip_distance") > 0)
+    .filter(col("fare_amount")   > 0)
+    .filter(col("total_amount")  > 0)
+    .filter(col("passenger_count").between(1, 6))
+    # Eliminar outliers extremos (99.9 percentil ≈ 120 USD total)
+    .filter(col("total_amount") < 500)
+)
+
+# Imputar nulos con valor por defecto
+df_clean = df_clean.fillna({
+    "passenger_count": 1,
+    "trip_distance":   0.0,
+})
+
+# Crear columnas derivadas
+df_feat = (df_clean
+    .withColumn("hora_recogida",  hour("tpep_pickup_datetime"))
+    .withColumn("dia_semana",     dayofweek("tpep_pickup_datetime"))
+    .withColumn("mes",            month("tpep_pickup_datetime"))
+    .withColumn("duracion_min",
+        (col("tpep_dropoff_datetime").cast("long") -
+         col("tpep_pickup_datetime").cast("long")) / 60)
+    .withColumn("tarifa_por_km",
+        when(col("trip_distance") > 0,
+             spark_round(col("fare_amount") / col("trip_distance"), 2))
+        .otherwise(None))
+    .withColumn("propina_pct",
+        spark_round(col("tip_amount") / col("fare_amount") * 100, 1))
+)
+```
+
+### 5.3 Aggregaciones y *Window Functions*
+
+```python
+from pyspark.sql import Window
+
+# Agregación simple: ingresos por hora del día
+ingresos_hora = (df_feat
+    .groupBy("hora_recogida")
+    .agg(
+        count("*").alias("n_viajes"),
+        avg("total_amount").alias("ticket_promedio"),
+        spark_sum("total_amount").alias("ingreso_total")
+    )
+    .orderBy("hora_recogida")
+)
+ingresos_hora.show(24)
+
+# Window function: ranking de zonas por ingreso diario
+wspec = Window.partitionBy("mes","dia_semana").orderBy(col("ingreso_total").desc())
+
+ranking = (df_feat
+    .groupBy("mes","dia_semana","PULocationID")
+    .agg(spark_sum("total_amount").alias("ingreso_total"))
+    .withColumn("rank", dense_rank().over(wspec))
+    .filter(col("rank") <= 5)
+    .orderBy("mes","dia_semana","rank")
+)
+ranking.show(20)
+```
+
+### 5.4 Joins a escala
+
+```python
+# Cargar tabla de zonas (pequeña — cabe en memoria → broadcast join)
+from pyspark.sql.functions import broadcast
+
+zonas = spark.read.csv("data/taxi_zone_lookup.csv",
+                       header=True, inferSchema=True)
+
+# Broadcast join: Spark envía la tabla pequeña a todos los executors
+df_con_zona = df_feat.join(
+    broadcast(zonas),
+    df_feat.PULocationID == zonas.LocationID,
+    "left"
+)
+
+# Para tablas grandes: sort-merge join (default automático en Spark)
+df_join_grande = df_feat.join(otra_tabla_grande, on="clave", how="inner")
+```
+
+::: {.callout-warning}
+**Evitar el Cartesian Product.** Un join sin condición sobre DataFrames
+grandes puede generar `N×M` filas y agotar la memoria del clúster. Spark
+lanzará un error si intentas un cross join sin `.crossJoin()` explícito.
+:::
+
+### 5.5 Ejercicio E-2 — Pipeline de limpieza completo {#sec-ej-e2}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-2: Transformación y calidad**
+
+Usando el Parquet del Ejercicio E-1:
+
+```python
+from pyspark.sql.functions import *
+
+# TODO: Completa cada paso
+# 1. Elimina filas con nulos en pickup_datetime o dropoff_datetime
+df_sin_nulos = df.dropna(subset=["tpep_pickup_datetime","tpep_dropoff_datetime"])
+
+# 2. Crea la columna `duracion_min` (diferencia en minutos)
+#    y filtra viajes con duración entre 1 y 180 minutos
+df_duracion = ...  # ← completa
+
+# 3. Añade columnas: hora_recogida, dia_semana, es_fin_de_semana (boolean)
+df_enriquecido = ...  # ← completa
+
+# 4. Calcula la mediana de total_amount por hora del día
+#    (usa approxQuantile sobre el grupo — los percentiles exactos son costosos)
+mediana_por_hora = ...  # ← completa
+
+# 5. ¿Qué porcentaje de viajes tienen propina = 0?
+#    ¿Difiere este porcentaje por día de la semana?
+pct_sin_propina = ...  # ← completa
+
+# 6. Escribe el resultado limpio como Parquet particionado por mes y día
+df_enriquecido.write.mode("overwrite")\
+    .partitionBy("mes","dia_semana")\
+    .parquet("output/taxi_limpio/")
+```
+
+**Preguntas de análisis:**
+a) ¿Cuántas filas se perdieron en cada paso de limpieza?
+b) ¿En qué hora del día el ticket promedio es más alto?
+c) ¿Los viernes tienen más propinas que los lunes?
+:::
+
+---
+
+## 7. Transformaciones SQL con Spark {#sec-spark-sql}
+
+Spark SQL permite usar sentencias SQL estándar sobre DataFrames:
+
+```python
+# Registrar el DataFrame como vista temporal
+df_feat.createOrReplaceTempView("viajes")
+
+# Consulta SQL — idéntica a lo que harías en BigQuery o Snowflake
+resultado = spark.sql("""
+    SELECT
+        hora_recogida,
+        dia_semana,
+        COUNT(*)                           AS n_viajes,
+        ROUND(AVG(total_amount), 2)        AS ticket_promedio,
+        ROUND(AVG(propina_pct), 1)         AS propina_pct_promedio,
+        ROUND(SUM(total_amount), 0)        AS ingreso_total
+    FROM viajes
+    WHERE total_amount BETWEEN 2.5 AND 200
+    GROUP BY hora_recogida, dia_semana
+    ORDER BY hora_recogida, dia_semana
+""")
+resultado.show(48)
+```
+
+::: {.callout-tip}
+Si ya conoces SQL, puedes empezar con Spark SQL y aprender la API DataFrame
+gradualmente. Ambas generan exactamente el mismo plan de ejecución optimizado.
+:::
+
+---
+
+## 8. Carga (*Load*) {#sec-etl-load}
+
+### 7.1 Escritura en Parquet (formato estándar del lakehouse)
+
+```python
+# Escritura simple
+df_feat.write.mode("overwrite").parquet("output/viajes_limpios/")
+
+# Particionado — clave para consultas eficientes (pruning de particiones)
+df_feat.write\
+    .mode("overwrite")\
+    .partitionBy("mes", "dia_semana")\
+    .parquet("output/viajes_por_fecha/")
+
+# Controlar el número de archivos de salida
+df_feat.coalesce(8).write.mode("overwrite").parquet("output/viajes_8archivos/")
+```
+
+### 7.2 Delta Lake — el formato lakehouse con ACID
+
+```python
+# pip install delta-spark
+from delta import configure_spark_with_delta_pip, DeltaTable
+
+spark = configure_spark_with_delta_pip(
+    SparkSession.builder.appName("ETL-Delta")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+).getOrCreate()
+
+# Escritura inicial
+df_feat.write.format("delta").mode("overwrite").save("output/delta/viajes/")
+
+# Upsert (MERGE) — fundamental para cargas incrementales
+delta_table = DeltaTable.forPath(spark, "output/delta/viajes/")
+
+nuevos = spark.read.parquet("data/yellow_tripdata_2023-02.parquet")
+
+(delta_table.alias("viejo")
+    .merge(nuevos.alias("nuevo"),
+           "viejo.VendorID = nuevo.VendorID AND "
+           "viejo.tpep_pickup_datetime = nuevo.tpep_pickup_datetime")
+    .whenMatchedUpdateAll()
+    .whenNotMatchedInsertAll()
+    .execute())
+
+# Time travel — leer versión anterior de la tabla
+df_ayer = spark.read.format("delta").option("versionAsOf", 0)\
+               .load("output/delta/viajes/")
+```
+
+### 7.3 Escritura a una base de datos (JDBC)
+
+```python
+(df_feat.write
+    .format("jdbc")
+    .option("url",      "jdbc:postgresql://dw-host:5432/datawarehouse")
+    .option("dbtable",  "hechos.viajes_taxi")
+    .option("user",     "etl_user")
+    .option("password", "secret")
+    .option("batchsize", 10000)     # filas por batch INSERT
+    .option("numPartitions", 8)     # conexiones paralelas
+    .mode("append")
+    .save())
+```
+
+---
+
+## 9. Pipeline ETL completo {#sec-etl-pipeline}
+
+Ahora unimos Extract + Transform + Load en una función reutilizable:
+
+```python
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import (
+    col, hour, dayofweek, month, when,
+    spark_round as _round
+)
+import logging
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("ETL-Taxi")
+
+
+def extract(spark: SparkSession, path: str) -> DataFrame:
+    log.info(f"Leyendo {path}")
+    return spark.read.parquet(path)
+
+
+def transform(df: DataFrame) -> DataFrame:
+    log.info("Transformando...")
+    return (df
+        .filter(col("trip_distance") > 0)
+        .filter(col("fare_amount").between(2.5, 500))
+        .filter(col("passenger_count").between(1, 6))
+        .fillna({"passenger_count": 1})
+        .withColumn("hora",      hour("tpep_pickup_datetime"))
+        .withColumn("dia",       dayofweek("tpep_pickup_datetime"))
+        .withColumn("mes",       month("tpep_pickup_datetime"))
+        .withColumn("duracion",
+            (col("tpep_dropoff_datetime").cast("long") -
+             col("tpep_pickup_datetime").cast("long")) / 60)
+        .filter(col("duracion").between(1, 180))
+        .withColumn("propina_pct",
+            when(col("fare_amount") > 0,
+                 _round(col("tip_amount")/col("fare_amount")*100, 1))
+            .otherwise(0.0))
+    )
+
+
+def load(df: DataFrame, output_path: str) -> None:
+    log.info(f"Escribiendo en {output_path}")
+    (df.write
+        .mode("overwrite")
+        .partitionBy("mes", "dia")
+        .parquet(output_path))
+    log.info("¡ETL completo!")
+
+
+if __name__ == "__main__":
+    spark = (SparkSession.builder
+        .appName("ETL-NYC-Taxi")
+        .master("local[*]")
+        .config("spark.sql.shuffle.partitions", "16")
+        .getOrCreate())
+
+    raw   = extract(spark, "data/yellow_tripdata_2023-01.parquet")
+    clean = transform(raw)
+    load(clean, "output/taxi_etl/")
+
+    spark.stop()
+```
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM 2 — Pipeline ETL interactivo: simula el flujo
+     ═══════════════════════════════════════════════════════ -->
+<div id="etl-pipeline-wrap" style="margin:2rem 0">
+  <div style="display:flex;gap:.8rem;flex-wrap:wrap;justify-content:center;margin-bottom:.8rem">
+    <button onclick="etlPipe.run()" id="etl-btn-run"
+      style="padding:.45rem 1.4rem;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-weight:600">
+      ▶ Ejecutar Pipeline
+    </button>
+    <button onclick="etlPipe.reset()"
+      style="padding:.45rem 1.4rem;border-radius:6px;border:none;background:#475569;color:#fff;cursor:pointer">
+      ↺ Reiniciar
+    </button>
+  </div>
+  <canvas id="etl-cv" width="700" height="200"
+    style="width:100%;border-radius:10px;background:#0f172a;display:block"></canvas>
+  <div id="etl-log"
+    style="margin-top:.6rem;background:#1e293b;border-radius:8px;padding:.8rem 1rem;
+           font-family:monospace;font-size:.82rem;color:#94a3b8;min-height:4rem;
+           max-height:8rem;overflow-y:auto"></div>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('etl-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=200;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const stages = [
+    { label:'EXTRACT', sub:'Parquet / CSV / JDBC', color:'#0ea5e9',
+      rows:3200000, detail:'3,200,000 filas leídas · 16 particiones' },
+    { label:'FILTER', sub:'distancia>0, tarifa∈[2.5,500]', color:'#f59e0b',
+      rows:3050000, detail:'150,000 filas eliminadas (outliers, nulos)' },
+    { label:'FEATURE ENG.', sub:'hora, día, duración, propina%', color:'#a855f7',
+      rows:3050000, detail:'6 columnas derivadas añadidas' },
+    { label:'LOAD', sub:'Parquet particionado (mes×día)', color:'#10b981',
+      rows:3050000, detail:'Escrito en output/taxi_etl/ · 56 archivos' },
+  ];
+
+  const logEl = document.getElementById('etl-log');
+  let running = false;
+
+  function drawStage(i, progress, done){
+    const x = 30 + i*(160+10);
+    const y = 30, bw=155, bh=120;
+
+    // shadow / glow
+    if(done){
+      ctx.shadowColor = stages[i].color;
+      ctx.shadowBlur  = 12;
+    }
+    // box
+    ctx.fillStyle = done ? stages[i].color : '#1e293b';
+    ctx.beginPath();
+    ctx.roundRect(x, y, bw, bh, 10);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // progress bar inside
+    if(progress > 0 && progress < 1){
+      ctx.fillStyle = stages[i].color + '55';
+      ctx.beginPath();
+      ctx.roundRect(x, y+bh*(1-progress), bw, bh*progress, 10);
+      ctx.fill();
+    }
+
+    // border
+    ctx.strokeStyle = stages[i].color;
+    ctx.lineWidth = done ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(x, y, bw, bh, 10);
+    ctx.stroke();
+
+    // text
+    ctx.fillStyle = done ? '#fff' : '#64748b';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(stages[i].label, x+bw/2, y+38);
+    ctx.font = '10px sans-serif';
+    ctx.fillStyle = done ? '#e2e8f0' : '#475569';
+    const words = stages[i].sub.split(' ');
+    let line='', lineY=y+58;
+    words.forEach(w=>{
+      if((line+w).length > 18){ ctx.fillText(line,x+bw/2,lineY); line=w+' '; lineY+=14; }
+      else line+=w+' ';
+    });
+    ctx.fillText(line,x+bw/2,lineY);
+
+    // rows
+    if(done){
+      ctx.font = 'bold 11px monospace';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(stages[i].rows.toLocaleString(), x+bw/2, y+108);
+    }
+
+    // arrow to next
+    if(i < stages.length-1){
+      const ax = x+bw+2, ay=y+bh/2;
+      ctx.strokeStyle = done ? stages[i].color : '#334155';
+      ctx.lineWidth = 2;
+      ctx.setLineDash(done?[]:[4,4]);
+      ctx.beginPath();
+      ctx.moveTo(ax,ay); ctx.lineTo(ax+7,ay);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if(done){
+        ctx.fillStyle=stages[i].color;
+        ctx.beginPath();
+        ctx.moveTo(ax+7,ay);
+        ctx.lineTo(ax+2,ay-5);
+        ctx.lineTo(ax+2,ay+5);
+        ctx.fill();
+      }
+    }
+  }
+
+  function render(completed, activeIdx, progress){
+    ctx.clearRect(0,0,W,H);
+    stages.forEach((_,i)=>{
+      const done = i < completed || (i===activeIdx&&progress>=1);
+      const prog = i===activeIdx ? progress : (done?1:0);
+      drawStage(i, prog, done);
+    });
+  }
+
+  function log(msg){ logEl.innerHTML += `<div>→ ${msg}</div>`; logEl.scrollTop=9999; }
+
+  function run(){
+    if(running) return;
+    running=true;
+    document.getElementById('etl-btn-run').disabled=true;
+    let stageIdx=0;
+    function nextStage(){
+      if(stageIdx>=stages.length){ running=false; log('✅ ETL completado.'); return; }
+      log(`[${stages[stageIdx].label}] ${stages[stageIdx].detail}`);
+      let p=0;
+      const iv = setInterval(()=>{
+        p+=0.04;
+        render(stageIdx, stageIdx, Math.min(p,1));
+        if(p>=1){ clearInterval(iv); stageIdx++; setTimeout(nextStage,300); }
+      },30);
+    }
+    nextStage();
+  }
+
+  function reset(){
+    running=false;
+    logEl.innerHTML='';
+    document.getElementById('etl-btn-run').disabled=false;
+    render(0,-1,0);
+  }
+
+  window.etlPipe = {run,reset};
+  reset();
+})();
+</script>
+```
+
+---
+
+## 10. Ejercicios avanzados {#sec-etl-ejercicios}
+
+### 9.1 Ejercicio E-3 — Pipeline incremental con Delta Lake {#sec-ej-e3}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-3: Carga incremental**
+
+Simula un pipeline de producción que carga datos mes a mes sin duplicar
+registros.
+
+```python
+from pyspark.sql import SparkSession
+from delta import DeltaTable, configure_spark_with_delta_pip
+
+spark = configure_spark_with_delta_pip(
+    SparkSession.builder.appName("E3-Incremental")
+    .config("spark.sql.extensions",
+            "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .master("local[*]")
+).getOrCreate()
+
+DELTA_PATH = "output/delta_taxi/"
+MESES = [
+    "data/yellow_tripdata_2023-01.parquet",
+    "data/yellow_tripdata_2023-02.parquet",
+    "data/yellow_tripdata_2023-03.parquet",
+]
+
+def transform(df):
+    from pyspark.sql.functions import col, hour, dayofweek, month
+    return (df
+        .filter(col("trip_distance") > 0)
+        .filter(col("fare_amount").between(2.5, 500))
+        .withColumn("hora", hour("tpep_pickup_datetime"))
+        .withColumn("mes",  month("tpep_pickup_datetime"))
+    )
+
+for path in MESES:
+    nuevos = transform(spark.read.parquet(path))
+
+    if DeltaTable.isDeltaTable(spark, DELTA_PATH):
+        # UPSERT: insertar solo lo que no existe
+        dt = DeltaTable.forPath(spark, DELTA_PATH)
+        (dt.alias("viejo")
+           .merge(nuevos.alias("nuevo"),
+                  "viejo.VendorID = nuevo.VendorID AND "
+                  "viejo.tpep_pickup_datetime = nuevo.tpep_pickup_datetime")
+           .whenNotMatchedInsertAll()
+           .execute())
+    else:
+        # Primera carga
+        nuevos.write.format("delta").mode("overwrite").save(DELTA_PATH)
+
+    print(f"✅ {path.split('/')[-1]} cargado. Total filas: "
+          f"{spark.read.format('delta').load(DELTA_PATH).count():,}")
+
+spark.stop()
+```
+
+**Preguntas:**
+a) ¿Qué pasa si cargas el mismo mes dos veces? ¿Por qué?
+b) Modifica el MERGE para que si un viaje ya existe pero tiene distinto
+   `total_amount`, actualice el registro (simula una corrección tardía).
+c) Usa `DESCRIBE HISTORY delta.\`output/delta_taxi/\`` para ver el log de
+   transacciones.
+:::
+
+### 9.2 Ejercicio E-4 — ETL multi-fuente con join a escala {#sec-ej-e4}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-4: Enriquecimiento con join**
+
+Descarga el catálogo de zonas y úsalo para enriquecer los viajes con el
+nombre del barrio.
+
+```bash
+# Descargar catálogo de zonas (26 KB)
+wget https://d37ci6vzurychx.cloudfront.net/misc/taxi+_zone_lookup.csv \
+     -O data/taxi_zone_lookup.csv
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import broadcast, col, count, avg, desc
+
+spark = SparkSession.builder.appName("E4-Join").master("local[*]").getOrCreate()
+
+viajes = spark.read.parquet("data/yellow_tripdata_2023-01.parquet")
+zonas  = spark.read.csv("data/taxi_zone_lookup.csv",
+                        header=True, inferSchema=True)
+
+# TODO 1: Renombra columnas de zonas para evitar ambigüedad
+zonas_pu = zonas.select(
+    col("LocationID").alias("pu_location_id"),
+    col("Zone").alias("pu_zone"),
+    col("Borough").alias("pu_borough")
+)
+
+# TODO 2: Haz un broadcast join de viajes con zonas_pu
+#          usando PULocationID == pu_location_id
+df_enriquecido = ...  # ← completa
+
+# TODO 3: Calcula el top-10 de zonas de recogida por ingreso total
+top_zonas = (df_enriquecido
+    .groupBy("pu_zone", "pu_borough")
+    .agg(
+        count("*").alias("n_viajes"),
+        avg("total_amount").alias("ticket_prom")
+    )
+    .orderBy(desc("n_viajes"))
+    .limit(10)
+)
+top_zonas.show(truncate=False)
+
+# TODO 4: ¿Qué borough tiene la propina promedio más alta?
+#          Añade la columna propina_pct y agrupa por pu_borough
+propina_borough = ...  # ← completa
+
+spark.stop()
+```
+
+**Preguntas:**
+a) ¿Por qué usamos `broadcast` para el join con zonas?
+b) ¿Qué ocurriría si quitamos el `broadcast` y el DataFrame de zonas
+   fuera de 10 GB en vez de 26 KB?
+c) Extiende el enriquecimiento para incluir también la zona de destino
+   (`DOLocationID`).
+:::
+
+### 9.3 Ejercicio E-5 — Detección de calidad con Great Expectations {#sec-ej-e5}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-5: Validación automatizada**
+
+```bash
+pip install great_expectations
+```
+
+```python
+import great_expectations as gx
+from great_expectations.dataset import SparkDFDataset
+
+spark = SparkSession.builder.appName("E5-GX").master("local[*]").getOrCreate()
+df = spark.read.parquet("data/yellow_tripdata_2023-01.parquet")
+
+# Convertir a Great Expectations dataset
+gx_df = SparkDFDataset(df)
+
+# Definir expectativas de calidad
+resultados = []
+resultados.append(gx_df.expect_column_values_to_not_be_null("tpep_pickup_datetime"))
+resultados.append(gx_df.expect_column_values_to_be_between(
+    "trip_distance", min_value=0, max_value=500))
+resultados.append(gx_df.expect_column_values_to_be_between(
+    "fare_amount", min_value=0, max_value=1000))
+resultados.append(gx_df.expect_column_values_to_be_in_set(
+    "payment_type", [1, 2, 3, 4, 5, 6]))
+resultados.append(gx_df.expect_column_values_to_not_be_null("VendorID"))
+
+# Reporte
+for r in resultados:
+    icon = "✅" if r["success"] else "❌"
+    print(f"{icon} {r['expectation_config']['expectation_type']} "
+          f"({r['expectation_config']['kwargs'].get('column','')}) "
+          f"— {r['result'].get('unexpected_percent',0):.2f}% inesperado")
+
+spark.stop()
+```
+
+**Preguntas:**
+a) ¿Qué expectativas fallan? ¿Cómo lo interpretarías en un pipeline real?
+b) Agrega una expectativa para verificar que `passenger_count` nunca supere 6.
+c) ¿Dónde colocarías estas validaciones en el pipeline E→T→L?
+:::
+
+### 9.4 Ejercicio E-6 — Proyecto integrador TPC-H {#sec-ej-e6}
+
+::: {.callout-important icon="false"}
+**Ejercicio E-6: ETL sobre esquema estrella**
+
+Genera datos sintéticos con TPC-H (escala 1 GB) y construye un DW
+en Parquet.
+
+```bash
+pip install tpch  # o clonar https://github.com/electrum/tpch-dbgen
+python -m tpch generate --scale 1  # 1 GB de datos relacionales
+```
+
+```python
+# Esquema TPC-H (simplificado):
+# ORDERS (pedido_id, cliente_id, fecha, prioridad, total)
+# LINEITEM (pedido_id, producto_id, cantidad, precio, descuento)
+# CUSTOMER (cliente_id, nombre, segmento, nacion_id)
+# NATION   (nacion_id, nombre, region_id)
+
+spark = SparkSession.builder.appName("E6-TPCH").master("local[*]").getOrCreate()
+
+orders   = spark.read.csv("tpch/orders.tbl",   sep="|", inferSchema=True)
+lineitem = spark.read.csv("tpch/lineitem.tbl",  sep="|", inferSchema=True)
+customer = spark.read.csv("tpch/customer.tbl",  sep="|", inferSchema=True)
+nation   = spark.read.csv("tpch/nation.tbl",    sep="|", inferSchema=True)
+
+# TODO 1: Renombra columnas (TPC-H usa _c0, _c1, ...)
+#         Consulta el diccionario en: http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v3.0.1.pdf
+
+# TODO 2: Construye la tabla de hechos `hechos_ventas` con estas columnas:
+#   pedido_id, cliente_id, producto_id, nacion, segmento,
+#   fecha_pedido, cantidad, ingreso_neto (precio×cantidad×(1-descuento))
+
+# TODO 3: Escribe hechos_ventas como Parquet particionado por año y mes
+
+# TODO 4: Responde con Spark SQL:
+#   Q1: Ingreso total por segmento de cliente y año
+#   Q2: Top-5 naciones por ingreso en el último trimestre disponible
+#   Q3: ¿Qué porcentaje de pedidos son de prioridad "URGENT"?
+
+spark.stop()
+```
+
+**Este ejercicio simula exactamente un pipeline ETL empresarial:**
+extracción de tablas OLTP → joins dimensionales → tabla de hechos → Parquet.
+:::
+
+---
+
+## 11. ETL moderno: dbt + PySpark {#sec-dbt}
+
+**dbt** (*data build tool*) separa la *transformación* del pipeline técnico:
+defines las transformaciones como modelos SQL, y dbt se encarga de
+ejecutarlos en el orden correcto, con pruebas automáticas y documentación.
+
+```bash
+pip install dbt-spark
+dbt init mi_proyecto_etl
+```
+
+```sql
+-- models/staging/stg_viajes.sql
+-- dbt materializa esto como una tabla o vista en Spark/DW
+SELECT
+    VendorID                    AS vendor_id,
+    tpep_pickup_datetime        AS pickup_at,
+    trip_distance,
+    fare_amount,
+    tip_amount,
+    total_amount,
+    payment_type
+FROM {{ source('raw', 'yellow_taxi') }}
+WHERE trip_distance > 0
+  AND fare_amount   > 2.5
+```
+
+```sql
+-- models/marts/fct_viajes_diarios.sql
+SELECT
+    DATE(pickup_at)             AS fecha,
+    HOUR(pickup_at)             AS hora,
+    COUNT(*)                    AS n_viajes,
+    AVG(total_amount)           AS ticket_prom,
+    SUM(total_amount)           AS ingreso_total
+FROM {{ ref('stg_viajes') }}
+GROUP BY 1, 2
+```
+
+```yaml
+# models/schema.yml — pruebas automáticas de calidad
+models:
+  - name: stg_viajes
+    columns:
+      - name: vendor_id
+        tests: [not_null]
+      - name: total_amount
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+```
+
+```bash
+dbt run      # ejecuta los modelos
+dbt test     # corre las pruebas de calidad
+dbt docs generate && dbt docs serve   # abre documentación interactiva
+```
+
+---
+
+## 12. Orquestación con Apache Airflow {#sec-airflow}
+
+En producción, los pipelines ETL se ejecutan automáticamente según un
+calendario. **Airflow** define estos flujos como DAGs de Python:
+
+```python
+# dags/etl_taxi_mensual.py
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from datetime import datetime, timedelta
+
+def extraer(**ctx):
+    mes = ctx['logical_date'].strftime("%Y-%m")
+    print(f"Extrayendo mes {mes}...")
+    # aquí va el código de extracción
+
+def transformar(**ctx): ...
+def cargar(**ctx): ...
+def validar(**ctx): ...
+
+with DAG(
+    dag_id="etl_nyc_taxi_mensual",
+    start_date=datetime(2023, 1, 1),
+    schedule_interval="0 3 1 * *",  # el día 1 de cada mes a las 3 AM
+    catchup=False,
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
+) as dag:
+
+    t_extract   = PythonOperator(task_id="extraer",     python_callable=extraer)
+    t_transform = PythonOperator(task_id="transformar", python_callable=transformar)
+    t_load      = PythonOperator(task_id="cargar",      python_callable=cargar)
+    t_validate  = PythonOperator(task_id="validar",     python_callable=validar)
+
+    t_extract >> t_transform >> t_load >> t_validate
+```
+
+::: {.callout-tip}
+**Alternativas a Airflow:**
+- **Prefect** — más Python-nativo, sin XML/YAML, fácil para equipos pequeños.
+- **Dagster** — fuerte en observabilidad y gestión de assets de datos.
+- Para empezar: **Prefect** + **PySpark local** → luego migrar a Airflow en producción.
+:::
+
+---
+
+## 13. Resumen y mapa de herramientas {#sec-etl-resumen}
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     GEM 3 — Mapa de herramientas ETL interactivo
+     ═══════════════════════════════════════════════════════ -->
+<div id="tools-wrap" style="margin:2rem 0">
+<canvas id="tools-cv" width="700" height="360"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block;cursor:pointer"
+  onclick="toolsMap.click(event)"></canvas>
+<p id="tools-info" style="text-align:center;margin-top:.5rem;font-size:.9rem;
+   color:#94a3b8;min-height:1.6em">Haz clic en una herramienta para ver cuándo usarla.</p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('tools-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=360;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const tools = [
+    // Extract
+    {x:80,y:80,w:120,h:44,color:'#0ea5e9',label:'PySpark',
+     info:'Extracción distribuida: CSV, Parquet, JSON, JDBC sobre TB de datos.'},
+    {x:80,y:140,w:120,h:44,color:'#0ea5e9',label:'Kafka',
+     info:'Streaming ETL en tiempo real: eventos de usuarios, IoT, logs.'},
+    {x:80,y:200,w:120,h:44,color:'#0ea5e9',label:'Debezium',
+     info:'Change Data Capture (CDC): captura cambios en BD OLTP sin polling.'},
+    // Transform
+    {x:280,y:80,w:130,h:44,color:'#a855f7',label:'Spark SQL',
+     info:'Transformaciones SQL sobre DataFrames: joins, agregaciones, ventanas.'},
+    {x:280,y:140,w:130,h:44,color:'#a855f7',label:'dbt',
+     info:'Transformaciones SQL versionadas y testeadas dentro del DW (ELT).'},
+    {x:280,y:200,w:130,h:44,color:'#a855f7',label:'Delta Lake',
+     info:'ACID sobre Parquet: upsert, time travel, compaction automática.'},
+    {x:280,y:260,w:130,h:44,color:'#a855f7',label:'Great Expectations',
+     info:'Validación de calidad de datos: expectativas declarativas, alertas.'},
+    // Load
+    {x:490,y:80,w:130,h:44,color:'#10b981',label:'Parquet / Iceberg',
+     info:'Formato columnar de destino. Iceberg añade gestión de particiones.'},
+    {x:490,y:140,w:130,h:44,color:'#10b981',label:'BigQuery / Snowflake',
+     info:'DW cloud columnares: escala infinita, SQL estándar, pago por uso.'},
+    {x:490,y:200,w:130,h:44,color:'#10b981',label:'DuckDB',
+     info:'DW en proceso: perfecto para notebooks y entornos sin clúster.'},
+    // Orchestration
+    {x:185,y:300,w:120,h:44,color:'#f43f5e',label:'Airflow',
+     info:'Orquestación por DAGs: scheduling, reintentos, monitoreo de pipelines.'},
+    {x:355,y:300,w:120,h:44,color:'#f43f5e',label:'Prefect',
+     info:'Alternativa a Airflow más Python-nativa; ideal para equipos pequeños.'},
+  ];
+
+  const headers = [
+    {x:80,y:30,w:120,label:'EXTRACT',color:'#0ea5e9'},
+    {x:280,y:30,w:130,label:'TRANSFORM',color:'#a855f7'},
+    {x:490,y:30,w:130,label:'LOAD',color:'#10b981'},
+    {x:185,y:270,w:290,label:'ORQUESTACIÓN',color:'#f43f5e'},
+  ];
+
+  let hovered = -1;
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // bg grid
+    ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+    // section lines
+    [210, 420].forEach(x=>{
+      ctx.strokeStyle='#334155'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(x,15); ctx.lineTo(x,260); ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    headers.forEach(h=>{
+      ctx.fillStyle = h.color+'33';
+      ctx.beginPath(); ctx.roundRect(h.x, h.y, h.w, 28, 6); ctx.fill();
+      ctx.fillStyle = h.color;
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(h.label, h.x+h.w/2, h.y+18);
+    });
+
+    tools.forEach((t,i)=>{
+      const hi = i===hovered;
+      ctx.shadowColor = hi ? t.color : 'transparent';
+      ctx.shadowBlur  = hi ? 14 : 0;
+      ctx.fillStyle   = hi ? t.color : t.color+'44';
+      ctx.beginPath(); ctx.roundRect(t.x, t.y, t.w, t.h, 8); ctx.fill();
+      ctx.shadowBlur  = 0;
+      ctx.strokeStyle = t.color;
+      ctx.lineWidth   = hi ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(t.x, t.y, t.w, t.h, 8); ctx.stroke();
+      ctx.fillStyle   = hi ? '#fff' : '#cbd5e1';
+      ctx.font        = `${hi?'bold ':' '}12px sans-serif`;
+      ctx.textAlign   = 'center';
+      ctx.fillText(t.label, t.x+t.w/2, t.y+t.h/2+4);
+    });
+  }
+
+  cv.addEventListener('mousemove', e=>{
+    const r = cv.getBoundingClientRect();
+    const mx = (e.clientX-r.left)*(W/r.width);
+    const my = (e.clientY-r.top)*(H/r.height);
+    hovered = tools.findIndex(t=>mx>=t.x&&mx<=t.x+t.w&&my>=t.y&&my<=t.y+t.h);
+    draw();
+  });
+  cv.addEventListener('mouseleave',()=>{ hovered=-1; draw(); });
+
+  function click(e){
+    const r = cv.getBoundingClientRect();
+    const mx = (e.clientX-r.left)*(W/r.width);
+    const my = (e.clientY-r.top)*(H/r.height);
+    const i = tools.findIndex(t=>mx>=t.x&&mx<=t.x+t.w&&my>=t.y&&my<=t.y+t.h);
+    document.getElementById('tools-info').textContent =
+      i>=0 ? `${tools[i].label}: ${tools[i].info}` : 'Haz clic en una herramienta para ver cuándo usarla.';
+  }
+
+  window.toolsMap = {click};
+  draw();
+})();
+</script>
+```
+
+| Etapa | Herramienta | Cuándo usarla |
+|---|---|---|
+| **Extract** | PySpark | Archivos grandes (>1 GB), clústeres, Parquet/JDBC |
+| **Extract** | Kafka + Debezium | Streaming en tiempo real, CDC |
+| **Transform** | Spark SQL / DataFrame API | Joins complejos, window functions, ML features |
+| **Transform** | dbt | Transformaciones SQL versionadas sobre DW cloud |
+| **Quality** | Great Expectations | Validación declarativa antes de la carga |
+| **Load** | Delta Lake / Iceberg | ACID, upsert, time travel en el lakehouse |
+| **Load** | BigQuery / Snowflake | DW cloud sin gestión de infraestructura |
+| **Load** | DuckDB | Notebooks, sin clúster, prototipos rápidos |
+| **Orquestar** | Airflow | Pipelines de producción complejos con SLA |
+| **Orquestar** | Prefect | Equipos pequeños, Python-native, simplicidad |
+
+---
+
+## Referencias y recursos adicionales {#sec-etl-refs}
+
+- Chambers & Zaharia. *Spark: The Definitive Guide*. O'Reilly, 2018.
+- [PySpark Documentation](https://spark.apache.org/docs/latest/api/python/) — API reference completa.
+- [Delta Lake Documentation](https://docs.delta.io/) — ACID y time travel.
+- [dbt Documentation](https://docs.getdbt.com/) — transformaciones SQL versionadas.
+- [Great Expectations](https://greatexpectations.io/) — validación de calidad.
+- [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) — dataset de ejercicios.
+- [TPC-H Benchmark](http://www.tpc.org/tpch/) — esquema de referencia para DW.
