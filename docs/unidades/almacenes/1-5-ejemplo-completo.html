@@ -1,0 +1,2759 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.9.38">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>10&nbsp; Ejemplo Completo: Café Norte — Análisis y Construcción de Data Marts (Kimball) – Almacenes y Minería de Datos</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js" integrity="sha384-ZvpUoO/+PpLXR1lu4jmpXWu80pZlYUAfxl5NsBMWOEPSjUn/6Z/hRTt8+pR6L4N2" crossorigin="anonymous"></script><script src="../../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../../">
+<link href="../../unidades/almacenes/1-4-pyspark-intro.html" rel="next">
+<link href="../../unidades/almacenes/1-4-scd.html" rel="prev">
+<script src="../../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../../site_libs/quarto-html/popper.min.js"></script>
+<script src="../../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting-8e563bccdeb7e5b4bf8f1d510bb78af9.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting-dark-8e563bccdeb7e5b4bf8f1d510bb78af9.css" rel="stylesheet" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting-8e563bccdeb7e5b4bf8f1d510bb78af9.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
+<script src="../../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../../site_libs/bootstrap/bootstrap-c7874ee7edc6d1e6b9c4b9104ce3c829.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../../site_libs/bootstrap/bootstrap-dark-fd7d7d85ebf31d297d22fc4867c845cf.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../../site_libs/bootstrap/bootstrap-c7874ee7edc6d1e6b9c4b9104ce3c829.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "textbox",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+<style>html{ scroll-behavior: smooth; }</style>
+<script src="https://cdn.jsdelivr.net/npm/requirejs@2.3.6/require.min.js" integrity="sha384-c9c+LnTbwQ3aujuU7ULEPVvgLs+Fn6fJUvIGTsuu1ZcCf11fiEubah0ttpca4ntM sha384-6V1/AdqZRWk1KAlWbKBlGhN7VG4iE/yAZcO6NZPMF8od0vukrvr0tg4qY6NSrItx" crossorigin="anonymous"></script>
+
+<script type="application/javascript">define('jquery', [],function() {return window.jQuery;})</script>
+<!-- Google Tag Manager -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-NQJGJRC5');</script>
+<!-- End Google Tag Manager -->
+
+
+<link rel="stylesheet" href="../../visionbook.css">
+</head>
+
+<body class="nav-sidebar floating quarto-light"><script id="quarto-html-before-body" type="application/javascript">
+    const toggleBodyColorMode = (bsSheetEl) => {
+      const mode = bsSheetEl.getAttribute("data-mode");
+      const bodyEl = window.document.querySelector("body");
+      if (mode === "dark") {
+        bodyEl.classList.add("quarto-dark");
+        bodyEl.classList.remove("quarto-light");
+      } else {
+        bodyEl.classList.add("quarto-light");
+        bodyEl.classList.remove("quarto-dark");
+      }
+    }
+    const toggleBodyColorPrimary = () => {
+      const bsSheetEl = window.document.querySelector("link#quarto-bootstrap:not([rel=disabled-stylesheet])");
+      if (bsSheetEl) {
+        toggleBodyColorMode(bsSheetEl);
+      }
+    }
+    const setColorSchemeToggle = (alternate) => {
+      const toggles = window.document.querySelectorAll('.quarto-color-scheme-toggle');
+      for (let i=0; i < toggles.length; i++) {
+        const toggle = toggles[i];
+        if (toggle) {
+          if (alternate) {
+            toggle.classList.add("alternate");
+          } else {
+            toggle.classList.remove("alternate");
+          }
+        }
+      }
+    };
+    const toggleColorMode = (alternate) => {
+      // Switch the stylesheets
+      const primaryStylesheets = window.document.querySelectorAll('link.quarto-color-scheme:not(.quarto-color-alternate)');
+      const alternateStylesheets = window.document.querySelectorAll('link.quarto-color-scheme.quarto-color-alternate');
+      manageTransitions('#quarto-margin-sidebar .nav-link', false);
+      if (alternate) {
+        // note: dark is layered on light, we don't disable primary!
+        enableStylesheet(alternateStylesheets);
+        for (const sheetNode of alternateStylesheets) {
+          if (sheetNode.id === "quarto-bootstrap") {
+            toggleBodyColorMode(sheetNode);
+          }
+        }
+      } else {
+        disableStylesheet(alternateStylesheets);
+        enableStylesheet(primaryStylesheets)
+        toggleBodyColorPrimary();
+      }
+      manageTransitions('#quarto-margin-sidebar .nav-link', true);
+      // Switch the toggles
+      setColorSchemeToggle(alternate)
+      // Hack to workaround the fact that safari doesn't
+      // properly recolor the scrollbar when toggling (#1455)
+      if (navigator.userAgent.indexOf('Safari') > 0 && navigator.userAgent.indexOf('Chrome') == -1) {
+        manageTransitions("body", false);
+        window.scrollTo(0, 1);
+        setTimeout(() => {
+          window.scrollTo(0, 0);
+          manageTransitions("body", true);
+        }, 40);
+      }
+    }
+    const disableStylesheet = (stylesheets) => {
+      for (let i=0; i < stylesheets.length; i++) {
+        const stylesheet = stylesheets[i];
+        stylesheet.rel = 'disabled-stylesheet';
+      }
+    }
+    const enableStylesheet = (stylesheets) => {
+      for (let i=0; i < stylesheets.length; i++) {
+        const stylesheet = stylesheets[i];
+        if(stylesheet.rel !== 'stylesheet') { // for Chrome, which will still FOUC without this check
+          stylesheet.rel = 'stylesheet';
+        }
+      }
+    }
+    const manageTransitions = (selector, allowTransitions) => {
+      const els = window.document.querySelectorAll(selector);
+      for (let i=0; i < els.length; i++) {
+        const el = els[i];
+        if (allowTransitions) {
+          el.classList.remove('notransition');
+        } else {
+          el.classList.add('notransition');
+        }
+      }
+    }
+    const isFileUrl = () => {
+      return window.location.protocol === 'file:';
+    }
+    const hasAlternateSentinel = () => {
+      let styleSentinel = getColorSchemeSentinel();
+      if (styleSentinel !== null) {
+        return styleSentinel === "alternate";
+      } else {
+        return false;
+      }
+    }
+    const setStyleSentinel = (alternate) => {
+      const value = alternate ? "alternate" : "default";
+      if (!isFileUrl()) {
+        window.localStorage.setItem("quarto-color-scheme", value);
+      } else {
+        localAlternateSentinel = value;
+      }
+    }
+    const getColorSchemeSentinel = () => {
+      if (!isFileUrl()) {
+        const storageValue = window.localStorage.getItem("quarto-color-scheme");
+        return storageValue != null ? storageValue : localAlternateSentinel;
+      } else {
+        return localAlternateSentinel;
+      }
+    }
+    const toggleGiscusIfUsed = (isAlternate, darkModeDefault) => {
+      const baseTheme = document.querySelector('#giscus-base-theme')?.value ?? 'light';
+      const alternateTheme = document.querySelector('#giscus-alt-theme')?.value ?? 'dark';
+      let newTheme = '';
+      if(authorPrefersDark) {
+        newTheme = isAlternate ? baseTheme : alternateTheme;
+      } else {
+        newTheme = isAlternate ? alternateTheme : baseTheme;
+      }
+      const changeGiscusTheme = () => {
+        // From: https://github.com/giscus/giscus/issues/336
+        const sendMessage = (message) => {
+          const iframe = document.querySelector('iframe.giscus-frame');
+          if (!iframe) return;
+          iframe.contentWindow.postMessage({ giscus: message }, 'https://giscus.app');
+        }
+        sendMessage({
+          setConfig: {
+            theme: newTheme
+          }
+        });
+      }
+      const isGiscussLoaded = window.document.querySelector('iframe.giscus-frame') !== null;
+      if (isGiscussLoaded) {
+        changeGiscusTheme();
+      }
+    };
+    const authorPrefersDark = false;
+    const darkModeDefault = authorPrefersDark;
+      document.querySelector('link#quarto-text-highlighting-styles.quarto-color-scheme-extra').rel = 'disabled-stylesheet';
+      document.querySelector('link#quarto-bootstrap.quarto-color-scheme-extra').rel = 'disabled-stylesheet';
+    let localAlternateSentinel = darkModeDefault ? 'alternate' : 'default';
+    // Dark / light mode switch
+    window.quartoToggleColorScheme = () => {
+      // Read the current dark / light value
+      let toAlternate = !hasAlternateSentinel();
+      toggleColorMode(toAlternate);
+      setStyleSentinel(toAlternate);
+      toggleGiscusIfUsed(toAlternate, darkModeDefault);
+      window.dispatchEvent(new Event('resize'));
+    };
+    // Switch to dark mode if need be
+    if (hasAlternateSentinel()) {
+      toggleColorMode(true);
+    } else {
+      toggleColorMode(false);
+    }
+  </script>
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item">Almacenes de Datos</li><li class="breadcrumb-item"><a href="../../unidades/almacenes/1-2-modelo-multidim.html">Modelado multidimensional</a></li><li class="breadcrumb-item"><a href="../../unidades/almacenes/1-5-ejemplo-completo.html"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Ejemplo Completo: Café Norte — Análisis y Construcción de Data Marts (Kimball)</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="Search" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="../../">Almacenes y Minería de Datos</a> 
+        <div class="sidebar-tools-main tools-wide">
+    <a href="https://github.com/DiegoViillalba/almacenamienes-y-mineria-de-datos" title="Source Code" class="quarto-navigation-tool px-1" aria-label="Source Code"><i class="bi bi-github"></i></a>
+    <div class="dropdown">
+      <a href="" title="Download" id="quarto-navigation-tool-dropdown-0" class="quarto-navigation-tool dropdown-toggle px-1" data-bs-toggle="dropdown" aria-expanded="false" role="link" aria-label="Download"><i class="bi bi-download"></i></a>
+      <ul class="dropdown-menu" aria-labelledby="quarto-navigation-tool-dropdown-0">
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="../../Almacenes-y-Minería-de-Datos.pdf">
+              <i class="bi bi-file-pdf pe-1"></i>
+            Download PDF
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="../../Almacenes-y-Minería-de-Datos.epub">
+              <i class="bi bi-journal pe-1"></i>
+            Download ePub
+            </a>
+          </li>
+      </ul>
+    </div>
+    <div class="dropdown">
+      <a href="" title="Share" id="quarto-navigation-tool-dropdown-1" class="quarto-navigation-tool dropdown-toggle px-1" data-bs-toggle="dropdown" aria-expanded="false" role="link" aria-label="Share"><i class="bi bi-share"></i></a>
+      <ul class="dropdown-menu" aria-labelledby="quarto-navigation-tool-dropdown-1">
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="https://twitter.com/intent/tweet?url=|url|">
+              <i class="bi bi-twitter pe-1"></i>
+            Twitter
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="https://www.facebook.com/sharer/sharer.php?u=|url|">
+              <i class="bi bi-facebook pe-1"></i>
+            Facebook
+            </a>
+          </li>
+      </ul>
+    </div>
+  <a href="" class="quarto-color-scheme-toggle quarto-navigation-tool  px-1" onclick="window.quartoToggleColorScheme(); return false;" title="Toggle dark mode"><i class="bi"></i></a>
+</div>
+    </div>
+      </div>
+        <div class="mt-2 flex-shrink-0 align-items-center">
+        <div class="sidebar-search">
+        <div id="quarto-search" class="" title="Search"></div>
+        </div>
+        </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Prefacio</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Entendimiento de Negocio</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="false">
+ <span class="menu-text">Fundamentos y Stakeholders</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro/1-0-gestion-stakeholders.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">Gestión de Requerimientos y Stakeholders</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro/1-0-roles-y-ciclo-vida.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Roles en el Equipo de Datos y Ciclo de Vida de los Datos</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="false">
+ <span class="menu-text">Planeación del Proyecto</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro/1-1-business-understanding-canvas.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">Planeación Real de un Proyecto: El Business Understanding Canvas</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Almacenes de Datos</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="false">
+ <span class="menu-text">Arquitectura de almacenes de Datos</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-0-arquitecturas-almacenamiento.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Introducción</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-1-datawarehouse.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Data Warehouse</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-1-datalakehouse.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Data Lakehouse</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
+ <span class="menu-text">Modelado multidimensional</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth2 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-2-modelo-multidim.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Modelado Multidimensional</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-3-esquemas-y-redundancia.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Esquemas Dimensionales y Redundancia</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-4-scd.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">Dimensiones Lentamente Cambiantes (SCD)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-5-ejemplo-completo.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Ejemplo Completo: Café Norte — Análisis y Construcción de Data Marts (Kimball)</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="false">
+ <span class="menu-text">Integración ETL/ELT</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-4-pyspark-intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Introducción a PySpark y Fundamentos ETL</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-5-etl-extraccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Extracción y Fuentes Heterogéneas</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-6-etl-transformacion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Transformación, Carga y Pipeline ETL</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-7-etl-practicas.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Prácticas ETL en Databricks</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/almacenes/1-8-etl-orquestacion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">Orquestación y Herramientas Modernas</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="false">
+ <span class="menu-text">Modelado para consumo</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/OLAP/capitulo_cubos_olap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Computación de cubos de datos OLAP</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/OLAP/capitulo_datamarts.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Data Marts: del Almacén de Datos al Consumo por Área de Negocio</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/OLAP/capitulo_api_consumo.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Consumo Moderno de Data Marts: APIs y Capas Semánticas</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
+ <span class="menu-text">Proceso de Minería de Datos</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="false">
+ <span class="menu-text">Marco Metodológico</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Introducción a Minería de Datos y Frameworks de Proceso</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-10-CRISP_DM_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">Business Understanding - Caso BigMart Sales</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="false">
+ <span class="menu-text">Análisis Exploratorio (EDA)</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-11" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-2-eda_exploratorio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Análisis Exploratorio de Datos (EDA): teoría, medidas y visualización</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-3-example_localizacion_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Medidas de localización en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-4-variabilidad_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Medidas de variabilidad en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-5-forma_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Medidas de forma en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-6-heterogeneidad_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Medidas de heterogeneidad en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-7-concentracion_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Medidas de concentración en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/2-9-correlacion_bigmart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Medidas de correlación en Big Mart Sales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/multivariado/2-11-analisis-multivariado.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Análisis Exploratorio de Datos Multivariado: Teoría y Visualización</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/intro_mineria/multivariado/2-12-analisis-multivariado-examples.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Análisis Exploratorio de Datos Multivariado: Ejemplos prácticos</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="false">
+ <span class="menu-text">Preprocesamiento</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-12" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Introducción a Preprocesamiento de Datos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-3-conversion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Conversión y Transformación de Datos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-6-ruido.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Reducción de ruido</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-2-datos-faltantes.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">Procesamiento de Datos Faltantes</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-4-PCA.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">34</span>&nbsp; <span class="chapter-title">Reducción de Dimensionalidad con PCA</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/preprocesamiento/4-5-chi2.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">35</span>&nbsp; <span class="chapter-title">Reducción de variables categóricas con χ²</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-13" role="navigation" aria-expanded="true">
+ <span class="menu-text">Extracción de Patrones</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-13" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-13" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-14" role="navigation" aria-expanded="false">
+ <span class="menu-text">Reglas de Asociación</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-14" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-14" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/reglas_asociacion/5-1-introduccion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">36</span>&nbsp; <span class="chapter-title">Reglas de Asociación: Fundamentos, Interpretación y Selección</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/reglas_asociacion/5-2-metricas-extra.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">37</span>&nbsp; <span class="chapter-title">Más Allá del Lift: Métricas Avanzadas, Sensibilidad y Estructura de Reglas</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/reglas_asociacion/5-3-fp_growth.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">38</span>&nbsp; <span class="chapter-title">FP-Growth y minería de patrones frecuentes</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-15" role="navigation" aria-expanded="true">
+ <span class="menu-text">Clasificación</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-15" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-15" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-16" role="navigation" aria-expanded="false">
+ <span class="menu-text">Introducción y Evaluación</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-16" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-16" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-1-clasificacion_arboles.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">39</span>&nbsp; <span class="chapter-title">Clasificación y árboles de decisión</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-2-metricas_clasificacion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">Evaluación de Clasificadores: Métricas Esenciales y su Interpretación</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_evaluacion_modelos_clasificacion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">41</span>&nbsp; <span class="chapter-title">Evaluación de un modelo de clasificación</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-17" role="navigation" aria-expanded="false">
+ <span class="menu-text">Árboles y Ensambles</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-17" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-17" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-1-clasificacion_cart.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">42</span>&nbsp; <span class="chapter-title">Arboles CART: árboles de clasificación y regresión</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_arboles_regresion_lineal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">43</span>&nbsp; <span class="chapter-title">Árboles de regresión lineal, ensambles y vecinos cercanos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_xgboost.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">44</span>&nbsp; <span class="chapter-title">Gradient Boosting y XGBoost</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/6-3-ejercicio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">45</span>&nbsp; <span class="chapter-title">Clasificadores Supervisados: Experimento Práctico</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-18" role="navigation" aria-expanded="false">
+ <span class="menu-text">Modelos Lineales</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-18" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-18" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_regresion_clasificadores_lineales.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">46</span>&nbsp; <span class="chapter-title">Regresión y clasificadores lineales</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_regresion_logistica.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">47</span>&nbsp; <span class="chapter-title">Regresión Logística</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_svm.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">48</span>&nbsp; <span class="chapter-title">Máquinas de Soporte Vectorial</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-19" role="navigation" aria-expanded="false">
+ <span class="menu-text">Clasificadores Probabilísticos</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-19" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-19" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_clasificadores_bayesianos.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">49</span>&nbsp; <span class="chapter-title">Clasificadores bayesianos</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_gmm.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">50</span>&nbsp; <span class="chapter-title">Modelos de Mezcla Gaussiana</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-20" role="navigation" aria-expanded="false">
+ <span class="menu-text">Redes Neuronales</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-20" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-20" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_redes_neuronales.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">51</span>&nbsp; <span class="chapter-title">Redes Neuronales para Clasificacion</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clasificadores/capitulo_pytorch_jax.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">52</span>&nbsp; <span class="chapter-title">Implementacion Practica: PyTorch y JAX</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-21" role="navigation" aria-expanded="true">
+ <span class="menu-text">Aprendizaje No Supervisado</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-21" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-21" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-22" role="navigation" aria-expanded="false">
+ <span class="menu-text">Clustering</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-22" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-22" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_clustering_intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">53</span>&nbsp; <span class="chapter-title">Introducción al clustering y métricas de evaluación</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_kmeans.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">54</span>&nbsp; <span class="chapter-title">K-Means y K-Medoids</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_jerarquico.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">55</span>&nbsp; <span class="chapter-title">Clustering jerárquico</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_dbscan.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">56</span>&nbsp; <span class="chapter-title">DBSCAN y HDBSCAN</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+          <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-23" role="navigation" aria-expanded="false">
+ <span class="menu-text">Reducción de Dimensionalidad</span></a>
+          <a class="sidebar-item-toggle text-start collapsed" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-23" role="navigation" aria-expanded="false" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-23" class="collapse list-unstyled sidebar-section depth2 ">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/clustering/capitulo_tsne_umap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">57</span>&nbsp; <span class="chapter-title">t-SNE, UMAP y reducción de dimensionalidad no lineal</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-24" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-24" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-24" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../presentaciones.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">Presentaciones de clase</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/apendices/glosario.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">B</span>&nbsp; <span class="chapter-title">Glosario Unificado de Términos de Datos y Computación en la Nube</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/apendices/preparacion-entrevistas.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Preparación para Entrevistas Analíticas</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../../unidades/apendices/referencias-adicionales.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">D</span>&nbsp; <span class="chapter-title">Bibliografía y Recursos Adicionales</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#propósito-y-supuestos" id="toc-propósito-y-supuestos" class="nav-link active" data-scroll-target="#propósito-y-supuestos"><span class="header-section-number">10.1</span> Propósito y supuestos</a></li>
+  <li><a href="#estructura-esperada-de-archivos-csv" id="toc-estructura-esperada-de-archivos-csv" class="nav-link" data-scroll-target="#estructura-esperada-de-archivos-csv"><span class="header-section-number">10.2</span> 1. Estructura esperada de archivos CSV</a>
+  <ul class="collapse">
+  <li><a href="#catálogos-maestros-dimensiones" id="toc-catálogos-maestros-dimensiones" class="nav-link" data-scroll-target="#catálogos-maestros-dimensiones"><span class="header-section-number">10.2.1</span> 1.1 Catálogos maestros (dimensiones)</a></li>
+  <li><a href="#transacciones-hechos" id="toc-transacciones-hechos" class="nav-link" data-scroll-target="#transacciones-hechos"><span class="header-section-number">10.2.2</span> 1.2 Transacciones (hechos)</a></li>
+  </ul></li>
+  <li><a href="#carga-de-datos-y-validación-de-esquema" id="toc-carga-de-datos-y-validación-de-esquema" class="nav-link" data-scroll-target="#carga-de-datos-y-validación-de-esquema"><span class="header-section-number">10.3</span> 2. Carga de datos y validación de esquema</a>
+  <ul class="collapse">
+  <li><a href="#chequeos-mínimos-de-calidad" id="toc-chequeos-mínimos-de-calidad" class="nav-link" data-scroll-target="#chequeos-mínimos-de-calidad"><span class="header-section-number">10.3.1</span> 2.1 Chequeos mínimos de calidad</a></li>
+  </ul></li>
+  <li><a href="#homologación-e-integración-de-fuentes-staging-integrado" id="toc-homologación-e-integración-de-fuentes-staging-integrado" class="nav-link" data-scroll-target="#homologación-e-integración-de-fuentes-staging-integrado"><span class="header-section-number">10.4</span> 3. Homologación e integración de fuentes (Staging Integrado)</a>
+  <ul class="collapse">
+  <li><a href="#integración-de-encabezados-y-líneas" id="toc-integración-de-encabezados-y-líneas" class="nav-link" data-scroll-target="#integración-de-encabezados-y-líneas"><span class="header-section-number">10.4.1</span> 3.1 Integración de encabezados y líneas</a></li>
+  <li><a href="#derivación-de-métricas-transaccionales" id="toc-derivación-de-métricas-transaccionales" class="nav-link" data-scroll-target="#derivación-de-métricas-transaccionales"><span class="header-section-number">10.4.2</span> 3.2 Derivación de métricas transaccionales</a></li>
+  </ul></li>
+  <li><a href="#construcción-de-dimensiones-conformadas" id="toc-construcción-de-dimensiones-conformadas" class="nav-link" data-scroll-target="#construcción-de-dimensiones-conformadas"><span class="header-section-number">10.5</span> 4. Construcción de dimensiones conformadas</a>
+  <ul class="collapse">
+  <li><a href="#dim_tiempo" id="toc-dim_tiempo" class="nav-link" data-scroll-target="#dim_tiempo"><span class="header-section-number">10.5.1</span> 4.1 <code>dim_tiempo</code></a></li>
+  <li><a href="#función-auxiliar-para-dimensiones-tipo-1" id="toc-función-auxiliar-para-dimensiones-tipo-1" class="nav-link" data-scroll-target="#función-auxiliar-para-dimensiones-tipo-1"><span class="header-section-number">10.5.2</span> 4.2 Función auxiliar para dimensiones (Tipo 1)</a></li>
+  <li><a href="#dim_cliente-dim_producto-dim_sucursal" id="toc-dim_cliente-dim_producto-dim_sucursal" class="nav-link" data-scroll-target="#dim_cliente-dim_producto-dim_sucursal"><span class="header-section-number">10.5.3</span> 4.3 <code>dim_cliente</code>, <code>dim_producto</code>, <code>dim_sucursal</code></a></li>
+  </ul></li>
+  <li><a href="#construcción-de-la-tabla-de-hechos-fact_linea_pedido" id="toc-construcción-de-la-tabla-de-hechos-fact_linea_pedido" class="nav-link" data-scroll-target="#construcción-de-la-tabla-de-hechos-fact_linea_pedido"><span class="header-section-number">10.6</span> 5. Construcción de la tabla de hechos (fact_linea_pedido)</a></li>
+  <li><a href="#data-marts-y-respuestas-a-preguntas-estratégicas" id="toc-data-marts-y-respuestas-a-preguntas-estratégicas" class="nav-link" data-scroll-target="#data-marts-y-respuestas-a-preguntas-estratégicas"><span class="header-section-number">10.7</span> 6. Data Marts y respuestas a preguntas estratégicas</a>
+  <ul class="collapse">
+  <li><a href="#pregunta-1-pedidos-mensuales-desde-enero-2023-segmentado-por-canal" id="toc-pregunta-1-pedidos-mensuales-desde-enero-2023-segmentado-por-canal" class="nav-link" data-scroll-target="#pregunta-1-pedidos-mensuales-desde-enero-2023-segmentado-por-canal"><span class="header-section-number">10.7.1</span> 6.1 Pregunta 1: Pedidos mensuales desde enero 2023, segmentado por canal</a></li>
+  <li><a href="#pregunta-2-categorías-con-mayor-demanda-en-el-periodo-post" id="toc-pregunta-2-categorías-con-mayor-demanda-en-el-periodo-post" class="nav-link" data-scroll-target="#pregunta-2-categorías-con-mayor-demanda-en-el-periodo-post"><span class="header-section-number">10.7.2</span> 6.2 Pregunta 2: Categorías con mayor demanda en el periodo post</a></li>
+  <li><a href="#pregunta-3-variaciones-por-zona-y-tipo-de-cliente-pre-vs-post" id="toc-pregunta-3-variaciones-por-zona-y-tipo-de-cliente-pre-vs-post" class="nav-link" data-scroll-target="#pregunta-3-variaciones-por-zona-y-tipo-de-cliente-pre-vs-post"><span class="header-section-number">10.7.3</span> 6.3 Pregunta 3: Variaciones por zona y tipo de cliente (pre vs post)</a></li>
+  <li><a href="#pregunta-4-cancelación-y-cupones-tasas-por-mes" id="toc-pregunta-4-cancelación-y-cupones-tasas-por-mes" class="nav-link" data-scroll-target="#pregunta-4-cancelación-y-cupones-tasas-por-mes"><span class="header-section-number">10.7.4</span> 6.4 Pregunta 4: Cancelación y cupones (tasas) por mes</a></li>
+  </ul></li>
+  <li><a href="#exportación-de-tablas-dimensiones-y-hechos-data-mart-físico" id="toc-exportación-de-tablas-dimensiones-y-hechos-data-mart-físico" class="nav-link" data-scroll-target="#exportación-de-tablas-dimensiones-y-hechos-data-mart-físico"><span class="header-section-number">10.8</span> 7. Exportación de tablas: Dimensiones y Hechos (Data Mart físico)</a></li>
+  <li><a href="#discusión-técnica-decisiones-de-diseño-y-extensiones" id="toc-discusión-técnica-decisiones-de-diseño-y-extensiones" class="nav-link" data-scroll-target="#discusión-técnica-decisiones-de-diseño-y-extensiones"><span class="header-section-number">10.9</span> 8. Discusión técnica: decisiones de diseño y extensiones</a></li>
+  <li><a href="#reproducibilidad-y-control-de-versiones" id="toc-reproducibilidad-y-control-de-versiones" class="nav-link" data-scroll-target="#reproducibilidad-y-control-de-versiones"><span class="header-section-number">10.10</span> 9. Reproducibilidad y control de versiones</a></li>
+  </ul>
+<div class="toc-actions"><ul><li><a href="https://github.com/DiegoViillalba/almacenamienes-y-mineria-de-datos/edit/main/unidades/almacenes/1-5-ejemplo-completo.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li></ul></div><div class="quarto-other-links"><h2>Other Links</h2><ul><li><a href="mailto:diego.villalba@ciencias.unam.mx"><i class="bi bi-envelope"></i>Contáctame</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item">Almacenes de Datos</li><li class="breadcrumb-item"><a href="../../unidades/almacenes/1-2-modelo-multidim.html">Modelado multidimensional</a></li><li class="breadcrumb-item"><a href="../../unidades/almacenes/1-5-ejemplo-completo.html"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Ejemplo Completo: Café Norte — Análisis y Construcción de Data Marts (Kimball)</span></a></li></ol></nav>
+<div class="quarto-title">
+<h1 class="title"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Ejemplo Completo: Café Norte — Análisis y Construcción de Data Marts (Kimball)</span></h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="propósito-y-supuestos" class="level2" data-number="10.1">
+<h2 data-number="10.1" class="anchored" data-anchor-id="propósito-y-supuestos"><span class="header-section-number">10.1</span> Propósito y supuestos</h2>
+<p>Este ejemplo documenta, con un enfoque <strong>Kimball</strong>, la construcción de dimensiones conformadas y una tabla de hechos a granularidad <strong>línea de pedido</strong> para evaluar el impacto del lanzamiento de la app (enero de 2023) y del programa de lealtad. Es el cierre práctico de la sección: aplica granularidad y aditividad, esquema estrella y redundancia controlada, y dimensiones conformadas, todo sobre un caso end-to-end.</p>
+<p><strong>Hito de intervención (cutoff):</strong> <code>2023-01-01</code>. Se define:</p>
+<ul>
+<li>Periodo <strong>pre</strong>: fechas menores a <code>2023-01-01</code>.</li>
+<li>Periodo <strong>post</strong>: fechas mayores o iguales a <code>2023-01-01</code>.</li>
+</ul>
+<p>Se asume que el lector <strong>ya cuenta con CSVs</strong> provenientes de sistemas operacionales (POS y App) y catálogos maestros.</p>
+<hr>
+</section>
+<section id="estructura-esperada-de-archivos-csv" class="level2" data-number="10.2">
+<h2 data-number="10.2" class="anchored" data-anchor-id="estructura-esperada-de-archivos-csv"><span class="header-section-number">10.2</span> 1. Estructura esperada de archivos CSV</h2>
+<p>Coloque los archivos en un directorio <code>data/</code> al mismo nivel que este <code>.qmd</code>.</p>
+<section id="catálogos-maestros-dimensiones" class="level3" data-number="10.2.1">
+<h3 data-number="10.2.1" class="anchored" data-anchor-id="catálogos-maestros-dimensiones"><span class="header-section-number">10.2.1</span> 1.1 Catálogos maestros (dimensiones)</h3>
+<ul>
+<li><p><code>data/clientes.csv</code> Campos mínimos: <code>cliente_id</code>, <code>fecha_alta</code>, <code>tipo_cliente</code>, <code>nivel_lealtad</code> (u otros atributos).</p></li>
+<li><p><code>data/productos.csv</code> Campos mínimos: <code>sku</code>, <code>nombre</code>, <code>categoria</code>, <code>subcategoria</code>, <code>tamano</code>, <code>activo</code>.</p></li>
+<li><p><code>data/sucursales.csv</code> Campos mínimos: <code>sucursal_id</code>, <code>nombre</code>, <code>zona</code>, <code>formato</code>.</p></li>
+<li><p>(Opcional) <code>data/promociones.csv</code> Campos mínimos: <code>promo_codigo</code>, <code>campania</code>, <code>descripcion</code>.</p></li>
+</ul>
+</section>
+<section id="transacciones-hechos" class="level3" data-number="10.2.2">
+<h3 data-number="10.2.2" class="anchored" data-anchor-id="transacciones-hechos"><span class="header-section-number">10.2.2</span> 1.2 Transacciones (hechos)</h3>
+<p>Se recomienda conservar el encabezado del pedido y las líneas separadas.</p>
+<ul>
+<li><p><code>data/pedidos_pos.csv</code> y <code>data/pedidos_app.csv</code> Campos mínimos: <code>order_id</code>, <code>fecha</code>, <code>cliente_id</code>, <code>sucursal_id</code>, <code>canal</code> (<code>POS</code> o <code>APP</code>).</p></li>
+<li><p><code>data/lineas_pos.csv</code> y <code>data/lineas_app.csv</code> Campos mínimos: <code>order_id</code>, <code>line_num</code>, <code>sku</code>, <code>cantidad</code>, <code>precio_unitario</code>, <code>promo_codigo</code>, <code>metodo_pago</code>, <code>cancelado_flag</code>.</p></li>
+</ul>
+<blockquote class="blockquote">
+<p>Nota: si en origen el descuento ya viene desglosado, incluya también <code>descuento_importe</code>. Si no, puede derivarse en el proceso (ver más adelante).</p>
+</blockquote>
+<hr>
+</section>
+</section>
+<section id="carga-de-datos-y-validación-de-esquema" class="level2" data-number="10.3">
+<h2 data-number="10.3" class="anchored" data-anchor-id="carga-de-datos-y-validación-de-esquema"><span class="header-section-number">10.3</span> 2. Carga de datos y validación de esquema</h2>
+<p>En un pipeline reproducible, <strong>la primera etapa</strong> consiste en cargar datos y aplicar validaciones: tipos, llaves no nulas, dominios controlados y rangos.</p>
+<div id="da1bdee3" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>DATA_DIR <span class="op">=</span> Path(<span class="st">"../../data"</span>)</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> read_csv(path: Path) <span class="op">-&gt;</span> pd.DataFrame:</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> path.exists():</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">FileNotFoundError</span>(<span class="ss">f"No se encontró el archivo: </span><span class="sc">{</span>path<span class="sc">.</span>resolve()<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pd.read_csv(path)</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>clientes   <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"clientes.csv"</span>)</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>productos  <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"productos.csv"</span>)</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>sucursales <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"sucursales.csv"</span>)</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>ped_pos <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"pedidos_pos.csv"</span>)</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>ped_app <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"pedidos_app.csv"</span>)</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>lin_pos <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"lineas_pos.csv"</span>)</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>lin_app <span class="op">=</span> read_csv(DATA_DIR <span class="op">/</span> <span class="st">"lineas_app.csv"</span>)</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="co"># Promociones es opcional</span></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>prom_path <span class="op">=</span> DATA_DIR <span class="op">/</span> <span class="st">"promociones.csv"</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>promociones <span class="op">=</span> read_csv(prom_path) <span class="cf">if</span> prom_path.exists() <span class="cf">else</span> <span class="va">None</span></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="co"># Visualización rápida</span></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>clientes.head(), productos.head(), sucursales.head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>(  cliente_id  fecha_alta tipo_cliente nivel_lealtad
+ 0    C000001  2021-09-10      lealtad         Plata
+ 1    C000002  2022-02-15  sin_lealtad           NaN
+ 2    C000003  2022-06-01      lealtad        Bronce
+ 3    C000004  2022-11-20  sin_lealtad           NaN
+ 4    C000005  2023-01-05      lealtad           Oro,
+        sku           nombre          categoria subcategoria tamano  activo
+ 0  SKU0001        Americano  Bebidas Calientes    Americano      M       1
+ 1  SKU0002            Latte  Bebidas Calientes        Latte      G       1
+ 2  SKU0003        Capuccino  Bebidas Calientes    Capuccino      M       1
+ 3  SKU0004        Cold Brew      Bebidas Frías    Cold Brew      M       1
+ 4  SKU0005  Frappé Vainilla      Bebidas Frías       Frappé      G       1,
+   sucursal_id      nombre      zona formato
+ 0        S001    Centro 1    Centro  Tienda
+ 1        S002     Norte 1     Norte  Tienda
+ 2        S003       Sur 1       Sur  Tienda
+ 3        S004   Oriente 1   Oriente  Kiosco
+ 4        S005  Poniente 1  Poniente  Kiosco)</code></pre>
+</div>
+</div>
+<section id="chequeos-mínimos-de-calidad" class="level3" data-number="10.3.1">
+<h3 data-number="10.3.1" class="anchored" data-anchor-id="chequeos-mínimos-de-calidad"><span class="header-section-number">10.3.1</span> 2.1 Chequeos mínimos de calidad</h3>
+<p>A continuación se implementan reglas mínimas. En un DW real, estas reglas alimentan un sistema de monitoreo (por ejemplo, Great Expectations) y generan reportes de calidad.</p>
+<div id="4691cee0" class="cell" data-execution_count="2">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> assert_columns(df: pd.DataFrame, required: <span class="bu">list</span>[<span class="bu">str</span>], name: <span class="bu">str</span>):</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    missing <span class="op">=</span> [c <span class="cf">for</span> c <span class="kw">in</span> required <span class="cf">if</span> c <span class="kw">not</span> <span class="kw">in</span> df.columns]</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> missing:</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">] Faltan columnas requeridas: </span><span class="sc">{</span>missing<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Esquema mínimo</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>assert_columns(clientes,  [<span class="st">"cliente_id"</span>, <span class="st">"fecha_alta"</span>], <span class="st">"clientes"</span>)</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>assert_columns(productos, [<span class="st">"sku"</span>, <span class="st">"nombre"</span>, <span class="st">"categoria"</span>], <span class="st">"productos"</span>)</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>assert_columns(sucursales,[<span class="st">"sucursal_id"</span>, <span class="st">"nombre"</span>, <span class="st">"zona"</span>], <span class="st">"sucursales"</span>)</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>assert_columns(ped_pos, [<span class="st">"order_id"</span>,<span class="st">"fecha"</span>,<span class="st">"cliente_id"</span>,<span class="st">"sucursal_id"</span>,<span class="st">"canal"</span>], <span class="st">"pedidos_pos"</span>)</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>assert_columns(ped_app, [<span class="st">"order_id"</span>,<span class="st">"fecha"</span>,<span class="st">"cliente_id"</span>,<span class="st">"sucursal_id"</span>,<span class="st">"canal"</span>], <span class="st">"pedidos_app"</span>)</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>assert_columns(lin_pos, [<span class="st">"order_id"</span>,<span class="st">"line_num"</span>,<span class="st">"sku"</span>,<span class="st">"cantidad"</span>,<span class="st">"precio_unitario"</span>], <span class="st">"lineas_pos"</span>)</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>assert_columns(lin_app, [<span class="st">"order_id"</span>,<span class="st">"line_num"</span>,<span class="st">"sku"</span>,<span class="st">"cantidad"</span>,<span class="st">"precio_unitario"</span>], <span class="st">"lineas_app"</span>)</span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a><span class="co"># Tipos: fechas</span></span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> df, col, name <span class="kw">in</span> [</span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>    (clientes, <span class="st">"fecha_alta"</span>, <span class="st">"clientes"</span>),</span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>    (ped_pos, <span class="st">"fecha"</span>, <span class="st">"pedidos_pos"</span>),</span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>    (ped_app, <span class="st">"fecha"</span>, <span class="st">"pedidos_app"</span>),</span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a>]:</span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>    df[col] <span class="op">=</span> pd.to_datetime(df[col], errors<span class="op">=</span><span class="st">"coerce"</span>)</span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> df[col].isna().<span class="bu">any</span>():</span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a>        bad <span class="op">=</span> df[df[col].isna()].head(<span class="dv">5</span>)</span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">] Fechas inválidas en '</span><span class="sc">{</span>col<span class="sc">}</span><span class="ss">'. Ejemplos:</span><span class="ch">\n</span><span class="sc">{</span>bad<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true" tabindex="-1"></a><span class="co"># No nulos en llaves operacionales</span></span>
+<span id="cb3-29"><a href="#cb3-29" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> assert_not_null(df: pd.DataFrame, cols: <span class="bu">list</span>[<span class="bu">str</span>], name: <span class="bu">str</span>):</span>
+<span id="cb3-30"><a href="#cb3-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> c <span class="kw">in</span> cols:</span>
+<span id="cb3-31"><a href="#cb3-31" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> df[c].isna().<span class="bu">any</span>():</span>
+<span id="cb3-32"><a href="#cb3-32" aria-hidden="true" tabindex="-1"></a>            <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">] Hay nulos en la columna clave: </span><span class="sc">{</span>c<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb3-33"><a href="#cb3-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-34"><a href="#cb3-34" aria-hidden="true" tabindex="-1"></a>assert_not_null(ped_pos, [<span class="st">"order_id"</span>,<span class="st">"cliente_id"</span>,<span class="st">"sucursal_id"</span>], <span class="st">"pedidos_pos"</span>)</span>
+<span id="cb3-35"><a href="#cb3-35" aria-hidden="true" tabindex="-1"></a>assert_not_null(ped_app, [<span class="st">"order_id"</span>,<span class="st">"cliente_id"</span>,<span class="st">"sucursal_id"</span>], <span class="st">"pedidos_app"</span>)</span>
+<span id="cb3-36"><a href="#cb3-36" aria-hidden="true" tabindex="-1"></a>assert_not_null(lin_pos, [<span class="st">"order_id"</span>,<span class="st">"sku"</span>], <span class="st">"lineas_pos"</span>)</span>
+<span id="cb3-37"><a href="#cb3-37" aria-hidden="true" tabindex="-1"></a>assert_not_null(lin_app, [<span class="st">"order_id"</span>,<span class="st">"sku"</span>], <span class="st">"lineas_app"</span>)</span>
+<span id="cb3-38"><a href="#cb3-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-39"><a href="#cb3-39" aria-hidden="true" tabindex="-1"></a><span class="co"># Dominios controlados</span></span>
+<span id="cb3-40"><a href="#cb3-40" aria-hidden="true" tabindex="-1"></a>canales_validos <span class="op">=</span> {<span class="st">"POS"</span>,<span class="st">"APP"</span>}</span>
+<span id="cb3-41"><a href="#cb3-41" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="kw">not</span> <span class="bu">set</span>(ped_pos[<span class="st">"canal"</span>].unique()).issubset(canales_validos):</span>
+<span id="cb3-42"><a href="#cb3-42" aria-hidden="true" tabindex="-1"></a>    <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[pedidos_pos] Canal fuera de dominio: </span><span class="sc">{</span><span class="bu">set</span>(ped_pos[<span class="st">'canal'</span>].unique()) <span class="op">-</span> canales_validos<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb3-43"><a href="#cb3-43" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="kw">not</span> <span class="bu">set</span>(ped_app[<span class="st">"canal"</span>].unique()).issubset(canales_validos):</span>
+<span id="cb3-44"><a href="#cb3-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[pedidos_app] Canal fuera de dominio: </span><span class="sc">{</span><span class="bu">set</span>(ped_app[<span class="st">'canal'</span>].unique()) <span class="op">-</span> canales_validos<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb3-45"><a href="#cb3-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-46"><a href="#cb3-46" aria-hidden="true" tabindex="-1"></a><span class="co"># Rangos numéricos</span></span>
+<span id="cb3-47"><a href="#cb3-47" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> df, name <span class="kw">in</span> [(lin_pos,<span class="st">"lineas_pos"</span>), (lin_app,<span class="st">"lineas_app"</span>)]:</span>
+<span id="cb3-48"><a href="#cb3-48" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (df[<span class="st">"cantidad"</span>] <span class="op">&lt;=</span> <span class="dv">0</span>).<span class="bu">any</span>():</span>
+<span id="cb3-49"><a href="#cb3-49" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">] Se encontraron cantidades &lt;= 0"</span>)</span>
+<span id="cb3-50"><a href="#cb3-50" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (df[<span class="st">"precio_unitario"</span>] <span class="op">&lt;</span> <span class="dv">0</span>).<span class="bu">any</span>():</span>
+<span id="cb3-51"><a href="#cb3-51" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"[</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">] Se encontraron precios negativos"</span>)</span>
+<span id="cb3-52"><a href="#cb3-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-53"><a href="#cb3-53" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Validaciones mínimas: OK"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Validaciones mínimas: OK</code></pre>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="homologación-e-integración-de-fuentes-staging-integrado" class="level2" data-number="10.4">
+<h2 data-number="10.4" class="anchored" data-anchor-id="homologación-e-integración-de-fuentes-staging-integrado"><span class="header-section-number">10.4</span> 3. Homologación e integración de fuentes (Staging Integrado)</h2>
+<p>En Kimball, la integración lógica se garantiza mediante <strong>dimensiones conformadas</strong> y una <strong>bus matrix</strong>. Antes de construir dimensiones y hechos, se unifican las fuentes POS y App.</p>
+<section id="integración-de-encabezados-y-líneas" class="level3" data-number="10.4.1">
+<h3 data-number="10.4.1" class="anchored" data-anchor-id="integración-de-encabezados-y-líneas"><span class="header-section-number">10.4.1</span> 3.1 Integración de encabezados y líneas</h3>
+<div id="6aef7b80" class="cell" data-execution_count="3">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Unificar encabezados y líneas</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>pedidos <span class="op">=</span> pd.concat([ped_pos, ped_app], ignore_index<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>lineas  <span class="op">=</span> pd.concat([lin_pos, lin_app], ignore_index<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Normalizaciones</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>pedidos[<span class="st">"canal"</span>] <span class="op">=</span> pedidos[<span class="st">"canal"</span>].<span class="bu">str</span>.upper()</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="co"># --- CLAVE ÚNICA GLOBAL (DW) ---</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Si order_id puede repetirse entre POS y APP, usamos (canal, order_id).</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Creamos un identificador único: order_uid</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>pedidos[<span class="st">"order_uid"</span>] <span class="op">=</span> pedidos[<span class="st">"canal"</span>].astype(<span class="bu">str</span>) <span class="op">+</span> <span class="st">"-"</span> <span class="op">+</span> pedidos[<span class="st">"order_id"</span>].astype(<span class="bu">str</span>)</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="co"># Las líneas no traen canal; se lo pegamos desde el header con un join previo (por order_id y canal si aplica)</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Si tus líneas sí traen canal, úsalo; si no, asumimos que lineas_pos -&gt; POS y lineas_app -&gt; APP</span></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>lin_pos_ <span class="op">=</span> lin_pos.copy()</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>lin_pos_[<span class="st">"canal"</span>] <span class="op">=</span> <span class="st">"POS"</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>lin_app_ <span class="op">=</span> lin_app.copy()</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>lin_app_[<span class="st">"canal"</span>] <span class="op">=</span> <span class="st">"APP"</span></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>lineas <span class="op">=</span> pd.concat([lin_pos_, lin_app_], ignore_index<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>lineas[<span class="st">"canal"</span>] <span class="op">=</span> lineas[<span class="st">"canal"</span>].<span class="bu">str</span>.upper()</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>lineas[<span class="st">"order_uid"</span>] <span class="op">=</span> lineas[<span class="st">"canal"</span>].astype(<span class="bu">str</span>) <span class="op">+</span> <span class="st">"-"</span> <span class="op">+</span> lineas[<span class="st">"order_id"</span>].astype(<span class="bu">str</span>)</span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a><span class="co"># Flags</span></span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>lineas[<span class="st">"promo_codigo"</span>] <span class="op">=</span> lineas.get(<span class="st">"promo_codigo"</span>, pd.Series([<span class="st">"NA"</span>]<span class="op">*</span><span class="bu">len</span>(lineas))).fillna(<span class="st">"NA"</span>)</span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>lineas[<span class="st">"cancelado_flag"</span>] <span class="op">=</span> lineas.get(<span class="st">"cancelado_flag"</span>, <span class="dv">0</span>)</span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>lineas[<span class="st">"cancelado_flag"</span>] <span class="op">=</span> lineas[<span class="st">"cancelado_flag"</span>].fillna(<span class="dv">0</span>).astype(<span class="bu">int</span>)</span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a><span class="co"># Encabezados duplicados (reenvíos desde origen): se conserva el más reciente.</span></span>
+<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a><span class="co"># En una extracción real, el mismo pedido puede llegar más de una vez (reintentos,</span></span>
+<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a><span class="co"># recargas parciales); quedarse con la versión más reciente por 'fecha' es la</span></span>
+<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a><span class="co"># convención más simple, documentada aquí para que sea auditable.</span></span>
+<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> pedidos[<span class="st">"order_uid"</span>].duplicated().<span class="bu">any</span>():</span>
+<span id="cb5-34"><a href="#cb5-34" aria-hidden="true" tabindex="-1"></a>    n_dup <span class="op">=</span> pedidos[<span class="st">"order_uid"</span>].duplicated().<span class="bu">sum</span>()</span>
+<span id="cb5-35"><a href="#cb5-35" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"Aviso: </span><span class="sc">{</span>n_dup<span class="sc">}</span><span class="ss"> encabezados de pedido duplicados (reenvíos); se conserva el más reciente por 'fecha'."</span>)</span>
+<span id="cb5-36"><a href="#cb5-36" aria-hidden="true" tabindex="-1"></a>    pedidos <span class="op">=</span> pedidos.sort_values(<span class="st">"fecha"</span>).drop_duplicates(subset<span class="op">=</span>[<span class="st">"order_uid"</span>], keep<span class="op">=</span><span class="st">"last"</span>)</span>
+<span id="cb5-37"><a href="#cb5-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-38"><a href="#cb5-38" aria-hidden="true" tabindex="-1"></a><span class="co"># Integración header + lines a granularidad línea usando order_uid</span></span>
+<span id="cb5-39"><a href="#cb5-39" aria-hidden="true" tabindex="-1"></a><span class="co"># (order_id y canal ya vienen en 'lineas'; se descartan de 'pedidos' para evitar sufijos _x/_y)</span></span>
+<span id="cb5-40"><a href="#cb5-40" aria-hidden="true" tabindex="-1"></a>stg <span class="op">=</span> lineas.merge(pedidos.drop(columns<span class="op">=</span>[<span class="st">"order_id"</span>, <span class="st">"canal"</span>]), on<span class="op">=</span>[<span class="st">"order_uid"</span>], how<span class="op">=</span><span class="st">"left"</span>, validate<span class="op">=</span><span class="st">"m:1"</span>)</span>
+<span id="cb5-41"><a href="#cb5-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-42"><a href="#cb5-42" aria-hidden="true" tabindex="-1"></a><span class="co"># Chequeo de integridad</span></span>
+<span id="cb5-43"><a href="#cb5-43" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> stg[<span class="st">"fecha"</span>].isna().<span class="bu">any</span>():</span>
+<span id="cb5-44"><a href="#cb5-44" aria-hidden="true" tabindex="-1"></a>    bad <span class="op">=</span> stg[stg[<span class="st">"fecha"</span>].isna()][[<span class="st">"order_id"</span>,<span class="st">"order_uid"</span>,<span class="st">"line_num"</span>,<span class="st">"canal"</span>]].head(<span class="dv">10</span>)</span>
+<span id="cb5-45"><a href="#cb5-45" aria-hidden="true" tabindex="-1"></a>    <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"Existen líneas sin encabezado de pedido asociado. Ejemplos:</span><span class="ch">\n</span><span class="sc">{</span>bad<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Aviso: 13 encabezados de pedido duplicados (reenvíos); se conserva el más reciente por 'fecha'.</code></pre>
+</div>
+</div>
+</section>
+<section id="derivación-de-métricas-transaccionales" class="level3" data-number="10.4.2">
+<h3 data-number="10.4.2" class="anchored" data-anchor-id="derivación-de-métricas-transaccionales"><span class="header-section-number">10.4.2</span> 3.2 Derivación de métricas transaccionales</h3>
+<p>Se recomienda almacenar importes en el hecho para evitar dependencia histórica de catálogos (p.&nbsp;ej., cambios de precio de lista).</p>
+<div id="b12a0174" class="cell" data-execution_count="4">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Medidas base</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>stg[<span class="st">"importe_bruto"</span>] <span class="op">=</span> (stg[<span class="st">"cantidad"</span>] <span class="op">*</span> stg[<span class="st">"precio_unitario"</span>]).astype(<span class="bu">float</span>)</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Descuento: si no viene explícito, se asume 0 (ajuste si aplica)</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="st">"descuento_importe"</span> <span class="kw">not</span> <span class="kw">in</span> stg.columns:</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    stg[<span class="st">"descuento_importe"</span>] <span class="op">=</span> <span class="fl">0.0</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="cf">else</span>:</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>    stg[<span class="st">"descuento_importe"</span>] <span class="op">=</span> stg[<span class="st">"descuento_importe"</span>].fillna(<span class="fl">0.0</span>).astype(<span class="bu">float</span>)</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>stg[<span class="st">"importe_neto"</span>] <span class="op">=</span> stg[<span class="st">"importe_bruto"</span>] <span class="op">-</span> stg[<span class="st">"descuento_importe"</span>]</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Convención simple para cancelaciones:</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="co"># - Importe neto se fuerza a 0 para líneas canceladas.</span></span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>stg.loc[stg[<span class="st">"cancelado_flag"</span>].eq(<span class="dv">1</span>), <span class="st">"importe_neto"</span>] <span class="op">=</span> <span class="fl">0.0</span></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Cupón aplicado (bandera)</span></span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>stg[<span class="st">"cupon_aplicado_flag"</span>] <span class="op">=</span> (stg[<span class="st">"promo_codigo"</span>].fillna(<span class="st">"NA"</span>) <span class="op">!=</span> <span class="st">"NA"</span>).astype(<span class="bu">int</span>)</span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>stg[[<span class="st">"order_id"</span>,<span class="st">"line_num"</span>,<span class="st">"cantidad"</span>,<span class="st">"precio_unitario"</span>,<span class="st">"importe_bruto"</span>,<span class="st">"descuento_importe"</span>,<span class="st">"importe_neto"</span>,</span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a>     <span class="st">"cancelado_flag"</span>,<span class="st">"promo_codigo"</span>,<span class="st">"cupon_aplicado_flag"</span>]].head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="4">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">order_id</th>
+<th data-quarto-table-cell-role="th">line_num</th>
+<th data-quarto-table-cell-role="th">cantidad</th>
+<th data-quarto-table-cell-role="th">precio_unitario</th>
+<th data-quarto-table-cell-role="th">importe_bruto</th>
+<th data-quarto-table-cell-role="th">descuento_importe</th>
+<th data-quarto-table-cell-role="th">importe_neto</th>
+<th data-quarto-table-cell-role="th">cancelado_flag</th>
+<th data-quarto-table-cell-role="th">promo_codigo</th>
+<th data-quarto-table-cell-role="th">cupon_aplicado_flag</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">0</th>
+<td>P000007</td>
+<td>1</td>
+<td>2</td>
+<td>31.47</td>
+<td>62.94</td>
+<td>0.0</td>
+<td>62.94</td>
+<td>0</td>
+<td>APP10</td>
+<td>1</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">1</th>
+<td>P000007</td>
+<td>2</td>
+<td>1</td>
+<td>36.67</td>
+<td>36.67</td>
+<td>0.0</td>
+<td>36.67</td>
+<td>0</td>
+<td>NA</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">2</th>
+<td>P000001</td>
+<td>1</td>
+<td>3</td>
+<td>51.26</td>
+<td>153.78</td>
+<td>0.0</td>
+<td>153.78</td>
+<td>0</td>
+<td>NA</td>
+<td>0</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">3</th>
+<td>P000001</td>
+<td>2</td>
+<td>3</td>
+<td>78.11</td>
+<td>234.33</td>
+<td>0.0</td>
+<td>234.33</td>
+<td>0</td>
+<td>NA</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>P000010</td>
+<td>1</td>
+<td>3</td>
+<td>72.02</td>
+<td>216.06</td>
+<td>0.0</td>
+<td>216.06</td>
+<td>0</td>
+<td>NA</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="construcción-de-dimensiones-conformadas" class="level2" data-number="10.5">
+<h2 data-number="10.5" class="anchored" data-anchor-id="construcción-de-dimensiones-conformadas"><span class="header-section-number">10.5</span> 4. Construcción de dimensiones conformadas</h2>
+<p>En un DW tipo estrella, todas las dimensiones deben tener:</p>
+<ul>
+<li><strong>llave sustituta</strong> (<code>*_key</code>, entero),</li>
+<li><strong>llave natural</strong> (clave operacional como <code>cliente_id</code>, <code>sku</code>, etc.),</li>
+<li>atributos descriptivos.</li>
+</ul>
+<p>Para un libro y un ejemplo didáctico, se implementa SCD Tipo 1 (sobrescritura). En producción, <code>dim_cliente</code> y <code>dim_producto</code> suelen requerir SCD Tipo 2, como se vio en el capítulo anterior.</p>
+<section id="dim_tiempo" class="level3" data-number="10.5.1">
+<h3 data-number="10.5.1" class="anchored" data-anchor-id="dim_tiempo"><span class="header-section-number">10.5.1</span> 4.1 <code>dim_tiempo</code></h3>
+<div id="93626a84" class="cell" data-execution_count="5">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Rango de fechas basado en staging</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>min_date <span class="op">=</span> stg[<span class="st">"fecha"</span>].<span class="bu">min</span>().normalize()</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>max_date <span class="op">=</span> stg[<span class="st">"fecha"</span>].<span class="bu">max</span>().normalize()</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>dim_tiempo <span class="op">=</span> pd.DataFrame({<span class="st">"fecha"</span>: pd.date_range(min_date, max_date, freq<span class="op">=</span><span class="st">"D"</span>)})</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>dim_tiempo[<span class="st">"anio"</span>] <span class="op">=</span> dim_tiempo[<span class="st">"fecha"</span>].dt.year</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>dim_tiempo[<span class="st">"mes"</span>] <span class="op">=</span> dim_tiempo[<span class="st">"fecha"</span>].dt.month</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>dim_tiempo[<span class="st">"trimestre"</span>] <span class="op">=</span> dim_tiempo[<span class="st">"fecha"</span>].dt.quarter</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>dim_tiempo[<span class="st">"semana_iso"</span>] <span class="op">=</span> dim_tiempo[<span class="st">"fecha"</span>].dt.isocalendar().week.astype(<span class="bu">int</span>)</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>dim_tiempo[<span class="st">"dia_semana"</span>] <span class="op">=</span> dim_tiempo[<span class="st">"fecha"</span>].dt.dayofweek <span class="op">+</span> <span class="dv">1</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>dim_tiempo[<span class="st">"es_fin_semana"</span>] <span class="op">=</span> dim_tiempo[<span class="st">"dia_semana"</span>].isin([<span class="dv">6</span>,<span class="dv">7</span>]).astype(<span class="bu">int</span>)</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>dim_tiempo.insert(<span class="dv">0</span>, <span class="st">"tiempo_key"</span>, np.arange(<span class="dv">1</span>, <span class="bu">len</span>(dim_tiempo)<span class="op">+</span><span class="dv">1</span>, dtype<span class="op">=</span><span class="bu">int</span>))</span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>dim_tiempo.head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="5">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">tiempo_key</th>
+<th data-quarto-table-cell-role="th">fecha</th>
+<th data-quarto-table-cell-role="th">anio</th>
+<th data-quarto-table-cell-role="th">mes</th>
+<th data-quarto-table-cell-role="th">trimestre</th>
+<th data-quarto-table-cell-role="th">semana_iso</th>
+<th data-quarto-table-cell-role="th">dia_semana</th>
+<th data-quarto-table-cell-role="th">es_fin_semana</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">0</th>
+<td>1</td>
+<td>2022-07-11</td>
+<td>2022</td>
+<td>7</td>
+<td>3</td>
+<td>28</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">1</th>
+<td>2</td>
+<td>2022-07-12</td>
+<td>2022</td>
+<td>7</td>
+<td>3</td>
+<td>28</td>
+<td>2</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">2</th>
+<td>3</td>
+<td>2022-07-13</td>
+<td>2022</td>
+<td>7</td>
+<td>3</td>
+<td>28</td>
+<td>3</td>
+<td>0</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">3</th>
+<td>4</td>
+<td>2022-07-14</td>
+<td>2022</td>
+<td>7</td>
+<td>3</td>
+<td>28</td>
+<td>4</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>5</td>
+<td>2022-07-15</td>
+<td>2022</td>
+<td>7</td>
+<td>3</td>
+<td>28</td>
+<td>5</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="función-auxiliar-para-dimensiones-tipo-1" class="level3" data-number="10.5.2">
+<h3 data-number="10.5.2" class="anchored" data-anchor-id="función-auxiliar-para-dimensiones-tipo-1"><span class="header-section-number">10.5.2</span> 4.2 Función auxiliar para dimensiones (Tipo 1)</h3>
+<div id="e83e7328" class="cell" data-execution_count="6">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> build_dim_type1(df: pd.DataFrame, natural_key: <span class="bu">str</span>, attrs: <span class="bu">list</span>[<span class="bu">str</span>], sk_name: <span class="bu">str</span>) <span class="op">-&gt;</span> pd.DataFrame:</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    out <span class="op">=</span> df[[natural_key] <span class="op">+</span> attrs].drop_duplicates().reset_index(drop<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    out.insert(<span class="dv">0</span>, sk_name, np.arange(<span class="dv">1</span>, <span class="bu">len</span>(out)<span class="op">+</span><span class="dv">1</span>, dtype<span class="op">=</span><span class="bu">int</span>))</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> out</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Dimensiones básicas</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>dim_canal <span class="op">=</span> pd.DataFrame({<span class="st">"canal"</span>: [<span class="st">"POS"</span>,<span class="st">"APP"</span>]})</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>dim_canal.insert(<span class="dv">0</span>, <span class="st">"canal_key"</span>, [<span class="dv">1</span>,<span class="dv">2</span>])</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Metodo de pago: si no existe en staging, se crea "NA"</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="st">"metodo_pago"</span> <span class="kw">not</span> <span class="kw">in</span> stg.columns:</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>    stg[<span class="st">"metodo_pago"</span>] <span class="op">=</span> <span class="st">"NA"</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>dim_metodo_pago <span class="op">=</span> pd.DataFrame({<span class="st">"metodo_pago"</span>: <span class="bu">sorted</span>(stg[<span class="st">"metodo_pago"</span>].fillna(<span class="st">"NA"</span>).unique())})</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>dim_metodo_pago.insert(<span class="dv">0</span>, <span class="st">"metodo_pago_key"</span>, np.arange(<span class="dv">1</span>, <span class="bu">len</span>(dim_metodo_pago)<span class="op">+</span><span class="dv">1</span>, dtype<span class="op">=</span><span class="bu">int</span>))</span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Promoción</span></span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> promociones <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Mínimo viable: solo códigos observados</span></span>
+<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a>    dim_promocion <span class="op">=</span> pd.DataFrame({<span class="st">"promo_codigo"</span>: <span class="bu">sorted</span>(stg[<span class="st">"promo_codigo"</span>].fillna(<span class="st">"NA"</span>).unique())})</span>
+<span id="cb9-20"><a href="#cb9-20" aria-hidden="true" tabindex="-1"></a><span class="cf">else</span>:</span>
+<span id="cb9-21"><a href="#cb9-21" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Con catálogo maestro: se prioriza catálogo, pero garantizamos NA</span></span>
+<span id="cb9-22"><a href="#cb9-22" aria-hidden="true" tabindex="-1"></a>    dim_promocion <span class="op">=</span> promociones.copy()</span>
+<span id="cb9-23"><a href="#cb9-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="st">"promo_codigo"</span> <span class="kw">not</span> <span class="kw">in</span> dim_promocion.columns:</span>
+<span id="cb9-24"><a href="#cb9-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"promociones.csv debe incluir 'promo_codigo'"</span>)</span>
+<span id="cb9-25"><a href="#cb9-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="st">"NA"</span> <span class="kw">not</span> <span class="kw">in</span> <span class="bu">set</span>(dim_promocion[<span class="st">"promo_codigo"</span>].astype(<span class="bu">str</span>).unique()):</span>
+<span id="cb9-26"><a href="#cb9-26" aria-hidden="true" tabindex="-1"></a>        dim_promocion <span class="op">=</span> pd.concat([pd.DataFrame({<span class="st">"promo_codigo"</span>:[<span class="st">"NA"</span>]}), dim_promocion], ignore_index<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb9-27"><a href="#cb9-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-28"><a href="#cb9-28" aria-hidden="true" tabindex="-1"></a>dim_promocion[<span class="st">"promo_codigo"</span>] <span class="op">=</span> dim_promocion[<span class="st">"promo_codigo"</span>].astype(<span class="bu">str</span>).fillna(<span class="st">"NA"</span>)</span>
+<span id="cb9-29"><a href="#cb9-29" aria-hidden="true" tabindex="-1"></a>dim_promocion <span class="op">=</span> dim_promocion.drop_duplicates(subset<span class="op">=</span>[<span class="st">"promo_codigo"</span>]).reset_index(drop<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb9-30"><a href="#cb9-30" aria-hidden="true" tabindex="-1"></a>dim_promocion.insert(<span class="dv">0</span>, <span class="st">"promocion_key"</span>, np.arange(<span class="dv">1</span>, <span class="bu">len</span>(dim_promocion)<span class="op">+</span><span class="dv">1</span>, dtype<span class="op">=</span><span class="bu">int</span>))</span>
+<span id="cb9-31"><a href="#cb9-31" aria-hidden="true" tabindex="-1"></a>dim_promocion.head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="6">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">promocion_key</th>
+<th data-quarto-table-cell-role="th">promo_codigo</th>
+<th data-quarto-table-cell-role="th">campania</th>
+<th data-quarto-table-cell-role="th">descripcion</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">0</th>
+<td>1</td>
+<td>NA</td>
+<td>NaN</td>
+<td>NaN</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">1</th>
+<td>2</td>
+<td>nan</td>
+<td>Sin promo</td>
+<td>Sin descuento</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">2</th>
+<td>3</td>
+<td>APP10</td>
+<td>Lanzamiento App</td>
+<td>10% en app</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">3</th>
+<td>4</td>
+<td>2X1FRIO</td>
+<td>Bebidas frías</td>
+<td>2x1 bebidas frías</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>5</td>
+<td>DULCE15</td>
+<td>Postres</td>
+<td>15% en postres</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="dim_cliente-dim_producto-dim_sucursal" class="level3" data-number="10.5.3">
+<h3 data-number="10.5.3" class="anchored" data-anchor-id="dim_cliente-dim_producto-dim_sucursal"><span class="header-section-number">10.5.3</span> 4.3 <code>dim_cliente</code>, <code>dim_producto</code>, <code>dim_sucursal</code></h3>
+<div id="b0a37402" class="cell" data-execution_count="7">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Ajustes básicos de tipos</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="st">"nivel_lealtad"</span> <span class="kw">not</span> <span class="kw">in</span> clientes.columns:</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    clientes[<span class="st">"nivel_lealtad"</span>] <span class="op">=</span> <span class="st">"NA"</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="st">"tipo_cliente"</span> <span class="kw">not</span> <span class="kw">in</span> clientes.columns:</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    clientes[<span class="st">"tipo_cliente"</span>] <span class="op">=</span> <span class="st">"NA"</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>dim_cliente <span class="op">=</span> build_dim_type1(</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    clientes,</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    natural_key<span class="op">=</span><span class="st">"cliente_id"</span>,</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>    attrs<span class="op">=</span>[<span class="st">"tipo_cliente"</span>,<span class="st">"nivel_lealtad"</span>,<span class="st">"fecha_alta"</span>],</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>    sk_name<span class="op">=</span><span class="st">"cliente_key"</span></span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Productos</span></span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> col <span class="kw">in</span> [<span class="st">"subcategoria"</span>,<span class="st">"tamano"</span>,<span class="st">"activo"</span>]:</span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> col <span class="kw">not</span> <span class="kw">in</span> productos.columns:</span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>        productos[col] <span class="op">=</span> <span class="st">"NA"</span> <span class="cf">if</span> col <span class="op">!=</span> <span class="st">"activo"</span> <span class="cf">else</span> <span class="dv">1</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>dim_producto <span class="op">=</span> build_dim_type1(</span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a>    productos,</span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>    natural_key<span class="op">=</span><span class="st">"sku"</span>,</span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a>    attrs<span class="op">=</span>[<span class="st">"nombre"</span>,<span class="st">"categoria"</span>,<span class="st">"subcategoria"</span>,<span class="st">"tamano"</span>,<span class="st">"activo"</span>],</span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a>    sk_name<span class="op">=</span><span class="st">"producto_key"</span></span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb10-25"><a href="#cb10-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-26"><a href="#cb10-26" aria-hidden="true" tabindex="-1"></a><span class="co"># Sucursales</span></span>
+<span id="cb10-27"><a href="#cb10-27" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> col <span class="kw">in</span> [<span class="st">"formato"</span>]:</span>
+<span id="cb10-28"><a href="#cb10-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> col <span class="kw">not</span> <span class="kw">in</span> sucursales.columns:</span>
+<span id="cb10-29"><a href="#cb10-29" aria-hidden="true" tabindex="-1"></a>        sucursales[col] <span class="op">=</span> <span class="st">"NA"</span></span>
+<span id="cb10-30"><a href="#cb10-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-31"><a href="#cb10-31" aria-hidden="true" tabindex="-1"></a>dim_sucursal <span class="op">=</span> build_dim_type1(</span>
+<span id="cb10-32"><a href="#cb10-32" aria-hidden="true" tabindex="-1"></a>    sucursales,</span>
+<span id="cb10-33"><a href="#cb10-33" aria-hidden="true" tabindex="-1"></a>    natural_key<span class="op">=</span><span class="st">"sucursal_id"</span>,</span>
+<span id="cb10-34"><a href="#cb10-34" aria-hidden="true" tabindex="-1"></a>    attrs<span class="op">=</span>[<span class="st">"nombre"</span>,<span class="st">"zona"</span>,<span class="st">"formato"</span>],</span>
+<span id="cb10-35"><a href="#cb10-35" aria-hidden="true" tabindex="-1"></a>    sk_name<span class="op">=</span><span class="st">"sucursal_key"</span></span>
+<span id="cb10-36"><a href="#cb10-36" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb10-37"><a href="#cb10-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-38"><a href="#cb10-38" aria-hidden="true" tabindex="-1"></a>dim_cliente.head(), dim_producto.head(), dim_sucursal.head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="7">
+<pre><code>(   cliente_key cliente_id tipo_cliente nivel_lealtad fecha_alta
+ 0            1    C000001      lealtad         Plata 2021-09-10
+ 1            2    C000002  sin_lealtad           NaN 2022-02-15
+ 2            3    C000003      lealtad        Bronce 2022-06-01
+ 3            4    C000004  sin_lealtad           NaN 2022-11-20
+ 4            5    C000005      lealtad           Oro 2023-01-05,
+    producto_key      sku           nombre          categoria subcategoria  \
+ 0             1  SKU0001        Americano  Bebidas Calientes    Americano   
+ 1             2  SKU0002            Latte  Bebidas Calientes        Latte   
+ 2             3  SKU0003        Capuccino  Bebidas Calientes    Capuccino   
+ 3             4  SKU0004        Cold Brew      Bebidas Frías    Cold Brew   
+ 4             5  SKU0005  Frappé Vainilla      Bebidas Frías       Frappé   
+ 
+   tamano  activo  
+ 0      M       1  
+ 1      G       1  
+ 2      M       1  
+ 3      M       1  
+ 4      G       1  ,
+    sucursal_key sucursal_id      nombre      zona formato
+ 0             1        S001    Centro 1    Centro  Tienda
+ 1             2        S002     Norte 1     Norte  Tienda
+ 2             3        S003       Sur 1       Sur  Tienda
+ 3             4        S004   Oriente 1   Oriente  Kiosco
+ 4             5        S005  Poniente 1  Poniente  Kiosco)</code></pre>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="construcción-de-la-tabla-de-hechos-fact_linea_pedido" class="level2" data-number="10.6">
+<h2 data-number="10.6" class="anchored" data-anchor-id="construcción-de-la-tabla-de-hechos-fact_linea_pedido"><span class="header-section-number">10.6</span> 5. Construcción de la tabla de hechos (fact_linea_pedido)</h2>
+<p>El hecho se define a granularidad <strong>línea de pedido</strong>, con:</p>
+<ul>
+<li>Llaves sustitutas hacia dimensiones conformadas.</li>
+<li>Medidas aditivas (<code>cantidad</code>, <code>importe_*</code>) y banderas (<code>cancelado_flag</code>, <code>cupon_aplicado_flag</code>).</li>
+<li>Llave degenerada <code>order_id</code> para trazabilidad.</li>
+</ul>
+<div id="35007211" class="cell" data-execution_count="8">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>fact <span class="op">=</span> (stg</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>        .merge(dim_tiempo[[<span class="st">"tiempo_key"</span>,<span class="st">"fecha"</span>]], on<span class="op">=</span><span class="st">"fecha"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>        .merge(dim_cliente[[<span class="st">"cliente_key"</span>,<span class="st">"cliente_id"</span>]], on<span class="op">=</span><span class="st">"cliente_id"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>        .merge(dim_sucursal[[<span class="st">"sucursal_key"</span>,<span class="st">"sucursal_id"</span>]], on<span class="op">=</span><span class="st">"sucursal_id"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>        .merge(dim_producto[[<span class="st">"producto_key"</span>,<span class="st">"sku"</span>]], on<span class="op">=</span><span class="st">"sku"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>        .merge(dim_canal[[<span class="st">"canal_key"</span>,<span class="st">"canal"</span>]], on<span class="op">=</span><span class="st">"canal"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>        .merge(dim_metodo_pago[[<span class="st">"metodo_pago_key"</span>,<span class="st">"metodo_pago"</span>]], on<span class="op">=</span><span class="st">"metodo_pago"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>        .merge(dim_promocion[[<span class="st">"promocion_key"</span>,<span class="st">"promo_codigo"</span>]], on<span class="op">=</span><span class="st">"promo_codigo"</span>, how<span class="op">=</span><span class="st">"left"</span>))</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Integridad dimensional (unknown members)</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> col <span class="kw">in</span> [<span class="st">"tiempo_key"</span>,<span class="st">"cliente_key"</span>,<span class="st">"sucursal_key"</span>,<span class="st">"producto_key"</span>,<span class="st">"canal_key"</span>,<span class="st">"metodo_pago_key"</span>,<span class="st">"promocion_key"</span>]:</span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> fact[col].isna().<span class="bu">any</span>():</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>        <span class="co"># En DW real: asignar key=0 a Unknown y registrar warning.</span></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>        bad <span class="op">=</span> fact[fact[col].isna()][[<span class="st">"order_id"</span>,<span class="st">"line_num"</span>]].head(<span class="dv">10</span>)</span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"Hay filas sin mapeo dimensional para '</span><span class="sc">{</span>col<span class="sc">}</span><span class="ss">'. Ejemplos:</span><span class="ch">\n</span><span class="sc">{</span>bad<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>fact_linea_pedido <span class="op">=</span> fact[[</span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a>    <span class="st">"order_id"</span>,<span class="st">"line_num"</span>,</span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>    <span class="st">"tiempo_key"</span>,<span class="st">"cliente_key"</span>,<span class="st">"sucursal_key"</span>,<span class="st">"producto_key"</span>,</span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>    <span class="st">"canal_key"</span>,<span class="st">"metodo_pago_key"</span>,<span class="st">"promocion_key"</span>,</span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>    <span class="st">"cantidad"</span>,<span class="st">"precio_unitario"</span>,<span class="st">"importe_bruto"</span>,<span class="st">"descuento_importe"</span>,<span class="st">"importe_neto"</span>,</span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>    <span class="st">"cancelado_flag"</span>,<span class="st">"cupon_aplicado_flag"</span></span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>]].copy()</span>
+<span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-25"><a href="#cb12-25" aria-hidden="true" tabindex="-1"></a>fact_linea_pedido.head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="8">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">order_id</th>
+<th data-quarto-table-cell-role="th">line_num</th>
+<th data-quarto-table-cell-role="th">tiempo_key</th>
+<th data-quarto-table-cell-role="th">cliente_key</th>
+<th data-quarto-table-cell-role="th">sucursal_key</th>
+<th data-quarto-table-cell-role="th">producto_key</th>
+<th data-quarto-table-cell-role="th">canal_key</th>
+<th data-quarto-table-cell-role="th">metodo_pago_key</th>
+<th data-quarto-table-cell-role="th">promocion_key</th>
+<th data-quarto-table-cell-role="th">cantidad</th>
+<th data-quarto-table-cell-role="th">precio_unitario</th>
+<th data-quarto-table-cell-role="th">importe_bruto</th>
+<th data-quarto-table-cell-role="th">descuento_importe</th>
+<th data-quarto-table-cell-role="th">importe_neto</th>
+<th data-quarto-table-cell-role="th">cancelado_flag</th>
+<th data-quarto-table-cell-role="th">cupon_aplicado_flag</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">0</th>
+<td>P000007</td>
+<td>1</td>
+<td>245</td>
+<td>8</td>
+<td>1</td>
+<td>7</td>
+<td>1</td>
+<td>2</td>
+<td>3</td>
+<td>2</td>
+<td>31.47</td>
+<td>62.94</td>
+<td>0.0</td>
+<td>62.94</td>
+<td>0</td>
+<td>1</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">1</th>
+<td>P000007</td>
+<td>2</td>
+<td>245</td>
+<td>8</td>
+<td>1</td>
+<td>7</td>
+<td>1</td>
+<td>2</td>
+<td>1</td>
+<td>1</td>
+<td>36.67</td>
+<td>36.67</td>
+<td>0.0</td>
+<td>36.67</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">2</th>
+<td>P000001</td>
+<td>1</td>
+<td>528</td>
+<td>1</td>
+<td>2</td>
+<td>3</td>
+<td>1</td>
+<td>1</td>
+<td>1</td>
+<td>3</td>
+<td>51.26</td>
+<td>153.78</td>
+<td>0.0</td>
+<td>153.78</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">3</th>
+<td>P000001</td>
+<td>2</td>
+<td>528</td>
+<td>1</td>
+<td>2</td>
+<td>5</td>
+<td>1</td>
+<td>2</td>
+<td>1</td>
+<td>3</td>
+<td>78.11</td>
+<td>234.33</td>
+<td>0.0</td>
+<td>234.33</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>P000010</td>
+<td>1</td>
+<td>356</td>
+<td>5</td>
+<td>4</td>
+<td>5</td>
+<td>1</td>
+<td>1</td>
+<td>1</td>
+<td>3</td>
+<td>72.02</td>
+<td>216.06</td>
+<td>0.0</td>
+<td>216.06</td>
+<td>0</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+<hr>
+</section>
+<section id="data-marts-y-respuestas-a-preguntas-estratégicas" class="level2" data-number="10.7">
+<h2 data-number="10.7" class="anchored" data-anchor-id="data-marts-y-respuestas-a-preguntas-estratégicas"><span class="header-section-number">10.7</span> 6. Data Marts y respuestas a preguntas estratégicas</h2>
+<section id="pregunta-1-pedidos-mensuales-desde-enero-2023-segmentado-por-canal" class="level3" data-number="10.7.1">
+<h3 data-number="10.7.1" class="anchored" data-anchor-id="pregunta-1-pedidos-mensuales-desde-enero-2023-segmentado-por-canal"><span class="header-section-number">10.7.1</span> 6.1 Pregunta 1: Pedidos mensuales desde enero 2023, segmentado por canal</h3>
+<p>Se define como <strong>número de pedidos únicos</strong> (<code>COUNT DISTINCT order_id</code>) por mes.</p>
+<div id="0b1e7e86" class="cell" data-execution_count="9">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>APP_LAUNCH <span class="op">=</span> pd.Timestamp(<span class="st">"2023-01-01"</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>fact_time <span class="op">=</span> fact_linea_pedido.merge(</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    dim_tiempo[[<span class="st">"tiempo_key"</span>,<span class="st">"fecha"</span>,<span class="st">"anio"</span>,<span class="st">"mes"</span>]],</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    on<span class="op">=</span><span class="st">"tiempo_key"</span>, how<span class="op">=</span><span class="st">"left"</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>fact_time[<span class="st">"yyyymm"</span>] <span class="op">=</span> fact_time[<span class="st">"fecha"</span>].dt.to_period(<span class="st">"M"</span>).astype(<span class="bu">str</span>)</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Desde enero 2023</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>mask_2023 <span class="op">=</span> fact_time[<span class="st">"fecha"</span>] <span class="op">&gt;=</span> APP_LAUNCH</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>q1 <span class="op">=</span> (fact_time.loc[mask_2023]</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>      .groupby(<span class="st">"yyyymm"</span>)</span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>      .agg(pedidos<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"nunique"</span>),</span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a>           lineas<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"size"</span>),</span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>           ingreso_neto<span class="op">=</span>(<span class="st">"importe_neto"</span>,<span class="st">"sum"</span>))</span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a>      .reset_index()</span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>      .sort_values(<span class="st">"yyyymm"</span>))</span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a><span class="co"># Segmentación por canal</span></span>
+<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>fact_time_canal <span class="op">=</span> fact_time.merge(dim_canal, on<span class="op">=</span><span class="st">"canal_key"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a>q1_canal <span class="op">=</span> (fact_time_canal.loc[mask_2023]</span>
+<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a>            .groupby([<span class="st">"yyyymm"</span>,<span class="st">"canal"</span>])</span>
+<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a>            .agg(pedidos<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"nunique"</span>),</span>
+<span id="cb13-25"><a href="#cb13-25" aria-hidden="true" tabindex="-1"></a>                 ingreso_neto<span class="op">=</span>(<span class="st">"importe_neto"</span>,<span class="st">"sum"</span>))</span>
+<span id="cb13-26"><a href="#cb13-26" aria-hidden="true" tabindex="-1"></a>            .reset_index()</span>
+<span id="cb13-27"><a href="#cb13-27" aria-hidden="true" tabindex="-1"></a>            .sort_values([<span class="st">"yyyymm"</span>,<span class="st">"canal"</span>]))</span>
+<span id="cb13-28"><a href="#cb13-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-29"><a href="#cb13-29" aria-hidden="true" tabindex="-1"></a>q1.head(), q1_canal.head()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="9">
+<pre><code>(    yyyymm  pedidos  lineas  ingreso_neto
+ 0  2023-02        1       3        389.25
+ 1  2023-03        1       3        257.86
+ 2  2023-04        2       4        533.00
+ 3  2023-05        2       7        797.46
+ 4  2023-06        3       7       1129.59,
+     yyyymm canal  pedidos  ingreso_neto
+ 0  2023-02   APP        1        389.25
+ 1  2023-03   POS        1        257.86
+ 2  2023-04   APP        2        533.00
+ 3  2023-05   APP        1        360.25
+ 4  2023-05   POS        1        437.21)</code></pre>
+</div>
+</div>
+</section>
+<section id="pregunta-2-categorías-con-mayor-demanda-en-el-periodo-post" class="level3" data-number="10.7.2">
+<h3 data-number="10.7.2" class="anchored" data-anchor-id="pregunta-2-categorías-con-mayor-demanda-en-el-periodo-post"><span class="header-section-number">10.7.2</span> 6.2 Pregunta 2: Categorías con mayor demanda en el periodo post</h3>
+<p>Se recomienda reportar tanto unidades (volumen) como ingreso neto.</p>
+<div id="f4c52644" class="cell" data-execution_count="10">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>fact_prod <span class="op">=</span> fact_time.merge(dim_producto[[<span class="st">"producto_key"</span>,<span class="st">"categoria"</span>,<span class="st">"subcategoria"</span>]], on<span class="op">=</span><span class="st">"producto_key"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>q2 <span class="op">=</span> (fact_prod.loc[fact_prod[<span class="st">"fecha"</span>] <span class="op">&gt;=</span> APP_LAUNCH]</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>      .groupby(<span class="st">"categoria"</span>)</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>      .agg(unidades<span class="op">=</span>(<span class="st">"cantidad"</span>,<span class="st">"sum"</span>),</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>           ingreso_neto<span class="op">=</span>(<span class="st">"importe_neto"</span>,<span class="st">"sum"</span>),</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>           pedidos<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"nunique"</span>))</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>      .reset_index()</span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>      .sort_values([<span class="st">"ingreso_neto"</span>,<span class="st">"unidades"</span>], ascending<span class="op">=</span><span class="va">False</span>))</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>q2.head(<span class="dv">10</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="10">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">categoria</th>
+<th data-quarto-table-cell-role="th">unidades</th>
+<th data-quarto-table-cell-role="th">ingreso_neto</th>
+<th data-quarto-table-cell-role="th">pedidos</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">1</th>
+<td>Bebidas Calientes</td>
+<td>49</td>
+<td>2545.44</td>
+<td>13</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">2</th>
+<td>Bebidas Frías</td>
+<td>28</td>
+<td>2037.89</td>
+<td>8</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>Postres</td>
+<td>35</td>
+<td>1692.36</td>
+<td>12</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">0</th>
+<td>Accesorios</td>
+<td>15</td>
+<td>1386.63</td>
+<td>7</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">3</th>
+<td>Panadería</td>
+<td>27</td>
+<td>894.85</td>
+<td>11</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="pregunta-3-variaciones-por-zona-y-tipo-de-cliente-pre-vs-post" class="level3" data-number="10.7.3">
+<h3 data-number="10.7.3" class="anchored" data-anchor-id="pregunta-3-variaciones-por-zona-y-tipo-de-cliente-pre-vs-post"><span class="header-section-number">10.7.3</span> 6.3 Pregunta 3: Variaciones por zona y tipo de cliente (pre vs post)</h3>
+<p>Se propone comparar <strong>delta (post - pre)</strong> en pedidos e ingreso neto.</p>
+<div id="9dd24496" class="cell" data-execution_count="11">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>fact_zona <span class="op">=</span> fact_prod.merge(dim_sucursal[[<span class="st">"sucursal_key"</span>,<span class="st">"zona"</span>]], on<span class="op">=</span><span class="st">"sucursal_key"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>fact_zona <span class="op">=</span> fact_zona.merge(dim_cliente[[<span class="st">"cliente_key"</span>,<span class="st">"tipo_cliente"</span>]], on<span class="op">=</span><span class="st">"cliente_key"</span>, how<span class="op">=</span><span class="st">"left"</span>)</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>fact_zona[<span class="st">"periodo"</span>] <span class="op">=</span> np.where(fact_zona[<span class="st">"fecha"</span>] <span class="op">&gt;=</span> APP_LAUNCH, <span class="st">"post"</span>, <span class="st">"pre"</span>)</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>q3 <span class="op">=</span> (fact_zona</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>      .groupby([<span class="st">"periodo"</span>,<span class="st">"zona"</span>,<span class="st">"tipo_cliente"</span>])</span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>      .agg(pedidos<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"nunique"</span>),</span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>           ingreso_neto<span class="op">=</span>(<span class="st">"importe_neto"</span>,<span class="st">"sum"</span>))</span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>      .reset_index())</span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Pivot para deltas</span></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a>q3_pivot <span class="op">=</span> (q3.pivot_table(index<span class="op">=</span>[<span class="st">"zona"</span>,<span class="st">"tipo_cliente"</span>], columns<span class="op">=</span><span class="st">"periodo"</span>,</span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a>                           values<span class="op">=</span>[<span class="st">"pedidos"</span>,<span class="st">"ingreso_neto"</span>], aggfunc<span class="op">=</span><span class="st">"sum"</span>)</span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a>              .fillna(<span class="dv">0</span>))</span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a>q3_pivot[(<span class="st">"pedidos"</span>,<span class="st">"delta"</span>)] <span class="op">=</span> q3_pivot[(<span class="st">"pedidos"</span>,<span class="st">"post"</span>)] <span class="op">-</span> q3_pivot[(<span class="st">"pedidos"</span>,<span class="st">"pre"</span>)]</span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a>q3_pivot[(<span class="st">"ingreso_neto"</span>,<span class="st">"delta"</span>)] <span class="op">=</span> q3_pivot[(<span class="st">"ingreso_neto"</span>,<span class="st">"post"</span>)] <span class="op">-</span> q3_pivot[(<span class="st">"ingreso_neto"</span>,<span class="st">"pre"</span>)]</span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a>q3_delta <span class="op">=</span> q3_pivot.reset_index()</span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a>q3_delta.columns <span class="op">=</span> [<span class="st">"_"</span>.join([c <span class="cf">for</span> c <span class="kw">in</span> col <span class="cf">if</span> c]) <span class="cf">if</span> <span class="bu">isinstance</span>(col, <span class="bu">tuple</span>) <span class="cf">else</span> col <span class="cf">for</span> col <span class="kw">in</span> q3_delta.columns]</span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a>q3_delta.sort_values(<span class="st">"ingreso_neto_delta"</span>, ascending<span class="op">=</span><span class="va">False</span>).head(<span class="dv">15</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="11">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">zona</th>
+<th data-quarto-table-cell-role="th">tipo_cliente</th>
+<th data-quarto-table-cell-role="th">ingreso_neto_post</th>
+<th data-quarto-table-cell-role="th">ingreso_neto_pre</th>
+<th data-quarto-table-cell-role="th">pedidos_post</th>
+<th data-quarto-table-cell-role="th">pedidos_pre</th>
+<th data-quarto-table-cell-role="th">pedidos_delta</th>
+<th data-quarto-table-cell-role="th">ingreso_neto_delta</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">8</th>
+<td>Sur</td>
+<td>sin_lealtad</td>
+<td>1919.22</td>
+<td>0.00</td>
+<td>5.0</td>
+<td>0.0</td>
+<td>5.0</td>
+<td>1919.22</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">0</th>
+<td>Centro</td>
+<td>lealtad</td>
+<td>1700.87</td>
+<td>201.77</td>
+<td>5.0</td>
+<td>1.0</td>
+<td>4.0</td>
+<td>1499.10</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>Oriente</td>
+<td>lealtad</td>
+<td>1208.98</td>
+<td>272.56</td>
+<td>2.0</td>
+<td>1.0</td>
+<td>1.0</td>
+<td>936.42</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">7</th>
+<td>Sur</td>
+<td>lealtad</td>
+<td>858.78</td>
+<td>0.00</td>
+<td>2.0</td>
+<td>0.0</td>
+<td>2.0</td>
+<td>858.78</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">3</th>
+<td>Norte</td>
+<td>sin_lealtad</td>
+<td>854.44</td>
+<td>0.00</td>
+<td>2.0</td>
+<td>0.0</td>
+<td>2.0</td>
+<td>854.44</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">2</th>
+<td>Norte</td>
+<td>lealtad</td>
+<td>1006.74</td>
+<td>426.19</td>
+<td>2.0</td>
+<td>1.0</td>
+<td>1.0</td>
+<td>580.55</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">5</th>
+<td>Oriente</td>
+<td>sin_lealtad</td>
+<td>477.21</td>
+<td>137.77</td>
+<td>2.0</td>
+<td>1.0</td>
+<td>1.0</td>
+<td>339.44</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">6</th>
+<td>Poniente</td>
+<td>lealtad</td>
+<td>104.19</td>
+<td>0.00</td>
+<td>1.0</td>
+<td>0.0</td>
+<td>1.0</td>
+<td>104.19</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">1</th>
+<td>Centro</td>
+<td>sin_lealtad</td>
+<td>426.74</td>
+<td>407.78</td>
+<td>1.0</td>
+<td>1.0</td>
+<td>0.0</td>
+<td>18.96</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="pregunta-4-cancelación-y-cupones-tasas-por-mes" class="level3" data-number="10.7.4">
+<h3 data-number="10.7.4" class="anchored" data-anchor-id="pregunta-4-cancelación-y-cupones-tasas-por-mes"><span class="header-section-number">10.7.4</span> 6.4 Pregunta 4: Cancelación y cupones (tasas) por mes</h3>
+<p>Las tasas son <strong>no aditivas</strong>, por lo que deben calcularse como promedios o cocientes.</p>
+<div id="a4b9339d" class="cell" data-execution_count="12">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>q4 <span class="op">=</span> (fact_time</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>      .groupby(<span class="st">"yyyymm"</span>)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>      .agg(</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>          tasa_cancelacion<span class="op">=</span>(<span class="st">"cancelado_flag"</span>,<span class="st">"mean"</span>),</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>          tasa_cupon<span class="op">=</span>(<span class="st">"cupon_aplicado_flag"</span>,<span class="st">"mean"</span>),</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>          pedidos<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"nunique"</span>),</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>          lineas<span class="op">=</span>(<span class="st">"order_id"</span>,<span class="st">"size"</span>),</span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>          ingreso_neto<span class="op">=</span>(<span class="st">"importe_neto"</span>,<span class="st">"sum"</span>),</span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>      .reset_index()</span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>      .sort_values(<span class="st">"yyyymm"</span>))</span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a>q4.tail(<span class="dv">12</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="12">
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">yyyymm</th>
+<th data-quarto-table-cell-role="th">tasa_cancelacion</th>
+<th data-quarto-table-cell-role="th">tasa_cupon</th>
+<th data-quarto-table-cell-role="th">pedidos</th>
+<th data-quarto-table-cell-role="th">lineas</th>
+<th data-quarto-table-cell-role="th">ingreso_neto</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">3</th>
+<td>2022-12</td>
+<td>0.000000</td>
+<td>0.333333</td>
+<td>1</td>
+<td>3</td>
+<td>272.56</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">4</th>
+<td>2023-02</td>
+<td>0.000000</td>
+<td>0.333333</td>
+<td>1</td>
+<td>3</td>
+<td>389.25</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">5</th>
+<td>2023-03</td>
+<td>0.000000</td>
+<td>0.666667</td>
+<td>1</td>
+<td>3</td>
+<td>257.86</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">6</th>
+<td>2023-04</td>
+<td>0.000000</td>
+<td>0.000000</td>
+<td>2</td>
+<td>4</td>
+<td>533.00</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">7</th>
+<td>2023-05</td>
+<td>0.000000</td>
+<td>0.285714</td>
+<td>2</td>
+<td>7</td>
+<td>797.46</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">8</th>
+<td>2023-06</td>
+<td>0.000000</td>
+<td>0.714286</td>
+<td>3</td>
+<td>7</td>
+<td>1129.59</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">9</th>
+<td>2023-07</td>
+<td>0.000000</td>
+<td>0.000000</td>
+<td>1</td>
+<td>5</td>
+<td>822.09</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">10</th>
+<td>2023-08</td>
+<td>0.166667</td>
+<td>0.166667</td>
+<td>1</td>
+<td>6</td>
+<td>696.85</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">11</th>
+<td>2023-09</td>
+<td>0.125000</td>
+<td>0.375000</td>
+<td>2</td>
+<td>8</td>
+<td>653.90</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">12</th>
+<td>2023-10</td>
+<td>0.142857</td>
+<td>0.428571</td>
+<td>5</td>
+<td>14</td>
+<td>1545.01</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">13</th>
+<td>2023-11</td>
+<td>0.000000</td>
+<td>0.428571</td>
+<td>3</td>
+<td>7</td>
+<td>961.61</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">14</th>
+<td>2023-12</td>
+<td>0.000000</td>
+<td>0.000000</td>
+<td>1</td>
+<td>5</td>
+<td>770.55</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="exportación-de-tablas-dimensiones-y-hechos-data-mart-físico" class="level2" data-number="10.8">
+<h2 data-number="10.8" class="anchored" data-anchor-id="exportación-de-tablas-dimensiones-y-hechos-data-mart-físico"><span class="header-section-number">10.8</span> 7. Exportación de tablas: Dimensiones y Hechos (Data Mart físico)</h2>
+<p>En una implementación típica, estas tablas se materializan como CSV/Parquet en un <em>lakehouse</em> o como tablas físicas en un motor analítico (PostgreSQL, BigQuery, Snowflake, DuckDB, etc.). Aquí se exportan a <code>out/</code>.</p>
+<div id="36a63070" class="cell" data-execution_count="13">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>OUT_DIR <span class="op">=</span> Path(<span class="st">"out"</span>)</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>OUT_DIR.mkdir(exist_ok<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>dim_tiempo.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_tiempo.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>dim_cliente.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_cliente.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>dim_producto.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_producto.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>dim_sucursal.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_sucursal.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>dim_canal.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_canal.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>dim_metodo_pago.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_metodo_pago.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>dim_promocion.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"dim_promocion.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a>fact_linea_pedido.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"fact_linea_pedido.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Data marts de salida (consultas)</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a>q1.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"mart_pedidos_mensuales.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a>q1_canal.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"mart_pedidos_mensuales_canal.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a>q2.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"mart_demanda_categorias_post.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a>q3_delta.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"mart_variacion_zona_cliente_pre_post.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-19"><a href="#cb18-19" aria-hidden="true" tabindex="-1"></a>q4.to_csv(OUT_DIR <span class="op">/</span> <span class="st">"mart_tasas_cancelacion_cupon_mes.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb18-20"><a href="#cb18-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-21"><a href="#cb18-21" aria-hidden="true" tabindex="-1"></a><span class="bu">sorted</span>([p.name <span class="cf">for</span> p <span class="kw">in</span> OUT_DIR.glob(<span class="st">"*.csv"</span>)])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="13">
+<pre><code>['dim_canal.csv',
+ 'dim_cliente.csv',
+ 'dim_metodo_pago.csv',
+ 'dim_producto.csv',
+ 'dim_promocion.csv',
+ 'dim_sucursal.csv',
+ 'dim_tiempo.csv',
+ 'fact_linea_pedido.csv',
+ 'mart_demanda_categorias_post.csv',
+ 'mart_pedidos_mensuales.csv',
+ 'mart_pedidos_mensuales_canal.csv',
+ 'mart_tasas_cancelacion_cupon_mes.csv',
+ 'mart_variacion_zona_cliente_pre_post.csv']</code></pre>
+</div>
+</div>
+<hr>
+</section>
+<section id="discusión-técnica-decisiones-de-diseño-y-extensiones" class="level2" data-number="10.9">
+<h2 data-number="10.9" class="anchored" data-anchor-id="discusión-técnica-decisiones-de-diseño-y-extensiones"><span class="header-section-number">10.9</span> 8. Discusión técnica: decisiones de diseño y extensiones</h2>
+<ol type="1">
+<li><p><strong>Dimensiones conformadas</strong>: <code>dim_tiempo</code>, <code>dim_cliente</code>, <code>dim_producto</code>, <code>dim_sucursal</code>, <code>dim_canal</code> permiten integrar <em>Ventas POS</em> y <em>Pedidos App</em> en una misma semántica de consulta (bus architecture).</p></li>
+<li><p><strong>Granularidad</strong>: al modelar a nivel de línea, se preserva el análisis de mezcla de productos y el efecto de promociones en el importe.</p></li>
+<li><p><strong>SCD Tipo 2 (extensión recomendada)</strong>: si se desea preservar historia de cambios en <code>categoria</code> o en <code>nivel_lealtad</code>, se debe:</p>
+<ul>
+<li>añadir <code>vigencia_inicio</code>, <code>vigencia_fin</code>, <code>vigente_flag</code>,</li>
+<li>resolver la clave dimensional “as-of” en la fecha del hecho.</li>
+</ul></li>
+<li><p><strong>Late Arriving Dimensions</strong>: en escenarios reales, pueden llegar transacciones cuyo cliente aún no existe en el catálogo. La práctica estándar es asignar <strong>Unknown Member</strong> (<code>*_key = 0</code>) y corregir al cierre del ciclo de carga.</p></li>
+<li><p><strong>Prueba estadística pre/post (opcional)</strong>: para un tratamiento académico, se sugiere formalizar el cambio con pruebas no paramétricas o bootstrap sobre series mensuales (p.&nbsp;ej., pedidos o tasa de cancelación).</p></li>
+</ol>
+<hr>
+</section>
+<section id="reproducibilidad-y-control-de-versiones" class="level2" data-number="10.10">
+<h2 data-number="10.10" class="anchored" data-anchor-id="reproducibilidad-y-control-de-versiones"><span class="header-section-number">10.10</span> 9. Reproducibilidad y control de versiones</h2>
+<p>Para un libro académico, se recomienda:</p>
+<ul>
+<li>fijar versiones de dependencias (p.&nbsp;ej., <code>pandas==2.x</code>, <code>numpy==2.x</code>),</li>
+<li>mantener <code>data/</code> como directorio externo (no versionar datos sensibles),</li>
+<li>versionar el pipeline y el <code>.qmd</code> (Git),</li>
+<li>documentar el diccionario de datos final (metadatos de cada dimensión y hecho).</li>
+</ul>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    // Ensure there is a toggle, if there isn't float one in the top right
+    if (window.document.querySelector('.quarto-color-scheme-toggle') === null) {
+      const a = window.document.createElement('a');
+      a.classList.add('top-right');
+      a.classList.add('quarto-color-scheme-toggle');
+      a.href = "";
+      a.onclick = function() { try { window.quartoToggleColorScheme(); } catch {} return false; };
+      const i = window.document.createElement("i");
+      i.classList.add('bi');
+      a.appendChild(i);
+      window.document.body.appendChild(a);
+    }
+    setColorSchemeToggle(hasAlternateSentinel())
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../../unidades/almacenes/1-4-scd.html" class="pagination-link" aria-label="Dimensiones Lentamente Cambiantes (SCD)">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">Dimensiones Lentamente Cambiantes (SCD)</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../../unidades/almacenes/1-4-pyspark-intro.html" class="pagination-link" aria-label="Introducción a PySpark y Fundamentos ETL">
+        <span class="nav-page-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Introducción a PySpark y Fundamentos ETL</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+<!-- Google Tag Manager (noscript) -->
+<footer class="footer"><div class="nav-footer"><div class="nav-footer-center"><div class="toc-actions d-sm-block d-md-none"><ul><li><a href="https://github.com/DiegoViillalba/almacenamienes-y-mineria-de-datos/edit/main/unidades/almacenes/1-5-ejemplo-completo.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li></ul></div></div></div></footer><noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-NQJGJRC5" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
+
+
+
+
+<script src="../../site_libs/quarto-html/zenscroll-min.js"></script>
+</body></html>

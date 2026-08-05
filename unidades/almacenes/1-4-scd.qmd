@@ -1,0 +1,292 @@
+---
+title: "Dimensiones Lentamente Cambiantes (SCD)"
+---
+
+El capítulo anterior asumió, implícitamente, que las dimensiones son estáticas: un estudiante siempre pertenece a la misma carrera y un producto siempre a la misma categoría. En la práctica no es así: un cliente cambia de ciudad, un producto cambia de categoría y un empleado cambia de puesto.
+
+Las **Slowly Changing Dimensions (SCD)** definen cómo tratar esos cambios de atributos descriptivos sin romper la relación entre un hecho y el contexto que tenía cuando ocurrió. La **clave natural** identifica a la entidad en el sistema fuente; la **clave sustituta** identifica una fila o versión concreta dentro del data warehouse.
+
+```{=html}
+<style>
+.scd-viz{--ink:#172033;--muted:#53627a;--line:#9aa8bc;--soft:#eef3f8;--blue:#dceafe;--blue-line:#4478bd;--green:#dff3e7;--green-line:#3f855c;--amber:#fff0cc;--amber-line:#a56c10;--violet:#eee5fb;--violet-line:#7655aa;max-width:1040px;margin:1.4rem auto;color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.35}.scd-viz *{box-sizing:border-box}.scd-viz .scd-title{margin:0 0 1rem;text-align:center;font-size:1.05rem;font-weight:700}.scd-viz .scd-flow{display:grid;grid-template-columns:1fr 42px 1fr 42px 1fr;align-items:stretch;gap:.4rem}.scd-viz .scd-node{display:flex;flex-direction:column;justify-content:center;min-height:92px;padding:.75rem;border:1px solid var(--line);border-radius:8px;background:var(--soft);text-align:center}.scd-viz .scd-node strong{margin-bottom:.3rem}.scd-viz .scd-node small{color:var(--muted)}.scd-viz .scd-arrow{display:grid;place-items:center;color:var(--muted);font-weight:700}.scd-viz .scd-blue{border-color:var(--blue-line);background:var(--blue)}.scd-viz .scd-green{border-color:var(--green-line);background:var(--green)}.scd-viz .scd-amber{border-color:var(--amber-line);background:var(--amber)}.scd-viz .scd-violet{border-color:var(--violet-line);background:var(--violet)}.scd-viz code{color:var(--ink);font-size:.78rem}.scd-viz .scd-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem}.scd-viz .scd-panel{padding:.8rem;border-top:5px solid var(--accent);border-radius:0 0 8px 8px;background:var(--surface);text-align:center}.scd-viz .scd-panel strong{display:block;margin-bottom:.35rem}.scd-viz .scd-panel small{color:var(--muted)}.scd-viz .scd-timeline{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;padding-top:2rem}.scd-viz .scd-timeline:before{content:"";position:absolute;top:.9rem;left:8%;right:8%;height:3px;background:var(--line)}.scd-viz .scd-moment{position:relative}.scd-viz .scd-moment:before{content:"";position:absolute;top:-1.5rem;left:50%;width:14px;height:14px;transform:translateX(-50%);border:3px solid var(--green-line);border-radius:50%;background:var(--green)}.scd-viz .scd-date{text-align:center;color:var(--muted);font-size:.8rem;font-weight:700}.scd-viz .scd-record{margin-top:.4rem;padding:.7rem;border-left:5px solid var(--green-line);border-radius:6px;background:var(--green);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem}.scd-viz .scd-fact{margin:.75rem auto 0;padding:.65rem;border:1px solid var(--violet-line);border-radius:7px;background:var(--violet);text-align:center;font-size:.84rem}.scd-viz .scd-previous{display:grid;grid-template-columns:1fr 46px 1fr;align-items:center;gap:.5rem}.scd-viz .scd-caption{margin:.65rem 0 0;color:var(--muted);text-align:center;font-size:.82rem}.scd-viz .scd-table{width:100%;border-collapse:collapse;font-size:.84rem}.scd-viz .scd-table th,.scd-viz .scd-table td{padding:.65rem;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}.scd-viz .scd-table th{background:var(--soft)}.scd-viz .scd-table td:first-child{font-weight:700}.scd-viz .scd-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}@media(max-width:720px){.scd-viz .scd-flow{grid-template-columns:1fr}.scd-viz .scd-flow>.scd-arrow{transform:rotate(90deg)}.scd-viz .scd-row{grid-template-columns:1fr}.scd-viz .scd-previous{grid-template-columns:1fr}.scd-viz .scd-previous>.scd-arrow{transform:rotate(90deg)}}@media(max-width:560px){.scd-viz .scd-timeline{grid-template-columns:1fr;padding:0 0 0 1.4rem}.scd-viz .scd-timeline:before{top:.3rem;bottom:.3rem;left:.37rem;right:auto;width:3px;height:auto}.scd-viz .scd-moment:before{top:50%;left:-1.03rem;transform:translateY(-50%)}.scd-viz .scd-date{text-align:left}.scd-viz .scd-table-wrap{overflow-x:auto}}
+/* @media(prefers-color-scheme:dark){.scd-viz{--ink:#eef4ff;--muted:#bdc8d8;--line:#64748b;--soft:#243044;--blue:#203a5d;--blue-line:#83b5f4;--green:#203f31;--green-line:#79c696;--amber:#4b391a;--amber-line:#e2b75d;--violet:#392d50;--violet-line:#b79ae0}} */
+</style>
+
+<div class="scd-viz" role="figure" aria-labelledby="scd-contexto-title">
+  <div id="scd-contexto-title" class="scd-title">Entidad, versiones y hechos históricos</div>
+  <div class="scd-flow">
+    <div class="scd-node"><strong>Sistema fuente</strong><code>cliente_id = C-42</code><small>Clave natural estable</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-green"><strong>Dimensión</strong><code>cliente_key = 101, 208...</code><small>Una clave sustituta por versión</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-violet"><strong>Tabla de hechos</strong><code>cliente_key = 101</code><small>Conserva el contexto vigente</small></div>
+  </div>
+  <p class="scd-caption">La clave sustituta desacopla el historial del identificador utilizado por el sistema fuente.</p>
+</div>
+```
+
+## Tipos de SCD
+
+### Tipo 1: sobrescribir
+
+SCD Tipo 1 actualiza la fila existente. El valor nuevo sustituye al anterior y todas las consultas, incluso las que analizan hechos antiguos, ven la descripción corregida o más reciente.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-t1-title">
+  <div id="scd-t1-title" class="scd-title">SCD Tipo 1: el nuevo valor reemplaza al anterior</div>
+  <div class="scd-flow">
+    <div class="scd-node scd-blue"><strong>Antes</strong><code>C-42 | Monterrey</code></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594; UPDATE &#8594;</div>
+    <div class="scd-node scd-blue"><strong>Después</strong><code>C-42 | Guadalajara</code><small>Monterrey deja de estar disponible</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node"><strong>Consultas históricas</strong><small>También muestran Guadalajara</small></div>
+  </div>
+</div>
+```
+
+**Ventajas**
+
+- Es el patrón más sencillo de implementar, consultar y mantener.
+- No incrementa el número de filas de la dimensión.
+- Corrige errores de captura para todo el historial de manera inmediata.
+- No requiere columnas de vigencia ni lógica temporal en los joins.
+
+**Desventajas**
+
+- Destruye el valor anterior y no permite reconstruir cómo se veía la entidad en una fecha pasada.
+- Puede reinterpretar hechos históricos con atributos que todavía no existían cuando ocurrieron.
+- No es adecuado para auditoría, trazabilidad ni análisis de evolución.
+
+**Conviene usarlo cuando** el cambio es una corrección ortográfica, una normalización o un atributo cuyo historial carece de valor analítico. No conviene usarlo para cambios de puesto, categoría, segmento o ubicación cuando esos cambios alteran la interpretación del hecho.
+
+```sql
+merge into dim_cliente as destino
+using stg_cliente as fuente
+  on destino.cliente_id = fuente.cliente_id
+when matched then update set
+  nombre = fuente.nombre,
+  ciudad = fuente.ciudad
+when not matched then insert (cliente_id, nombre, ciudad)
+values (fuente.cliente_id, fuente.nombre, fuente.ciudad);
+```
+
+### Tipo 2: crear una versión
+
+SCD Tipo 2 cierra la versión vigente e inserta una fila nueva. La clave natural se mantiene, pero cada versión recibe una clave sustituta distinta y un intervalo de vigencia.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-t2-title">
+  <div id="scd-t2-title" class="scd-title">SCD Tipo 2: cada cambio crea una versión temporal</div>
+  <div class="scd-timeline">
+    <div class="scd-moment">
+      <div class="scd-date">1 ene 2024</div>
+      <div class="scd-record">cliente_key: 101<br>cliente_id: C-42<br>ciudad: Monterrey<br>hasta: 2024-06-30<br>es_actual: false</div>
+    </div>
+    <div class="scd-moment">
+      <div class="scd-date">1 jul 2024</div>
+      <div class="scd-record">Cambio detectado<br>Se cierra key 101<br>Se crea key 208</div>
+    </div>
+    <div class="scd-moment">
+      <div class="scd-date">Versión vigente</div>
+      <div class="scd-record">cliente_key: 208<br>cliente_id: C-42<br>ciudad: Guadalajara<br>hasta: 9999-12-31<br>es_actual: true</div>
+    </div>
+  </div>
+  <div class="scd-fact"><strong>Venta de mayo &#8594; key 101 &#8594; Monterrey</strong>&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Venta de agosto &#8594; key 208 &#8594; Guadalajara</strong></div>
+</div>
+```
+
+**Ventajas**
+
+- Conserva el historial completo de los atributos seleccionados.
+- Mantiene el contexto correcto de cada hecho sin depender de joins por rango de fecha, siempre que el proceso de carga asigne la clave sustituta vigente.
+- Permite auditoría, reconstrucción histórica y análisis de transiciones.
+- Hace explícita la vigencia mediante `valido_desde`, `valido_hasta` y `es_actual`.
+
+**Desventajas**
+
+- Aumenta el volumen de la dimensión: una entidad puede producir muchas filas.
+- La carga es más compleja porque debe detectar cambios, cerrar la versión anterior e insertar la nueva de forma consistente.
+- Requiere reglas claras para cambios tardíos, correcciones retroactivas y límites de vigencia.
+- Puede generar versiones duplicadas, solapamientos o más de una fila vigente si el proceso no es idempotente o no se ejecuta de forma atómica.
+
+**Conviene usarlo cuando** es necesario responder preguntas como “¿qué categoría tenía el producto cuando se realizó la venta?” o “¿en qué ciudad estaba registrado el cliente cuando ocurrió la transacción?”.
+
+```sql
+update dim_cliente as d
+set valido_hasta = current_date - interval '1 day',
+    es_actual = false
+from stg_cliente as s
+where d.cliente_id = s.cliente_id
+  and d.es_actual
+  and (d.nombre is distinct from s.nombre
+       or d.ciudad is distinct from s.ciudad);
+
+insert into dim_cliente
+  (cliente_id, nombre, ciudad, valido_desde, valido_hasta, es_actual)
+select s.cliente_id,
+       s.nombre,
+       s.ciudad,
+       current_date,
+       date '9999-12-31',
+       true
+from stg_cliente as s
+left join dim_cliente as d
+  on d.cliente_id = s.cliente_id
+ and d.es_actual
+where d.cliente_id is null
+   or d.nombre is distinct from s.nombre
+   or d.ciudad is distinct from s.ciudad;
+```
+
+En producción, el cierre y la inserción deberían ejecutarse dentro de una misma transacción cuando el motor lo permita. La clave sustituta puede generarse mediante una columna `identity`, una secuencia, un hash estable de la versión o la estrategia definida por la plataforma.
+
+### Tipo 3: guardar el valor anterior
+
+SCD Tipo 3 conserva el valor vigente y un valor previo en la misma fila. No crea una historia ilimitada: al llegar otro cambio, el valor anterior también se sobrescribe.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-t3-title">
+  <div id="scd-t3-title" class="scd-title">SCD Tipo 3: una fila conserva el estado actual y el previo</div>
+  <div class="scd-previous">
+    <div class="scd-node scd-amber"><strong>Antes del cambio</strong><code>actual = Monterrey</code><code>anterior = NULL</code></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-amber"><strong>Después del cambio</strong><code>actual = Guadalajara</code><code>anterior = Monterrey</code><small>Un tercer valor desplazaría a Monterrey</small></div>
+  </div>
+</div>
+```
+
+**Ventajas**
+
+- Permite comparar fácilmente el estado actual con el inmediatamente anterior.
+- Mantiene una sola fila por entidad y evita el crecimiento de SCD Tipo 2.
+- Las consultas son sencillas porque no necesitan intervalos de vigencia ni múltiples versiones.
+
+**Desventajas**
+
+- Sólo conserva una cantidad fija y limitada de cambios.
+- Requiere agregar columnas específicas para cada atributo histórico.
+- Pierde utilidad cuando varios atributos cambian de forma independiente.
+- No permite reconstruir el estado de la dimensión para una fecha arbitraria.
+
+**Conviene usarlo cuando** el negocio sólo compara el valor actual contra el anterior, por ejemplo, segmento actual frente a segmento previo. No sustituye a SCD Tipo 2 cuando existe un requisito de auditoría completa.
+
+```sql
+update dim_cliente as d
+set ciudad_anterior = d.ciudad_actual,
+    ciudad_actual = s.ciudad,
+    fecha_cambio = current_date
+from stg_cliente as s
+where d.cliente_id = s.cliente_id
+  and d.ciudad_actual is distinct from s.ciudad;
+```
+
+## Implementación con dbt
+
+dbt materializa el modelo dimensional desde tablas de *staging*. Un modelo incremental puede cubrir SCD Tipo 1; para SCD Tipo 2, un *snapshot* registra automáticamente las versiones detectadas.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-dbt-title">
+  <div id="scd-dbt-title" class="scd-title">Flujo de SCD Tipo 2 con dbt</div>
+  <div class="scd-flow">
+    <div class="scd-node"><strong>Staging</strong><code>stg_clientes</code><small>Datos normalizados</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-green"><strong>Snapshot</strong><code>unique_key</code><code>check_cols</code><small>Detecta y versiona cambios</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-blue"><strong>Dimensión final</strong><code>cliente_key</code><code>valido_desde / hasta</code><small>Interfaz para hechos y consultas</small></div>
+  </div>
+  <p class="scd-caption">Las pruebas se aplican después de materializar la dimensión y verifican tanto las claves como la integridad temporal.</p>
+</div>
+```
+
+```sql
+-- snapshots/clientes.sql
+{% snapshot clientes_snapshot %}
+{{
+  config(
+    target_schema='snapshots',
+    unique_key='cliente_id',
+    strategy='check',
+    check_cols=['nombre', 'ciudad']
+  )
+}}
+
+select cliente_id, nombre, ciudad
+from {{ ref('stg_clientes') }}
+{% endsnapshot %}
+```
+
+El *snapshot* agrega `dbt_valid_from`, `dbt_valid_to` y `dbt_scd_id`. La dimensión final usa esas columnas para exponer la vigencia y la clave sustituta.
+
+```sql
+-- models/marts/dim_cliente.sql
+select
+  dbt_scd_id as cliente_key,
+  cliente_id,
+  nombre,
+  ciudad,
+  dbt_valid_from as valido_desde,
+  coalesce(dbt_valid_to, timestamp '9999-12-31') as valido_hasta,
+  dbt_valid_to is null as es_actual
+from {{ ref('clientes_snapshot') }}
+```
+
+### Ventajas de usar snapshots de dbt
+
+- Centralizan la detección y el versionado de cambios.
+- Reducen la cantidad de SQL procedural escrito manualmente.
+- Generan metadatos de vigencia de forma consistente.
+- Se integran con dependencias, documentación y pruebas del proyecto dbt.
+
+### Desventajas y precauciones
+
+- El comportamiento depende de elegir correctamente `unique_key`, `strategy` y `check_cols`.
+- Incluir columnas volátiles, como una marca de tiempo de carga, puede crear versiones innecesarias en cada ejecución.
+- Un snapshot conserva lo que observa durante sus ejecuciones; no puede reconstruir cambios que ocurrieron y desaparecieron entre dos corridas.
+- Los cambios retroactivos y las eliminaciones requieren una política explícita.
+
+## Pruebas de integridad
+
+Las pruebas declarativas verifican que la clave sustituta sea única y no nula, y que la clave natural esté presente.
+
+```yaml
+models:
+  - name: dim_cliente
+    columns:
+      - name: cliente_key
+        tests: [unique, not_null]
+      - name: cliente_id
+        tests: [not_null]
+```
+
+Esas pruebas no garantizan por sí solas que exista una sola versión vigente. Esa regla puede verificarse con una prueba singular adicional:
+
+```sql
+-- tests/una_version_vigente_por_cliente.sql
+select cliente_id
+from {{ ref('dim_cliente') }}
+where es_actual
+group by cliente_id
+having count(*) > 1
+```
+
+También conviene comprobar que los intervalos no se solapen y que `valido_desde` sea menor que `valido_hasta`.
+
+## Comparación y criterio de elección
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-comparacion-title">
+  <div id="scd-comparacion-title" class="scd-title">Comparación de los tipos principales</div>
+  <div class="scd-table-wrap">
+    <table class="scd-table">
+      <thead><tr><th>Tipo</th><th>Historial</th><th>Filas por entidad</th><th>Complejidad</th><th>Uso principal</th></tr></thead>
+      <tbody>
+        <tr><td>Tipo 1</td><td>Ninguno</td><td>Una</td><td>Baja</td><td>Correcciones y atributos sin valor histórico</td></tr>
+        <tr><td>Tipo 2</td><td>Completo</td><td>Una por versión</td><td>Alta</td><td>Auditoría y contexto histórico preciso</td></tr>
+        <tr><td>Tipo 3</td><td>Limitado</td><td>Una</td><td>Media</td><td>Comparar el estado actual con el previo</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+```
+
+La elección no tiene que hacerse para toda la dimensión. En una misma tabla es posible aplicar Tipo 1 a atributos correctivos, Tipo 2 a atributos cuyo historial importa y, de forma excepcional, Tipo 3 a comparaciones limitadas. Lo importante es definir la política **por atributo**, documentar por qué se conserva o descarta el historial y diseñar las pruebas que protejan esa decisión.

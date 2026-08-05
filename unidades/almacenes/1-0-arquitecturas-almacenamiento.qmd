@@ -1,0 +1,163 @@
+# Introducción
+
+## La Arquitectura en Ciencias de la Computación
+
+En Ciencias de la Computación (CS) y en la Ingeniería de Software, el término **arquitectura** no se refiere al diseño estético de un edificio físico, sino a la definición y diseño de las estructuras que componen un sistema digital complejo.
+
+::: {.callout-note appearance="minimal"}
+**Definición (Arquitectura de Sistemas de Datos)**. La organización estructural de los sistemas de hardware, software y almacenamiento que permiten capturar, transformar, organizar y consultar datos a gran escala, definiendo los flujos de información y los límites operativos entre cada componente del sistema.
+:::
+
+Una buena arquitectura de datos garantiza que la información esté disponible para quien la necesita, en el formato adecuado, de forma segura y con un rendimiento predecible. Pero esa definición esconde una pregunta más incómoda: **¿por qué no basta con "guardar los datos en un disco y ya"?** ¿Por qué la industria ha invertido cuatro décadas diseñando y rediseñando la forma en que se persisten los datos analíticos?
+
+La respuesta tiene poco que ver con estética o con moda tecnológica, y mucho con tres restricciones físicas muy concretas:
+
+1.  **Cómo está organizada la información sobre el disco/memoria determina qué tan rápido (y qué tan caro) es responder una pregunta sobre ella.**
+2.  **Qué tan rígido o flexible es el sistema de persistencia determina qué tipos de datos puede almacenar de manera eficiente, y qué tanto puede crecer.**
+3.  **Qué tan estrictas son las garantías de consistencia que ofrece el sistema determina qué tan caro es coordinar escrituras concurrentes.**
+
+Toda arquitectura de almacenamiento —Data Warehouse, Data Lake o Data Lakehouse, que estudiaremos en los siguientes capítulos— es, en el fondo, una decisión de diseño distinta sobre estos tres ejes. Antes de nombrarlas, vale la pena entender *por qué* existen: cuál es su **sentido de ser** desde una perspectiva técnica.
+
+---
+
+## Eje 1: El costo de leer datos — filas vs. columnas
+
+Cuando un motor de base de datos ejecuta una consulta, el cuello de botella casi nunca es la CPU: es la cantidad de datos que hay que **leer desde disco** para responderla. La forma en que los registros se distribuyen físicamente sobre el almacenamiento —fila por fila o columna por columna— cambia radicalmente cuánto hay que leer.
+
+::: {.callout-note appearance="minimal"}
+**Definición (Almacenamiento orientado a filas / *Row-oriented*)**. Modelo de persistencia en el que todos los valores de un mismo registro (fila) se guardan de forma contigua en disco. Es el modelo clásico de los sistemas transaccionales (OLTP).
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definición (Almacenamiento orientado a columnas / *Column-oriented*)**. Modelo de persistencia en el que todos los valores de un mismo atributo (columna) se guardan de forma contigua en disco, separando cada columna de la tabla en su propio bloque físico. Es el modelo dominante en los sistemas analíticos (OLAP).
+:::
+
+### Visualización: mismo dato, dos disposiciones físicas distintas
+
+```{=html}
+<div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin: 1.5rem 0; font-family: system-ui, -apple-system, sans-serif;">
+
+  <!-- Row-oriented -->
+  <div style="flex: 1; min-width: 260px; max-width: 340px; border: 1px solid #ccd; border-radius: 8px; padding: 15px; background: rgba(0,0,0,0.02);">
+    <div style="font-size: 0.8em; font-weight: bold; color: #666; text-transform: uppercase; margin-bottom: 8px; text-align: center;">Row-oriented (OLTP)</div>
+    <div style="font-size: 0.8em; opacity: 0.85; margin-bottom: 10px; text-align: center;">Ideal para: <code>INSERT</code>, <code>UPDATE</code> y lectura de un registro completo.</div>
+    <div style="font-family: monospace; font-size: 0.78em; background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 10px; line-height: 1.7; overflow-x: auto;">
+      [ 1, Ana, Ventas, 3200 ]<br>
+      [ 2, Luis, TI, 4100 ]<br>
+      [ 3, Eva, Ventas, 2900 ]<br>
+      [ 4, Iván, TI, 4600 ]
+    </div>
+    <div style="font-size: 0.78em; opacity: 0.85; margin-top: 8px;">Para calcular el salario promedio, el motor debe leer <strong>todos</strong> los bloques, aunque solo necesite una columna.</div>
+  </div>
+
+  <!-- Column-oriented -->
+  <div style="flex: 1; min-width: 260px; max-width: 340px; border: 1px solid #0d47a1; border-radius: 8px; padding: 15px; background: rgba(13, 71, 161, 0.05);">
+    <div style="font-size: 0.8em; font-weight: bold; color: #0d47a1; text-transform: uppercase; margin-bottom: 8px; text-align: center;">Column-oriented (OLAP)</div>
+    <div style="font-size: 0.8em; opacity: 0.85; margin-bottom: 10px; text-align: center;">Ideal para: agregaciones (<code>AVG</code>, <code>SUM</code>) sobre pocas columnas y muchas filas.</div>
+    <div style="font-family: monospace; font-size: 0.78em; background: #fff; border: 1px solid #90caf9; border-radius: 6px; padding: 10px; line-height: 1.7; overflow-x: auto;">
+      id: [1, 2, 3, 4]<br>
+      nombre: [Ana, Luis, Eva, Iván]<br>
+      área: [Ventas, TI, Ventas, TI]<br>
+      <strong style="color:#0d47a1;">salario: [3200, 4100, 2900, 4600]</strong>
+    </div>
+    <div style="font-size: 0.78em; opacity: 0.85; margin-top: 8px;">Para <code>AVG(salario)</code>, el motor lee <strong>únicamente</strong> el bloque de la columna <code>salario</code>, ignorando el resto.</div>
+  </div>
+
+</div>
+```
+
+Esta diferencia, que parece un detalle de implementación, tiene consecuencias enormes a escala:
+
+*   **Menos I/O**: si una tabla tiene 50 columnas y una consulta analítica solo necesita 3, un motor columnar lee, en teoría, el 6 % de los datos que leería un motor por filas.
+*   **Mejor compresión**: una columna contiene valores del mismo tipo y con baja variabilidad (por ejemplo, un mismo `área` se repite miles de veces), lo que permite algoritmos de compresión mucho más agresivos que comprimir filas heterogéneas.
+*   **Ejecución vectorizada**: al tener los valores de una columna contiguos en memoria, el CPU puede aplicar operaciones (sumar, comparar, filtrar) sobre bloques completos usando instrucciones SIMD, en lugar de procesar registro por registro.
+
+Por eso los sistemas transaccionales (bases de datos operacionales de un e-commerce, un banco, una universidad) son **row-oriented** —necesitan escribir y leer registros completos rápidamente— mientras que los sistemas analíticos (Data Warehouse, Data Lakehouse) son **column-oriented**, o usan formatos de archivo columnares como **Parquet** u **ORC**, porque su carga de trabajo dominante son agregaciones sobre volúmenes masivos de filas.
+
+### OLTP vs. OLAP: dos cargas de trabajo distintas
+
+La elección entre almacenamiento por filas o por columnas no es arbitraria: responde a que, desde los años 90, la industria reconoce dos tipos de carga de trabajo con necesidades opuestas.
+
+::: {.callout-note appearance="minimal"}
+**Definición (OLTP / *Online Transaction Processing*)**. Carga de trabajo dominada por operaciones de escritura y lectura de registros individuales, con alta concurrencia y baja latencia por operación. Es el patrón de las aplicaciones operacionales.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definición (OLAP / *Online Analytical Processing*)**. Carga de trabajo dominada por consultas de agregación y exploración sobre grandes volúmenes de filas, típicamente sobre pocas columnas a la vez, con menor concurrencia y tolerancia a mayor latencia por consulta.
+:::
+
+| Criterio | OLTP | OLAP |
+|---|---|---|
+| Objetivo | Registrar la operación del negocio | Analizar el histórico del negocio |
+| Operación típica | `INSERT` / `UPDATE` de un registro | `SELECT ... GROUP BY` sobre millones de filas |
+| Volumen por operación | Pocas filas, todas sus columnas | Muchas filas, pocas columnas |
+| Almacenamiento natural | Orientado a filas | Orientado a columnas |
+| Usuarios | Aplicación operacional (miles de transacciones concurrentes) | Analistas/BI (pocas consultas, pero pesadas) |
+| Ejemplo | Registrar una venta en un POS | Calcular ventas promedio por región del último año |
+
+Esta tabla es la razón última por la que un **Data Warehouse** nunca se alimenta directamente de la base transaccional de producción: son dos cargas de trabajo que compiten por los mismos recursos y que, además, favorecen disposiciones físicas de almacenamiento opuestas.
+
+---
+
+## Eje 2: El costo de la rigidez — datos homogéneos vs. heterogéneos
+
+El segundo eje no tiene que ver con *cómo* se organiza el dato dentro de la tabla, sino con **qué tan dispuesto está el sistema de persistencia a aceptar datos que no encajan en una tabla**.
+
+Una base de datos relacional clásica exige que, antes de insertar un dato, este se ajuste a un esquema fijo: columnas, tipos, longitudes. Esto es excelente para garantizar consistencia, pero es una barrera de entrada para datos que **no nacen tabulares**: un archivo de log, una imagen de un producto, un JSON anidado que cambia de estructura entre un evento y otro, una transcripción de audio.
+
+Durante décadas, la única opción para ese tipo de datos era descartarlos, transformarlos forzosamente en tablas (perdiendo información en el proceso) o almacenarlos en sistemas de archivos completamente aislados de la infraestructura analítica.
+
+El avance que habilitó a los sistemas modernos de persistencia a resolver esto fue la combinación de dos ideas:
+
+*   **Almacenamiento de objetos** (*object storage*, como Amazon S3 o Google Cloud Storage): un sistema de persistencia que no exige un esquema para aceptar un archivo, es económico por naturaleza (paga por byte, no por rendimiento de disco de alta gama) y escala de forma prácticamente ilimitada.
+*   **Formatos de archivo abiertos y autodescriptivos** (Parquet, Avro, JSON, ORC): archivos que llevan su propio esquema embebido, permitiendo que datos estructurados, semi-estructurados y no estructurados convivan en el mismo almacén sin perder la posibilidad de ser leídos e interpretados después.
+
+Esta combinación es lo que permite que un **Data Lake** —y, más adelante, un **Data Lakehouse**— almacene en el mismo lugar una tabla de transacciones, un conjunto de imágenes de productos y un registro de eventos de clics de una aplicación web, sin que el sistema de almacenamiento le exija a ninguno de ellos ajustarse a una estructura predefinida antes de guardarse. El esquema, si se necesita, se interpreta **en el momento de la lectura**, no al momento de la escritura.
+
+### Escalar verticalmente vs. escalar horizontalmente
+
+La flexibilidad de un sistema de persistencia también depende de cómo crece cuando el volumen de datos supera lo que un solo servidor puede manejar. Existen dos estrategias:
+
+::: {.callout-note appearance="minimal"}
+**Definición (Escalamiento vertical / *Scale-up*)**. Estrategia que aumenta la capacidad de un sistema añadiendo más recursos (CPU, RAM, disco) a una única máquina. Es el patrón tradicional de las bases de datos relacionales.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definición (Escalamiento horizontal / *Scale-out*)**. Estrategia que aumenta la capacidad de un sistema añadiendo más máquinas (nodos), distribuyendo los datos y el trabajo entre ellas. Es el patrón nativo del almacenamiento de objetos y del cómputo distribuido.
+:::
+
+El escalamiento vertical tiene un techo físico y económico: existe un límite de CPU/RAM que un solo servidor puede alojar, y el costo de esas máquinas de gama alta crece mucho más rápido que linealmente conforme se acercan a ese límite. Es una restricción que las bases de datos relacionales de un Data Warehouse clásico heredan directamente.
+
+El escalamiento horizontal, en cambio, permite crecer añadiendo nodos de hardware relativamente económico (*commodity hardware*), lo cual es lo que hace viable, en términos de costo, almacenar petabytes de datos heterogéneos en un Data Lake: el sistema no necesita un servidor cada vez más costoso, sino simplemente más espacio distribuido entre miles de discos comunes.
+
+---
+
+## Eje 3: El costo de la consistencia — ACID vs. BASE
+
+El tercer eje no tiene que ver con la velocidad de lectura ni con qué tipos de datos se aceptan, sino con **qué tan estrictamente garantiza el sistema que los datos siempre reflejen un estado correcto**, incluso cuando ocurren escrituras simultáneas o fallas a mitad de una operación.
+
+::: {.callout-note appearance="minimal"}
+**Definición (ACID)**. Conjunto de garantías —*Atomicity* (atomicidad), *Consistency* (consistencia), *Isolation* (aislamiento) y *Durability* (durabilidad)— que aseguran que cada transacción se ejecute por completo o no se ejecute en absoluto, y que el sistema nunca quede en un estado intermedio o corrupto.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definición (BASE)**. Conjunto de garantías más laxas —*Basically Available* (básicamente disponible), *Soft state* (estado flexible) y *Eventual consistency* (consistencia eventual)— que priorizan la disponibilidad y la capacidad de seguir operando bajo fallas o alta distribución, aceptando que distintos lectores puedan ver temporalmente versiones ligeramente distintas del dato.
+:::
+
+Garantizar ACID tiene un costo real: exige coordinación (bloqueos, registros de transacciones, verificación de reglas) que se vuelve cada vez más cara conforme el sistema se distribuye en más nodos. Por eso los sistemas relacionales clásicos —diseñados para escalar verticalmente, en una sola máquina o un clúster pequeño y fuertemente acoplado— pueden ofrecer ACID de forma económica, mientras que los sistemas de almacenamiento de objetos masivamente distribuidos, pensados para escalar horizontalmente a miles de nodos, adoptaron tradicionalmente garantías BASE: aceptan una ventana de inconsistencia a cambio de disponibilidad y escala casi ilimitada.
+
+Este es precisamente el problema que resolverá más adelante el **Data Lakehouse**: introducir una capa de metadatos transaccionales que reintroduce garantías ACID *sobre* un almacenamiento de objetos que, por diseño, nació BASE.
+
+---
+
+## El sentido de ser de las arquitecturas de almacenamiento
+
+Ningún sistema optimiza simultáneamente los tres ejes al máximo: **velocidad de consulta** (filas vs. columnas), **flexibilidad para persistir datos heterogéneos** (rigidez del esquema y del escalamiento) y **garantías de consistencia** (ACID vs. BASE) compiten entre sí, porque cada garantía adicional tiene un costo de rigidez o de cómputo.
+
+Esa tensión de tres vías es exactamente el problema que cada arquitectura de datos intenta resolver con un balance distinto:
+
+*   Un sistema puede priorizar el **eje 1** y el **eje 3** al extremo —almacenamiento columnar y ACID estricto— aceptando datos únicamente estructurados a cambio de un rendimiento de consulta extraordinario y consistencia total.
+*   Un sistema puede priorizar el **eje 2** al extremo —escalamiento horizontal y BASE— aceptando cualquier tipo de dato y creciendo casi sin límite, a cambio de renunciar a garantías de consistencia inmediata.
+*   Un sistema puede intentar obtener lo mejor de los tres mundos, incorporando una capa adicional que reintroduzca control transaccional (ACID) sobre un almacenamiento de objetos flexible y escalado horizontalmente.
+
+En los próximos capítulos estudiaremos, respectivamente, el **Data Warehouse**, el **Data Lake** y el **Data Lakehouse**: tres materializaciones concretas de estas decisiones de diseño. Lo importante, antes de entrar en el detalle de cada una, es no perder de vista que ninguna de estas arquitecturas es una moda: cada una existe porque resuelve, con distintas concesiones, el mismo trío de restricciones físicas de eficiencia que acabamos de describir.
