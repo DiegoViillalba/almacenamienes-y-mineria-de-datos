@@ -1,0 +1,289 @@
+---
+title: "Slowly Changing Dimensions (SCD)"
+---
+
+The previous chapter implicitly assumed that dimensions are static: a student always belongs to the same major, and a product always belongs to the same category. In practice, this is not the case: a customer moves to a new city, a product changes categories, or an employee changes job titles.
+
+**Slowly Changing Dimensions (SCD)** define how to handle changes in descriptive attributes without breaking the historical relationship between a fact event and its context at the time it occurred. The **natural key** identifies the entity in the source system; the **surrogate key** identifies a specific row version within the data warehouse.
+
+```{=html}
+<style>
+.scd-viz{--ink:#172033;--muted:#53627a;--line:#9aa8bc;--soft:#eef3f8;--blue:#dceafe;--blue-line:#4478bd;--green:#dff3e7;--green-line:#3f855c;--amber:#fff0cc;--amber-line:#a56c10;--violet:#eee5fb;--violet-line:#7655aa;max-width:1040px;margin:1.4rem auto;color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.35}.scd-viz *{box-sizing:border-box}.scd-viz .scd-title{margin:0 0 1rem;text-align:center;font-size:1.05rem;font-weight:700}.scd-viz .scd-flow{display:grid;grid-template-columns:1fr 42px 1fr 42px 1fr;align-items:stretch;gap:.4rem}.scd-viz .scd-node{display:flex;flex-direction:column;justify-content:center;min-height:92px;padding:.75rem;border:1px solid var(--line);border-radius:8px;background:var(--soft);text-align:center}.scd-viz .scd-node strong{margin-bottom:.3rem}.scd-viz .scd-node small{color:var(--muted)}.scd-viz .scd-arrow{display:grid;place-items:center;color:var(--muted);font-weight:700}.scd-viz .scd-blue{border-color:var(--blue-line);background:var(--blue)}.scd-viz .scd-green{border-color:var(--green-line);background:var(--green)}.scd-viz .scd-amber{border-color:var(--amber-line);background:var(--amber)}.scd-viz .scd-violet{border-color:var(--violet-line);background:var(--violet)}.scd-viz code{color:var(--ink);font-size:.78rem}.scd-viz .scd-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem}.scd-viz .scd-panel{padding:.8rem;border-top:5px solid var(--accent);border-radius:0 0 8px 8px;background:var(--surface);text-align:center}.scd-viz .scd-panel strong{display:block;margin-bottom:.35rem}.scd-viz .scd-panel small{color:var(--muted)}.scd-viz .scd-timeline{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;padding-top:2rem}.scd-viz .scd-timeline:before{content:"";position:absolute;top:.9rem;left:8%;right:8%;height:3px;background:var(--line)}.scd-viz .scd-moment{position:relative}.scd-viz .scd-moment:before{content:"";position:absolute;top:-1.5rem;left:50%;width:14px;height:14px;transform:translateX(-50%);border:3px solid var(--green-line);border-radius:50%;background:var(--green)}.scd-viz .scd-date{text-align:center;color:var(--muted);font-size:.8rem;font-weight:700}.scd-viz .scd-record{margin-top:.4rem;padding:.7rem;border-left:5px solid var(--green-line);border-radius:6px;background:var(--green);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem}.scd-viz .scd-fact{margin:.75rem auto 0;padding:.65rem;border:1px solid var(--violet-line);border-radius:7px;background:var(--violet);text-align:center;font-size:.84rem}.scd-viz .scd-previous{display:grid;grid-template-columns:1fr 46px 1fr;align-items:center;gap:.5rem}.scd-viz .scd-caption{margin:.65rem 0 0;color:var(--muted);text-align:center;font-size:.82rem}.scd-viz .scd-table{width:100%;border-collapse:collapse;font-size:.84rem}.scd-viz .scd-table th,.scd-viz .scd-table td{padding:.65rem;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}.scd-viz .scd-table th{background:var(--soft)}.scd-viz .scd-table td:first-child{font-weight:700}.scd-viz .scd-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}@media(max-width:720px){.scd-viz .scd-flow{grid-template-columns:1fr}.scd-viz .scd-flow>.scd-arrow{transform:rotate(90deg)}.scd-viz .scd-row{grid-template-columns:1fr}.scd-viz .scd-previous{grid-template-columns:1fr}.scd-viz .scd-previous>.scd-arrow{transform:rotate(90deg)}}@media(max-width:560px){.scd-viz .scd-timeline{grid-template-columns:1fr;padding:0 0 0 1.4rem}.scd-viz .scd-timeline:before{top:.3rem;bottom:.3rem;left:.37rem;right:auto;width:3px;height:auto}.scd-viz .scd-moment:before{top:50%;left:-1.03rem;transform:translateY(-50%)}.scd-viz .scd-date{text-align:left}.scd-viz .scd-table-wrap{overflow-x:auto}}
+</style>
+
+<div class="scd-viz" role="figure" aria-labelledby="scd-contexto-title">
+  <div id="scd-contexto-title" class="scd-title">Entity, Versions, and Historical Facts</div>
+  <div class="scd-flow">
+    <div class="scd-node"><strong>Source System</strong><code>customer_id = C-42</code><small>Stable natural key</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-green"><strong>Dimension</strong><code>customer_key = 101, 208...</code><small>One surrogate key per version</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-violet"><strong>Fact Table</strong><code>customer_key = 101</code><small>Preserves context at event time</small></div>
+  </div>
+  <p class="scd-caption">The surrogate key decouples history from the identifier used by the source system.</p>
+</div>
+```
+
+## SCD Types
+
+### Type 1: Overwrite
+
+SCD Type 1 updates the existing row in place. The new attribute value replaces the old value, and all historical queries—even those analyzing past transactions—reflect the updated or corrected attribute.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-t1-title">
+  <div id="scd-t1-title" class="scd-title">SCD Type 1: New Value Overwrites Old Value</div>
+  <div class="scd-flow">
+    <div class="scd-node scd-blue"><strong>Before</strong><code>C-42 | Monterrey</code></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594; UPDATE &#8594;</div>
+    <div class="scd-node scd-blue"><strong>After</strong><code>C-42 | Guadalajara</code><small>Monterrey is overwritten</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node"><strong>Historical Queries</strong><small>Display Guadalajara for all dates</small></div>
+  </div>
+</div>
+```
+
+**Advantages**
+
+- Simplest pattern to implement, query, and maintain.
+- Does not increase dimension row count.
+- Instantly corrects data entry errors across the entire history.
+- Requires no effective date ranges or temporal join logic.
+
+**Disadvantages**
+
+- Erases historical context; cannot reconstruct past states.
+- Can re-attribute historical facts to states that did not exist when the event occurred.
+- Unsuitable for auditing, traceability, or trend tracking.
+
+**When to Use:** When changes represent spelling corrections, data standardization, or attributes whose historical changes carry no business value. Avoid Type 1 when attribute changes alter the interpretation of historical fact records (e.g., job titles, sales territories, customer segments).
+
+```sql
+merge into dim_customer as target
+using stg_customer as source
+  on target.customer_id = source.customer_id
+when matched then update set
+  name = source.name,
+  city = source.city
+when not matched then insert (customer_id, name, city)
+values (source.customer_id, source.name, source.city);
+```
+
+### Type 2: Add a New Version Row
+
+SCD Type 2 closes out the current record version and inserts a new row. The natural key stays the same, but each version receives a unique surrogate key and effective date interval.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-t2-title">
+  <div id="scd-t2-title" class="scd-title">SCD Type 2: Every Change Creates a Version Row</div>
+  <div class="scd-timeline">
+    <div class="scd-moment">
+      <div class="scd-date">Jan 1, 2024</div>
+      <div class="scd-record">customer_key: 101<br>customer_id: C-42<br>city: Monterrey<br>valid_to: 2024-06-30<br>is_current: false</div>
+    </div>
+    <div class="scd-moment">
+      <div class="scd-date">Jul 1, 2024</div>
+      <div class="scd-record">Change detected<br>Key 101 closed<br>Key 208 inserted</div>
+    </div>
+    <div class="scd-moment">
+      <div class="scd-date">Active Version</div>
+      <div class="scd-record">customer_key: 208<br>customer_id: C-42<br>city: Guadalajara<br>valid_to: 9999-12-31<br>is_current: true</div>
+    </div>
+  </div>
+  <div class="scd-fact"><strong>May Sale &#8594; key 101 &#8594; Monterrey</strong>&nbsp;&nbsp;|&nbsp;&nbsp;<strong>August Sale &#8594; key 208 &#8594; Guadalajara</strong></div>
+</div>
+```
+
+**Advantages**
+
+- Preserves a full audit history of selected attribute changes over time.
+- Preserves accurate point-in-time context without requiring complex date-range join logic, provided the ETL process assigns the active surrogate key during load time.
+- Enables point-in-time reconstruction and transition tracking.
+- Explicitly models validity via `valid_from`, `valid_to`, and `is_current`.
+
+**Disadvantages**
+
+- Expands dimension storage footprint as entities generate multiple version rows.
+- ETL complexity increases: pipelines must detect changes, expire prior versions, and insert new versions atomically.
+- Demands clear policies for late-arriving data, retroactive corrections, and boundary dates.
+
+**When to Use:** When answering queries like "Which sales region was assigned to the product when the transaction occurred?" or "Where was the customer living at the time of purchase?".
+
+```sql
+update dim_customer as d
+set valid_to = current_date - interval '1 day',
+    is_current = false
+from stg_customer as s
+where d.customer_id = s.customer_id
+  and d.is_current
+  and (d.name is distinct from s.name
+       or d.city is distinct from s.city);
+
+insert into dim_customer
+  (customer_id, name, city, valid_from, valid_to, is_current)
+select s.customer_id,
+       s.name,
+       s.city,
+       current_date,
+       date '9999-12-31',
+       true
+from stg_customer as s
+left join dim_customer as d
+  on d.customer_id = s.customer_id
+ and d.is_current
+where d.customer_id is null
+   or d.name is distinct from s.name
+   or d.city is distinct from s.city;
+```
+
+In production environments, expiration and insertion steps should execute within a single transaction. Surrogate keys can be generated via `identity` columns, database sequences, stable version hashes, or cloud data platform primitives.
+
+### Type 3: Add Previous Value Column
+
+SCD Type 3 stores the current value and the immediately preceding value within separate columns on the same row. It does not track an unlimited history: when a new change occurs, the previous value is overwritten.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-t3-title">
+  <div id="scd-t3-title" class="scd-title">SCD Type 3: Single Row Tracks Current and Previous Values</div>
+  <div class="scd-previous">
+    <div class="scd-node scd-amber"><strong>Before Change</strong><code>current = Monterrey</code><code>previous = NULL</code></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-amber"><strong>After Change</strong><code>current = Guadalajara</code><code>previous = Monterrey</code><small>A third change overwrites Monterrey</small></div>
+  </div>
+</div>
+```
+
+**Advantages**
+
+- Simplifies year-over-year or current-vs-previous comparisons.
+- Maintains a single row per entity, avoiding row count expansion.
+- Simple query patterns without date-range logic.
+
+**Disadvantages**
+
+- Captures only a fixed, limited history (typically one previous state).
+- Requires modifying table DDL to add specific historical columns.
+- Fails to scale when multiple attributes change independently.
+
+**When to Use:** When business requirements call strictly for comparing current values against prior values (e.g., current sales territory vs. previous sales territory). It does not replace Type 2 for full audit compliance.
+
+```sql
+update dim_customer as d
+set previous_city = d.current_city,
+    current_city = s.city,
+    change_date = current_date
+from stg_customer as s
+where d.customer_id = s.customer_id
+  and d.current_city is distinct from s.city;
+```
+
+## Implementation with dbt
+
+dbt materializes dimensional models from staging models. Incremental models handle Type 1 updates; for Type 2, dbt **snapshots** automatically track and version detected changes.
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-dbt-title">
+  <div id="scd-dbt-title" class="scd-title">SCD Type 2 Flow with dbt</div>
+  <div class="scd-flow">
+    <div class="scd-node"><strong>Staging</strong><code>stg_customers</code><small>Normalized data</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-green"><strong>Snapshot</strong><code>unique_key</code><code>check_cols</code><small>Detects and versions changes</small></div>
+    <div class="scd-arrow" aria-hidden="true">&#8594;</div>
+    <div class="scd-node scd-blue"><strong>Final Dimension</strong><code>customer_key</code><code>valid_from / to</code><small>Interface for fact tables and queries</small></div>
+  </div>
+  <p class="scd-caption">Data tests run after materializing the dimension, verifying keys and temporal integrity.</p>
+</div>
+```
+
+```sql
+-- snapshots/customers.sql
+{% snapshot customers_snapshot %}
+{{
+  config(
+    target_schema='snapshots',
+    unique_key='customer_id',
+    strategy='check',
+    check_cols=['name', 'city']
+  )
+}}
+
+select customer_id, name, city
+from {{ ref('stg_customers') }}
+{% endsnapshot %}
+```
+
+The snapshot appends metadata columns: `dbt_valid_from`, `dbt_valid_to`, and `dbt_scd_id`. The downstream dimension model exposes surrogate keys and validity windows:
+
+```sql
+-- models/marts/dim_customer.sql
+select
+  dbt_scd_id as customer_key,
+  customer_id,
+  name,
+  city,
+  dbt_valid_from as valid_from,
+  coalesce(dbt_valid_to, timestamp '9999-12-31') as valid_to,
+  dbt_valid_to is null as is_current
+from {{ ref('customers_snapshot') }}
+```
+
+### Advantages of dbt Snapshots
+
+- Centralizes change detection and versioning logic.
+- Eliminates manual procedural SQL.
+- Generates temporal validity metadata consistently.
+- Integrates natively with dbt lineage, documentation, and data testing frameworks.
+
+### Trade-offs and Considerations
+
+- Correct behavior relies on configuring `unique_key`, `strategy`, and `check_cols` accurately.
+- Including volatile columns (such as load timestamps) creates unwanted version rows on every run.
+- Snapshots record states observed during execution runs; changes occurring and reverting between runs are lost.
+- Retroactive updates and hard deletions require explicit policies.
+
+## Data Quality and Integrity Testing
+
+Declarative testing verifies surrogate key uniqueness, non-null constraints, and natural key presence.
+
+```yaml
+models:
+  - name: dim_customer
+    columns:
+      - name: customer_key
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+```
+
+To guarantee that exactly one row remains active per natural key, a custom singular test can be added:
+
+```sql
+-- tests/one_active_version_per_customer.sql
+select customer_id
+from {{ ref('dim_customer') }}
+where is_current
+group by customer_id
+having count(*) > 1
+```
+
+Additionally, validate that effective date ranges do not overlap and that `valid_from` is strictly less than `valid_to`.
+
+## Comparison and Decision Criteria
+
+```{=html}
+<div class="scd-viz" role="figure" aria-labelledby="scd-comparacion-title">
+  <div id="scd-comparacion-title" class="scd-title">Comparison of Core SCD Types</div>
+  <div class="scd-table-wrap">
+    <table class="scd-table">
+      <thead><tr><th>Type</th><th>History Preserved</th><th>Rows per Entity</th><th>Complexity</th><th>Primary Use Case</th></tr></thead>
+      <tbody>
+        <tr><td>Type 1</td><td>None</td><td>One</td><td>Low</td><td>Corrections and attributes without historical value</td></tr>
+        <tr><td>Type 2</td><td>Complete</td><td>One per version</td><td>High</td><td>Auditability and precise historical context</td></tr>
+        <tr><td>Type 3</td><td>Limited</td><td>One</td><td>Medium</td><td>Comparing current state against previous state</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+```
+
+SCD types do not need to be applied uniformly across an entire dimension table. A single dimension table can mix strategies: applying Type 1 to corrective fields, Type 2 to historically significant fields, and Type 3 to specific comparative fields. The key is defining policies **attribute by attribute**, documenting trade-offs, and enforcing integrity through automated tests.

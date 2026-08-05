@@ -1,0 +1,485 @@
+---
+title: "Support Vector Machines"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_svm.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Support Vector Machines (SVM) represent one of the most theoretically elegant frameworks in supervised learning. Developed by Vladimir Vapnik and colleagues in the 1990s [@vapnik1995nature; @cortes1995support], SVMs combine three core concepts: maximum-margin hyperplanes, Lagrangian duality, and the *kernel trick* to operate in high-dimensional feature spaces without explicit coordinate transformations.
+
+Unlike logistic regression (which seeks any separating boundary), SVMs find the *optimal* boundary maximizing the minimal geometric distance to training instances. This property links margin maximization to Statistical Learning Theory and generalization capacity [@hastie2009elements].
+
+This chapter develops SVM theory from geometric foundations to practical extensions, covering soft-margin formulations, kernel tricks, Support Vector Regression (SVR), and probability calibration.
+
+## Motivation: Maximum-Margin Classification
+
+### Multiple Separating Hyperplanes
+
+For a linearly separable dataset, infinitely many hyperplanes separate training instances perfectly. Which boundary should be selected?
+
+### Why Margins Matter
+
+SVMs select the unique decision boundary that maximizes the **margin**: the geometric distance from the boundary to the nearest training instance. Maximizing margin minimizes Vapnik-Chervonenkis (VC) capacity, bounding generalization error independently of input dimension $d$ [@vapnik1995nature].
+
+$$
+\text{margin} = \frac{2}{\|\mathbf{w}\|}
+$$
+
+Maximizing margin corresponds directly to minimizing $\|\mathbf{w}\|$.
+
+```{python}
+#| label: fig-svm-multiple-hyperplanes
+#| fig-cap: "Multiple valid separating hyperplanes for linearly separable data. The maximum-margin boundary (solid blue line) is unique and optimal."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(42)
+
+X_neg = np.column_stack([
+    np.random.uniform(0.5, 2.5, 12),
+    np.random.uniform(3.5, 6.0, 12)
+])
+X_pos = np.column_stack([
+    np.random.uniform(3.5, 6.0, 12),
+    np.random.uniform(0.5, 3.0, 12)
+])
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=X_neg[:, 0], y=X_neg[:, 1],
+    mode='markers',
+    name='Class −1',
+    marker=dict(color='#4C72B0', size=10, symbol='circle')
+))
+
+fig.add_trace(go.Scatter(
+    x=X_pos[:, 0], y=X_pos[:, 1],
+    mode='markers',
+    name='Class +1',
+    marker=dict(color='#DD8452', size=10, symbol='square')
+))
+
+x_line = np.linspace(0, 7, 200)
+
+y_opt = 6.5 - x_line
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_opt,
+    mode='lines',
+    name='Maximum Margin (Optimal)',
+    line=dict(color='#2c4f8c', width=3)
+))
+
+configs = [
+    (5.5 - x_line, 'rgba(100,100,100,0.5)', 'Alternative Boundary 1'),
+    (7.0 - 1.3 * x_line, 'rgba(130,130,130,0.5)', 'Alternative Boundary 2'),
+    (5.0 - 0.7 * x_line, 'rgba(160,160,160,0.5)', 'Alternative Boundary 3'),
+]
+for y_alt, col, name in configs:
+    fig.add_trace(go.Scatter(
+        x=x_line, y=y_alt,
+        mode='lines',
+        name=name,
+        line=dict(color=col, width=1.5, dash='dot')
+    ))
+
+fig.update_layout(
+    title='Multiple Separating Hyperplanes: Unique Maximum Margin Selection',
+    xaxis_title='Feature 1',
+    yaxis_title='Feature 2',
+    xaxis=dict(range=[0, 7]),
+    yaxis=dict(range=[0, 7]),
+    height=480,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## Hard-Margin SVM (Linearly Separable Data)
+
+### Primal Formulation
+
+$$
+\min_{\mathbf{w},\, b} \quad \frac{1}{2}\|\mathbf{w}\|^2
+$$
+
+$$
+\text{subject to} \quad y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1, \quad \forall\, i = 1, \dots, n
+$$ {#eq-svm-primal}
+
+### Support Vectors and Dual Formulation
+
+Points satisfying $y_i(\mathbf{w}^\top \mathbf{x}_i + b) = 1$ are **support vectors**.
+
+The dual optimization problem is:
+
+$$
+\max_{\boldsymbol{\alpha}} \quad \sum_{i=1}^n \alpha_i - \frac{1}{2}\sum_{i=1}^n\sum_{j=1}^n \alpha_i \alpha_j y_i y_j \mathbf{x}_i^\top \mathbf{x}_j
+$$ {#eq-svm-dual}
+
+$$
+\text{subject to} \quad \alpha_i \geq 0, \quad \sum_{i=1}^n \alpha_i y_i = 0
+$$
+
+The dual decision function evaluates to:
+
+$$
+f(\mathbf{x}) = \text{sgn}\!\left(\sum_{i \in \mathcal{S}} \alpha_i y_i \mathbf{x}_i^\top \mathbf{x} + b\right)
+$$ {#eq-svm-decision}
+
+```{python}
+#| label: fig-svm-hard-margin
+#| fig-cap: "Hard-margin SVM on linearly separable 2D data. Support vectors highlighted with black borders."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(7)
+
+X_pos = np.column_stack([
+    np.random.uniform(3.2, 5.5, 10),
+    np.random.uniform(3.2, 5.5, 10)
+])
+X_neg = np.column_stack([
+    np.random.uniform(0.5, 2.8, 10),
+    np.random.uniform(0.5, 2.8, 10)
+])
+
+w = np.array([1.0, 1.0]) / np.sqrt(2)
+b_unnorm = -6.0 / np.sqrt(2)
+
+dist_pos = (X_pos @ w + b_unnorm)
+dist_neg = (X_neg @ w + b_unnorm)
+
+sv_pos_idx = np.argmin(dist_pos)
+sv_neg_idx = np.argmax(dist_neg)
+
+margin_pos = dist_pos[sv_pos_idx]
+margin_neg = -dist_neg[sv_neg_idx]
+
+x_line = np.linspace(0, 7, 300)
+y_hyp  = 6.0 - x_line
+y_marg_pos = 6.0 + margin_pos*np.sqrt(2) - x_line
+y_marg_neg = 6.0 - margin_neg*np.sqrt(2) - x_line
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=np.concatenate([x_line, x_line[::-1]]),
+    y=np.concatenate([y_marg_pos, y_marg_neg[::-1]]),
+    fill='toself',
+    fillcolor='rgba(150,150,150,0.12)',
+    line=dict(color='rgba(0,0,0,0)'),
+    name='Margin Band'
+))
+
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_marg_pos,
+    mode='lines',
+    name='Margin +1',
+    line=dict(color='#DD8452', width=1.5, dash='dash')
+))
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_marg_neg,
+    mode='lines',
+    name='Margin −1',
+    line=dict(color='#4C72B0', width=1.5, dash='dash')
+))
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_hyp,
+    mode='lines',
+    name='Optimal Hyperplane',
+    line=dict(color='#2c4f8c', width=2.5)
+))
+
+mask_neg = np.ones(len(X_neg), dtype=bool)
+mask_neg[sv_neg_idx] = False
+fig.add_trace(go.Scatter(
+    x=X_neg[mask_neg, 0], y=X_neg[mask_neg, 1],
+    mode='markers', name='Class −1',
+    marker=dict(color='#4C72B0', size=10)
+))
+mask_pos = np.ones(len(X_pos), dtype=bool)
+mask_pos[sv_pos_idx] = False
+fig.add_trace(go.Scatter(
+    x=X_pos[mask_pos, 0], y=X_pos[mask_pos, 1],
+    mode='markers', name='Class +1',
+    marker=dict(color='#DD8452', size=10, symbol='square')
+))
+
+fig.add_trace(go.Scatter(
+    x=[X_neg[sv_neg_idx, 0]], y=[X_neg[sv_neg_idx, 1]],
+    mode='markers', name='Support Vector −1',
+    marker=dict(color='#4C72B0', size=14, line=dict(color='black', width=2.5))
+))
+fig.add_trace(go.Scatter(
+    x=[X_pos[sv_pos_idx, 0]], y=[X_pos[sv_pos_idx, 1]],
+    mode='markers', name='Support Vector +1',
+    marker=dict(color='#DD8452', size=14, symbol='square', line=dict(color='black', width=2.5))
+))
+
+fig.update_layout(
+    title='Hard-Margin SVM: Optimal Hyperplane & Support Vectors',
+    xaxis_title='Feature 1',
+    yaxis_title='Feature 2',
+    xaxis=dict(range=[0, 7]),
+    yaxis=dict(range=[0, 7]),
+    height=500,
+    template='plotly_white',
+    legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
+)
+fig.show()
+```
+
+## Soft-Margin SVM (Non-Separable Data)
+
+$$
+\min_{\mathbf{w},\, b,\, \boldsymbol{\xi}} \quad \frac{1}{2}\|\mathbf{w}\|^2 + C\sum_{i=1}^n \xi_i
+$$ {#eq-svm-soft-primal}
+
+$$
+\text{subject to} \quad y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1 - \xi_i, \quad \xi_i \geq 0
+$$
+
+Regularization hyperparameter $C > 0$ controls the trade-off between maximizing margin width and penalizing margin slack violations [@cortes1995support].
+
+```{python}
+#| label: fig-svm-soft-C
+#| fig-cap: "Impact of regularization parameter C on soft-margin decision boundaries."
+
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(21)
+n = 30
+
+X_pos = np.column_stack([
+    np.random.normal(3.5, 0.9, n),
+    np.random.normal(3.5, 0.9, n)
+])
+X_neg = np.column_stack([
+    np.random.normal(2.0, 0.9, n),
+    np.random.normal(2.0, 0.9, n)
+])
+
+X = np.vstack([X_pos, X_neg])
+y = np.array([1]*n + [-1]*n)
+
+def svm_soft_approx(X, y, C):
+    mu_pos = X[y == 1].mean(axis=0)
+    mu_neg = X[y == -1].mean(axis=0)
+    w_dir = mu_pos - mu_neg
+    w_dir = w_dir / np.linalg.norm(w_dir)
+
+    mid = (mu_pos + mu_neg) / 2.0
+    margin_scale = 1.0 / (1.0 + 0.3 * np.log1p(C))
+
+    b = -np.dot(w_dir, mid)
+    return w_dir, b, margin_scale
+
+C_values = [0.01, 0.1, 1.0, 10.0, 100.0]
+x_line = np.linspace(-1, 7, 300)
+
+frames = []
+for C in C_values:
+    w, b, ms = svm_soft_approx(X, y, C)
+    y_hyp = -(w[0]*x_line + b) / w[1]
+    y_mp  = -(w[0]*x_line + b - ms) / w[1]
+    y_mn  = -(w[0]*x_line + b + ms) / w[1]
+
+    scores = X @ w + b
+    correct = (scores * y) >= 0
+    violated = ~correct
+
+    frame_data = [
+        go.Scatter(
+            x=np.concatenate([x_line, x_line[::-1]]),
+            y=np.concatenate([y_mp, y_mn[::-1]]),
+            fill='toself', fillcolor='rgba(150,150,150,0.15)',
+            line=dict(color='rgba(0,0,0,0)'), name='Margin Band'
+        ),
+        go.Scatter(x=x_line, y=y_mp, mode='lines', line=dict(color='#DD8452', dash='dash', width=1.5), name='Margin +1'),
+        go.Scatter(x=x_line, y=y_mn, mode='lines', line=dict(color='#4C72B0', dash='dash', width=1.5), name='Margin −1'),
+        go.Scatter(x=x_line, y=y_hyp, mode='lines', line=dict(color='#2c4f8c', width=2.5), name='Hyperplane'),
+        go.Scatter(x=X[y==1][correct[y==1], 0], y=X[y==1][correct[y==1], 1], mode='markers', name='Class +1', marker=dict(color='#DD8452', size=9, symbol='square')),
+        go.Scatter(x=X[y==-1][correct[y==-1], 0], y=X[y==-1][correct[y==-1], 1], mode='markers', name='Class −1', marker=dict(color='#4C72B0', size=9)),
+        go.Scatter(x=X[violated, 0], y=X[violated, 1], mode='markers', name='Misclassified', marker=dict(color='red', size=10, symbol='x', line=dict(width=2))),
+    ]
+    frames.append(go.Frame(data=frame_data, name=str(C)))
+
+w0, b0, ms0 = svm_soft_approx(X, y, 1.0)
+y_hyp0 = -(w0[0]*x_line + b0) / w0[1]
+y_mp0  = -(w0[0]*x_line + b0 - ms0) / w0[1]
+y_mn0  = -(w0[0]*x_line + b0 + ms0) / w0[1]
+scores0 = X @ w0 + b0
+correct0 = (scores0 * y) >= 0
+violated0 = ~correct0
+
+fig = go.Figure(
+    data=[
+        go.Scatter(
+            x=np.concatenate([x_line, x_line[::-1]]),
+            y=np.concatenate([y_mp0, y_mn0[::-1]]),
+            fill='toself', fillcolor='rgba(150,150,150,0.15)',
+            line=dict(color='rgba(0,0,0,0)'), name='Margin Band'
+        ),
+        go.Scatter(x=x_line, y=y_mp0, mode='lines', line=dict(color='#DD8452', dash='dash', width=1.5), name='Margin +1'),
+        go.Scatter(x=x_line, y=y_mn0, mode='lines', line=dict(color='#4C72B0', dash='dash', width=1.5), name='Margin −1'),
+        go.Scatter(x=x_line, y=y_hyp0, mode='lines', line=dict(color='#2c4f8c', width=2.5), name='Hyperplane'),
+        go.Scatter(x=X[y==1][correct0[y==1], 0], y=X[y==1][correct0[y==1], 1], mode='markers', name='Class +1', marker=dict(color='#DD8452', size=9, symbol='square')),
+        go.Scatter(x=X[y==-1][correct0[y==-1], 0], y=X[y==-1][correct0[y==-1], 1], mode='markers', name='Class −1', marker=dict(color='#4C72B0', size=9)),
+        go.Scatter(x=X[violated0, 0], y=X[violated0, 1], mode='markers', name='Misclassified', marker=dict(color='red', size=10, symbol='x', line=dict(width=2))),
+    ],
+    frames=frames
+)
+
+slider_steps = []
+for C in C_values:
+    slider_steps.append(dict(
+        args=[[str(C)], dict(frame=dict(duration=300), mode='immediate', transition=dict(duration=200))],
+        label=str(C), method='animate'
+    ))
+
+fig.update_layout(
+    title='Soft-Margin Parameter C Trade-off',
+    xaxis_title='Feature 1', yaxis_title='Feature 2',
+    template='plotly_white', height=490,
+    sliders=[dict(currentvalue=dict(prefix='C = ', font=dict(size=14)), steps=slider_steps, pad=dict(t=50))]
+)
+fig.show()
+```
+
+## The Kernel Trick
+
+$$
+K(\mathbf{x}_i, \mathbf{x}_j) = \phi(\mathbf{x}_i)^\top \phi(\mathbf{x}_j)
+$$ {#eq-kernel-def}
+
+Common Kernels:
+
+- **Linear:** $K(\mathbf{x}_i, \mathbf{x}_j) = \mathbf{x}_i^\top \mathbf{x}_j$
+- **Polynomial:** $K(\mathbf{x}_i, \mathbf{x}_j) = (\gamma\, \mathbf{x}_i^\top \mathbf{x}_j + r)^d$
+- **RBF (Gaussian):** $K(\mathbf{x}_i, \mathbf{x}_j) = \exp\!\left(-\gamma\,\|\mathbf{x}_i - \mathbf{x}_j\|^2\right)$ {#eq-rbf-kernel}
+
+```{python}
+#| label: fig-kernel-transform
+#| fig-cap: "Non-linear 1D input space transformed into linearly separable 2D feature space via φ(x) = (x, x²)."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(3)
+
+x_neg = np.random.uniform(-1.0, 1.0, 20)
+x_pos = np.concatenate([
+    np.random.uniform(-2.5, -1.2, 10),
+    np.random.uniform(1.2,  2.5, 10)
+])
+
+phi_neg = np.column_stack([x_neg, x_neg**2])
+phi_pos = np.column_stack([x_pos, x_pos**2])
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        'Original Space ℝ¹ (Non-Separable)',
+        'Transformed Space ℝ² φ(x)=(x, x²) (Separable)'
+    ]
+)
+
+jitter_neg = np.random.uniform(-0.05, 0.05, len(x_neg))
+jitter_pos = np.random.uniform(-0.05, 0.05, len(x_pos))
+
+fig.add_trace(go.Scatter(
+    x=x_neg, y=jitter_neg,
+    mode='markers', name='Class −1',
+    marker=dict(color='#4C72B0', size=10)
+), row=1, col=1)
+
+fig.add_trace(go.Scatter(
+    x=x_pos, y=jitter_pos,
+    mode='markers', name='Class +1',
+    marker=dict(color='#DD8452', size=10, symbol='square')
+), row=1, col=1)
+
+fig.add_trace(go.Scatter(
+    x=phi_neg[:, 0], y=phi_neg[:, 1],
+    mode='markers', name='Class −1 (φ)',
+    marker=dict(color='#4C72B0', size=10), showlegend=False
+), row=1, col=2)
+
+fig.add_trace(go.Scatter(
+    x=phi_pos[:, 0], y=phi_pos[:, 1],
+    mode='markers', name='Class +1 (φ)',
+    marker=dict(color='#DD8452', size=10, symbol='square'), showlegend=False
+), row=1, col=2)
+
+x_sep = np.linspace(-3, 3, 100)
+fig.add_trace(go.Scatter(
+    x=x_sep, y=np.full_like(x_sep, 1.3),
+    mode='lines', name='Separating Hyperplane',
+    line=dict(color='#2c4f8c', width=2.5, dash='dash')
+), row=1, col=2)
+
+fig.update_layout(
+    height=430, template='plotly_white',
+    title='Kernel Trick: 1D Non-Separable to 2D Separable Mapping'
+)
+fig.show()
+```
+
+## Support Vector Regression (SVR)
+
+SVR introduces an $\varepsilon$-insensitive loss tube around the target regression function, ignoring error magnitudes below $\varepsilon$.
+
+## Platt Probability Calibration {#sec-platt}
+
+Sigmoid calibration maps uncalibrated SVM output scores $f(\mathbf{x})$ into well-calibrated posterior probabilities [@platt1999probabilistic]:
+
+$$
+P(y = 1 \mid f(\mathbf{x})) = \frac{1}{1 + \exp(Af(\mathbf{x}) + B)}
+$$ {#eq-platt}
+
+## Summary
+
+SVMs optimize maximum-margin hyperplanes using convex quadratic programming. The kernel trick enables non-linear decision boundaries, while Support Vector Regression adapts loss tolerances for continuous target estimation [@chang2011libsvm].
+
+## References
+
+::: {#refs}
+:::

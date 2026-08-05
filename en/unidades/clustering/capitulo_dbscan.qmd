@@ -1,0 +1,198 @@
+---
+title: "DBSCAN and HDBSCAN"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clustering.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Unlike K-Means or hierarchical methods which assume convex or compact clusters, density-based algorithms partition data by discovering contiguous regions of high point density separated by low-density noise [@ester1996].
+
+## Fundamental Definitions
+
+DBSCAN requires two parameters: neighborhood radius $\varepsilon$ and minimum points threshold $\text{minPts}$.
+
+::: {.callout-note appearance="minimal"}
+Definition. $\varepsilon$-Neighborhood:
+$$
+N_\varepsilon(\mathbf{x}) = \{\mathbf{y}\in\mathcal{D} \mid d(\mathbf{x},\mathbf{y})\leq\varepsilon\}.
+$$ {#eq-eps-neighborhood}
+:::
+
+Point Categorization:
+- **Core Point:** $|N_\varepsilon(\mathbf{x})|\geq\text{minPts}$.
+- **Border Point:** $|N_\varepsilon(\mathbf{x})|<\text{minPts}$ but $\mathbf{x} \in N_\varepsilon(\mathbf{y})$ where $\mathbf{y}$ is a core point.
+- **Noise Point:** Neither core nor border point.
+
+```{=html}
+<div id="dbscan-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">DBSCAN — ε-Neighborhood Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Adjust ε and minPts parameters to visualize core, border, and noise designations</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+    <div><label style="font-size:0.83em;color:#444;">ε = <strong id="db-ev">0.9</strong></label><br>
+      <input id="db-esl" type="range" min="0.2" max="2.5" step="0.05" value="0.9" style="width:100%;accent-color:#1a3a5c;"></div>
+    <div><label style="font-size:0.83em;color:#444;">minPts = <strong id="db-mv">3</strong></label><br>
+      <input id="db-msl" type="range" min="1" max="8" step="1" value="3" style="width:100%;accent-color:#7c3aed;"></div>
+  </div>
+  <div id="dbscan-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="dbscan-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  function makeData(){
+    const pts=[];
+    for(let i=0;i<24;i++){const a=Math.PI*i/23;pts.push([2+1.8*Math.cos(a)+0.12*(Math.random()-0.5),1+1.2*Math.sin(a)+0.12*(Math.random()-0.5)]);}
+    for(let i=0;i<20;i++){const a=Math.PI+Math.PI*i/19;pts.push([2.5+1.8*Math.cos(a)+0.12*(Math.random()-0.5),2.2+1.2*Math.sin(a)+0.12*(Math.random()-0.5)]);}
+    pts.push([0.5,0.3],[5.0,3.8],[0.2,3.5],[5.5,0.5],[2.8,4.5]);
+    return pts;
+  }
+  const PTS=makeData();
+  const N=PTS.length;
+  const cv=document.getElementById('dbscan-cv');
+  const W=680,H=360,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:40,r:16,t:20,b:30};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=-0.5,xMx=6.5,yMn=-0.5,yMx=5.0;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+  const GCOLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+
+  function dist(a,b){return Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2);}
+
+  function runDBSCAN(eps,minPts){
+    const nbrs=PTS.map(p=>PTS.map((q,j)=>({j,d:dist(p,q)})).filter(x=>x.d<=eps).map(x=>x.j));
+    const isCore=nbrs.map(nb=>nb.length>=minPts);
+    const labels=new Array(N).fill(-1);
+    let cid=0;
+    for(let i=0;i<N;i++){
+      if(labels[i]!==-1||!isCore[i])continue;
+      const queue=[i];labels[i]=cid;
+      while(queue.length){
+        const cur=queue.shift();
+        nbrs[cur].forEach(j=>{
+          if(labels[j]===-1){labels[j]=cid;if(isCore[j])queue.push(j);}
+        });
+      }
+      cid++;
+    }
+    const type=PTS.map((_,i)=>isCore[i]?'core':labels[i]===-1?'noise':'border');
+    return{labels,type,nClusters:cid};
+  }
+
+  function draw(eps,minPts){
+    const{labels,type,nClusters}=runDBSCAN(eps,minPts);
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+
+    PTS.forEach((p,i)=>{
+      if(type[i]==='core'){
+        ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),eps/(xMx-xMn)*CW,0,2*Math.PI);
+        ctx.strokeStyle=GCOLS[labels[i]%GCOLS.length]+'33';ctx.lineWidth=1;ctx.stroke();
+        ctx.fillStyle=GCOLS[labels[i]%GCOLS.length]+'10';ctx.fill();
+      }
+    });
+
+    PTS.forEach((p,i)=>{
+      const col=type[i]==='noise'?'#94a3b8':GCOLS[labels[i]%GCOLS.length];
+      const r=type[i]==='core'?7:type[i]==='border'?5:4;
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),r,0,2*Math.PI);
+      ctx.fillStyle=col+'cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    });
+
+    const nCore=type.filter(t=>t==='core').length;
+    const nBorder=type.filter(t=>t==='border').length;
+    const nNoise=type.filter(t=>t==='noise').length;
+    document.getElementById('dbscan-info').innerHTML=
+      `Clusters = <strong>${nClusters}</strong>&ensp;·&ensp;`+
+      `Core = <strong style="color:#2563eb">${nCore}</strong>&ensp;·&ensp;`+
+      `Border = <strong style="color:#16a34a">${nBorder}</strong>&ensp;·&ensp;`+
+      `Noise = <strong style="color:#94a3b8">${nNoise}</strong>`;
+  }
+
+  ['db-esl','db-msl'].forEach(id=>{
+    document.getElementById(id).addEventListener('input',function(){
+      const eps=parseFloat(document.getElementById('db-esl').value);
+      const minPts=parseInt(document.getElementById('db-msl').value);
+      document.getElementById('db-ev').textContent=eps.toFixed(2);
+      document.getElementById('db-mv').textContent=minPts;
+      draw(eps,minPts);
+    });
+  });
+  draw(0.9,3);
+})();
+</script>
+```
+
+## HDBSCAN
+
+Hierarchical DBSCAN (HDBSCAN) builds a hierarchical tree of density-based clusters, extracting persistent clusters across varying densities [@campello2013].
+
+::: {.callout-note appearance="minimal"}
+Definition. Mutual Reachability Distance:
+$$
+d_{\text{mreach},k}(\mathbf{x},\mathbf{y}) = \max\{d_k(\mathbf{x}),\; d_k(\mathbf{y}),\; d(\mathbf{x},\mathbf{y})\},
+$$ {#eq-mutual-reachability}
+where $d_k(\mathbf{x})$ is the distance to the $k$-nearest neighbor of $\mathbf{x}$.
+:::
+
+```{python}
+from sklearn.cluster import DBSCAN
+from sklearn.datasets import make_moons
+import numpy as np
+
+X, y_true = make_moons(n_samples=300, noise=0.05, random_state=42)
+
+db = DBSCAN(eps=0.15, min_samples=5)
+labels = db.fit_predict(X)
+
+n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+n_noise = np.sum(labels == -1)
+
+print(f"Clusters discovered: {n_clusters}")
+print(f"Noise instances: {n_noise} ({100*n_noise/len(X):.1f}%)")
+```
+
+## Summary
+
+DBSCAN and HDBSCAN identify non-spherical clusters of arbitrary geometric shapes without requiring a prior specified cluster count $k$, automatically isolating noise instances [@ester1996; @campello2013].
+
+## References
+
+::: {#refs}
+:::

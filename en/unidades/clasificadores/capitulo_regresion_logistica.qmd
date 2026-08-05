@@ -1,0 +1,806 @@
+---
+title: "Logistic Regression"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_regresion_logistica.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Logistic regression is one of the most widely used classification models in statistics and machine learning. Despite its name, it is not a traditional regression method for continuous responses: its goal is modeling the conditional probability that an observation belongs to a specific class. Its elegance lies in combining the interpretability of a linear model with a non-linear transformation mapping outputs strictly to the open interval $(0,1)$, producing well-calibrated probabilistic estimates [@hosmer2013; @mccullagh1989].
+
+Formally proposed by David Cox in 1958, logistic regression has become the standard baseline for binary classification in medicine, epidemiology, economics, and the social sciences. In modern machine learning, it remains highly competitive when classes are approximately linearly separable or when coefficient interpretability is essential [@hastie2009].
+
+This chapter develops logistic regression from foundational principles to advanced variants. We motivate classification using linear regression and highlight its shortcomings, introduce the sigmoid function, derive maximum likelihood estimation, interpret coefficients via odds ratios, examine regularization techniques, and conclude with multi-class extensions via softmax. Numerical implementations in Python rely solely on `numpy` and `plotly.graph_objects` built from scratch.
+
+## Motivation: Pitfalls of Linear Regression for Classification
+
+Before introducing logistic regression, it is instructive to examine why ordinary linear regression fails on binary classification tasks. Suppose we aim to predict whether an email is spam ($y=1$) or not ($y=0$) given a numeric feature $x$ (e.g., keyword frequency).
+
+Fitting an ordinary linear regression yields:
+
+$$
+\hat{y} = \beta_0 + \beta_1 x,
+$$
+
+with a decision rule predicting class $1$ if $\hat{y} > 0.5$ and class $0$ otherwise. This approach presents three critical flaws:
+
+1. **Out-of-bound predictions:** Linear models produce predictions $\hat{y} < 0$ or $\hat{y} > 1$, which lack valid probabilistic interpretations.
+2. **Sensitivity to outliers:** Extreme leverage points in feature space distort regression slopes, inappropriately shifting decision boundaries.
+3. **Violated statistical assumptions:** Linear regression assumes homoscedastic Gaussian residuals, which fail completely for binary responses.
+
+Figure @fig-logit-failure illustrates these issues on synthetic data [@james2021].
+
+```{python}
+#| label: fig-logit-failure
+#| fig-cap: "Linear regression applied to binary classification. The fitted line yields predictions outside [0, 1] and violates probabilistic assumptions."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(42)
+
+n0, n1 = 40, 40
+x0 = rng.normal(loc=2.0, scale=0.8, size=n0)
+x1 = rng.normal(loc=5.5, scale=0.8, size=n1)
+x1_extra = np.array([9.5, 10.5, 11.0])
+x_all = np.concatenate([x0, x1, x1_extra])
+y_all = np.concatenate([np.zeros(n0), np.ones(n1), np.ones(3)])
+
+X_mat = np.column_stack([np.ones_like(x_all), x_all])
+beta_ols = np.linalg.lstsq(X_mat, y_all, rcond=None)[0]
+
+x_line = np.linspace(-1.5, 12.5, 300)
+y_line = beta_ols[0] + beta_ols[1] * x_line
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=x0, y=np.zeros(n0),
+    mode="markers",
+    name="Class 0 (Non-Spam)",
+    marker=dict(color="#4C72B0", size=8, opacity=0.8,
+                line=dict(color="white", width=1))
+))
+
+fig.add_trace(go.Scatter(
+    x=np.concatenate([x1, x1_extra]),
+    y=np.ones(n1 + 3),
+    mode="markers",
+    name="Class 1 (Spam)",
+    marker=dict(color="#DD8452", size=8, opacity=0.8,
+                line=dict(color="white", width=1))
+))
+
+fig.add_trace(go.Scatter(
+    x=x_line, y=y_line,
+    mode="lines",
+    name="Linear Regression",
+    line=dict(color="#2ca02c", width=2.5, dash="solid")
+))
+
+fig.add_hline(y=0, line_dash="dot", line_color="gray", line_width=1)
+fig.add_hline(y=1, line_dash="dot", line_color="gray", line_width=1)
+fig.add_hrect(y0=1.0, y1=1.4, fillcolor="rgba(220,50,50,0.07)",
+              line_width=0, annotation_text="Invalid Range (ŷ > 1)")
+fig.add_hrect(y0=-0.4, y1=0.0, fillcolor="rgba(220,50,50,0.07)",
+              line_width=0, annotation_text="Invalid Range (ŷ < 0)")
+
+fig.add_annotation(x=0.5, y=0.5, xref="paper", yref="y",
+                   text="Threshold: 0.5", showarrow=False,
+                   font=dict(size=11, color="gray"),
+                   xanchor="left")
+
+fig.update_layout(
+    title="Linear Regression Failure on Binary Classification",
+    xaxis_title="Feature x",
+    yaxis_title="Response y (or ŷ)",
+    template="plotly_white",
+    height=460,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+::: {.callout-important}
+While linear regression can serve as a crude heuristic classifier, its predictions violate probability boundaries and decision boundaries remain vulnerable to leverage points. Logistic regression resolves these issues directly.
+:::
+
+## The Logistic (Sigmoid) Function
+
+To ensure valid probability bounds, linear combinations of features are mapped to $(0,1)$ via the **logistic function** (or sigmoid function).
+
+::: {.callout-note appearance="minimal"}
+**Definition.** The logistic sigmoid function $\sigma : \mathbb{R} \to (0,1)$ is defined as:
+
+$$
+\sigma(z) = \frac{1}{1 + e^{-z}}
+$$ {#eq-sigmoid}
+:::
+
+Key mathematical properties include:
+
+1. **Domain and Range:** For all $z \in \mathbb{R}$, $0 < \sigma(z) < 1$. As $z \to +\infty$, $\sigma(z) \to 1$; as $z \to -\infty$, $\sigma(z) \to 0$.
+2. **Symmetry:** $\sigma(0) = 0.5$. Input value $z=0$ defines equal class membership probability.
+3. **Analytic Derivative:** The derivative satisfies a convenient closed-form expression:
+
+$$
+\frac{d\sigma}{dz}(z) = \sigma(z)\bigl(1 - \sigma(z)\bigr).
+$$ {#eq-sigmoid-deriv}
+
+4. **Log-Odds Interpretation:** Setting $p = \sigma(z)$ yields:
+
+$$
+\log \frac{p}{1-p} = z.
+$$ {#eq-logit}
+
+The quantity $\log(p/(1-p))$ is the **logit** or log-odds. Equation @eq-logit shows that sigmoid argument $z$ corresponds to the log-odds of positive class membership [@bishop2006].
+
+Figure @fig-sigmoid displays the sigmoid curve with decision threshold shifting.
+
+```{python}
+#| label: fig-sigmoid
+#| fig-cap: "Sigmoid curve with decision threshold z₀ shift animation. Highlighted regions mark positive class assignment zones."
+
+import numpy as np
+import plotly.graph_objects as go
+
+z = np.linspace(-8, 8, 400)
+sigma = 1 / (1 + np.exp(-z))
+
+z0_values = np.arange(-4, 4.5, 0.5)
+
+frames = []
+for z0 in z0_values:
+    sigma_shifted = 1 / (1 + np.exp(-(z - z0)))
+    frames.append(go.Frame(
+        data=[
+            go.Scatter(x=z, y=sigma_shifted,
+                       mode="lines",
+                       line=dict(color="#4C72B0", width=2.5)),
+            go.Scatter(x=z[z >= z0], y=sigma_shifted[z >= z0],
+                       fill="tozeroy", fillcolor="rgba(221,132,82,0.15)",
+                       mode="none", showlegend=False),
+            go.Scatter(x=[z0], y=[0.5],
+                       mode="markers",
+                       marker=dict(color="#DD8452", size=10,
+                                   line=dict(color="white", width=2))),
+        ],
+        name=str(round(z0, 1))
+    ))
+
+sigma0 = 1 / (1 + np.exp(-z))
+fig = go.Figure(
+    data=[
+        go.Scatter(x=z, y=sigma0, mode="lines",
+                   name="σ(z − z₀)",
+                   line=dict(color="#4C72B0", width=2.5)),
+        go.Scatter(x=z[z >= 0], y=sigma0[z >= 0],
+                   fill="tozeroy", fillcolor="rgba(221,132,82,0.15)",
+                   mode="none", name="Class 1 Region"),
+        go.Scatter(x=[0], y=[0.5], mode="markers",
+                   name="Threshold z₀",
+                   marker=dict(color="#DD8452", size=10,
+                               line=dict(color="white", width=2))),
+    ],
+    frames=frames
+)
+
+fig.add_hline(y=0.5, line_dash="dash", line_color="gray", line_width=1,
+              annotation_text="p = 0.5", annotation_position="right")
+fig.add_hline(y=1.0, line_dash="dot", line_color="lightgray", line_width=1)
+fig.add_hline(y=0.0, line_dash="dot", line_color="lightgray", line_width=1)
+
+fig.update_layout(
+    title="Sigmoid Function: Decision Threshold Shift z₀",
+    xaxis_title="z",
+    yaxis_title="σ(z − z₀)",
+    template="plotly_white",
+    height=470,
+    updatemenus=[dict(
+        type="buttons",
+        showactive=False,
+        y=1.15, x=0.5, xanchor="center",
+        buttons=[
+            dict(label="Play",
+                 method="animate",
+                 args=[None, dict(frame=dict(duration=300, redraw=True),
+                                  fromcurrent=True)]),
+            dict(label="Pause",
+                 method="animate",
+                 args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                    mode="immediate")])
+        ]
+    )],
+    sliders=[dict(
+        steps=[dict(args=[[f.name],
+                          dict(frame=dict(duration=300, redraw=True),
+                               mode="immediate")],
+                    label=f.name, method="animate")
+               for f in frames],
+        currentvalue=dict(prefix="z₀ = ", font=dict(size=13)),
+        x=0.05, len=0.9, y=0
+    )],
+    legend=dict(orientation="h", yanchor="top", y=-0.25,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+## The Logistic Regression Model
+
+The logistic regression model parametrizes the conditional posterior probability of positive class assignment given feature vector $\mathbf{x} \in \mathbb{R}^d$:
+
+::: {.callout-note appearance="minimal"}
+**Definition.** Logistic regression calculates class probabilities via:
+
+$$
+P(y=1 \mid \mathbf{x}) = \sigma(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x}) = \frac{1}{1 + e^{-(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x})}},
+$$ {#eq-logistic-model}
+
+where $\beta_0 \in \mathbb{R}$ is the intercept and $\boldsymbol{\beta} \in \mathbb{R}^d$ is the weight coefficient vector.
+:::
+
+Complementarily:
+
+$$
+P(y=0 \mid \mathbf{x}) = 1 - \sigma(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x}) = \sigma(-(\beta_0 + \boldsymbol{\beta}^\top \mathbf{x})).
+$$
+
+### Decision Boundary
+
+Assigning class labels based on default probability cut-off $0.5$:
+
+$$
+\hat{y} = \begin{cases} 1 & \text{if } P(y=1\mid\mathbf{x}) \geq 0.5, \\ 0 & \text{otherwise.} \end{cases}
+$$
+
+Because $\sigma(z) \geq 0.5 \iff z \geq 0$, the decision boundary simplifies to:
+
+$$
+\beta_0 + \boldsymbol{\beta}^\top \mathbf{x} = 0.
+$$ {#eq-decision-boundary}
+
+This defines a linear hyperplane in $\mathbb{R}^d$, establishing logistic regression as a **linear classifier** [@bishop2006; @hastie2009].
+
+```{python}
+#| label: fig-logistic-boundary-2d
+#| fig-cap: "2D Decision boundary for logistic regression. Contour shading represents P(y=1|x); black line represents decision boundary p=0.5."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(7)
+n = 60
+X0 = rng.multivariate_normal([1.5, 1.5], [[1, 0.3],[0.3, 1]], n)
+X1 = rng.multivariate_normal([4.0, 4.0], [[1, -0.2],[-0.2, 1]], n)
+X = np.vstack([X0, X1])
+y = np.concatenate([np.zeros(n), np.ones(n)])
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+def entrenar_logistica(X, y, lr=0.1, n_iter=1000):
+    N, d = X.shape
+    X_aug = np.column_stack([np.ones(N), X])
+    w = np.zeros(d + 1)
+    for _ in range(n_iter):
+        p = sigmoid(X_aug @ w)
+        grad = X_aug.T @ (p - y) / N
+        w -= lr * grad
+    return w
+
+w = entrenar_logistica(X, y)
+beta0, beta = w[0], w[1:]
+
+x1g = np.linspace(-1, 7, 120)
+x2g = np.linspace(-1, 7, 120)
+xx1, xx2 = np.meshgrid(x1g, x2g)
+Z = sigmoid(beta0 + beta[0]*xx1 + beta[1]*xx2)
+
+fig = go.Figure()
+
+fig.add_trace(go.Contour(
+    x=x1g, y=x2g, z=Z,
+    colorscale=[[0, "#4C72B0"], [0.5, "white"], [1, "#DD8452"]],
+    opacity=0.45,
+    showscale=True,
+    colorbar=dict(title="P(y=1|x)"),
+    contours=dict(showlines=False),
+    name="Probability"
+))
+
+fig.add_trace(go.Contour(
+    x=x1g, y=x2g, z=Z,
+    contours=dict(start=0.5, end=0.5, coloring="none",
+                  showlabels=True, labelfont=dict(size=12, color="black")),
+    line=dict(color="black", width=2.5),
+    showscale=False,
+    name="Boundary (p=0.5)"
+))
+
+fig.add_trace(go.Scatter(
+    x=X0[:,0], y=X0[:,1],
+    mode="markers", name="Class 0",
+    marker=dict(color="#4C72B0", size=7, opacity=0.85,
+                line=dict(color="white", width=1))
+))
+
+fig.add_trace(go.Scatter(
+    x=X1[:,0], y=X1[:,1],
+    mode="markers", name="Class 1",
+    marker=dict(color="#DD8452", size=7, opacity=0.85,
+                line=dict(color="white", width=1))
+))
+
+fig.update_layout(
+    title="2D Logistic Regression Decision Boundary",
+    xaxis_title="Feature x₁",
+    yaxis_title="Feature x₂",
+    template="plotly_white",
+    height=490,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+## Maximum Likelihood Estimation
+
+Model parameters $\boldsymbol{\beta}$ are estimated by maximizing the joint Bernoulli likelihood over training samples $\{(\mathbf{x}_i, y_i)\}_{i=1}^n$ [@murphy2012]:
+
+$$
+L(\boldsymbol{\beta}) = \prod_{i=1}^n p_i^{y_i}(1-p_i)^{1-y_i},
+$$
+
+yielding the log-likelihood function:
+
+$$
+\ell(\boldsymbol{\beta}) = \sum_{i=1}^n \left[ y_i \log p_i + (1-y_i)\log(1-p_i) \right].
+$$ {#eq-log-likelihood}
+
+### Equivalence to Binary Cross-Entropy
+
+Maximizing log-likelihood is equivalent to minimizing empirical **binary cross-entropy** loss:
+
+$$
+\mathcal{L}(\boldsymbol{\beta}) = -\frac{1}{n}\ell(\boldsymbol{\beta}) = -\frac{1}{n}\sum_{i=1}^n \left[ y_i \log p_i + (1-y_i)\log(1-p_i) \right].
+$$ {#eq-cross-entropy}
+
+### Gradient Derivation
+
+The gradient of the log-likelihood function is given by:
+
+$$
+\nabla_{\boldsymbol{\beta}}\,\ell(\boldsymbol{\beta}) = \mathbf{X}^\top(\mathbf{y} - \hat{\mathbf{p}}),
+$$ {#eq-gradient}
+
+where $\mathbf{X} \in \mathbb{R}^{n \times (d+1)}$ is the design matrix, $\mathbf{y} = (y_1, \dots, y_n)^\top$, and $\hat{\mathbf{p}} = (p_1, \dots, p_n)^\top$.
+
+### Gradient Descent Updates
+
+Parameter weight updates proceed along the gradient step:
+
+$$
+\boldsymbol{\beta}^{(t+1)} = \boldsymbol{\beta}^{(t)} + \eta \cdot \mathbf{X}^\top(\mathbf{y} - \hat{\mathbf{p}}^{(t)}),
+$$ {#eq-gradient-descent}
+
+where $\eta > 0$ represents the learning rate.
+
+```{python}
+#| label: fig-gradient-descent
+#| fig-cap: "Gradient descent convergence under different learning rates η. Binary cross-entropy loss plotted per iteration."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(21)
+n = 120
+X0 = rng.multivariate_normal([1, 1], [[1, 0],[0, 1]], n//2)
+X1 = rng.multivariate_normal([3.5, 3.5], [[1, 0],[0, 1]], n//2)
+X_tr = np.vstack([X0, X1])
+y_tr = np.concatenate([np.zeros(n//2), np.ones(n//2)])
+X_aug = np.column_stack([np.ones(n), X_tr])
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+def cross_entropy(w, X, y):
+    p = sigmoid(X @ w)
+    p = np.clip(p, 1e-10, 1-1e-10)
+    return -np.mean(y * np.log(p) + (1-y) * np.log(1-p))
+
+colores = ["#4C72B0", "#DD8452", "#2ca02c"]
+learning_rates = [0.5, 0.1, 0.02]
+n_iter = 200
+
+fig = go.Figure()
+
+for lr, color in zip(learning_rates, colores):
+    w = np.zeros(3)
+    losses = []
+    for _ in range(n_iter):
+        losses.append(cross_entropy(w, X_aug, y_tr))
+        p = sigmoid(X_aug @ w)
+        grad = X_aug.T @ (p - y_tr) / n
+        w -= lr * grad
+
+    fig.add_trace(go.Scatter(
+        x=list(range(n_iter)),
+        y=losses,
+        mode="lines",
+        name=f"η = {lr}",
+        line=dict(color=color, width=2.2)
+    ))
+
+fig.update_layout(
+    title="Gradient Descent Convergence: Cross-Entropy vs Iterations",
+    xaxis_title="Iteration",
+    yaxis_title="Binary Cross-Entropy Loss",
+    template="plotly_white",
+    height=450,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+## Coefficient Interpretation and Odds Ratios
+
+Logit scale representation:
+
+$$
+\log \frac{P(y=1\mid\mathbf{x})}{P(y=0\mid\mathbf{x})} = \beta_0 + \beta_1 x_1 + \cdots + \beta_d x_d.
+$$ {#eq-log-odds}
+
+Exponentiating coefficients yields feature **odds ratios**:
+
+$$
+OR_j = e^{\beta_j}.
+$$ {#eq-odds-ratio}
+
+- $e^{\beta_j} > 1$: Unit increase in $x_j$ multiplies positive class odds by $e^{\beta_j}$.
+- $e^{\beta_j} < 1$: Unit increase in $x_j$ reduces positive class odds.
+- $e^{\beta_j} = 1$: Predictor has no impact on odds.
+
+```{python}
+#| label: fig-forest-plot
+#| fig-cap: "Forest plot of logistic regression coefficients with 95% confidence intervals."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(99)
+n = 200
+nombres = ["Intercept", "Age", "Cholesterol", "Blood Pressure",
+           "Smoking Status", "Physical Exercise"]
+X_raw = np.column_stack([
+    np.ones(n),
+    rng.normal(55, 10, n),
+    rng.normal(200, 30, n),
+    rng.normal(130, 20, n),
+    rng.binomial(1, 0.35, n).astype(float),
+    rng.binomial(1, 0.5, n).astype(float)
+])
+X_std = X_raw.copy()
+for j in [1, 2, 3]:
+    X_std[:, j] = (X_raw[:, j] - X_raw[:, j].mean()) / X_raw[:, j].std()
+
+beta_true = np.array([-1.0, 0.8, 0.5, 0.6, 1.2, -0.7])
+logit_true = X_std @ beta_true
+p_true = 1 / (1 + np.exp(-logit_true))
+y_sim = rng.binomial(1, p_true)
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+w = np.zeros(6)
+for _ in range(3000):
+    p = sigmoid(X_std @ w)
+    grad = X_std.T @ (p - y_sim) / n
+    w -= 0.05 * grad
+
+p_hat = sigmoid(X_std @ w)
+W_diag = p_hat * (1 - p_hat)
+I_mat = (X_std * W_diag[:, None]).T @ X_std
+try:
+    I_inv = np.linalg.inv(I_mat)
+    se = np.sqrt(np.diag(I_inv))
+except np.linalg.LinAlgError:
+    se = np.ones(6) * 0.1
+
+ci_low = w - 1.96 * se
+ci_high = w + 1.96 * se
+
+colores_coef = ["#DD8452" if v > 0 else "#4C72B0" for v in w]
+
+fig = go.Figure()
+
+for i, (nombre, coef, lo, hi, color) in enumerate(
+        zip(nombres, w, ci_low, ci_high, colores_coef)):
+    fig.add_trace(go.Scatter(
+        x=[lo, hi], y=[i, i],
+        mode="lines",
+        line=dict(color=color, width=3),
+        showlegend=False
+    ))
+    fig.add_trace(go.Scatter(
+        x=[coef], y=[i],
+        mode="markers",
+        marker=dict(color=color, size=11,
+                    line=dict(color="white", width=2)),
+        name=nombre,
+        showlegend=False
+    ))
+
+fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1.5)
+
+fig.update_layout(
+    title="Logistic Regression Coefficients with 95% CIs",
+    xaxis_title="Coefficient β (Log-Odds Scale)",
+    yaxis=dict(tickvals=list(range(len(nombres))),
+               ticktext=nombres, showgrid=False),
+    template="plotly_white",
+    height=430
+)
+fig.show()
+```
+
+| Variable | $\hat{\beta}_j$ | $e^{\hat{\beta}_j}$ | Interpretation |
+|---|---:|---:|---|
+| Age (std.) | $\approx 0.80$ | $\approx 2.23$ | 1 SD increase multiplies odds by 2.23 |
+| Cholesterol | $\approx 0.50$ | $\approx 1.65$ | Moderate positive risk association |
+| Blood Pressure | $\approx 0.60$ | $\approx 1.82$ | Elevated risk per SD increase |
+| Smoking Status | $\approx 1.20$ | $\approx 3.32$ | Strongest individual risk factor |
+| Physical Exercise | $\approx -0.70$ | $\approx 0.50$ | Protective factor (halves risk odds) |
+
+## Regularization
+
+- **L2 Regularization (Ridge):** $\mathcal{L}_{\text{Ridge}}(\boldsymbol{\beta}) = -\ell(\boldsymbol{\beta}) + \lambda \|\boldsymbol{\beta}\|_2^2$ {#eq-ridge}
+- **L1 Regularization (Lasso):** $\mathcal{L}_{\text{Lasso}}(\boldsymbol{\beta}) = -\ell(\boldsymbol{\beta}) + \lambda \|\boldsymbol{\beta}\|_1$ {#eq-lasso}
+- **Elastic Net:** $\mathcal{L}_{\text{EN}}(\boldsymbol{\beta}) = -\ell(\boldsymbol{\beta}) + \lambda\left[\alpha \|\boldsymbol{\beta}\|_1 + \frac{1-\alpha}{2}\|\boldsymbol{\beta}\|_2^2\right]$ {#eq-elastic-net}
+
+```{python}
+#| label: fig-reg-path
+#| fig-cap: "Regularization paths for Ridge (L2) vs. Lasso (L1) penalty terms across log10(λ)."
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng = np.random.default_rng(55)
+n_path = 150
+d_path = 5
+nombres_vars = [f"β_{j}" for j in range(1, d_path + 1)]
+
+X_p = rng.normal(size=(n_path, d_path))
+beta_gen = np.array([1.5, -1.0, 0.5, 0.0, -0.3])
+logit_p = -0.5 + X_p @ beta_gen
+p_gen = 1 / (1 + np.exp(-logit_p))
+y_p = rng.binomial(1, p_gen)
+X_paug = np.column_stack([np.ones(n_path), X_p])
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+lambdas = np.logspace(-3, 2, 50)
+coefs_ridge = []
+
+for lam in lambdas:
+    w = np.zeros(d_path + 1)
+    for _ in range(2000):
+        p_hat = sigmoid(X_paug @ w)
+        grad = X_paug.T @ (p_hat - y_p) / n_path
+        grad[1:] += 2 * lam * w[1:]
+        w -= 0.05 * grad
+    coefs_ridge.append(w[1:].copy())
+
+coefs_ridge = np.array(coefs_ridge)
+
+def soft_threshold(x, threshold):
+    return np.sign(x) * np.maximum(np.abs(x) - threshold, 0)
+
+coefs_lasso = []
+for lam in lambdas:
+    w = np.zeros(d_path + 1)
+    lr_l1 = 0.02
+    for it in range(3000):
+        p_hat = sigmoid(X_paug @ w)
+        grad = X_paug.T @ (p_hat - y_p) / n_path
+        w[0] -= lr_l1 * grad[0]
+        w[1:] -= lr_l1 * grad[1:]
+        w[1:] = soft_threshold(w[1:], lr_l1 * lam)
+    coefs_lasso.append(w[1:].copy())
+
+coefs_lasso = np.array(coefs_lasso)
+
+paleta = ["#4C72B0", "#DD8452", "#2ca02c", "#d62728", "#9467bd"]
+log_lam = np.log10(lambdas)
+
+fig = make_subplots(rows=1, cols=2,
+                    subplot_titles=["Ridge (L2)", "Lasso (L1)"],
+                    shared_yaxes=False)
+
+for j in range(d_path):
+    fig.add_trace(go.Scatter(
+        x=log_lam, y=coefs_ridge[:, j],
+        mode="lines", name=nombres_vars[j],
+        line=dict(color=paleta[j], width=2),
+        legendgroup=nombres_vars[j],
+        showlegend=True
+    ), row=1, col=1)
+
+for j in range(d_path):
+    fig.add_trace(go.Scatter(
+        x=log_lam, y=coefs_lasso[:, j],
+        mode="lines", name=nombres_vars[j],
+        line=dict(color=paleta[j], width=2),
+        legendgroup=nombres_vars[j],
+        showlegend=False
+    ), row=1, col=2)
+
+fig.add_hline(y=0, line_dash="dot", line_color="gray",
+              line_width=1, row=1, col=1)
+fig.add_hline(y=0, line_dash="dot", line_color="gray",
+              line_width=1, row=1, col=2)
+
+fig.update_xaxes(title_text="log₁₀(λ)", row=1, col=1)
+fig.update_xaxes(title_text="log₁₀(λ)", row=1, col=2)
+fig.update_yaxes(title_text="Estimated β̂", row=1, col=1)
+fig.update_yaxes(title_text="Estimated β̂", row=1, col=2)
+
+fig.update_layout(
+    title="Regularization Path: Ridge vs Lasso",
+    template="plotly_white",
+    height=460,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+## Multi-Class Extensions
+
+### Softmax Multinomial Regression
+
+$$
+P(y=k \mid \mathbf{x}) = \frac{e^{\boldsymbol{\beta}_k^\top \mathbf{x}}}{\sum_{j=1}^K e^{\boldsymbol{\beta}_j^\top \mathbf{x}}}.
+$$ {#eq-softmax}
+
+Categorical cross-entropy log-likelihood:
+
+$$
+\ell(\{\boldsymbol{\beta}_k\}) = \sum_{i=1}^n \sum_{k=1}^K \mathbb{1}[y_i = k] \log P(y_i = k \mid \mathbf{x}_i).
+$$ {#eq-softmax-loglik}
+
+```{python}
+#| label: fig-multiclass
+#| fig-cap: "Multinomial Softmax Logistic Regression decision regions for a 3-class problem."
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(13)
+n_mc = 60
+
+medias = [[1.0, 4.5], [4.5, 1.0], [4.5, 5.5]]
+covs = [[[0.8, 0.1],[0.1, 0.8]],
+        [[0.8, -0.1],[-0.1, 0.8]],
+        [[0.8, 0.2],[0.2, 0.8]]]
+colores_clases = ["#4C72B0", "#DD8452", "#2ca02c"]
+
+Xs, ys = [], []
+for k, (mu, cov) in enumerate(zip(medias, covs)):
+    pts = rng.multivariate_normal(mu, cov, n_mc)
+    Xs.append(pts)
+    ys.extend([k] * n_mc)
+
+X_mc = np.vstack(Xs)
+y_mc = np.array(ys)
+K = 3
+
+def softmax(Z):
+    Z_shift = Z - Z.max(axis=1, keepdims=True)
+    E = np.exp(Z_shift)
+    return E / E.sum(axis=1, keepdims=True)
+
+X_mc_aug = np.column_stack([np.ones(len(y_mc)), X_mc])
+d_mc = X_mc_aug.shape[1]
+
+W_mc = np.zeros((d_mc, K))
+lr_mc = 0.05
+
+Y_oh = np.zeros((len(y_mc), K))
+Y_oh[np.arange(len(y_mc)), y_mc] = 1
+
+for _ in range(3000):
+    Z_mc = X_mc_aug @ W_mc
+    P_mc = softmax(Z_mc)
+    grad_mc = X_mc_aug.T @ (P_mc - Y_oh) / len(y_mc)
+    W_mc -= lr_mc * grad_mc
+
+x1g = np.linspace(-1.5, 7.5, 200)
+x2g = np.linspace(-1.5, 8.0, 200)
+xx1, xx2 = np.meshgrid(x1g, x2g)
+X_grid = np.column_stack([np.ones(xx1.size), xx1.ravel(), xx2.ravel()])
+P_grid = softmax(X_grid @ W_mc)
+clase_grid = P_grid.argmax(axis=1).reshape(xx1.shape)
+
+paleta_rgb = [
+    [0.0, "rgba(76,114,176,0.35)"],
+    [0.33, "rgba(76,114,176,0.35)"],
+    [0.33, "rgba(221,132,82,0.35)"],
+    [0.66, "rgba(221,132,82,0.35)"],
+    [0.66, "rgba(44,160,44,0.35)"],
+    [1.0, "rgba(44,160,44,0.35)"],
+]
+
+fig = go.Figure()
+
+fig.add_trace(go.Heatmap(
+    x=x1g, y=x2g, z=clase_grid,
+    colorscale=paleta_rgb,
+    showscale=False,
+    zmin=0, zmax=2
+))
+
+nombres_clases = ["Class 0", "Class 1", "Class 2"]
+for k, (pts, nombre, color) in enumerate(zip(Xs, nombres_clases, colores_clases)):
+    fig.add_trace(go.Scatter(
+        x=pts[:, 0], y=pts[:, 1],
+        mode="markers", name=nombre,
+        marker=dict(color=color, size=7, opacity=0.9,
+                    line=dict(color="white", width=1.2))
+    ))
+
+fig.update_layout(
+    title="Multinomial Softmax Decision Regions — 3 Classes",
+    xaxis_title="Feature x₁",
+    yaxis_title="Feature x₂",
+    template="plotly_white",
+    height=490,
+    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                xanchor="center", x=0.5)
+)
+fig.show()
+```
+
+## Summary
+
+Logistic regression bridges linear modelling and probabilistic classification. By optimizing binary cross-entropy loss via maximum likelihood estimation, it yields well-calibrated posterior probabilities and interpretable log-odds coefficients.
+
+## References
+
+::: {#refs}
+:::

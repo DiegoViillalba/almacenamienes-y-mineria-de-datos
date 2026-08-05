@@ -1,0 +1,165 @@
+---
+title: "Multidimensional Modeling"
+---
+
+Multidimensional modeling serves as the conceptual foundation for Data Warehouses (DW). Unlike highly normalized relational models (designed for transactional OLTP systems dominated by frequent single-record insertions and updates), multidimensional modeling is optimized for analytical (OLAP) workloads—answering complex business questions rapidly, clearly, and intuitively for business end users.
+
+As emphasized in this course, designing a Data Warehouse does not begin with database engines or tech stacks, but with the business decisions requiring data support. The model is constructed around analytical questions rather than operational routines.
+
+Unlike normalized relational models, multidimensional modeling uses structures optimized for complex analytical queries:
+
+* **Fact Table:** Contains quantitative business metrics and measures.
+* **Dimension Tables:** Contain descriptive attributes contextualizing facts (Time, Geography, Product, Student, etc.).
+
+## Facts and Dimensions
+
+A fact represents a measurable business event characterized by three core traits: it occurs at a specific point in time, it is quantifiable, and it occurs repeatedly. Rather than describing it purely conceptually, it is best understood through a structural representation.
+
+Below is an example of an **academic fact table**, where each row represents a student's course evaluation in a given academic term.
+
+```{mermaid}
+erDiagram
+
+    ACADEMIC_EVALUATION_FACT {
+        int student_id
+        int course_id
+        int time_id
+        decimal grade
+        int credits
+        int failed_indicator
+    }
+```
+
+In this table:
+
+- Each record corresponds to a concrete academic event.
+- Columns `grade`, `credits`, and `failed_indicator` are quantitative measures.
+- Foreign keys (`student_id`, `course_id`, `time_id`) connect the fact to its descriptive context.
+
+**Dimensions** supply that context, answering questions such as: who?, when?, where?, and what? took place during the event.
+
+Below is a simplified representation of academic dimensions:
+
+```{mermaid}
+erDiagram
+
+    STUDENT_DIMENSION {
+        int student_id
+        string name
+        string gender
+        int cohort
+        string major
+        string department
+    }
+
+    TIME_DIMENSION {
+        int time_id
+        int semester
+        int year
+        string term
+    }
+
+    COURSE_DIMENSION {
+        int course_id
+        string course_name
+        string course_type
+    }
+```
+
+The fact gains analytical meaning only when joined with these dimensions. Conceptually, the relationship is structured as follows:
+
+```{mermaid}
+erDiagram
+
+    ACADEMIC_EVALUATION_FACT }o--|| STUDENT_DIMENSION : belongs_to
+    ACADEMIC_EVALUATION_FACT }o--|| TIME_DIMENSION : occurs_in
+    ACADEMIC_EVALUATION_FACT }o--|| COURSE_DIMENSION : corresponds_to
+```
+
+Thus, a single row in the fact table can be interpreted as:
+
+> "Student X took course Y during academic term Z and earned a specific grade."
+
+An isolated measurement holds little analytical value; context emerges when linked to dimensions. This relationship also guides schema design: if a metric cannot be explained by available dimensions, a key dimension (such as campus, curriculum plan, course section, or study modality) is likely missing.
+
+## Granularity: The Core Design Decision
+
+Granularity defines what a single row in the fact table represents. It directly impacts data volume, infrastructure costs, ETL pipeline complexity, and analytical capabilities.
+
+### Comparing Granularity Levels
+
+```{mermaid}
+erDiagram
+    SEMESTER_TRAJECTORY_FACT {
+        int student_id
+        int time_id
+        int total_courses
+        int total_credits
+        decimal semester_gpa
+    }
+    ACADEMIC_EVALUATION_FACT {
+        int student_id
+        int course_id
+        int time_id
+        decimal grade
+        int credits
+        int failed_indicator
+    }
+```
+
+**Left: Low Granularity — One row per student per semester.**  
+Each record summarizes an overall student performance during a term. Individual course records are omitted in favor of semester aggregates.
+
+With 200 students across 2 semesters per year, approximately 400 rows are generated annually (2,000 over five years). This approach reduces data volume and pipeline complexity, but prevents granular analysis by course or instructor.
+
+**Right: High Granularity — One row per student per course per semester.**  
+Each record represents a specific course enrollment event. This enables tracking failure rates per course, performance per faculty member, and curriculum progression.
+
+With 200 students, averaging 6 courses across 2 semesters per year, approximately 4,800 rows are generated annually (24,000 over five years). This approach expands analytical capability at the expense of higher data storage, infrastructure costs, and pipeline complexity.
+
+### Additive Facts
+
+A fact is additive when it can be meaningfully summed across all dimensions of the model (including the time dimension). Standard examples include sales amounts, enrolled credits, and failure counts.
+
+Examples:
+
+- Sales: Summing `amount_sold` across days, stores, products, or cities yields valid totals at any aggregation level.
+- Academics: Summing `enrolled_credits` by student, major, semester, or academic year; and summing `failed_indicator` (0/1) to obtain total failed courses across any grouping.
+
+Design Implication: Fully additive measures should be stored directly in fact tables, as they support fast, flexible, and mathematically sound aggregations.
+
+### Semi-Additive Facts
+
+A fact is semi-additive when it can be summed across some dimensions, but not across others—most commonly failing across time. Examples include inventory levels, account balances, or active student counts.
+
+Example:
+
+- "Active students" across majors within a single semester: Summing across disjoint majors yields a valid headcount for that semester.
+- "Active students" across multiple semesters: Summing active students from Semester 1 and Semester 2 is invalid because returning students are double-counted.
+
+Design Implication: Semi-additive measures are queried using functions like `MAX`, `MIN`, or end-of-period snapshots, or modeled as periodic snapshot fact tables.
+
+### Non-Additive Facts
+
+A fact is non-additive when it cannot be summed across any dimension; it represents a calculated metric (average, ratio, percentage). Examples include average grades, failure rates, and drop-out rates.
+
+Example:
+
+- A failure rate is computed dynamically as `(failed_courses / total_enrollments)` for a given filter; storing pre-calculated percentages in the fact table leads to invalid aggregations.
+- Average grade depends on population size and weights. Summing averages yields mathematically invalid results.
+
+Design Implication: Raw numeric components (numerators, denominators, counts, sums) should be stored in fact tables, while non-additive ratios are computed dynamically in the semantic layer or reporting queries.
+
+## Dimensional Hierarchies and Analytical Navigation
+
+Hierarchies enable drill-down and roll-up navigation across levels of detail:
+
+- Time: Year → Semester → Term.
+- Geography: Country → State → City.
+- Academics: Department → Major → Student.
+
+This design enables flexible reporting: business users can change aggregation levels in queries simply by adjusting the `GROUP BY` clause or dimension hierarchy level.
+
+## Conclusion
+
+Multidimensional modeling structures data around measurable facts and descriptive dimensions, prioritizing clarity and query performance. Establishing correct granularity and understanding metric additivity are essential design steps that dictate valid aggregations and downstream calculations.

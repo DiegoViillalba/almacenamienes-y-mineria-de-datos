@@ -1,0 +1,408 @@
+---
+title: "Modern Data Mart Consumption: APIs and Semantic Layers"
+subtitle: "From Direct Queries to Service Contracts"
+author: "Diego Villalba"
+date: today
+format: html
+bibliography: referencias_api_consumo.bib
+---
+
+```{=html}
+<style>
+.api-visual {
+  --api-blue: #2563eb; --api-blue-soft: #eff6ff;
+  --api-green: #15803d; --api-green-soft: #f0fdf4;
+  --api-amber: #b45309; --api-amber-soft: #fffbeb;
+  --api-purple: #7e22ce; --api-purple-soft: #faf5ff;
+  margin: 1.75rem 0; color: #1e293b;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.api-visual * { box-sizing: border-box; }
+.api-visual .api-caption { margin-top: .75rem; color: #64748b; font-size: .88rem; line-height: 1.45; text-align: center; }
+.api-visual .api-grid { display: grid; gap: 1rem; }
+.api-visual .api-card { padding: 1rem; background: #fff; border: 1px solid #cbd5e1; border-radius: .8rem; box-shadow: 0 2px 8px rgba(15, 23, 42, .06); }
+.api-visual .api-title { font-weight: 750; margin-bottom: .35rem; }
+.api-visual .api-small { color: #475569; font-size: .9rem; line-height: 1.45; }
+.api-visual .api-arrow { color: #64748b; font-size: 1.45rem; font-weight: 700; text-align: center; }
+@media (max-width: 760px) {
+  .api-visual .api-flow { grid-template-columns: 1fr !important; }
+  .api-visual .api-arrow { transform: rotate(90deg); }
+}
+
+.api-demo-root { font-family: inherit; background:#f8f9fb; border:1px solid #d8dee6; border-radius:8px; padding:18px 22px; margin:2em 0; }
+.api-demo-tabs { display:flex; gap:8px; justify-content:center; margin-bottom:12px; flex-wrap:wrap; }
+.api-demo-btn { padding:6px 16px; border:1px solid #aab; background:#fff; border-radius:5px; cursor:pointer; font-size:0.85em; font-family:inherit; transition:background .15s,color .15s; }
+.api-demo-btn:hover  { background:#eef2f7; }
+.api-demo-btn.active { background:#1a3a5c; color:#fff; border-color:#1a3a5c; }
+.api-demo-panel { display:none; }
+.api-demo-panel.active { display:block; }
+.api-demo-desc { text-align:center; font-size:0.85em; color:#444; margin-bottom:10px; }
+.api-demo-panel pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:6px; font-size:0.8em; overflow-x:auto; margin: 0.4rem 0; }
+.api-demo-label { font-weight:700; font-size:0.8em; color:#1a3a5c; text-transform:uppercase; letter-spacing:.03em; margin-top:.6rem; }
+</style>
+```
+
+The previous chapter concluded with the construction of a physical Sales data mart comprising four core tables: `dim_tiempo`, `dim_ubicacion`, `dim_departamento`, and `fact_ventas`. While querying this dimensional schema directly via SQL or BI tools connected through ODBC/JDBC remains common, it is not the only—nor always the most effective—consumption pattern. Mobile applications, embedded customer dashboards, microservices, and autonomous software agents should not require direct database credentials or internal schema knowledge to retrieve sales metrics. This chapter formalizes exposing data marts through a **service contract**—an API layer—rather than direct database access.
+
+## From Direct Access to Service Contracts
+
+In traditional consumption models, every client application connects directly to the data warehouse and executes custom SQL queries. While simple initially, this tightly couples client applications to internal physical schemas: renaming a column in `dim_ubicacion` breaks every downstream client. Furthermore, enforcing centralized access control, rate limiting, and schema versioning becomes difficult.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A **data service contract** decouples the physical storage representation $DM_j$ from client-facing interfaces via an access function $A$ that exposes only authorized operations and attributes:
+$$
+A: \text{Request} \longrightarrow \text{Response}, \qquad A \text{ encapsulates the internal schema of } DM_j
+$$
+:::
+
+```{=html}
+<div class="api-visual" role="img" aria-label="From Data Mart to Multiple Clients via API Layer">
+  <div class="api-grid api-flow" style="grid-template-columns: minmax(150px,1fr) auto minmax(190px,1fr) auto minmax(150px,1fr); align-items:center;">
+    <div class="api-card" style="border-top:4px solid var(--api-purple);">
+      <div class="api-title">Sales Data Mart</div>
+      <div class="api-small">fact_ventas + conformed dimensions.</div>
+    </div>
+    <div class="api-arrow" aria-hidden="true">&rarr;</div>
+    <div class="api-card" style="border-top:4px solid var(--api-green);">
+      <div class="api-title">Semantic Layer + API</div>
+      <div class="api-small">Defines metrics once; exposes them via REST / GraphQL.</div>
+    </div>
+    <div class="api-arrow" aria-hidden="true">&rarr;</div>
+    <div class="api-card" style="border-top:4px solid var(--api-blue);">
+      <div class="api-title">Clients</div>
+      <div class="api-small">Mobile App &middot; Embedded Dashboard &middot; Microservice &middot; Analytics Notebook</div>
+    </div>
+  </div>
+  <div class="api-caption">Architectural flow. Clients consume a unified service contract without needing direct database access or internal schema awareness.</div>
+</div>
+```
+
+This separation between storage and consumption extends classic data independence principles to the API layer [@kimball2013data].
+
+## REST APIs over Data Marts
+
+REST (*Representational State Transfer*) maps operational resources and analytical queries to stateless HTTP endpoints [@fielding2000rest]. For a data mart, a natural REST resource is an aggregated metric query (e.g., "sales by region and quarter").
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A REST endpoint over a data mart maps filter parameters and dimension groupings to a structured payload (typically JSON):
+$$
+\text{GET } /\text{sales}?\text{region}=r\,\&\,\text{quarter}=t \;\longmapsto\; \big\{\text{department}: v \;\big|\; v = C(r,t,\cdot)\big\}
+$$
+:::
+
+The Richardson Maturity Model categorizes REST API maturity from Level 0 (single RPC endpoint) to Level 3 (HATEOAS hypermedia controls) [@fowler2010richardson]. Most enterprise analytical APIs operate at Level 2, leveraging HTTP verbs and status codes alongside query parameter filtering.
+
+### Endpoint Interface Design
+
+A Level 2 REST endpoint interface for the Sales data mart:
+
+```python
+# app.py — illustrative interface using FastAPI
+from fastapi import FastAPI, Query
+
+app = FastAPI(title="Sales Analytics API")
+
+@app.get("/v1/sales")
+def get_sales(
+    region: str | None = Query(None),
+    quarter: str | None = Query(None),
+    department: str | None = Query(None),
+):
+    """Returns aggregated sales filtered by region, quarter, and/or department."""
+    result = query_metric(
+        "total_sales",
+        group_by=["region", "quarter", "department"],
+        filters={"region": region, "quarter": quarter, "department": department},
+    )
+    return {"data": result}
+```
+
+The key architectural pattern here is separation of concerns: the HTTP endpoint delegates metric calculation to `query_metric`, an underlying semantic layer function that abstracts SQL join execution [@fastapi2024docs].
+
+### Reproducible Request/Response Simulation
+
+We simulate this request/response cycle using Python and `pandas`:
+
+```{python}
+import pandas as pd
+
+dim_tiempo = pd.DataFrame({
+    "time_key": [1, 2], "quarter": ["Q1", "Q2"], "year": [2025, 2025],
+})
+dim_ubicacion = pd.DataFrame({
+    "location_key": [1, 2, 3, 4],
+    "city": ["CDMX", "Guadalajara", "Monterrey", "Merida"],
+    "region": ["Central", "West", "North", "Southeast"],
+})
+dim_departamento = pd.DataFrame({
+    "dept_key": [1, 2, 3, 4],
+    "department": ["Wood", "Plumbing", "Decoration", "Electrical"],
+})
+fact_ventas = pd.DataFrame([
+    (1, 1, 1, 70), (1, 1, 2, 40), (1, 1, 3, 20), (1, 1, 4, 30),
+    (2, 1, 1, 50), (2, 1, 2, 60), (2, 1, 3, 22), (2, 1, 4, 28),
+    (1, 2, 1, 60), (1, 2, 2, 35), (1, 2, 3, 25), (1, 2, 4, 40),
+    (2, 2, 1, 45), (2, 2, 2, 50), (2, 2, 3, 30), (2, 2, 4, 35),
+    (1, 3, 1, 48), (1, 3, 2, 38), (1, 3, 3, 18), (1, 3, 4, 26),
+    (2, 3, 1, 36), (2, 3, 2, 55), (2, 3, 3, 25), (2, 3, 4, 30),
+    (1, 4, 1, 52), (1, 4, 2, 42), (1, 4, 3, 15), (1, 4, 4, 37),
+    (2, 4, 1, 44), (2, 4, 2, 33), (2, 4, 3, 20), (2, 4, 4, 28),
+], columns=["time_key", "location_key", "dept_key", "sales_amount"])
+
+data_mart = (
+    fact_ventas
+    .merge(dim_tiempo, on="time_key")
+    .merge(dim_ubicacion, on="location_key")
+    .merge(dim_departamento, on="dept_key")
+)
+data_mart.head()
+```
+
+Implementing the endpoint request handler:
+
+```{python}
+def get_sales_endpoint(region=None, quarter=None, department=None):
+    df = data_mart
+    if region:
+        df = df[df["region"] == region]
+    if quarter:
+        df = df[df["quarter"] == quarter]
+    if department:
+        df = df[df["department"] == department]
+
+    aggregated = (
+        df.groupby(["region", "quarter", "department"], as_index=False)["sales_amount"]
+        .sum()
+        .rename(columns={"sales_amount": "total_sales"})
+    )
+    return {"data": aggregated.to_dict(orient="records")}
+
+request_params = {"region": "Central", "quarter": "Q2"}
+response_payload = get_sales_endpoint(**request_params)
+response_payload
+```
+
+## GraphQL APIs over Data Marts
+
+GraphQL empowers client applications to request specific fields and structure responses dynamically in a single request, resolving REST over-fetching (retrieving unneeded attributes) and under-fetching (requiring multiple round-trips) [@graphql2021spec].
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A GraphQL query specifies a subset of fields $F \subseteq \text{fields}(R)$ on resource $R$; the server resolver returns strictly $F$.
+:::
+
+Illustrative GraphQL schema definition:
+
+```python
+# schema.py — illustrative Strawberry GraphQL definition
+import strawberry
+
+@strawberry.type
+class AggregatedSale:
+    region: str
+    quarter: str
+    department: str
+    total_sales: float
+
+@strawberry.type
+class Query:
+    @strawberry.field
+    def sales(self, region: str | None = None, quarter: str | None = None) -> list[AggregatedSale]:
+        result = query_metric(
+            "total_sales",
+            group_by=["region", "quarter", "department"],
+            filters={"region": region, "quarter": quarter},
+        )
+        return [AggregatedSale(**row) for row in result]
+
+schema = strawberry.Schema(query=Query)
+```
+
+Client GraphQL query requesting only department and total_sales:
+
+```graphql
+query {
+  sales(region: "Central", quarter: "Q2") {
+    department
+    totalSales
+  }
+}
+```
+
+### Reproducible Simulation of GraphQL Field Selection
+
+```{python}
+def resolve_sales_query(requested_fields, region=None, quarter=None, department=None):
+    df = data_mart
+    if region:
+        df = df[df["region"] == region]
+    if quarter:
+        df = df[df["quarter"] == quarter]
+    if department:
+        df = df[df["department"] == department]
+
+    aggregated = (
+        df.groupby(["region", "quarter", "department"], as_index=False)["sales_amount"]
+        .sum()
+        .rename(columns={"sales_amount": "total_sales"})
+    )
+    return aggregated[requested_fields].to_dict(orient="records")
+
+resolve_sales_query(["department", "total_sales"], region="Central", quarter="Q2")
+```
+
+## Semantic Layers: Metrics as Code
+
+Both REST and GraphQL patterns rely on an underlying **semantic layer**. A semantic layer defines business metrics (calculation rules, aggregations, filters) **once as code**, serving as a single source of truth across dashboards, REST endpoints, GraphQL queries, and notebooks [@dbtlabs2024semanticlayer; @cubejs2024docs].
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A **semantic metric** is a registered function $M: (\text{groupings}, \text{filters}) \to \mathbb{R}$ executed over the underlying data mart:
+$$
+M_{\text{total\_sales}}(G, F) = \sum_{i \,:\, i \models F} \text{sales\_amount}_i \quad \text{grouped by } G
+$$
+:::
+
+Decoupling metric definitions from visualization tools is commonly referred to as **headless BI**.
+
+### Reproducible Semantic Metric Registry
+
+```{python}
+METRICS_REGISTRY = {
+    "total_sales": {
+        "column": "sales_amount",
+        "aggregation": "sum",
+    },
+    "average_ticket": {
+        "column": "sales_amount",
+        "aggregation": "mean",
+    },
+}
+
+def query_metric(metric_name, group_by, filters=None):
+    if metric_name not in METRICS_REGISTRY:
+        raise ValueError(f"Unregistered metric: {metric_name}")
+
+    definition = METRICS_REGISTRY[metric_name]
+    df = data_mart
+
+    for field, value in (filters or {}).items():
+        if value is not None:
+            df = df[df[field] == value]
+
+    aggregated = (
+        df.groupby(group_by, as_index=False)[definition["column"]]
+        .agg(definition["aggregation"])
+        .rename(columns={definition["column"]: metric_name})
+    )
+    return aggregated.to_dict(orient="records")
+
+query_metric(
+    "total_sales",
+    group_by=["region", "quarter"],
+    filters={"quarter": "Q2"},
+)
+```
+
+```{python}
+query_metric(
+    "average_ticket",
+    group_by=["department"],
+    filters={"region": "Central"},
+)
+```
+
+## Comparing Consumption Contracts
+
+```{=html}
+<div class="api-demo-root">
+  <div style="text-align:center;margin-bottom:6px;">
+    <span style="font-size:1.02em;font-weight:bold;color:#1a2e45;">Central Region Sales in Q2 by Department &mdash; Three Contracts</span>
+  </div>
+  <div class="api-demo-tabs">
+    <button class="api-demo-btn active" onclick="apiDemoShow('rest')" id="api-btn-rest">REST API</button>
+    <button class="api-demo-btn" onclick="apiDemoShow('graphql')" id="api-btn-graphql">GraphQL API</button>
+    <button class="api-demo-btn" onclick="apiDemoShow('metrica')" id="api-btn-metrica">Semantic Layer (Python)</button>
+  </div>
+
+  <div class="api-demo-panel active" id="api-panel-rest">
+    <div class="api-demo-desc">Server dictates response shape: includes all resource fields by default.</div>
+    <div class="api-demo-label">Request</div>
+    <pre>GET /v1/sales?region=Central&amp;quarter=Q2</pre>
+    <div class="api-demo-label">Response</div>
+    <pre>{
+  "data": [
+    {"region": "Central", "quarter": "Q2", "department": "Televisions", "total_sales": 45},
+    {"region": "Central", "quarter": "Q2", "department": "Computers",   "total_sales": 50},
+    {"region": "Central", "quarter": "Q2", "department": "Decoration",  "total_sales": 30},
+    {"region": "Central", "quarter": "Q2", "department": "Electrical",  "total_sales": 35}
+  ]
+}</pre>
+  </div>
+
+  <div class="api-demo-panel" id="api-panel-graphql">
+    <div class="api-demo-desc">Client dictates response shape: requests only department and total_sales.</div>
+    <div class="api-demo-label">Request</div>
+    <pre>query {
+  sales(region: "Central", quarter: "Q2") {
+    department
+    totalSales
+  }
+}</pre>
+    <div class="api-demo-label">Response</div>
+    <pre>{
+  "data": {
+    "sales": [
+      {"department": "Televisions", "totalSales": 45},
+      {"department": "Computers",   "totalSales": 50},
+      {"department": "Decoration",  "totalSales": 30},
+      {"department": "Electrical",  "totalSales": 35}
+    ]
+  }
+}</pre>
+  </div>
+
+  <div class="api-demo-panel" id="api-panel-metrica">
+    <div class="api-demo-desc">Both API protocols delegate metric evaluation to the centralized semantic layer.</div>
+    <div class="api-demo-label">Invocation</div>
+    <pre>query_metric(
+    "total_sales",
+    group_by=["department"],
+    filters={"region": "Central", "quarter": "Q2"},
+)</pre>
+    <div class="api-demo-label">Result</div>
+    <pre>[
+  {"department": "Televisions", "total_sales": 45},
+  {"department": "Computers",   "total_sales": 50},
+  {"department": "Decoration",  "total_sales": 30},
+  {"department": "Electrical",  "total_sales": 35}
+]</pre>
+  </div>
+  <div class="api-caption">All three contracts expose identical metric calculations (45, 50, 30, 35); only protocol interaction format varies.</div>
+</div>
+
+<script>
+function apiDemoShow(mode){
+  document.querySelectorAll('.api-demo-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.api-demo-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('api-panel-'+mode).classList.add('active');
+  document.getElementById('api-btn-'+mode).classList.add('active');
+}
+</script>
+```
+
+## Security and Governance at the API Layer
+
+Centralizing data mart access through an API layer enables security controls that are difficult to enforce with direct database queries:
+
+- **Authentication & Authorization:** Verifies caller identities and scope permissions (JWT, API keys).
+- **Row-Level Security (RLS):** Automatically restricts data visibility based on user roles (e.g., regional managers see only their assigned regions).
+- **Rate Limiting & Throttling:** Protects analytical databases from unoptimized, expensive queries.
+- **Contract Versioning:** Explicit URL paths (e.g., `/v1/`) support schema evolution without breaking legacy client integrations.
+
+## Conclusions
+
+Exposing data marts via APIs and semantic layers transforms database tables into governed **data products** [@dehghani2022datamesh]. Whether providing interactive OLAP cube exploration or programmatic REST/GraphQL service endpoints, defining conformed dimensions and metrics once guarantees enterprise-wide consistency across all analytics consumers.
+
+## References
+
+::: {#refs}
+:::

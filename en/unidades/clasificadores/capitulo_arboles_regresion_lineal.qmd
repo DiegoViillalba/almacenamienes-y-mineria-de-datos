@@ -1,0 +1,994 @@
+---
+title: "Regression Trees, Ensembles, and Nearest Neighbors"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_arboles_regresion_lineal.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Decision trees represent a family of rule-based supervised learning methods. Unlike global linear models that describe an entire dataset using a single global equation, a decision tree partitions predictor space into smaller regions and fits a simple localized prediction in each one. This approach is particularly effective when relationships between explanatory variables and continuous target responses are non-linear, vary across feature space subregions, or involve complex interactions [@breiman1984classification; @hastie2009elements].
+
+In regression tasks, the objective is predicting a numerical response. For example, we might estimate laptop prices based on RAM, screen size, processor specs, and brand; or forecast housing prices based on surface area, location, and property age. A regression tree learns decision rules of the form "if a feature falls below a specific threshold, follow one branch; otherwise, follow another". At the end of each branch lies a terminal leaf node, where the response prediction is typically the average of training observations reaching that specific region.
+
+This chapter develops the core logic of regression trees, their geometric interpretation as piecewise constant functions, split evaluation criteria, pruning techniques to prevent overfitting, and basic evaluation metrics. Subsequently, tree-based ensemble methods are introduced, specifically bagging, random forests, and boosting. Finally, the nearest neighbor algorithm is presented as a contrast to decision trees: a memory-based, distance-driven lazy learning method.
+
+## From Linear Regression to Region-Based Models
+
+Multiple linear regression models a continuous target $y$ as a global linear combination of predictor features $x_1, \ldots, x_p$:
+
+$$
+y_i = \beta_0 + \beta_1 x_{i1}+\dots+\beta_p x_{ip}+\varepsilon_i.
+$$
+
+Its primary advantage is coefficient interpretability: each $\beta_j$ quantifies the expected change in $y$ given a one-unit increase in $x_j$, holding all other features constant. However, this structure enforces a global functional form. When the true relationship between $X$ and $y$ varies across different regions of feature space, a single linear equation can prove overly restrictive.
+
+Regression trees address this limitation through recursive partitioning. Rather than fitting a single global surface, they divide predictor space into disjoint regions and assign a constant prediction to each region, producing a flexible, non-parametric, and interpretable model [@james2021introduction].
+
+::: {.callout-note appearance="minimal"}
+Definition. A regression tree is a model that partitions predictor feature space into disjoint regions $R_1,\ldots,R_J$ and predicts a constant value $c_h$ within each region:
+$$
+\hat f(x)=\sum_{h=1}^{J} c_h\,\mathbb{I}(x\in R_h).
+$$ {#eq-tree-piecewise}
+:::
+
+Here, $x$ represents an input observation; $R_h$ denotes region $h$ in feature space; $c_h$ is the prediction assigned to that region (typically the mean observed target response within $R_h$); and $\mathbb{I}(x\in R_h)$ is an indicator function taking value one if $x \in R_h$ and zero otherwise.
+
+::: {.callout-note appearance="minimal"}
+Definition. The indicator function for region $R_h$ is defined as:
+$$
+\mathbb{I}(x\in R_h)=
+\begin{cases}
+1, & \text{if } x\in R_h,\\
+0, & \text{if } x\notin R_h.
+\end{cases}
+$$ {#eq-indicator}
+:::
+
+## Non-Linear Classifiers and Piecewise Models
+
+In classification problems, linear classifiers separate classes using decision hyperplanes. When data are linearly separable, this approach is sufficient. However, in real-world applications, class boundaries are often curved, disjoint, or driven by non-linear feature interactions. In these scenarios, two main strategies exist: retaining a linear classifier while tolerating classification errors, or employing non-linear classifiers capable of learning flexible decision boundaries.
+
+A intuitive way to construct non-linearity is combining linear pieces. The core concept involves partitioning a class into sub-classes or local sub-regions and assigning a local linear discriminant to each sub-region. The resulting global boundary transitions from a single hyperplane into a composite union of linear segments or faces. This logic directly foreshadows two key frameworks: decision trees (which split feature space via recursive orthogonal cuts) and nearest neighbors (which carry local decision making to its logical extreme by treating every training sample as a local reference point) [@duda2001pattern; @hastie2009elements].
+
+::: {.callout-note appearance="minimal"}
+Definition. A piecewise linear classifier assigns to each class $\omega_i$ a set of sub-classes $\omega_i^1,\dots,\omega_i^{\ell_i}$, each possessing a linear discriminant $g_i^\ell(x)$, defining the class discriminant function as a local maximum:
+$$
+g_i(x)=\max_{\ell=1,\dots,\ell_i} g_i^\ell(x),\qquad
+\hat y(x)=\arg\max_{i=1,\dots,c} g_i(x).
+$$ {#eq-piecewise-linear-discriminant}
+:::
+
+Writing $g_i^\ell(x)=w_{i\ell}^{\top}x+w_{i\ell,0}$, each sub-class contributes a linear boundary. The maximum operator selects the sub-region that best explains query point $x$. As the number of sub-classes increases, the decision boundary can approximate complex non-linear shapes. However, this flexibility requires deciding how many sub-classes to instantiate, how to initialize them, and how to avoid overfitting noise.
+
+From this perspective, decision trees construct piecewise constant approximations with axis-aligned boundaries. KNN, on the other hand, can be viewed as an extreme local classifier: rather than learning explicit sub-classes, it stores training examples directly and makes decisions based on local distances.
+
+## Step Functions
+
+A regression tree produces a piecewise step function. For a single predictor $x$, a simple model can be expressed as:
+
+$$
+\hat f(x)=
+\begin{cases}
+100, & x<10,\\
+200, & 10\le x<20,\\
+300, & x\ge 20.
+\end{cases}
+$$
+
+Rather than fitting a continuous line, this model partitions the $x$-axis into intervals and assigns a constant target prediction to each interval. In two dimensions, regions form rectangular boxes; in $p$ dimensions, they form hyper-rectangles. For instance, with age, income, and experience, a decision rule might read:
+
+$$
+\text{age}<30 \quad \text{and} \quad \text{income}>5000.
+$$
+
+Such explicit rules are easily human-readable, explaining the popularity of decision trees in domain-sensitive applications. However, axis-aligned splits impose a geometric constraint: linear diagonal or smooth oblique relationships require many step splits to approximate effectively [@hastie2009elements].
+
+## Prediction Within a Region
+
+Once a tree defines region $R_h$, the optimal prediction under squared-error loss is the arithmetic mean of target values residing in that region. Given observations within region $R_h$ with target responses $y_1, \ldots, y_{n_h}$, constant prediction $c_h$ is chosen to minimize Sum of Squared Errors:
+
+$$
+\sum_{i:x_i\in R_h}(y_i-c_h)^2.
+$$
+
+Setting the derivative with respect to $c_h$ to zero yields the sample mean.
+
+::: {.callout-note appearance="minimal"}
+Definition. Under squared-error loss, the optimal leaf prediction $\hat c_h$ for region $R_h$ in a regression tree is the mean of target responses falling into that leaf:
+$$
+\hat c_h = \frac{1}{|R_h|}\sum_{i:x_i\in R_h} y_i.
+$$ {#eq-leaf-mean}
+:::
+
+For example, if a region contains actual values $\{20, 40, 100, 120\}$, its un-split prediction is:
+
+$$
+\hat c=\frac{20+40+100+120}{4}=70.
+$$
+
+If this region is partitioned into two sub-regions, $R_1=\{20,40\}$ and $R_2=\{100,120\}$, the new regional predictions become:
+
+$$
+\hat c_1=30,\qquad \hat c_2=110.
+$$
+
+Partitioning improves accuracy because each sub-region is represented by a mean that far better reflects its localized values.
+
+## Total Error and Split Criteria
+
+A decision tree evaluates candidate splits by quantifying the reduction in error achieved when partitioning a region. In regression, the standard split criterion is the Residual Sum of Squares (RSS) within leaf nodes [@breiman1984classification; @james2021introduction].
+
+::: {.callout-note appearance="minimal"}
+Definition. The total squared error of a regression tree with regions $R_1,\dots,R_J$ is:
+$$
+D(T)=\sum_{h=1}^{J}\sum_{i:x_i\in R_h}(y_i-\hat c_h)^2.
+$$ {#eq-tree-error}
+:::
+
+When evaluating a candidate split of region $R$ into left ($R_L$) and right ($R_R$) sub-regions, the algorithm compares total error before and after splitting:
+
+$$
+D_{\text{split}} = \sum_{i:x_i\in R_L}(y_i-\hat c_L)^2+
+\sum_{i:x_i\in R_R}(y_i-\hat c_R)^2.
+$$
+
+::: {.callout-note appearance="minimal"}
+Definition. The gain of a split is defined as the absolute error reduction achieved by the partition:
+$$
+\text{Gain}=D_{\text{before}}-D_{\text{after}}.
+$$ {#eq-gain}
+:::
+
+A candidate split is selected if it yields a large reduction in RSS. During training, the algorithm evaluates all candidate split points across all features (e.g., evaluating threshold cuts across age, income, experience) and selects the split maximizing gain.
+
+```{=html}
+<div id="rss-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">RSS Split Criterion — Interactive Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Drag the split threshold slider to observe how RSS changes before and after partitioning</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">RAM Threshold = <strong id="rss-tv">6.0</strong> GB</label>
+    <input id="rss-sl" type="range" min="4.5" max="15.5" step="0.5" value="6"
+           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
+  </div>
+  <div id="rss-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="rss-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const RAM=[4,4,8,8,16,16], Y=[6500,7200,10500,12000,21000,24000], N=6;
+  const cv=document.getElementById('rss-cv');
+  const W=680,H=260,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const LP={l:52,r:W/2-8,t:20,b:220},RP={l:W/2+8,r:W-10,t:20,b:220};
+  const LW=LP.r-LP.l,LH=LP.b-LP.t,RW=RP.r-RP.l,RH=RP.b-RP.t;
+  const xMn=2,xMx=18,yMn=0,yMx=26000;
+  const sx=x=>LP.l+(x-xMn)/(xMx-xMn)*LW;
+  const sy=y=>LP.t+LH-(y-yMn)/(yMx-yMn)*LH;
+  function rss(arr){const m=arr.reduce((s,v)=>s+v,0)/arr.length;return arr.reduce((s,v)=>s+(v-m)**2,0);}
+
+  function draw(t){
+    ctx.clearRect(0,0,W,H);
+    const yL=Y.filter((_,i)=>RAM[i]<t),yR=Y.filter((_,i)=>RAM[i]>=t);
+    const rssTotal=rss(Y),rssSplit=(yL.length?rss(yL):0)+(yR.length?rss(yR):0);
+    const gain=rssTotal-rssSplit;
+    const meanAll=Y.reduce((s,v)=>s+v,0)/N;
+    const meanL=yL.length?yL.reduce((s,v)=>s+v,0)/yL.length:null;
+    const meanR=yR.length?yR.reduce((s,v)=>s+v,0)/yR.length:null;
+
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW,LH);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
+    [4,8,12,16].forEach(x=>{ctx.beginPath();ctx.moveTo(sx(x),LP.t);ctx.lineTo(sx(x),LP.b);ctx.stroke();});
+    [0,5000,10000,15000,20000,25000].forEach(y=>{ctx.beginPath();ctx.moveTo(LP.l,sy(y));ctx.lineTo(LP.r,sy(y));ctx.stroke();});
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(LP.l,LP.t);ctx.lineTo(LP.l,LP.b);ctx.lineTo(LP.r,LP.b);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    [4,8,12,16].forEach(x=>ctx.fillText(x+'GB',sx(x),LP.b+13));
+    ctx.textAlign='right';
+    [0,10000,20000].forEach(y=>ctx.fillText((y/1000).toFixed(0)+'k',LP.l-4,sy(y)+3));
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Data and Tree Prediction',LP.l+LW/2,LP.t-5);
+
+    ctx.strokeStyle='rgba(100,100,100,0.3)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(sx(xMn),sy(meanAll));ctx.lineTo(sx(xMx),sy(meanAll));ctx.stroke();
+    ctx.setLineDash([]);
+    if(meanL!==null){
+      ctx.strokeStyle='rgba(37,99,235,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
+      ctx.beginPath();ctx.moveTo(sx(xMn),sy(meanL));ctx.lineTo(sx(t),sy(meanL));ctx.stroke();
+      ctx.fillStyle='#2563eb';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText('ĉ₁='+meanL.toFixed(0),sx((xMn+t)/2),sy(meanL)-7);
+    }
+    if(meanR!==null){
+      ctx.strokeStyle='rgba(220,38,38,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
+      ctx.beginPath();ctx.moveTo(sx(t),sy(meanR));ctx.lineTo(sx(xMx),sy(meanR));ctx.stroke();
+      ctx.fillStyle='#dc2626';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText('ĉ₂='+meanR.toFixed(0),sx((t+xMx)/2),sy(meanR)-7);
+    }
+    ctx.setLineDash([]);
+    if(t>xMn&&t<xMx){
+      ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(sx(t),LP.t);ctx.lineTo(sx(t),LP.b);ctx.stroke();
+      ctx.fillStyle='#f59e0b';ctx.font='bold 10px Georgia,serif';ctx.textAlign='left';
+      ctx.fillText('t='+t,sx(t)+4,LP.t+12);
+    }
+    RAM.forEach((r,i)=>{
+      const inL=r<t;
+      ctx.beginPath();ctx.arc(sx(r)+(i%2===0?-5:5),sy(Y[i]),6,0,2*Math.PI);
+      ctx.fillStyle=inL?'#2563ebcc':'#dc2626cc';ctx.fill();
+      ctx.strokeStyle=inL?'#1d4ed8':'#b91c1c';ctx.lineWidth=1.5;ctx.stroke();
+    });
+
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('RSS Comparison',RP.l+RW/2,RP.t-5);
+    const bars=[{lbl:'Unsplit\nRSS',val:rssTotal,col:'#9ca3af'},{lbl:'Split\nRSS',val:rssSplit,col:gain>0?'#16a34a':'#dc2626'}];
+    const maxRSS=rssTotal*1.1,bW=RW*0.22;
+    bars.forEach((b,i)=>{
+      const bx=RP.l+RW*(i+1)/(bars.length+1)-bW/2;
+      const bh=(b.val/maxRSS)*(RH-40),by=RP.b-bh-4;
+      ctx.fillStyle=b.col+'bb';ctx.fillRect(bx,by,bW,bh);
+      ctx.strokeStyle=b.col;ctx.lineWidth=1.5;ctx.strokeRect(bx,by,bW,bh);
+      ctx.fillStyle='#1a2e45';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
+      const v=b.val>=1e6?(b.val/1e6).toFixed(2)+'M':(b.val/1e3).toFixed(0)+'k';
+      ctx.fillText(v,bx+bW/2,by-5);
+      ctx.fillStyle=b.col;ctx.font='10px Georgia,serif';
+      b.lbl.split('\n').forEach((l,j)=>ctx.fillText(l,bx+bW/2,RP.b+13+j*12));
+    });
+    const gainPct=(gain/rssTotal*100).toFixed(1);
+    const gc=gain>rssTotal*0.3?'#16a34a':gain>0?'#ca8a04':'#dc2626';
+    ctx.fillStyle=gc;ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Gain: '+gainPct+'%',RP.l+RW/2,RP.t+RH*0.5);
+    document.getElementById('rss-info').innerHTML=
+      `Unsplit RSS = <strong>${(rssTotal/1e6).toFixed(3)}M</strong>&ensp;·&ensp;`+
+      `Split RSS = <strong>${(rssSplit/1e6).toFixed(3)}M</strong>&ensp;·&ensp;`+
+      `Gain = <strong style="color:${gc}">${gainPct}%</strong>`+
+      (yL.length===0||yR.length===0?' &ensp;<em style="color:#aaa">(no data in region)</em>':'');
+  }
+  document.getElementById('rss-sl').addEventListener('input',function(){
+    const v=parseFloat(this.value);
+    document.getElementById('rss-tv').textContent=v.toFixed(1);
+    draw(v);
+  });
+  draw(6);
+})();
+</script>
+```
+
+## Recursive Binary Splitting
+
+Decision tree training employs greedy top-down recursive binary splitting. The algorithm finds the optimal single split for the full training set. It then recursively applies the same splitting procedure to each child region until a stopping criterion is met (e.g., maximum depth, minimum samples per leaf, or minimum error gain).
+
+Workflow steps:
+
+1. Start with all training instances in a single root region.
+2. For each predictor feature and candidate threshold cut-point, evaluate the RSS error reduction.
+3. Select the single split maximizing RSS error reduction.
+4. Recursively repeat steps 2–3 on each child sub-region.
+5. Stop growing when stopping constraints or pruning criteria trigger.
+
+Top-down greedy splitting is computationally efficient and generates interpretable rules. However, because it makes greedy local choices at each step without backtracking, it does not guarantee finding globally optimal tree structures [@breiman1984classification].
+
+## Manual Calculation Example: Laptop Pricing by RAM
+
+Consider a toy dataset predicting laptop prices based solely on RAM capacity.
+
+| Laptop | RAM | Actual Price |
+|---|---:|---:|
+| A | 4 GB | 6,500 |
+| B | 4 GB | 7,200 |
+| C | 8 GB | 10,500 |
+| D | 8 GB | 12,000 |
+| E | 16 GB | 21,000 |
+| F | 16 GB | 24,000 |
+
+Without splitting, the prediction for all laptops is the global sample mean:
+
+$$
+\bar y=\frac{6500+7200+10500+12000+21000+24000}{6}=13,533.33.
+$$
+
+Unsplit total RSS error is:
+
+$$
+D_{\text{unsplit}}=\sum_i(y_i-\bar y)^2=266{,}433{,}333.33.
+$$
+
+Evaluating candidate split: $\text{RAM} < 12 \text{ GB}$.
+
+This creates two sub-regions:
+
+$$
+R_1=\{6500,7200,10500,12000\},\qquad R_2=\{21000,24000\}.
+$$
+
+Leaf predictions are regional averages:
+
+$$
+\hat c_1=\frac{6500+7200+10500+12000}{4}=9050,
+$$
+
+$$
+\hat c_2=\frac{21000+24000}{2}=22500.
+$$
+
+Post-split RSS error:
+
+$$
+D_{\text{split}}=
+(6500-9050)^2+(7200-9050)^2+(10500-9050)^2+(12000-9050)^2
++(21000-22500)^2+(24000-22500)^2 = 25{,}230{,}000.
+$$
+
+Relative error reduction:
+
+$$
+\frac{D_{\text{unsplit}}-D_{\text{split}}}{D_{\text{unsplit}}}
+=\frac{266{,}433{,}333.33-25{,}230{,}000}{266{,}433{,}333.33}
+\approx 90.53\%.
+$$
+
+A single split reduces squared prediction error by **90.53%**.
+
+## Python Implementation
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.tree import DecisionTreeRegressor, export_text
+from sklearn.metrics import mean_squared_error, r2_score
+
+# Toy dataset
+X = pd.DataFrame({
+    "RAM_GB": [4, 4, 8, 8, 16, 16]
+})
+y = np.array([6500, 7200, 10500, 12000, 21000, 24000])
+
+# Depth-1 regression stump
+tree = DecisionTreeRegressor(max_depth=1, random_state=42)
+tree.fit(X, y)
+
+pred = tree.predict(X)
+
+print(export_text(tree, feature_names=list(X.columns)))
+print("Predictions:", pred)
+print("MSE:", mean_squared_error(y, pred))
+print("R2 Score:", r2_score(y, pred))
+```
+
+Visualizing decision stump predictions vs. actual data points:
+
+```python
+import matplotlib.pyplot as plt
+
+ram_grid = np.linspace(3, 17, 200).reshape(-1, 1)
+pred_grid = tree.predict(pd.DataFrame(ram_grid, columns=["RAM_GB"]))
+
+plt.figure(figsize=(7, 4))
+plt.scatter(X["RAM_GB"], y, color="#1a3a5c", label="Actual Data")
+plt.plot(ram_grid, pred_grid, color="#e74c3c", linewidth=2, label="Regression Tree")
+plt.xlabel("RAM (GB)")
+plt.ylabel("Price ($)")
+plt.title("Regression Stump Predictions")
+plt.legend()
+plt.show()
+```
+
+## Overfitting and Pruning
+
+Unconstrained trees split recursively until every training sample is isolated into its own leaf node, achieving zero training error. However, this memorizes noise and ruins out-of-sample generalization.
+
+Cost-complexity pruning penalizes tree size during structure selection [@breiman1984classification; @scikit-learn-tree].
+
+::: {.callout-note appearance="minimal"}
+Definition. The cost-complexity objective penalizes total empirical error with a complexity term scaled by leaf count $J$:
+$$
+C_{\alpha}(T)=\sum_{h=1}^{J}D_h+\alpha J.
+$$ {#eq-cost-complexity}
+:::
+
+Here $D_h$ is RSS error in leaf $h$, $J$ is the total leaf count, and $\alpha \ge 0$ controls the penalty weight. Small $\alpha$ allows deeper trees; large $\alpha$ forces compact trees.
+
+```python
+from sklearn.model_selection import train_test_split
+from sklearn.datasets import fetch_california_housing
+from sklearn.metrics import mean_absolute_error, r2_score
+
+housing = fetch_california_housing(as_frame=True)
+X_h, y_h = housing.data, housing.target
+
+X_tr, X_te, y_tr, y_te = train_test_split(
+    X_h, y_h, test_size=0.25, random_state=42
+)
+
+for alpha in [0.0, 0.001, 0.01, 0.05]:
+    model = DecisionTreeRegressor(random_state=42, ccp_alpha=alpha)
+    model.fit(X_tr, y_tr)
+    y_pred_h = model.predict(X_te)
+    print({
+        "ccp_alpha": alpha,
+        "n_leaves": model.get_n_leaves(),
+        "MAE": round(mean_absolute_error(y_te, y_pred_h), 4),
+        "R2": round(r2_score(y_te, y_pred_h), 4)
+    })
+```
+
+```{=html}
+<div id="td-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Tree Depth and Overfitting</span><br>
+    <span style="font-size:0.81em;color:#666;">Increase max depth to observe how deep decision trees overfit training noise</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">Max Depth = <strong id="td-dv">2</strong></label>
+    <input id="td-sl" type="range" min="1" max="7" step="1" value="2"
+           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
+  </div>
+  <div id="td-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="td-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const RAW=[[0.3,8.1],[0.7,9.8],[1.1,7.4],[1.6,11.2],[2.0,9.6],[2.5,13.1],
+             [3.0,10.8],[3.4,14.5],[3.9,11.9],[4.3,15.2],[4.7,12.6],[5.1,16.3],
+             [5.5,13.4],[5.9,17.1],[6.3,14.2],[6.7,18.0],[7.0,8.2],[7.4,9.5]];
+  const cv=document.getElementById('td-cv');
+  const W=680,H=300,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:52,r:20,t:24,b:34};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=0,xMx=8,yMn=5,yMx=20;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+
+  function rss(pts){
+    if(!pts.length)return 0;
+    const m=pts.reduce((s,p)=>s+p[1],0)/pts.length;
+    return pts.reduce((s,p)=>s+(p[1]-m)**2,0);
+  }
+
+  function buildTree(pts,depth){
+    if(depth===0||pts.length<2)return{leaf:true,val:pts.reduce((s,p)=>s+p[1],0)/(pts.length||1)};
+    let best=null,bestRSS=Infinity;
+    const xs=pts.map(p=>p[0]).sort((a,b)=>a-b);
+    for(let i=0;i<xs.length-1;i++){
+      const t=(xs[i]+xs[i+1])/2;
+      const L=pts.filter(p=>p[0]<=t),R=pts.filter(p=>p[0]>t);
+      if(!L.length||!R.length)continue;
+      const r=rss(L)+rss(R);
+      if(r<bestRSS){bestRSS=r;best={t,L,R};}
+    }
+    if(!best)return{leaf:true,val:pts.reduce((s,p)=>s+p[1],0)/pts.length};
+    return{leaf:false,split:best.t,left:buildTree(best.L,depth-1),right:buildTree(best.R,depth-1)};
+  }
+
+  function predict(tree,x){
+    if(tree.leaf)return tree.val;
+    return x<=tree.split?predict(tree.left,x):predict(tree.right,x);
+  }
+
+  function countLeaves(tree){
+    if(tree.leaf)return 1;
+    return countLeaves(tree.left)+countLeaves(tree.right);
+  }
+
+  function depthColor(d){
+    const t=Math.min((d-1)/6,1);
+    const r=Math.round(37+t*(220-37)),g=Math.round(150+t*(38-150)),b=Math.round(60+t*(38-60));
+    return`rgb(${r},${g},${b})`;
+  }
+
+  function draw(depth){
+    const tree=buildTree(RAW,depth);
+    const leaves=countLeaves(tree);
+    const trainRSS=RAW.reduce((s,p)=>s+(p[1]-predict(tree,p[0]))**2,0);
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.7;
+    [2,4,6,8].forEach(x=>{ctx.beginPath();ctx.moveTo(sx(x),PAD.t);ctx.lineTo(sx(x),PAD.t+CH);ctx.stroke();});
+    [5,10,15,20].forEach(y=>{ctx.beginPath();ctx.moveTo(PAD.l,sy(y));ctx.lineTo(PAD.l+CW,sy(y));ctx.stroke();});
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    [0,2,4,6,8].forEach(x=>ctx.fillText(x.toFixed(0),sx(x),PAD.t+CH+13));
+    ctx.textAlign='right';
+    [5,10,15,20].forEach(y=>ctx.fillText(y.toFixed(0),PAD.l-5,sy(y)+3));
+    const col=depthColor(depth);
+    const step=0.03;
+    ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.beginPath();
+    let first=true;
+    for(let x=xMn;x<=xMx;x+=step){
+      const yp=predict(tree,x);
+      if(first){ctx.moveTo(sx(x),sy(yp));first=false;}else ctx.lineTo(sx(x),sy(yp));
+    }
+    ctx.stroke();
+    RAW.forEach(p=>{
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5,0,2*Math.PI);
+      ctx.fillStyle='#1a3a5c';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    });
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Regression Tree Fit',PAD.l+CW/2,PAD.t-7);
+    const overfit=depth>=5?'⚠️ High Overfitting Risk':depth>=3?'Reasonable Fit':'Underfitting / Simple';
+    document.getElementById('td-info').innerHTML=
+      `Depth = <strong>${depth}</strong>&ensp;·&ensp;`+
+      `Leaves = <strong>${leaves}</strong>&ensp;·&ensp;`+
+      `Train RSS = <strong>${trainRSS.toFixed(2)}</strong>&ensp;·&ensp;`+
+      `<span style="color:${depth>=5?'#dc2626':depth>=3?'#ca8a04':'#16a34a'}">${overfit}</span>`;
+  }
+  document.getElementById('td-sl').addEventListener('input',function(){
+    const d=parseInt(this.value);
+    document.getElementById('td-dv').textContent=d;
+    draw(d);
+  });
+  draw(2);
+})();
+</script>
+```
+
+## Regression Tree Evaluation Metrics
+
+::: {.callout-note appearance="minimal"}
+Definition. The coefficient of determination $R^2$ is defined as:
+$$
+R^2=1-\frac{SSE}{SS_{TOT}},
+\qquad
+SSE=\sum_i(y_i-\hat y_i)^2,
+\qquad
+SS_{TOT}=\sum_i(y_i-\bar y)^2.
+$$ {#eq-r2}
+:::
+
+An $R^2 = 0.90$ means the model explains 90% of target response variance relative to a baseline mean predictor. In addition to $R^2$, Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE) provide absolute error bounds in target units.
+
+## Bagging: Bootstrap Aggregating
+
+Bagging reduces variance by training decision trees independently on multiple bootstrap samples of the training set and averaging their predictions [@breiman1996bagging].
+
+::: {.callout-note appearance="minimal"}
+Definition. A size-$n$ bootstrap sample $\mathcal{D}^{*(b)}$ is generated by sampling $n$ instances uniformly at random with replacement from original training set $\mathcal{D}$:
+$$
+\mathcal{D}^{*(b)}=\{(x_1^{*(b)},y_1^{*(b)}),\dots,(x_n^{*(b)},y_n^{*(b)})\}.
+$$ {#eq-bootstrap-sample}
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. The bagging ensemble prediction for regression is the arithmetic mean across $B$ bootstrap-trained trees:
+$$
+\hat f_{bag}(x)=\frac{1}{B}\sum_{b=1}^{B}\hat f^{*(b)}(x).
+$$ {#eq-bagging}
+:::
+
+```python
+from sklearn.ensemble import BaggingRegressor
+
+bag = BaggingRegressor(
+    estimator=DecisionTreeRegressor(random_state=42),
+    n_estimators=100,
+    random_state=42,
+    n_jobs=-1
+)
+
+bag.fit(X_tr, y_tr)
+y_pred_bag = bag.predict(X_te)
+
+print("Bagging MAE :", round(mean_absolute_error(y_te, y_pred_bag), 4))
+print("Bagging R2  :", round(r2_score(y_te, y_pred_bag), 4))
+```
+
+## Random Forests
+
+Random Forests extend bagging by injecting feature randomization into node split evaluation [@breiman2001random]. At each split candidate, only a random subset of $m \le p$ features is considered (typically $m = \sqrt{p}$ for classification and $m = p/3$ for regression), decorrelating trees and maximizing variance reduction.
+
+::: {.callout-note appearance="minimal"}
+Definition. A Random Forest is an ensemble of decorrelated decision trees built on bootstrap samples, where each node split considers only a random feature subset:
+$$
+\hat f_{RF}(x)=\frac{1}{B}\sum_{b=1}^{B}\hat f_b(x).
+$$ {#eq-random-forest}
+:::
+
+```python
+from sklearn.ensemble import RandomForestRegressor
+
+rf = RandomForestRegressor(
+    n_estimators=300,
+    max_features="sqrt",
+    random_state=42,
+    n_jobs=-1
+)
+
+rf.fit(X_tr, y_tr)
+y_pred_rf = rf.predict(X_te)
+
+print("Random Forest MAE :", round(mean_absolute_error(y_te, y_pred_rf), 4))
+print("Random Forest R2  :", round(r2_score(y_te, y_pred_rf), 4))
+```
+
+## Boosting
+
+Unlike bagging, boosting builds models sequentially. Each new weak learner is trained to predict residual errors made by preceding trees [@freund1997decision; @schapire1990strength; @friedman2001greedy].
+
+::: {.callout-note appearance="minimal"}
+Definition. Gradient Boosting for regression fits additive models sequentially:
+$$
+F_M(x)=F_0(x)+\sum_{m=1}^{M}\nu h_m(x),
+$$
+where each tree $h_m$ fits pseudo-residuals of $F_{m-1}$ and $\nu \in (0, 1]$ is the learning rate shrinking parameter.
+$$ {#eq-gradient-boosting}
+:::
+
+```python
+from sklearn.ensemble import GradientBoostingRegressor
+
+gb = GradientBoostingRegressor(
+    n_estimators=300,
+    learning_rate=0.05,
+    max_depth=3,
+    random_state=42
+)
+
+gb.fit(X_tr, y_tr)
+y_pred_gb = gb.predict(X_te)
+
+print("Gradient Boosting MAE :", round(mean_absolute_error(y_te, y_pred_gb), 4))
+print("Gradient Boosting R2  :", round(r2_score(y_te, y_pred_gb), 4))
+```
+
+### Comparison: Bagging vs. Boosting
+
+| Feature | Bagging (Random Forest) | Boosting (GBDT / XGBoost) |
+|---|---|---|
+| Model Fitting | Independent (parallel) | Sequential (additive) |
+| Core Objective | Reduce variance | Reduce bias & variance |
+| Sample Focus | Uniform bootstrap | Focuses on high-error instances |
+| Parallelization | Trivial parallel execution | Less parallelizable across trees |
+| Noise Sensitivity | Highly robust | Sensitive to extreme outliers |
+
+## Nearest Neighbor Classification (k-NN)
+
+Nearest neighbor classification is a memory-based (lazy learning) method [@cover1967nearest; @duda2001pattern]. It stores training data directly without fitting explicit parametric parameters.
+
+::: {.callout-note appearance="minimal"}
+Definition. The 1-NN rule assigns query point $x$ the label of its single nearest training instance under distance metric $d$:
+$$
+\hat y(x)=\theta_{i^*},\qquad i^*=\arg\min_{i=1,\dots,N} d(x,x_i).
+$$ {#eq-nearest-neighbor}
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. Minimum distance discriminant function for class $\omega_j$:
+$$
+g_j(x)=\min_{i:\theta_i=j} d(x,x_i),\qquad
+\hat y(x)=\arg\min_{j=1,\dots,c} g_j(x).
+$$ {#eq-nn-discriminant}
+:::
+
+### Distance Metrics
+
+::: {.callout-note appearance="minimal"}
+Definition. Minkowski distance of order $s \ge 1$ between $x, z \in \mathbb{R}^p$:
+$$
+d_s(x,z)=\left(\sum_{j=1}^{p}|x_j-z_j|^s\right)^{1/s}.
+$$ {#eq-minkowski-distance}
+:::
+
+- **Manhattan ($s=1$):** $d_1(x,z)=\sum_{j=1}^{p}|x_j-z_j|$ {#eq-manhattan-distance}
+- **Euclidean ($s=2$):** $d_2(x,z)=\sqrt{\sum_{j=1}^{p}(x_j-z_j)^2}$ {#eq-euclidean-distance}
+- **Chebyshev ($s=\infty$):** $d_{\infty}(x,z)=\max_{j=1,\dots,p}|x_j-z_j|$ {#eq-chebyshev-distance}
+- **Mahalanobis:** $d_Q(x,z)=(x-z)^{\top}\Sigma^{-1}(x-z)$ {#eq-quadratic-distance}
+
+```{=html}
+<div id="mk-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Minkowski Unit Ball — Interactive Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Drag p to observe unit ball shape changes: diamond (p=1), circle (p=2), square (p→∞)</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">p = <strong id="mk-pv">2</strong> &ensp;<span id="mk-name" style="color:#1a3a5c;font-style:italic;"></span></label>
+    <input id="mk-sl" type="range" min="1" max="20" step="1" value="2"
+           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
+  </div>
+  <canvas id="mk-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const cv=document.getElementById('mk-cv');
+  const W=680,H=360,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const CX=W/2,CY=H/2,SCALE=140;
+
+  function ballR(theta,p){
+    const ac=Math.abs(Math.cos(theta)),as=Math.abs(Math.sin(theta));
+    if(p>=18)return 1/Math.max(ac,as);
+    return 1/Math.pow(Math.pow(ac,p)+Math.pow(as,p),1/p);
+  }
+
+  function drawBall(p,col,alpha,lw){
+    ctx.beginPath();
+    const N=720;
+    for(let i=0;i<=N;i++){
+      const th=i/N*2*Math.PI;
+      const r=ballR(th,p);
+      const x=CX+r*Math.cos(th)*SCALE,y=CY-r*Math.sin(th)*SCALE;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle=col;ctx.globalAlpha=alpha;ctx.lineWidth=lw;ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+
+  function draw(p){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
+    [-1,1].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(CX+v*SCALE,CY-SCALE*1.35);ctx.lineTo(CX+v*SCALE,CY+SCALE*1.35);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(CX-SCALE*1.35,CY+v*SCALE);ctx.lineTo(CX+SCALE*1.35,CY+v*SCALE);ctx.stroke();
+    });
+    ctx.strokeStyle='#c9d0de';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(CX-SCALE*1.35,CY);ctx.lineTo(CX+SCALE*1.35,CY);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(CX,CY-SCALE*1.35);ctx.lineTo(CX,CY+SCALE*1.35);ctx.stroke();
+    ctx.fillStyle='#aaa';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('1',CX+SCALE,CY+13);ctx.fillText('-1',CX-SCALE,CY+13);
+    ctx.fillText('1',CX+6,CY-SCALE+5);ctx.fillText('-1',CX+8,CY+SCALE+5);
+    drawBall(1,'#dc2626',0.35,1.5);
+    drawBall(2,'#16a34a',0.35,1.5);
+    ctx.fillStyle='#dc2626';ctx.font='10px Georgia,serif';ctx.textAlign='left';
+    ctx.globalAlpha=0.55;ctx.fillText('p=1 (Manhattan)',CX+SCALE*0.72+4,CY-SCALE*0.12);ctx.globalAlpha=1;
+    ctx.fillStyle='#16a34a';
+    ctx.globalAlpha=0.55;ctx.fillText('p=2 (Euclidean)',CX+SCALE*0.72+4,CY-SCALE*0.12+14);ctx.globalAlpha=1;
+    const col=p<=1?'#dc2626':p<=2?'#2563eb':p<=5?'#7c3aed':p>=18?'#0f172a':'#1a3a5c';
+    ctx.fillStyle=col+'22';
+    ctx.beginPath();
+    const N=720;
+    for(let i=0;i<=N;i++){
+      const th=i/N*2*Math.PI;
+      const r=ballR(th,p);
+      const x=CX+r*Math.cos(th)*SCALE,y=CY-r*Math.sin(th)*SCALE;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.closePath();ctx.fill();
+    drawBall(p,col,0.9,2.5);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Minkowski Unit Ball (p='+p+')',CX,22);
+    const name=p<=1?'Manhattan Distance (L¹)':p===2?'Euclidean Distance (L²)':p>=18?'Chebyshev Distance (L∞)':'Minkowski Distance (L'+p+')';
+    document.getElementById('mk-name').textContent=name;
+  }
+
+  document.getElementById('mk-sl').addEventListener('input',function(){
+    const p=parseInt(this.value);
+    document.getElementById('mk-pv').textContent=p>=18?'∞':p;
+    draw(p);
+  });
+  draw(2);
+  document.getElementById('mk-name').textContent='Euclidean Distance (L²)';
+})();
+</script>
+```
+
+## k-NN Classifier
+
+::: {.callout-note appearance="minimal"}
+Definition. In $k$-NN classification, given $N_k(x)$ containing the set of indices for the $k$ nearest training points to $x$:
+$$
+g_j(x)=\sum_{i\in N_k(x)}\mathbb{I}(\theta_i=j),\qquad
+\hat y(x)=\arg\max_{j=1,\dots,c}g_j(x).
+$$ {#eq-knn-classification}
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. In $k$-NN regression, predictions average the responses of the $k$ nearest neighbors:
+$$
+\hat f(x)=\frac{1}{k}\sum_{i\in N_k(x)}y_i.
+$$ {#eq-knn-regression}
+:::
+
+```{=html}
+<div id="knn-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">k-NN Classifier — Interactive Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Click anywhere on the canvas to place a query point; adjust k to observe decision boundary changes</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">k = <strong id="knn-kv">3</strong></label>
+    <input id="knn-sl" type="range" min="1" max="15" step="1" value="3"
+           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
+  </div>
+  <div id="knn-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;">Click on canvas to query point</div>
+  <canvas id="knn-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;cursor:crosshair;"></canvas>
+</div>
+<script>
+(function(){
+  const TRAIN=[
+    {x:[1.2,3.8],y:'A'},{x:[1.8,4.5],y:'A'},{x:[2.3,3.2],y:'A'},{x:[1.5,5.1],y:'A'},
+    {x:[2.8,4.8],y:'A'},{x:[3.1,3.6],y:'A'},{x:[0.9,4.2],y:'A'},{x:[2.0,5.5],y:'A'},
+    {x:[3.5,5.0],y:'A'},{x:[1.3,2.9],y:'A'},{x:[2.6,4.1],y:'A'},{x:[3.8,4.4],y:'A'},
+    {x:[4.5,1.2],y:'B'},{x:[5.0,0.8],y:'B'},{x:[5.8,2.1],y:'B'},{x:[4.2,1.8],y:'B'},
+    {x:[6.1,1.5],y:'B'},{x:[5.5,2.8],y:'B'},{x:[4.8,0.5],y:'B'},{x:[6.5,2.5],y:'B'},
+    {x:[5.2,1.0],y:'B'},{x:[4.0,2.5],y:'B'},{x:[6.8,1.0],y:'B'},{x:[5.7,3.2],y:'B'}
+  ];
+  const cv=document.getElementById('knn-cv');
+  const W=680,H=380,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:44,r:16,t:16,b:30};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=0,xMx=8,yMn=0,yMx=7;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+  const ix=px=>(px-PAD.l)/CW*(xMx-xMn)+xMn;
+  const iy=py=>yMx-(py-PAD.t)/CH*(yMx-yMn);
+  const COL={A:'#2563eb',B:'#dc2626'};
+  let query=null,k=3;
+
+  function dist(a,bq){return Math.sqrt((a.x[0]-bq[0])**2+(a.x[1]-bq[1])**2);}
+  function knn(q,k){
+    const ranked=[...TRAIN].map(t=>({...t,d:dist(t,[q.x,q.y])})).sort((a,b)=>a.d-b.d);
+    const nbrs=ranked.slice(0,k);
+    const votes={A:0,B:0};nbrs.forEach(n=>votes[n.y]++);
+    const pred=votes.A>=votes.B?'A':'B';
+    return{nbrs,pred,votes};
+  }
+
+  function drawBg(k){
+    const step=12;
+    for(let px=PAD.l;px<PAD.l+CW;px+=step){
+      for(let py=PAD.t;py<PAD.t+CH;py+=step){
+        const qx=ix(px),qy=iy(py);
+        const {pred}=knn({x:qx,y:qy},k);
+        ctx.fillStyle=pred==='A'?'rgba(37,99,235,0.08)':'rgba(220,38,38,0.08)';
+        ctx.fillRect(px,py,step,step);
+      }
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawBg(k);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.7;
+    [0,2,4,6,8].forEach(x=>{ctx.beginPath();ctx.moveTo(sx(x),PAD.t);ctx.lineTo(sx(x),PAD.t+CH);ctx.stroke();});
+    [0,2,4,6].forEach(y=>{ctx.beginPath();ctx.moveTo(PAD.l,sy(y));ctx.lineTo(PAD.l+CW,sy(y));ctx.stroke();});
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
+    [0,2,4,6,8].forEach(x=>ctx.fillText(x,sx(x),PAD.t+CH+13));
+    ctx.textAlign='right';
+    [0,2,4,6].forEach(y=>ctx.fillText(y,PAD.l-5,sy(y)+3));
+
+    let result=null;
+    if(query){
+      result=knn(query,k);
+      const kDist=result.nbrs[result.nbrs.length-1].d;
+      ctx.beginPath();ctx.arc(sx(query.x),sy(query.y),kDist/(xMx-xMn)*CW,0,2*Math.PI);
+      ctx.strokeStyle='rgba(100,100,100,0.35)';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);ctx.stroke();ctx.setLineDash([]);
+      result.nbrs.forEach((n,i)=>{
+        ctx.strokeStyle=COL[n.y]+'99';ctx.lineWidth=1.2;
+        ctx.beginPath();ctx.moveTo(sx(query.x),sy(query.y));ctx.lineTo(sx(n.x[0]),sy(n.x[1]));ctx.stroke();
+        ctx.fillStyle=COL[n.y];ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
+        const mx=(sx(query.x)+sx(n.x[0]))/2,my=(sy(query.y)+sy(n.x[1]))/2;
+        ctx.fillText(i+1,mx,my);
+      });
+    }
+
+    TRAIN.forEach(t=>{
+      ctx.beginPath();ctx.arc(sx(t.x[0]),sy(t.x[1]),6,0,2*Math.PI);
+      ctx.fillStyle=COL[t.y]+'cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle=COL[t.y];ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(t.y,sx(t.x[0]),sy(t.x[1])+3);
+    });
+
+    if(query){
+      const col=result?COL[result.pred]:'#666';
+      const S=sx(query.x),Sy=sy(query.y),R=9;
+      ctx.beginPath();
+      ctx.moveTo(S,Sy-R);ctx.lineTo(S+R*0.35,Sy-R*0.35);ctx.lineTo(S+R,Sy);
+      ctx.lineTo(S+R*0.35,Sy+R*0.35);ctx.lineTo(S,Sy+R);
+      ctx.lineTo(S-R*0.35,Sy+R*0.35);ctx.lineTo(S-R,Sy);
+      ctx.lineTo(S-R*0.35,Sy-R*0.35);ctx.closePath();
+      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+      if(result){
+        document.getElementById('knn-info').innerHTML=
+          `Query (${query.x.toFixed(2)}, ${query.y.toFixed(2)}) → `+
+          `<strong style="color:${col}">Class ${result.pred}</strong>&ensp;·&ensp;`+
+          `Votes: A=${result.votes.A}, B=${result.votes.B}&ensp;·&ensp;`+
+          `k=${k} nearest neighbors`;
+      }
+    }
+  }
+
+  cv.addEventListener('click',function(e){
+    const rect=cv.getBoundingClientRect();
+    const px=e.clientX-rect.left,py=e.clientY-rect.top;
+    query={x:ix(px),y:iy(py)};
+    draw();
+  });
+  document.getElementById('knn-sl').addEventListener('input',function(){
+    k=parseInt(this.value);
+    document.getElementById('knn-kv').textContent=k;
+    draw();
+  });
+  draw();
+})();
+</script>
+```
+
+### Cover-Hart Asymptotic Error Bound
+
+Cover and Hart (1967) established that for $N \to \infty$ i.i.d. samples, the asymptotic 1-NN error rate $P_1$ is upper-bounded by Bayes error rate $P^*$:
+
+::: {.callout-note appearance="minimal"}
+Definition. For $c$ classes, Cover-Hart bound states:
+$$
+P^*\le P_1\le P^*\left(2-\frac{c}{c-1}P^*\right) \le 2 P^*.
+$$ {#eq-cover-hart-bound}
+:::
+
+### Consistency Condition
+
+::: {.callout-note appearance="minimal"}
+Definition. $k$-NN consistency requires:
+$$
+N\to\infty,\qquad k\to\infty,\qquad \frac{k}{N}\to 0.
+$$ {#eq-knn-consistency-condition}
+:::
+
+### Curse of Dimensionality
+
+::: {.callout-note appearance="minimal"}
+Definition. In a $p$-dimensional unit hypercube, a local neighborhood with linear edge length $r$ occupies relative volume:
+$$
+V(r,p)=r^p.
+$$ {#eq-curse-volume}
+:::
+
+For $p=10$ and $r=0.1$, volume fraction is $10^{-10}$, demonstrating why density estimation decays exponentially in high dimensions [@bellman1961adaptive].
+
+### Computational Optimization and Pruning Rules
+
+- **Branch-and-Bound Node Pruning:** $d(x, M_p) - r_p > B$ {#eq-branch-bound-prune}
+- **Edited Nearest Neighbors:** Remove $(x_i, y_i)$ if $\hat y_{-i}(x_i) \neq y_i$ {#eq-edited-nn-rule}
+- **Condensed Nearest Neighbors:** Find small subset $\mathcal{S} \subseteq S_N$ preserving decisions {#eq-condensed-nn}
+
+## Conclusions
+
+Regression trees replace global linear equations with structured hierarchies of localized decision rules. They offer high interpretability but suffer from high variance, instability, and axis-aligned step constraints. Ensembles like Random Forests (bagging + feature randomization) and Gradient Boosted Trees (sequential residual fitting) dramatically improve accuracy and stability. Finally, Nearest Neighbors offers a memory-based distance-driven alternative, completing the spectrum of non-linear decision modeling.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

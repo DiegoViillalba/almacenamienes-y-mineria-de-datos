@@ -1,0 +1,185 @@
+---
+title: "Practical Implementation: PyTorch and JAX"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_pytorch_jax.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+This chapter translates neural network concepts into production frameworks:
+
+- **scikit-learn** — `MLPClassifier` with standard `fit/predict` interface [@pedregosa2011scikit].
+- **PyTorch** — Dynamic computational graphs and object-oriented automatic differentiation [@paszke2019pytorch].
+- **JAX** — Pure functional paradigm with explicit PRNG, vectorization, and XLA compilation [@bradbury2018jax; @heek2023flax; @deepmind2020optax].
+
+## Deep Learning Framework Ecosystem {#sec-ecosistema}
+
+| Framework | Paradigm | Primary Use Case |
+|---|---|---|
+| scikit-learn | Object-Oriented High-Level | Small tabular data baselines |
+| PyTorch | Imperative / Dynamic Graph | General deep learning & research standard |
+| JAX | Pure Functional / XLA JIT | High-order differentiation & TPU acceleration |
+
+```python
+from sklearn.neural_network import MLPClassifier
+from sklearn.datasets import make_moons
+
+X, y = make_moons(n_samples=400, noise=0.2, random_state=42)
+clf = MLPClassifier(hidden_layer_sizes=(16, 16), max_iter=500, random_state=42)
+clf.fit(X, y)
+print(f"Accuracy: {clf.score(X, y):.3f}")
+```
+
+## PyTorch Fundamentals {#sec-pytorch-fundamentos}
+
+### Tensors and Autograd
+
+$$
+\frac{\partial \mathcal{L}}{\partial \theta} \quad \forall \theta \text{ with } \texttt{requires\_grad=True}
+$$ {#eq-autograd}
+
+`loss.backward()` computes gradients automatically via chain rule backpropagation across dynamic computation graphs.
+
+```{=html}
+<div class="pytorch-stepper" style="font-family:'Fira Mono',monospace;border:1px solid #dee2e6;border-radius:10px;overflow:hidden;margin:1.5em 0;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+  <div id="pt-tabs" style="display:flex;background:#f8f9fa;border-bottom:1px solid #dee2e6;">
+    <button class="pt-tab active" data-step="1" style="flex:1;padding:.6em .2em;border:none;background:none;cursor:pointer;font-size:.82em;font-weight:600;color:#495057;border-bottom:3px solid transparent;">① train()</button>
+    <button class="pt-tab" data-step="2" style="flex:1;padding:.6em .2em;border:none;background:none;cursor:pointer;font-size:.82em;font-weight:600;color:#495057;border-bottom:3px solid transparent;">② zero_grad()</button>
+    <button class="pt-tab" data-step="3" style="flex:1;padding:.6em .2em;border:none;background:none;cursor:pointer;font-size:.82em;font-weight:600;color:#495057;border-bottom:3px solid transparent;">③ forward</button>
+    <button class="pt-tab" data-step="4" style="flex:1;padding:.6em .2em;border:none;background:none;cursor:pointer;font-size:.82em;font-weight:600;color:#495057;border-bottom:3px solid transparent;">④ backward()</button>
+    <button class="pt-tab" data-step="5" style="flex:1;padding:.6em .2em;border:none;background:none;cursor:pointer;font-size:.82em;font-weight:600;color:#495057;border-bottom:3px solid transparent;">⑤ step()</button>
+  </div>
+  <div id="pt-content" style="padding:1.2em 1.5em;min-height:140px;">
+    <div class="pt-panel" data-step="1">
+      <p style="margin:0 0 .6em;font-size:.95em;"><strong>model.train()</strong> — Activates training mode for Dropout/BatchNorm.</p>
+    </div>
+    <div class="pt-panel" data-step="2" style="display:none;">
+      <p style="margin:0 0 .6em;font-size:.95em;"><strong>optimizer.zero_grad()</strong> — Clears accumulated gradients before backward pass.</p>
+    </div>
+    <div class="pt-panel" data-step="3" style="display:none;">
+      <p style="margin:0 0 .6em;font-size:.95em;"><strong>logits = model(X_train)</strong> — Executes forward pass computation graph.</p>
+    </div>
+    <div class="pt-panel" data-step="4" style="display:none;">
+      <p style="margin:0 0 .6em;font-size:.95em;"><strong>loss.backward()</strong> — Computes gradients via autograd reverse graph traversal.</p>
+    </div>
+    <div class="pt-panel" data-step="5" style="display:none;">
+      <p style="margin:0 0 .6em;font-size:.95em;"><strong>optimizer.step()</strong> — Applies weight updates using computed gradients.</p>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:.6em 1.2em;border-top:1px solid #dee2e6;background:#f8f9fa;">
+    <button id="pt-prev" onclick="ptNav(-1)" style="padding:.4em .9em;border:1px solid #adb5bd;border-radius:5px;background:white;cursor:pointer;font-size:.85em;">← Previous</button>
+    <span id="pt-counter" style="font-size:.82em;color:#6c757d;">Step 1 / 5</span>
+    <button id="pt-next" onclick="ptNav(+1)" style="padding:.4em .9em;border:1px solid #0d6efd;border-radius:5px;background:#0d6efd;color:white;cursor:pointer;font-size:.85em;">Next →</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var current = 1, total = 5;
+  function activate(step) {
+    current = step;
+    document.querySelectorAll(".pt-panel").forEach(p => p.style.display = p.dataset.step == step ? "block" : "none");
+    document.querySelectorAll(".pt-tab").forEach(t => t.style.color = t.dataset.step == step ? "#0d6efd" : "#495057");
+    document.getElementById("pt-counter").textContent = "Step " + step + " / " + total;
+  }
+  window.ptNav = function(dir) { activate(Math.min(Math.max(current + dir, 1), total)); };
+  document.querySelectorAll(".pt-tab").forEach(t => t.addEventListener("click", function(){ activate(+this.dataset.step); }));
+  activate(1);
+})();
+</script>
+```
+
+Numerically stable Binary Cross Entropy with Logits Loss:
+
+$$
+\mathcal{L} = \frac{1}{N} \sum_{i=1}^{N} \left[ \max(z_i, 0) - z_i y_i + \log\left(1 + e^{-|z_i|}\right) \right]
+$$ {#eq-bceloss}
+
+## JAX Fundamentals {#sec-jax-fundamentos}
+
+JAX relies on pure functions and stateless pytrees.
+
+```{=html}
+<div style="border:1px solid #dee2e6;border-radius:10px;overflow:hidden;margin:1.5em 0;">
+  <div style="display:flex;background:#f8f9fa;border-bottom:1px solid #dee2e6;">
+    <button id="jax-tab-pt" onclick="jaxToggle('pt')" style="flex:1;padding:.7em;border:none;background:none;cursor:pointer;font-weight:700;color:#ef553b;">PyTorch — Imperative</button>
+    <button id="jax-tab-jax" onclick="jaxToggle('jax')" style="flex:1;padding:.7em;border:none;background:none;cursor:pointer;font-weight:700;color:#6c757d;">JAX — Functional</button>
+  </div>
+  <div id="jax-panel-pt" style="padding:1.2em 1.5em;">
+    <p style="margin:0;font-size:.9em;color:#555;">Mutable object-oriented model encapsulation holding parameters internally.</p>
+  </div>
+  <div id="jax-panel-jax" style="display:none;padding:1.2em 1.5em;">
+    <p style="margin:0;font-size:.9em;color:#555;">Stateless pure functions receiving parameters externally as explicit pytree dictionaries.</p>
+  </div>
+</div>
+<script>
+function jaxToggle(which) {
+  var isPT = which === 'pt';
+  document.getElementById('jax-panel-pt').style.display = isPT ? 'block' : 'none';
+  document.getElementById('jax-panel-jax').style.display = isPT ? 'none' : 'block';
+}
+</script>
+```
+
+Single-instance scalar Binary Cross Entropy in JAX:
+
+$$
+\mathcal{L}(w) = -\left[ y \log \sigma(wx) + (1-y) \log(1 - \sigma(wx)) \right]
+$$ {#eq-bce-jax}
+
+```python
+import jax
+import jax.numpy as jnp
+import optax
+
+def loss_fn(params, x, y):
+    logits = forward(params, x)
+    return optax.sigmoid_binary_cross_entropy(logits, y).mean()
+
+@jax.jit
+def train_step(params, opt_state, x, y):
+    loss, grads = jax.value_and_grad(loss_fn)(params, x, y)
+    updates, new_opt_state = optimizer.update(grads, opt_state, params)
+    new_params = optax.apply_updates(params, updates)
+    return new_params, new_opt_state, loss
+```
+
+## Summary
+
+PyTorch provides an intuitive, object-oriented imperative workflow ideal for rapid prototyping and debugging. JAX enforces pure functional programming, enabling high-order automatic differentiation and JIT compilation via XLA [@paszke2019pytorch; @bradbury2018jax].
+
+## References {-}
+
+::: {#refs}
+:::

@@ -1,0 +1,802 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "title: \"Medidas de localización en Big Mart Sales\"\n",
+        "number-sections: false\n",
+        "format:\n",
+        "  html:\n",
+        "    toc: true\n",
+        "    page-layout: full\n",
+        "  pdf:\n",
+        "    toc: true\n",
+        "jupyter: python3\n",
+        "---\n",
+        "\n",
+        "Desde la perspectiva del análisis exploratorio de datos, las medidas de localización responden a una pregunta fundamental: **¿en qué región de valores tiende a concentrarse el fenómeno observado?**. En términos prácticos, esto permite identificar valores típicos, comparar distribuciones y comenzar a interpretar el comportamiento general del sistema antes de pasar a medidas de dispersión, forma o segmentación.\n",
+        "\n",
+        "El dataset incluye variables numéricas como `Item_Weight`, `Item_Visibility`, `Item_MRP` y `Item_Outlet_Sales`, junto con variables categóricas asociadas a tipo de producto, establecimiento y ubicación del outlet. Para este primer analisis nos enfocaremos en el comportamiento univariado de las variables numéricas, usando medidas como la **media**, la **mediana**, la **moda** y algunos **cuantiles**.\n",
+        "\n",
+        "## Preparación del entorno\n",
+        "\n",
+        "Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), para esta sección usaremos Python y las bibliotecas pandas, numpy, plotly y matplotlib."
+      ],
+      "id": "80edcc4c"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "import matplotlib.pyplot as plt\n",
+        "\n",
+        "plt.rcParams[\"figure.figsize\"] = (8, 4.5)\n",
+        "plt.rcParams[\"axes.grid\"] = True\n",
+        "\n",
+        "DATA_PATH = \"../../data/bigmart_sales.csv\"\n",
+        "\n",
+        "df = pd.read_csv(DATA_PATH)\n",
+        "df.head()"
+      ],
+      "id": "71e39e49",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Inspección inicial\n",
+        "\n",
+        "Antes de calcular medidas de localización conviene identificar el tipo de variables disponibles y confirmar qué columnas numéricas serán analizadas."
+      ],
+      "id": "cbc9f120"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "df.info()"
+      ],
+      "id": "4fb48d7c",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n",
+        "cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()\n",
+        "\n",
+        "num_cols, cat_cols[:10]"
+      ],
+      "id": "ec616c80",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "En este punto es útil destacar que no todas las variables numéricas tienen el mismo significado. Por ejemplo, `Item_MRP` representa el precio máximo sugerido del producto, mientras que `Item_Outlet_Sales` corresponde a las ventas del producto en un outlet particular. La interpretación del “centro” de cada variable, por tanto, depende del contexto económico de la medición.\n",
+        "\n",
+        "## Selección de variables para el análisis de localización\n",
+        "\n",
+        "Para esta etapa trabajaremos con un subconjunto de variables numéricas especialmente interpretables:\n",
+        "\n",
+        "- `Item_Weight`\n",
+        "- `Item_Visibility`\n",
+        "- `Item_MRP`\n",
+        "- `Item_Outlet_Sales`\n",
+        "\n",
+        "Crearemos un nuevo dataframe con estas columnas para facilitar el análisis, identificando además el número de datos faltantes en las mismas."
+      ],
+      "id": "9f915c53"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "vars_localizacion = [\n",
+        "    \"Item_Weight\",\n",
+        "    \"Item_Visibility\",\n",
+        "    \"Item_MRP\",\n",
+        "    \"Item_Outlet_Sales\",\n",
+        "]\n",
+        "\n",
+        "missing_report = df[vars_localizacion].isna().sum().to_frame(\"missing\")\n",
+        "missing_report[\"missing_pct\"] = 100 * missing_report[\"missing\"] / len(df)\n",
+        "missing_report"
+      ],
+      "id": "0acb524f",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Datos faltantes y su impacto en el análisis de localización\n",
+        "\n",
+        "La presencia de valores faltantes en la variable `Item_Weight` no impide comenzar el análisis descriptivo de localización, **sin embargo, eliminarlos sin analizar su origen puede introducir sesgos en los resultados**. Por ello, antes de calcular medidas descriptivas es necesario examinar la magnitud y el posible patrón de los datos ausentes. Extrayendo un dataframe con los casos faltantes en `Item_Weight` tenemos:"
+      ],
+      "id": "dff8c1d9"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "missing_weight = df[df[\"Item_Weight\"].isna()]\n",
+        "missing_weight.head()"
+      ],
+      "id": "e3f18f5d",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Si bien no es el objetivo de esta sección resolver el problema de los datos faltantes, es importante tener una noción clara de su impacto. Para esto existen tres preguntas clave que podemos hacernos en estos casos:\n",
+        "\n",
+        "1. **¿Qué porcentaje de datos faltantes hay en la variable?**\n",
+        "\n",
+        "Este paso permite dimensionar la magnitud del problema. Calcular la proporción de valores ausentes respecto al total de observaciones ayuda a evaluar si los faltantes representan una fracción pequeña del dataset o si son lo suficientemente numerosos como para afectar la representatividad del análisis."
+      ],
+      "id": "20283ca6"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "print(f\"Porcentaje de datos faltantes en Item_Weight: {missing_report.loc['Item_Weight', 'missing_pct']:.2f}%\")"
+      ],
+      "id": "c5672319",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "En nuestro caso la variable presenta aproximadamente un 17 % de valores faltantes, lo que implica que cerca de una sexta parte de las observaciones no contiene información para este atributo. Esta proporción no es despreciable, por lo que antes de excluir estos registros conviene examinar si los datos faltantes siguen algún patrón sistemático y evaluar el posible impacto de su eliminación en el análisis exploratorio.\n",
+        "\n",
+        "2. **¿Existen patrones de ausencia relacionados con otras variables?**\n",
+        "\n",
+        "Aquí se busca identificar si los datos faltantes aparecen de manera aleatoria o si se concentran en ciertos grupos (por ejemplo, en determinadas categorías de producto, tipos de outlet o rangos de precio). Detectar patrones de ausencia es importante porque podría indicar un posible sesgo en los datos.\n",
+        "\n",
+        "Analicemos el promedio de valores faltantes en `Item_Weight` por tipo de producto y tipo de outlet:"
+      ],
+      "id": "adecaf17"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "df['Item_Weight'].isna().groupby(df['Item_Type']).mean()"
+      ],
+      "id": "d09fe84d",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "df['Item_Weight'].isna().groupby(df['Outlet_Type']).mean()"
+      ],
+      "id": "c78588ae",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Podemos observar como la falta de datos en `Item_Weight` se concentra principalmete en 2 tipos de outlets : `Grocery Store` y `Supermarket Type1`. Esto sugiere que la ausencia de información no es aleatoria en estos casos, mientras que tenemos una distribución más equilibrada en `Item_Type`. \n",
+        "\n",
+        "Este patrón de ausencia podría estar relacionado con la naturaleza de los productos comercializados en esos outlets o con prácticas de registro de datos específicas, lo que implica que eliminar estos casos sin un análisis previo podría sesgar el análisis descriptivo."
+      ],
+      "id": "c2738d11"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "import pandas as pd\n",
+        "import plotly.express as px\n",
+        "\n",
+        "# Proporción de missing de Item_Weight por Outlet_Type\n",
+        "missing_outlet = (\n",
+        "    df['Item_Weight']\n",
+        "    .isna()\n",
+        "    .groupby(df['Outlet_Type'])\n",
+        "    .mean()\n",
+        "    .mul(100)\n",
+        "    .reset_index(name='pct_missing')\n",
+        "    .sort_values('pct_missing', ascending=False)\n",
+        ")\n",
+        "\n",
+        "fig = px.bar(\n",
+        "    missing_outlet,\n",
+        "    x='Outlet_Type',\n",
+        "    y='pct_missing',\n",
+        "    color='pct_missing',\n",
+        "    color_continuous_scale='Reds',\n",
+        "    text='pct_missing',\n",
+        "    labels={\n",
+        "        'Outlet_Type': 'Tipo de outlet',\n",
+        "        'pct_missing': '% de faltantes en Item_Weight'\n",
+        "    },\n",
+        "    title='Porcentaje de valores faltantes de Item_Weight por Outlet_Type'\n",
+        ")\n",
+        "\n",
+        "fig.update_traces(\n",
+        "    texttemplate='%{text:.1f}%',\n",
+        "    textposition='outside'\n",
+        ")\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    yaxis_title='% de faltantes',\n",
+        "    xaxis_title='Tipo de outlet',\n",
+        "    coloraxis_colorbar_title='% faltante'\n",
+        ")\n",
+        "\n",
+        "fig.show()"
+      ],
+      "id": "b840e659",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "3. **¿Cuál es el impacto potencial de eliminar casos con datos faltantes en el análisis?**\n",
+        "\n",
+        "En este punto, la pregunta clave ya no es solo si existen datos faltantes, sino si su eliminación cambia nuestra lectura general de los datos. Por ello, una forma natural de continuar el EDA es comparar medidas de localización antes y después de excluir los casos incompletos. Si estas medidas permanecen estables, la omisión de dichos registros tendría un impacto limitado; si cambian de manera apreciable, entonces la ausencia de datos sí afecta la interpretación. \n",
+        "\n",
+        "Con lo cual procederemos en las siguientes secciones a evaluar estas medidas de localizacion asociadas.\n",
+        "\n",
+        "\n",
+        "\n",
+        "\n",
+        "## Medidas de localización básicas\n",
+        "\n",
+        "Como vimos en el capitulo pasado las medidas más usadas en esta etapa son:\n",
+        "\n",
+        "- **Media**: \n",
+        "  $$\n",
+        "  \\bar{x} = \\frac{1}{n}\\sum_{i=1}^{n} x_i\n",
+        "  $$\n",
+        "- **Mediana**: valor que deja 50\\% de observaciones a cada lado.\n",
+        "- **Moda**: valor más frecuente. En variables continuas muchas veces es más útil hablar de la región modal observada en un histograma.\n",
+        "- **Cuantiles**: percentiles como $Q_{0.25}$, $Q_{0.50}$ y $Q_{0.75}$.\n",
+        "\n",
+        "Estas se pueden conocer de manera rápida en pandas mediante los métodos `mean()`, `median()`, `mode()` y `quantile()`. Para facilitar la lectura comparativa, conviene construir una tabla resumen con estas medidas para cada variable numérica clave."
+      ],
+      "id": "0d7eb110"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "def mode_series(s):\n",
+        "    m = s.mode(dropna=True)\n",
+        "    if len(m) == 0:\n",
+        "        return np.nan\n",
+        "    if len(m) == 1:\n",
+        "        return m.iloc[0]\n",
+        "    return m.iloc[:5].tolist()\n",
+        "\n",
+        "summary_loc = pd.DataFrame({\n",
+        "    \"media\": df[vars_localizacion].mean(numeric_only=True),\n",
+        "    \"mediana\": df[vars_localizacion].median(numeric_only=True),\n",
+        "    \"moda\": [mode_series(df[c]) for c in vars_localizacion],\n",
+        "    \"q25\": df[vars_localizacion].quantile(0.25),\n",
+        "    \"q75\": df[vars_localizacion].quantile(0.75),\n",
+        "    \"min\": df[vars_localizacion].min(numeric_only=True),\n",
+        "    \"max\": df[vars_localizacion].max(numeric_only=True),\n",
+        "})\n",
+        "summary_loc"
+      ],
+      "id": "b063f328",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Esta tabla permite una primera lectura comparativa. La relación entre media y mediana es particularmente informativa. Si ambas están muy próximas, la distribución podría ser relativamente simétrica o al menos no estar muy afectada por colas extremas. Si difieren de forma notable, conviene anticipar que más adelante aparecerán señales de asimetría.\n",
+        "\n",
+        "## Interpretación estadística de la media y la mediana\n",
+        "\n",
+        "En datos de ventas es común encontrar distribuciones con sesgo a la derecha. Esto significa que la mayor parte de las observaciones se agrupan en niveles bajos o medios, pero existe una cola de valores altos que empuja la media hacia arriba. En ese caso, la media deja de representar un valor “típico” tan bien como la mediana.\n",
+        "\n",
+        "Podemos ilustrarlo directamente con histogramas sobre los que se tracen ambas medidas."
+      ],
+      "id": "dc906f89"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "from plotly.subplots import make_subplots\n",
+        "import plotly.graph_objects as go\n",
+        "\n",
+        "fig = make_subplots(\n",
+        "    rows=2, cols=2,\n",
+        "    subplot_titles=vars_localizacion\n",
+        ")\n",
+        "\n",
+        "for i, col in enumerate(vars_localizacion):\n",
+        "    s = df[col].dropna()\n",
+        "    row = i // 2 + 1\n",
+        "    col_pos = i % 2 + 1\n",
+        "\n",
+        "    media = s.mean()\n",
+        "    mediana = s.median()\n",
+        "\n",
+        "    # Histograma\n",
+        "    fig.add_trace(\n",
+        "        go.Histogram(\n",
+        "            x=s,\n",
+        "            nbinsx=30,\n",
+        "            name=col,\n",
+        "            showlegend=False\n",
+        "        ),\n",
+        "        row=row, col=col_pos\n",
+        "    )\n",
+        "\n",
+        "    # Línea de la media\n",
+        "    fig.add_vline(\n",
+        "        x=media,\n",
+        "        line_dash=\"dash\",\n",
+        "        line_width=2,\n",
+        "        annotation_text=f\"Media = {media:.2f}\",\n",
+        "        annotation_position=\"top right\",\n",
+        "        row=row, col=col_pos\n",
+        "    )\n",
+        "\n",
+        "    # Línea de la mediana\n",
+        "    fig.add_vline(\n",
+        "        x=mediana,\n",
+        "        line_dash=\"dot\",\n",
+        "        line_width=2,\n",
+        "        annotation_text=f\"Mediana = {mediana:.2f}\",\n",
+        "        annotation_position=\"top left\",\n",
+        "        row=row, col=col_pos\n",
+        "    )\n",
+        "\n",
+        "    fig.update_xaxes(title_text=col, row=row, col=col_pos)\n",
+        "    fig.update_yaxes(title_text=\"Frecuencia\", row=row, col=col_pos)\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    # title=\"Distribuciones con media y mediana\",\n",
+        "    height=700,\n",
+        "    width=1000,\n",
+        "    bargap=0.05\n",
+        ")\n",
+        "\n",
+        "fig.show()"
+      ],
+      "id": "373a1a59",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "La superposición de estas líneas verticales ofrece una interpretación inmediata. En particular, si en `Item_Outlet_Sales` la media aparece sensiblemente a la derecha de la mediana, puede concluirse que las ventas no se distribuyen de forma simétrica y que existen casos de ventas altas elevan el promedio. En cambio, si en `Item_MRP` ambas medidas son relativamente cercanas, la estructura de precios podría ser más estable o menos sesgada.\n",
+        "\n",
+        "## Cuantiles y lectura ampliada del centro\n",
+        "\n",
+        "Cuando hablamos de **localización**, no siempre basta con resumir una variable mediante un único valor, como la media o la mediana. En muchos casos, resulta más útil describir la **zona central** donde se concentra la mayor parte de las observaciones. Para ello, los **cuantiles** son especialmente importantes.\n",
+        "\n",
+        "En particular, los percentiles 25, 50 y 75 permiten identificar el tramo donde se encuentra el **50 % central de los datos**. Esta información ayuda a responder preguntas más ricas que un simple “¿cuál es el promedio?”, por ejemplo:\n",
+        "\n",
+        "- ¿entre qué valores se concentra la mitad central de los casos?\n",
+        "- ¿qué tan alejados están los valores altos respecto del centro?\n",
+        "- ¿la mediana representa bien a la distribución o existen asimetrías importantes?"
+      ],
+      "id": "c2c2f869"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "quantiles = df[vars_localizacion].quantile([0.10, 0.25, 0.50, 0.75, 0.90])\n",
+        "quantiles"
+      ],
+      "id": "955f93b9",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "La tabla de cuantiles permite ampliar la lectura del centro. Mientras la media resume la localización en un solo número, los cuantiles muestran cómo se distribuyen los datos alrededor de esa zona central. Así, el percentil 25 marca el punto por debajo del cual se encuentra el 25 % de las observaciones, la mediana divide la distribución en dos partes iguales, y el percentil 75 indica el límite superior del 50 % central.\n",
+        "\n",
+        "Para complementar esta lectura, es útil recurrir a los boxplots, ya que representan visualmente la mediana, los cuartiles, la dispersión central y la posible presencia de valores atípicos."
+      ],
+      "id": "ba6ef112"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "from plotly.subplots import make_subplots\n",
+        "import plotly.graph_objects as go\n",
+        "\n",
+        "fig = make_subplots(\n",
+        "    rows=2, cols=2,\n",
+        "    subplot_titles=vars_localizacion\n",
+        ")\n",
+        "\n",
+        "for i, var in enumerate(vars_localizacion):\n",
+        "    row = i // 2 + 1\n",
+        "    col = i % 2 + 1\n",
+        "    \n",
+        "    fig.add_trace(\n",
+        "        go.Box(\n",
+        "            y=df[var].dropna(),\n",
+        "            name=var,\n",
+        "            boxpoints=\"outliers\",\n",
+        "            showlegend=False\n",
+        "        ),\n",
+        "        row=row, col=col\n",
+        "    )\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    title=\"Boxplots de variables seleccionadas\",\n",
+        "    height=700,\n",
+        "    width=900\n",
+        ")\n",
+        "\n",
+        "fig.show()"
+      ],
+      "id": "e596bfa5",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "A partir de estos gráficos, la interpretación ya no se limita a un valor “promedio”, sino que puede centrarse en la estructura de la distribución. En particular, los boxplots permiten observar:\n",
+        "\n",
+        "- dónde se ubica la mediana;\n",
+        "\n",
+        "- qué tan amplio es el rango intercuartílico;\n",
+        "\n",
+        "- si la distribución parece simétrica o sesgada;\n",
+        "\n",
+        "- y si existen valores atípicos que puedan influir en la media.\n",
+        "\n",
+        "De esta forma, los cuantiles y los boxplots enriquecen el análisis de localización, porque muestran no solo un centro numérico, sino también la región en la que efectivamente se concentra la mayor parte de los datos.\n",
+        "\n",
+        "## Impacto de eliminar faltantes en `Item_Weight`\n",
+        "\n",
+        "Para evaluar si eliminar las observaciones con valores faltantes en `Item_Weight` introduce sesgos en el análisis, compararemos el comportamiento del dataset antes y después de excluir dichos casos. La idea es verificar si esta reducción de la muestra modifica de forma importante la localización de otras variables relevantes y la composición general de los datos.\n",
+        "\n",
+        "Primero construimos dos subconjuntos:\n",
+        "\n",
+        "- el dataset original;\n",
+        "- el dataset filtrado, conservando solo las observaciones con `Item_Weight` disponible."
+      ],
+      "id": "f7f69d73"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "df_complete_weight = df[df[\"Item_Weight\"].notna()].copy()\n",
+        "\n",
+        "n_total = len(df)\n",
+        "n_complete = len(df_complete_weight)\n",
+        "n_removed = n_total - n_complete\n",
+        "\n",
+        "print(f\"Observaciones totales: {n_total}\")\n",
+        "print(f\"Observaciones con Item_Weight disponible: {n_complete}\")\n",
+        "print(f\"Observaciones eliminadas: {n_removed}\")\n",
+        "print(f\"Porcentaje eliminado: {100 * n_removed / n_total:.2f}%\")"
+      ],
+      "id": "fd9a1cfb",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Una primera forma de evaluar el posible sesgo consiste en comparar medidas de localización de variables relevantes antes y después del filtrado."
+      ],
+      "id": "93d996a2"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "vars_compare = [\"Item_MRP\", \"Item_Outlet_Sales\", \"Item_Visibility\"]\n",
+        "\n",
+        "summary_compare = pd.DataFrame({\n",
+        "    \"media_original\": df[vars_compare].mean(),\n",
+        "    \"media_filtrado\": df_complete_weight[vars_compare].mean(),\n",
+        "    \"mediana_original\": df[vars_compare].median(),\n",
+        "    \"mediana_filtrado\": df_complete_weight[vars_compare].median()\n",
+        "})\n",
+        "\n",
+        "summary_compare[\"dif_media_abs\"] = summary_compare[\"media_filtrado\"] - summary_compare[\"media_original\"]\n",
+        "summary_compare[\"dif_media_pct\"] = 100 * summary_compare[\"dif_media_abs\"] / summary_compare[\"media_original\"]\n",
+        "\n",
+        "summary_compare[\"dif_mediana_abs\"] = summary_compare[\"mediana_filtrado\"] - summary_compare[\"mediana_original\"]\n",
+        "summary_compare[\"dif_mediana_pct\"] = 100 * summary_compare[\"dif_mediana_abs\"] / summary_compare[\"mediana_original\"]\n",
+        "\n",
+        "summary_compare.round(3)"
+      ],
+      "id": "d462d4ed",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Además de la comparación numérica, es útil observar gráficamente si las distribuciones cambian al eliminar los registros con Item_Weight faltante."
+      ],
+      "id": "003aa0a8"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "from plotly.subplots import make_subplots\n",
+        "import plotly.graph_objects as go\n",
+        "\n",
+        "vars_compare = [\"Item_MRP\", \"Item_Outlet_Sales\", \"Item_Visibility\"]\n",
+        "\n",
+        "fig = make_subplots(\n",
+        "    rows=1, cols=3,\n",
+        "    subplot_titles=vars_compare\n",
+        ")\n",
+        "\n",
+        "for i, var in enumerate(vars_compare, start=1):\n",
+        "    fig.add_trace(\n",
+        "        go.Histogram(\n",
+        "            x=df[var].dropna(),\n",
+        "            name=\"Original\",\n",
+        "            opacity=0.55,\n",
+        "            nbinsx=30,\n",
+        "            histnorm=\"probability density\",\n",
+        "            showlegend=(i == 1)\n",
+        "        ),\n",
+        "        row=1, col=i\n",
+        "    )\n",
+        "    \n",
+        "    fig.add_trace(\n",
+        "        go.Histogram(\n",
+        "            x=df_complete_weight[var].dropna(),\n",
+        "            name=\"Sin faltantes en Item_Weight\",\n",
+        "            opacity=0.55,\n",
+        "            nbinsx=30,\n",
+        "            histnorm=\"probability density\",\n",
+        "            showlegend=(i == 1)\n",
+        "        ),\n",
+        "        row=1, col=i\n",
+        "    )\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    title=\"Distribuciones antes y después de eliminar faltantes en Item_Weight\",\n",
+        "    barmode=\"overlay\",\n",
+        "    height=450,\n",
+        "    width=1100\n",
+        ")\n",
+        "\n",
+        "fig.show()"
+      ],
+      "id": "92183c2c",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Para reforzar la lectura de localización, también podemos comparar boxplots en ambos escenarios."
+      ],
+      "id": "4270fd06"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = make_subplots(\n",
+        "    rows=1, cols=3,\n",
+        "    subplot_titles=vars_compare\n",
+        ")\n",
+        "\n",
+        "for i, var in enumerate(vars_compare, start=1):\n",
+        "    fig.add_trace(\n",
+        "        go.Box(\n",
+        "            y=df[var].dropna(),\n",
+        "            name=\"Original\",\n",
+        "            boxpoints=False,\n",
+        "            showlegend=(i == 1)\n",
+        "        ),\n",
+        "        row=1, col=i\n",
+        "    )\n",
+        "    \n",
+        "    fig.add_trace(\n",
+        "        go.Box(\n",
+        "            y=df_complete_weight[var].dropna(),\n",
+        "            name=\"Sin faltantes en Item_Weight\",\n",
+        "            boxpoints=False,\n",
+        "            showlegend=(i == 1)\n",
+        "        ),\n",
+        "        row=1, col=i\n",
+        "    )\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    title=\"Comparación de boxplots antes y después del filtrado\",\n",
+        "    height=450,\n",
+        "    width=1100\n",
+        ")\n",
+        "\n",
+        "fig.show()"
+      ],
+      "id": "08c87431",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Finalmente, también conviene revisar si la eliminación afecta la composición de algunos grupos del negocio."
+      ],
+      "id": "9734d137"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "comp_outlet = pd.concat([\n",
+        "    df[\"Outlet_Type\"].value_counts(normalize=True).rename(\"original\"),\n",
+        "    df_complete_weight[\"Outlet_Type\"].value_counts(normalize=True).rename(\"filtrado\")\n",
+        "], axis=1)\n",
+        "\n",
+        "comp_outlet[\"dif_pct_points\"] = 100 * (comp_outlet[\"filtrado\"] - comp_outlet[\"original\"])\n",
+        "comp_outlet.round(4)"
+      ],
+      "id": "03e2991b",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Los resultados muestran que la eliminación de observaciones con `Item_Weight` faltante produce cambios pequeños en las medidas de localización de las variables analizadas. Si bien en algunos casos las diferencias porcentuales superan ligeramente el 2 %, especialmente en `Item_Outlet_Sales` e `Item_Visibility`, la magnitud de estas variaciones no parece suficiente para modificar de manera sustantiva la interpretación general del centro de las distribuciones. Por ello, dentro del contexto de este EDA, trabajar con los casos completos puede considerarse una decisión razonable y con bajo riesgo de sesgo en términos de localización.\n",
+        "\n",
+        "<!-- \n",
+        "## Una tabla compacta de indicadores clave\n",
+        "\n",
+        "Como antesala a un dashboard, conviene construir una tabla ejecutiva resumida para cada variable numérica."
+      ],
+      "id": "ee24d205"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "dashboard_loc = pd.DataFrame({\n",
+        "    \"Variable\": vars_localizacion,\n",
+        "    \"N válidos\": [df[c].notna().sum() for c in vars_localizacion],\n",
+        "    \"Media\": [df[c].mean() for c in vars_localizacion],\n",
+        "    \"Mediana\": [df[c].median() for c in vars_localizacion],\n",
+        "    \"Q1\": [df[c].quantile(0.25) for c in vars_localizacion],\n",
+        "    \"Q3\": [df[c].quantile(0.75) for c in vars_localizacion],\n",
+        "})\n",
+        "\n",
+        "dashboard_loc"
+      ],
+      "id": "2f34bd10",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Esta tabla es adecuada para incrustarse en un panel inicial del libro o del dashboard porque sintetiza el centro y la región intercuartílica sin introducir todavía medidas formales de dispersión.\n",
+        "\n",
+        "## Comparación del centro por grupos\n",
+        "\n",
+        "Aunque este primer documento está centrado en la localización univariada, es útil incorporar una primera comparación por grupo. Esto permite enlazar con el tema posterior de heterogeneidad. Una opción natural es comparar la mediana de ventas por tipo de outlet."
+      ],
+      "id": "72ccc8c9"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "outlet_median = (\n",
+        "    df.groupby(\"Outlet_Type\", dropna=False)[\"Item_Outlet_Sales\"]\n",
+        "      .median()\n",
+        "      .sort_values(ascending=False)\n",
+        ")\n",
+        "\n",
+        "outlet_median"
+      ],
+      "id": "44b0e61c",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "outlet_median.plot(kind=\"bar\")\n",
+        "plt.title(\"Mediana de Item_Outlet_Sales por Outlet_Type\")\n",
+        "plt.xlabel(\"Outlet_Type\")\n",
+        "plt.ylabel(\"Mediana de ventas\")\n",
+        "plt.xticks(rotation=45, ha=\"right\")\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "b0923f0c",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "La diferencia entre medias o medianas de grupo no debe todavía interpretarse como evidencia causal, pero sí como una señal descriptiva fuerte: los centros de distribución pueden desplazarse según el contexto del outlet. Esta idea será fundamental cuando se discuta heterogeneidad entre subpoblaciones.\n",
+        "\n",
+        "## Propuesta de dashboard de localización\n",
+        "\n",
+        "La primera versión del dashboard puede organizarse en cuatro componentes:\n",
+        "\n",
+        "1. **KPIs principales**: media y mediana de `Item_Outlet_Sales`, `Item_MRP` e `Item_Weight`.\n",
+        "2. **Histogramas con líneas de centro**: uno por variable numérica clave.\n",
+        "3. **Tabla de cuantiles**: percentiles 10, 25, 50, 75 y 90.\n",
+        "4. **Comparación por grupos**: mediana de ventas por `Outlet_Type` o `Item_Type`.\n",
+        "\n",
+        "En Quarto esto puede presentarse como una narrativa progresiva: primero el tablero muestra el centro global de la distribución y después introduce una comparación segmentada.\n",
+        "\n",
+        "## Conclusiones\n",
+        "\n",
+        "Las medidas de localización constituyen el primer nivel de descripción cuantitativa de un dataset. En Big Mart Sales permiten responder dónde se sitúan, en términos generales, los precios, pesos, niveles de visibilidad y ventas. Sin embargo, el centro por sí solo no agota la estructura de los datos. Dos variables pueden compartir una media similar y, aun así, diferir mucho en dispersión o forma. Por ello, la siguiente etapa natural del análisis consiste en estudiar la **variabilidad**, es decir, qué tan extendida o concentrada se encuentra la distribución alrededor de sus valores centrales. -->\n",
+        "\n",
+        "## Ejercicio sugerido\n",
+        "\n",
+        "Construya una versión inicial de dashboard en Quarto que incluya:\n",
+        "\n",
+        "- una tabla resumen con media, mediana y cuantiles de las variables numéricas seleccionadas;\n",
+        "- un histograma con líneas para media y mediana de `Item_Outlet_Sales`;\n",
+        "- un gráfico de barras con la mediana de ventas por `Outlet_Type`;\n",
+        "- un breve comentario interpretativo donde se compare el uso de la media frente a la mediana."
+      ],
+      "id": "9543c0f2"
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "name": "python3",
+      "language": "python",
+      "display_name": "Python 3 (ipykernel)",
+      "path": "/Users/diegovillalba/.pyenv/versions/data_minning/share/jupyter/kernels/python3"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}

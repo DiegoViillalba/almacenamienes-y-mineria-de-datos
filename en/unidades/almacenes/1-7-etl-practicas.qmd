@@ -1,0 +1,238 @@
+# ETL Practice Exercises in Databricks {#sec-etl-practicas-cap}
+
+This chapter contains hands-on application exercises. All exercises run on **Databricks Community Edition** using the cluster configured in the first chapter of this unit.
+
+::: {.callout-tip}
+**Suggested Workflow per Exercise:**
+1. Create a new notebook in Databricks named after the exercise.
+2. In the first cell, add a title header: `# Exercise E-X — Title`.
+3. Execute cell by cell, inspecting the Spark UI to review physical execution plans.
+4. Attach output screenshots and query results as deliverables.
+:::
+
+## 1. Exercises {#sec-etl-ejercicios}
+
+### 1.1 Exercise E-3 — Incremental Pipeline with Delta Lake {#sec-ej-e3}
+
+::: {.callout-important icon="false"}
+**Exercise E-3: Incremental Loading**
+
+Simulate a production data pipeline that ingests monthly data incrementally without creating duplicate records.
+
+```python
+from pyspark.sql import SparkSession
+from delta import DeltaTable, configure_spark_with_delta_pip
+
+spark = configure_spark_with_delta_pip(
+    SparkSession.builder.appName("E3-Incremental")
+    .config("spark.sql.extensions",
+            "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .master("local[*]")
+).getOrCreate()
+
+DELTA_PATH = "output/delta_taxi/"
+MONTHS = [
+    "data/yellow_tripdata_2023-01.parquet",
+    "data/yellow_tripdata_2023-02.parquet",
+    "data/yellow_tripdata_2023-03.parquet",
+]
+
+def transform(df):
+    from pyspark.sql.functions import col, hour, dayofweek, month
+    return (df
+        .filter(col("trip_distance") > 0)
+        .filter(col("fare_amount").between(2.5, 500))
+        .withColumn("hour",  hour("tpep_pickup_datetime"))
+        .withColumn("month", month("tpep_pickup_datetime"))
+    )
+
+for path in MONTHS:
+    new_data = transform(spark.read.parquet(path))
+
+    if DeltaTable.isDeltaTable(spark, DELTA_PATH):
+        # UPSERT: Insert new records, skip existing records
+        dt = DeltaTable.forPath(spark, DELTA_PATH)
+        (dt.alias("target")
+           .merge(new_data.alias("source"),
+                  "target.VendorID = source.VendorID AND "
+                  "target.tpep_pickup_datetime = source.tpep_pickup_datetime")
+           .whenNotMatchedInsertAll()
+           .execute())
+    else:
+        # Initial load
+        new_data.write.format("delta").mode("overwrite").save(DELTA_PATH)
+
+    print(f"✅ {path.split('/')[-1]} loaded. Total row count: "
+          f"{spark.read.format('delta').load(DELTA_PATH).count():,}")
+
+spark.stop()
+```
+
+**Questions:**
+a) What happens if you execute the load for the same month twice? Why?
+b) Modify the `MERGE` clause so that if a trip record already exists but contains a different `total_amount`, the target record updates (simulating late-arriving data corrections).
+c) Execute `DESCRIBE HISTORY delta.\`output/delta_taxi/\`` to inspect the Delta transaction log history.
+:::
+
+### 1.2 Exercise E-4 — Multi-Source ETL with Join at Scale {#sec-ej-e4}
+
+::: {.callout-important icon="false"}
+**Exercise E-4: Data Enrichment via Joins**
+
+Download the NYC Taxi Zone lookup table and enrich trip records with neighborhood names.
+
+```bash
+# Download Taxi Zone lookup table (26 KB)
+wget https://d37ci6vzurychx.cloudfront.net/misc/taxi+_zone_lookup.csv \
+     -O data/taxi_zone_lookup.csv
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import broadcast, col, count, avg, desc
+
+spark = SparkSession.builder.appName("E4-Join").master("local[*]").getOrCreate()
+
+trips = spark.read.parquet("data/yellow_tripdata_2023-01.parquet")
+zones = spark.read.csv("data/taxi_zone_lookup.csv",
+                       header=True, inferSchema=True)
+
+# TODO 1: Rename zone columns to avoid naming ambiguity
+zones_pu = zones.select(
+    col("LocationID").alias("pu_location_id"),
+    col("Zone").alias("pu_zone"),
+    col("Borough").alias("pu_borough")
+)
+
+# TODO 2: Execute a broadcast join between trips and zones_pu
+#          matching PULocationID == pu_location_id
+df_enriched = ...  # ← complete
+
+# TODO 3: Compute the top-10 pickup zones by total revenue
+top_zones = (df_enriched
+    .groupBy("pu_zone", "pu_borough")
+    .agg(
+        count("*").alias("trip_count"),
+        avg("total_amount").alias("avg_ticket")
+    )
+    .orderBy(desc("trip_count"))
+    .limit(10)
+)
+top_zones.show(truncate=False)
+
+# TODO 4: Which borough exhibits the highest average tip percentage?
+#          Derive column tip_percentage and group by pu_borough
+borough_tips = ...  # ← complete
+
+spark.stop()
+```
+
+**Questions:**
+a) Why did we use `broadcast()` for joining with the zones dataset?
+b) What would happen if we removed `broadcast()` and the zones table were 10 GB instead of 26 KB?
+c) Extend the enrichment pipeline to also resolve the destination zone (`DOLocationID`).
+:::
+
+### 1.3 Exercise E-5 — Automated Data Quality Validation with Great Expectations {#sec-ej-e5}
+
+::: {.callout-important icon="false"}
+**Exercise E-5: Automated Validation**
+
+```bash
+pip install great_expectations
+```
+
+```python
+import great_expectations as gx
+from great_expectations.dataset import SparkDFDataset
+
+spark = SparkSession.builder.appName("E5-GX").master("local[*]").getOrCreate()
+df = spark.read.parquet("data/yellow_tripdata_2023-01.parquet")
+
+# Wrap DataFrame into a Great Expectations dataset
+gx_df = SparkDFDataset(df)
+
+# Define quality expectations
+results = []
+results.append(gx_df.expect_column_values_to_not_be_null("tpep_pickup_datetime"))
+results.append(gx_df.expect_column_values_to_be_between(
+    "trip_distance", min_value=0, max_value=500))
+results.append(gx_df.expect_column_values_to_be_between(
+    "fare_amount", min_value=0, max_value=1000))
+results.append(gx_df.expect_column_values_to_be_in_set(
+    "payment_type", [1, 2, 3, 4, 5, 6]))
+results.append(gx_df.expect_column_values_to_not_be_null("VendorID"))
+
+# Output summary report
+for r in results:
+    icon = "✅" if r["success"] else "❌"
+    print(f"{icon} {r['expectation_config']['expectation_type']} "
+          f"({r['expectation_config']['kwargs'].get('column','')}) "
+          f"— {r['result'].get('unexpected_percent',0):.2f}% unexpected")
+
+spark.stop()
+```
+
+**Questions:**
+a) Which expectations failed? How would you interpret these failures in a production data pipeline?
+b) Add an expectation rule to verify that `passenger_count` never exceeds 6.
+c) At which stage of the E→T→L pipeline should these quality assertions execute?
+:::
+
+### 1.4 Exercise E-6 — TPC-H Capstone Project {#sec-ej-e6}
+
+::: {.callout-important icon="false"}
+**Exercise E-6: Dimensional Star Schema ETL**
+
+Generate synthetic data using TPC-H (Scale Factor 1 GB) and construct a Parquet Data Warehouse.
+
+```bash
+pip install tpch
+python -m tpch generate --scale 1  # 1 GB relational dataset
+```
+
+```python
+# TPC-H Schema Overview:
+# ORDERS (order_id, customer_id, date, priority, total)
+# LINEITEM (order_id, product_id, quantity, price, discount)
+# CUSTOMER (customer_id, name, segment, nation_id)
+# NATION   (nation_id, name, region_id)
+
+spark = SparkSession.builder.appName("E6-TPCH").master("local[*]").getOrCreate()
+
+orders   = spark.read.csv("tpch/orders.tbl",   sep="|", inferSchema=True)
+lineitem = spark.read.csv("tpch/lineitem.tbl",  sep="|", inferSchema=True)
+customer = spark.read.csv("tpch/customer.tbl",  sep="|", inferSchema=True)
+nation   = spark.read.csv("tpch/nation.tbl",    sep="|", inferSchema=True)
+
+# TODO 1: Rename raw columns (TPC-H defaults to _c0, _c1, ...)
+#         Reference the schema definition at: http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v3.0.1.pdf
+
+# TODO 2: Construct the fact table `fact_sales` containing:
+#   order_id, customer_id, product_id, nation, segment,
+#   order_date, quantity, net_revenue (price × quantity × (1 - discount))
+
+# TODO 3: Write fact_sales as Parquet partitioned by year and month
+
+# TODO 4: Execute Spark SQL queries:
+#   Q1: Total revenue by customer segment and year
+#   Q2: Top-5 nations by revenue in the latest available quarter
+#   Q3: What percentage of orders carry "URGENT" priority?
+
+spark.stop()
+```
+
+**This exercise mirrors an enterprise ETL engineering workflow:**
+extracting OLTP relational tables → executing dimensional joins → building line-item fact tables → storing optimized Parquet files.
+:::
+
+---
+
+## References for this Chapter {#sec-etl-refs-practicas}
+
+- [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
+- [Great Expectations](https://greatexpectations.io/)
+- [TPC-H Benchmark](http://www.tpc.org/tpch/)
+- [Delta Lake Documentation](https://docs.delta.io/)

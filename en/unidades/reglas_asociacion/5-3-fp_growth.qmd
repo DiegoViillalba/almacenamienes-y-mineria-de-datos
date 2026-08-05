@@ -1,0 +1,531 @@
+---
+title: "FP-Growth and Frequent Pattern Mining"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_fp_growth.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+# FP-Growth and Frequent Pattern Mining
+
+## Introduction
+
+Association rule mining seeks to uncover regularities in transactional databases: products frequently bought together, web pages visited in the same session, words co-occurring in documents, or events recorded in tandem. In this context, a transaction represents an observation made up of multiple items; for instance, a supermarket basket might contain `{Bread, Milk, Diapers}`. The goal is not to predict a target label, but rather to identify co-occurrence structures that allow extracting interpretable knowledge from discrete data [@agrawal1994fast; @han2012data].
+
+The **FP-Growth** (*Frequent Pattern Growth*) algorithm was proposed as an efficient alternative to Apriori for discovering frequent itemsets. Its core idea is to avoid explicit candidate generation by compressing the transaction database into a compact data structure called the **FP-tree** (*Frequent Pattern Tree*). From this tree, the algorithm mines frequent patterns using conditional pattern bases and conditional trees [@han2000mining; @borgelt2005implementation].
+
+This chapter develops FP-Growth in a step-by-step fashion. First, we review the concepts of transactions, itemsets, support, and frequency. Next, we illustrate how to build an FP-tree using a toy market basket example. Finally, we explain how to extract frequent patterns via conditional prefix paths, compare FP-Growth with Apriori, and implement a practical pipeline in Python.
+
+## Basic Concepts
+
+In association mining, we work with a collection of transactions. Each transaction contains a subset of items drawn from a finite universe of possible products, terms, or events. This representation is natural for set-based data: a purchase contains products, a document contains words, a web session contains visited pages.
+
+::: {.callout-note appearance="minimal"}
+Definition. Let $I = \{i_1, i_2, \ldots, i_m\}$ be a finite set of items. A transaction $T$ is a subset of $I$, i.e.:
+$$
+T \subseteq I.
+$$
+A transaction database is a collection $\mathcal{D} = \{T_1, T_2, \ldots, T_n\}$ of transactions.
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. An itemset is any subset $X \subseteq I$. We say that a transaction $T_i$ contains $X$ if all items in $X$ appear in $T_i$:
+$$
+X \subseteq T_i.
+$$
+:::
+
+The key metric for assessing pattern relevance is **support**. It is commonly reported either as an absolute count or as a relative proportion. Absolute count indicates how many transactions contain the pattern; relative support divides that count by the total number of transactions.
+
+::: {.callout-note appearance="minimal"}
+Definition. The absolute support of an itemset $X$ in a transaction database $\mathcal{D}$ is the number of transactions containing $X$:
+$$
+\operatorname{supp}_{\#}(X)=\left|\{T_i \in \mathcal{D}: X \subseteq T_i\}\right|.
+$$
+Relative support is defined as:
+$$
+\operatorname{supp}(X)=\frac{\operatorname{supp}_{\#}(X)}{|\mathcal{D}|}.
+$$ {#eq-support}
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. Given a minimum support threshold $\text{min\_sup}$, an itemset $X$ is frequent if its absolute support satisfies:
+$$
+\operatorname{supp}_{\#}(X) \geq \text{min\_sup}.
+$$ {#eq-frequent}
+:::
+
+The threshold $\text{min\_sup}$ controls the granularity of the analysis. Setting it too low yields an excessive number of patterns, many of which are trivial or uninterpretable. Setting it too high can eliminate interesting but less common patterns. Consequently, in real-world applications, it is typically chosen through exploratory analysis, domain knowledge, and computational constraints.
+
+## From Apriori to FP-Growth
+
+The Apriori algorithm relies on a fundamental property: if an itemset is frequent, all of its subsets must also be frequent. Equivalently, if an itemset is infrequent, none of its supersets can be frequent [@agrawal1994fast]. This anti-monotonicity property allows pruning the search space, but Apriori still needs to generate candidate itemsets and scan the database multiple times.
+
+FP-Growth follows a different strategy. Instead of explicitly generating and evaluating candidates, it performs two main passes over the database: one to compute individual item supports and another to construct a compact tree. It then mines frequent patterns directly from this compressed structure [@han2000mining].
+
+This approach offers significant advantages when many transactions share prefixes. When items are sorted globally in descending frequency order, similar transactions tend to share the initial branches of the tree. Thus, the FP-tree stores aggregated information rather than repeating each full transaction independently.
+
+## Base Example: Market Basket Transactions
+
+Consider the following transaction database and an absolute minimum support threshold $\text{min\_sup}=3$:
+
+| Transaction | Items |
+|---|---|
+| $T_1$ | `{Bread, Milk}` |
+| $T_2$ | `{Bread, Milk, Diapers, Beer}` |
+| $T_3$ | `{Milk, Diapers, Beer}` |
+| $T_4$ | `{Bread, Milk, Diapers, Beer}` |
+| $T_5$ | `{Bread, Milk, Diapers}` |
+
+Individual absolute item supports are:
+
+| Item | Transactions where present | Absolute Support |
+|---|---|---:|
+| Bread | $T_1,T_2,T_4,T_5$ | 4 |
+| Milk | $T_1,T_2,T_3,T_4,T_5$ | 5 |
+| Diapers | $T_2,T_3,T_4,T_5$ | 4 |
+| Beer | $T_2,T_3,T_4$ | 3 |
+
+Since all items have an absolute support of at least $3$, none are filtered out at this stage. If any item had a support lower than $\text{min\_sup}$, it would be discarded prior to tree construction.
+
+```{python}
+# Toy transaction dataset
+transactions = [
+    {"Bread", "Milk"},
+    {"Bread", "Milk", "Diapers", "Beer"},
+    {"Milk", "Diapers", "Beer"},
+    {"Bread", "Milk", "Diapers", "Beer"},
+    {"Bread", "Milk", "Diapers"},
+]
+
+min_sup = 3
+
+from collections import Counter
+
+item_counts = Counter()
+for transaction in transactions:
+    item_counts.update(transaction)
+
+item_counts
+```
+
+## Frequency Ordering
+
+The FP-tree relies on a global item ordering. The standard rule is ordering items by descending frequency. Ties can be broken deterministically, such as alphabetically. This ordering ensures that transactions containing frequent items share prefixes, maximizing tree compactness.
+
+In our example, the global ordering is:
+
+$$
+\text{Milk} \succ \text{Bread} \succ \text{Diapers} \succ \text{Beer}.
+$$
+
+Applying this order transforms the original transactions as follows:
+
+| Original Transaction | Ordered Transaction |
+|---|---|
+| `{Bread, Milk}` | `[Milk, Bread]` |
+| `{Bread, Milk, Diapers, Beer}` | `[Milk, Bread, Diapers, Beer]` |
+| `{Milk, Diapers, Beer}` | `[Milk, Diapers, Beer]` |
+| `{Bread, Milk, Diapers, Beer}` | `[Milk, Bread, Diapers, Beer]` |
+| `{Bread, Milk, Diapers}` | `[Milk, Bread, Diapers]` |
+
+```{python}
+# Global ordering by descending frequency with alphabetical tie-breaking
+frequent_items = {item for item, count in item_counts.items() if count >= min_sup}
+order = sorted(frequent_items, key=lambda item: (-item_counts[item], item))
+rank = {item: position for position, item in enumerate(order)}
+
+ordered_transactions = []
+for transaction in transactions:
+    filtered = [item for item in transaction if item in frequent_items]
+    ordered = sorted(filtered, key=lambda item: rank[item])
+    ordered_transactions.append(ordered)
+
+order, ordered_transactions
+```
+
+## Construction of the FP-tree
+
+An FP-tree is a rooted tree initialized with a null root node. Each node stores an item, a count, and child pointers. To insert an ordered transaction, we traverse it from left to right. If the next item already exists as a child of the current node, its count is incremented. Otherwise, a new child node is created with an initial count of one.
+
+::: {.callout-note appearance="minimal"}
+Definition. An FP-tree is a tree structure $\mathcal{T}$ where each non-root node represents an item and maintains a count. The count of node $v$ reflects the number of transactions sharing the path prefix from the root to $v$:
+$$
+\operatorname{count}(v)=\left|\{T_i \in \mathcal{D}: \operatorname{path}(v) \subseteq T_i\}\right|.
+$$
+:::
+
+The construction algorithm proceeds as follows:
+
+1. Create a `null` root node.
+2. Sort items in each transaction according to global frequency order.
+3. Insert each transaction sequentially into the tree.
+4. Increment node counts along matching existing paths.
+5. Allocate new nodes whenever a prefix path deviates.
+
+```{python}
+class FPNode:
+    def __init__(self, item=None, count=0, parent=None):
+        self.item = item
+        self.count = count
+        self.parent = parent
+        self.children = {}
+
+    def add_child(self, item):
+        child = FPNode(item=item, count=0, parent=self)
+        self.children[item] = child
+        return child
+
+
+def insert_transaction(root, transaction):
+    current = root
+    for item in transaction:
+        if item not in current.children:
+            current.add_child(item)
+        current = current.children[item]
+        current.count += 1
+
+
+def build_fp_tree(ordered_transactions):
+    root = FPNode(item="null", count=0)
+    for transaction in ordered_transactions:
+        insert_transaction(root, transaction)
+    return root
+
+
+def print_tree(node, indent=0):
+    label = f"{node.item}: {node.count}" if node.item != "null" else "null"
+    print("  " * indent + label)
+    for child in node.children.values():
+        print_tree(child, indent + 1)
+
+root = build_fp_tree(ordered_transactions)
+print_tree(root)
+```
+
+In this example, the primary branch begins with `Milk` because it occurs across all transactions. From `Milk`, several transactions continue to `Bread`, while others branch directly to `Diapers`. Compression is achieved by accumulating counts along shared prefixes rather than storing each transaction independently.
+
+## Prefix Paths and Conditional Pattern Base
+
+Once the FP-tree is built, FP-Growth extracts frequent patterns by processing items from least to most frequent. For each target item, all prefix paths terminating at that item are gathered. Removing the target item from these paths yields its **conditional pattern base**.
+
+::: {.callout-note appearance="minimal"}
+Definition. Given an item $a$, the conditional pattern base of $a$, denoted $\mathcal{B}_a$, is the multiset of prefix paths preceding $a$ in the FP-tree, weighted by the node count of $a$:
+$$
+\mathcal{B}_a = \{(P_j,c_j): P_j \text{ is a prefix path of } a \text{ with count } c_j\}.
+$$
+:::
+
+For the item `Beer`, the relevant paths in the tree are:
+
+| Tree Path | Count |
+|---|---:|
+| `[Milk, Bread, Diapers, Beer]` | 2 |
+| `[Milk, Diapers, Beer]` | 1 |
+
+Removing `Beer` yields:
+
+| Prefix Path | Count |
+|---|---:|
+| `[Milk, Bread, Diapers]` | 2 |
+| `[Milk, Diapers]` | 1 |
+
+In this conditional pattern base, accumulated item counts are:
+
+| Item | Conditional Count |
+|---|---:|
+| Milk | 3 |
+| Bread | 2 |
+| Diapers | 3 |
+
+With $\text{min\_sup}=3$, `Bread` is pruned from the conditional base of `Beer`, while `Milk` and `Diapers` remain frequent. Thus, the frequent patterns containing `Beer` are:
+
+$$
+\{\text{Beer}\}, \quad
+\{\text{Milk},\text{Beer}\}, \quad
+\{\text{Diapers},\text{Beer}\}, \quad
+\{\text{Milk},\text{Diapers},\text{Beer}\}.
+$$
+
+```{python}
+def collect_prefix_paths(node, target_item):
+    """Returns prefix paths leading to target_item in a basic FP-tree."""
+    paths = []
+
+    def traverse(current):
+        for child in current.children.values():
+            if child.item == target_item:
+                path = []
+                parent = child.parent
+                while parent is not None and parent.item != "null":
+                    path.append(parent.item)
+                    parent = parent.parent
+                path.reverse()
+                if path:
+                    paths.append((path, child.count))
+            traverse(child)
+
+    traverse(node)
+    return paths
+
+prefix_paths_cerveza = collect_prefix_paths(root, "Beer")
+prefix_paths_cerveza
+```
+
+```{python}
+def conditional_counts(prefix_paths):
+    counts = Counter()
+    for path, weight in prefix_paths:
+        for item in path:
+            counts[item] += weight
+    return counts
+
+conditional_counts(prefix_paths_cerveza)
+```
+
+## Conditional Tree
+
+After building an item's conditional pattern base, items failing to meet minimum support are pruned, and a new sub-tree is constructed for that base. This is the **conditional tree**. For `Beer`, the conditional tree reduces to:
+
+$$
+\text{Milk}:3 \rightarrow \text{Diapers}:3.
+$$
+
+This indicates that across transactions containing `Beer`, `Milk` co-occurs 3 times and `Diapers` co-occurs 3 times. The joint branch confirms that `{Milk, Diapers, Beer}` is also a frequent pattern.
+
+::: {.callout-note appearance="minimal"}
+Definition. The conditional FP-tree of an item $a$ is the FP-tree constructed from its conditional pattern base $\mathcal{B}_a$ after removing items whose conditional count falls below $\text{min\_sup}$:
+$$
+\mathcal{T}_a = \operatorname{FPtree}\left(\{P_j \in \mathcal{B}_a: \operatorname{count}_{\mathcal{B}_a}(i) \geq \text{min\_sup}\}\right).
+$$
+:::
+
+```{python}
+def expand_weighted_paths(prefix_paths):
+    expanded = []
+    for path, weight in prefix_paths:
+        expanded.extend([path] * weight)
+    return expanded
+
+conditional_item_counts = conditional_counts(prefix_paths_cerveza)
+conditional_frequent = {
+    item for item, count in conditional_item_counts.items()
+    if count >= min_sup
+}
+
+conditional_order = sorted(
+    conditional_frequent,
+    key=lambda item: (-conditional_item_counts[item], item)
+)
+conditional_rank = {item: pos for pos, item in enumerate(conditional_order)}
+
+conditional_transactions = []
+for path in expand_weighted_paths(prefix_paths_cerveza):
+    filtered_path = [item for item in path if item in conditional_frequent]
+    ordered_path = sorted(filtered_path, key=lambda item: conditional_rank[item])
+    if ordered_path:
+        conditional_transactions.append(ordered_path)
+
+conditional_root = build_fp_tree(conditional_transactions)
+print_tree(conditional_root)
+```
+
+## Frequent Patterns for the Base Example
+
+Repeating this mining procedure for all items in ascending order of frequency yields the complete set of frequent itemsets:
+
+| Base Item | Associated Frequent Patterns |
+|---|---|
+| Beer | `{Beer}`, `{Milk, Beer}`, `{Diapers, Beer}`, `{Milk, Diapers, Beer}` |
+| Diapers | `{Diapers}`, `{Milk, Diapers}`, `{Bread, Diapers}`, `{Milk, Bread, Diapers}` |
+| Bread | `{Bread}`, `{Milk, Bread}` |
+| Milk | `{Milk}` |
+
+Aggregating and deduplicating, the frequent itemsets for $\text{min\_sup}=3$ are:
+
+$$
+\begin{aligned}
+&\{\text{Milk}\},\{\text{Bread}\},\{\text{Diapers}\},\{\text{Beer}\},\\
+&\{\text{Milk},\text{Bread}\},\{\text{Milk},\text{Diapers}\},\{\text{Milk},\text{Beer}\},\\
+&\{\text{Bread},\text{Diapers}\},\{\text{Diapers},\text{Beer}\},\\
+&\{\text{Milk},\text{Bread},\text{Diapers}\},\{\text{Milk},\text{Diapers},\text{Beer}\}.
+\end{aligned}
+$$
+
+Note that FP-Growth does not generate association rules directly; it outputs frequent itemsets. Association rules are generated subsequently from these itemsets by evaluating metrics such as confidence, lift, or conviction [@tan2019introduction; @han2012data].
+
+## Practical Implementation with `mlxtend`
+
+In Python, a straightforward way to execute FP-Growth is using `mlxtend`, which implements both Apriori and FP-Growth on one-hot encoded transaction DataFrames [@raschka2018mlxtend].
+
+```{python}
+import pandas as pd
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import fpgrowth, association_rules
+
+transactions_list = [list(t) for t in transactions]
+
+encoder = TransactionEncoder()
+one_hot = encoder.fit(transactions_list).transform(transactions_list)
+df = pd.DataFrame(one_hot, columns=encoder.columns_)
+
+df
+```
+
+Because `mlxtend` expects relative support, the absolute threshold $\text{min\_sup}=3$ is converted by dividing by total transactions:
+
+$$
+\text{min\_sup}_{rel}=\frac{3}{5}=0.6.
+$$
+
+```{python}
+min_support_relative = min_sup / len(transactions)
+
+frequent_itemsets = fpgrowth(
+    df,
+    min_support=min_support_relative,
+    use_colnames=True
+)
+
+frequent_itemsets.sort_values(
+    by=["support", "itemsets"],
+    ascending=[False, True]
+)
+```
+
+From frequent itemsets, rules are derived. For example, a rule $X \Rightarrow Y$ states: "when $X$ occurs, $Y$ also tends to occur."
+
+::: {.callout-note appearance="minimal"}
+Definition. The confidence of an association rule $X \Rightarrow Y$ (where $X \cap Y = \varnothing$) measures the fraction of transactions containing $X$ that also contain $Y$:
+$$
+\operatorname{conf}(X \Rightarrow Y)=\frac{\operatorname{supp}(X \cup Y)}{\operatorname{supp}(X)}.
+$$ {#eq-confidence}
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. The lift of a rule $X \Rightarrow Y$ compares observed co-occurrence of $X$ and $Y$ against expected co-occurrence under statistical independence:
+$$
+\operatorname{lift}(X \Rightarrow Y)=\frac{\operatorname{supp}(X \cup Y)}{\operatorname{supp}(X)\operatorname{supp}(Y)}.
+$$ {#eq-lift}
+:::
+
+```{python}
+rules = association_rules(
+    frequent_itemsets,
+    metric="confidence",
+    min_threshold=0.7
+)
+
+selected_columns = [
+    "antecedents", "consequents", "support", "confidence", "lift"
+]
+
+rules[selected_columns].sort_values(
+    by=["lift", "confidence"],
+    ascending=False
+)
+```
+
+Confidence can be high simply because the consequent is ubiquitous. Therefore, confidence should always be evaluated alongside lift. A lift greater than 1 signals a positive association; a lift near 1 suggests independence; a lift below 1 indicates negative association/inhibition.
+
+## Comparison between FP-Growth and Apriori
+
+| Feature | FP-Growth | Apriori |
+|---|---|---|
+| Candidate generation | Not required | Required |
+| Database scans | Typically two main passes | Multiple passes |
+| Execution speed | Efficient on large and dense datasets | Slower due to iterative candidate generation |
+| Memory usage | Can be high due to FP-tree storage | Generally lower, based on candidate counters |
+| Implementation | More complex | Simpler to understand and implement |
+
+FP-Growth is preferred when datasets are large and contain dense frequent patterns. Apriori remains useful for educational purposes or lightweight tasks requiring straightforward candidate generation. In practice, algorithm selection depends on transaction density, support threshold, available memory, and the need to inspect intermediate candidate steps.
+
+## Applications
+
+FP-Growth is widely applied across domains where data is naturally set-structured:
+
+- **Market basket analysis:** identifying products frequently bought together.
+- **Recommender systems:** suggesting items, articles, or services based on co-occurrence patterns.
+- **Customer behavior analysis:** discovering purchasing habits in physical retail or e-commerce.
+- **Web usage mining:** detecting common navigation paths or clickstream sequences.
+- **Text mining:** discovering words, terms, or phrases co-occurring in documents.
+
+In all cases, frequent patterns must be interpreted cautiously. Co-occurrence does not imply causation. A rule may be statistically valid yet offer no practical value if it represents an obvious, redundant, or data-collection-biased pattern.
+
+## Pros and Cons
+
+Key advantages of FP-Growth include:
+
+- Eliminates explicit candidate generation.
+- Reduces full database scans to two passes.
+- Compresses transactions via shared prefix paths.
+- Efficiently mines long, complex frequent patterns.
+- Scales well on dense datasets where Apriori generates combinatorial explosions of candidates.
+
+Main limitations include:
+
+- FP-tree memory overhead can be substantial on sparse, uncompressible datasets.
+- Implementation complexity is higher than Apriori.
+- Recursive conditional mining can be memory-heavy when frequent patterns abound.
+- Lacks native support for incremental updates: changing data requires rebuilding the tree.
+
+These constraints do not invalidate the algorithm, but highlight the need to carefully configure support thresholds, clean input data, and evaluate pattern actionability.
+
+## Best Practices for Analysis
+
+Applying FP-Growth in real projects requires a structured, reproducible workflow:
+
+1. Formally define what constitutes a transaction.
+2. Clean and normalize items.
+3. Inspect single-item frequency distributions prior to pattern mining.
+4. Experiment with multiple minimum support thresholds.
+5. Inspect frequent itemsets before attempting rule generation.
+6. Evaluate support, confidence, and lift jointly.
+7. Validate patterns using domain knowledge.
+8. Document all decisions, thresholds, and data preprocessing assumptions.
+
+The most critical step is not running the algorithm, but defining a coherent transaction model. In text mining, choosing words vs. lemmas vs. n-grams fundamentally alters pattern meaning. In e-commerce, defining a transaction as an order vs. a session vs. a user account completely reshapes support interpretation.
+
+## Conclusions
+
+FP-Growth is a cornerstone algorithm in frequent pattern mining. Its primary contribution is replacing candidate generation with a compact data structure —the FP-tree— that stores shared prefix paths and enables mining patterns via conditional bases. This strategy drastically reduces database scans and outperforms Apriori on large or dense datasets.
+
+Conceptually, FP-Growth highlights a fundamental principle in data science: computational efficiency depends heavily on data representation. Transforming flat transaction lists into a compressed prefix tree renders frequent itemset mining manageable without sacrificing complete information retrieval.
+
+In real-world deployment, algorithmic output must be paired with rigorous domain interpretation. Frequent patterns provide valuable starting points for building hypotheses and recommendation engines, but co-occurrence does not constitute causal proof. Thus, association mining should be integrated into broader exploratory workflows informed by domain expertise and practical utility.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::
