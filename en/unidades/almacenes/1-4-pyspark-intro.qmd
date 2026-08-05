@@ -1,0 +1,269 @@
+# Introduction to PySpark and ETL Fundamentals {#sec-etl-intro-cap}
+
+## 1. What is ETL and Why Does It Matter? {#sec-etl-intro}
+
+**ETL** (*Extract, Transform, Load*) is the process of moving data from operational systems (OLTP, APIs, logs, flat files) into a Data Warehouse, transforming it along the way to ensure it is clean, consistent, and ready for analytics.
+
+::: {.callout-note}
+**Distinction with Preprocessing (Part II)**
+ETL is data engineering: it operates on production streams, terabytes of data, and fixed schemas; its output is fully automated and reproducible.
+Analytical preprocessing (Part II) takes a *cleaned dataset view* from the DW and transforms it for a specific machine learning experiment.
+The Data Warehouse serves as the handoff point between both workflows.
+:::
+
+### 1.1 Classic ETL vs. Modern ELT
+
+| | Classic ETL | Modern ELT |
+|---|---|---|
+| Order | Extract → Transform → Load | Extract → Load → Transform |
+| Execution Engine | External ETL Engine | Inside the DW / Lakehouse |
+| Tools | Informatica, SSIS, Talend | dbt + BigQuery / Snowflake / DuckDB |
+| Advantage | Data is clean upon arrival | Leverages scalable columnar DW compute |
+| Disadvantage | Potential bottleneck in ETL engine | Requires scalable and cost-effective DW compute |
+
+### 1.2 Why PySpark?
+
+When datasets exceed the RAM capacity of a single machine, pandas becomes insufficient. **Apache Spark** divides work into partitions processed concurrently across a cluster of nodes using an optimized execution plan (DAG — *Directed Acyclic Graph*).
+
+PySpark is Python's API for Spark. It enables writing transformations that scale seamlessly from a local machine (local mode) to hundreds of cloud nodes (AWS EMR, Databricks, GCP Dataproc) without altering code.
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     Spark Architecture: Interactive DAG
+     ═══════════════════════════════════════════════════════ -->
+<div id="spark-arch-wrap" style="margin:2rem 0">
+<canvas id="spark-arch-cv" width="700" height="320"
+  style="width:100%;border-radius:10px;background:#0f172a;display:block"></canvas>
+<div style="margin-top:.6rem;display:flex;gap:.8rem;flex-wrap:wrap;justify-content:center">
+  <button onclick="sparkArch.step()" style="padding:.4rem 1.2rem;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-size:.9rem">▶ Next Stage</button>
+  <button onclick="sparkArch.reset()" style="padding:.4rem 1.2rem;border-radius:6px;border:none;background:#475569;color:#fff;cursor:pointer;font-size:.9rem">↺ Reset</button>
+</div>
+<p id="spark-arch-msg" style="text-align:center;margin-top:.5rem;font-size:.9rem;color:#94a3b8;min-height:1.4em"></p>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('spark-arch-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=320;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+  const stages = [
+    { label:'Data Sources', color:'#0ea5e9', nodes:[
+        {x:60,y:80,txt:'CSV/JSON'},{x:60,y:160,txt:'OLTP DB'},{x:60,y:240,txt:'API/Kafka'}
+      ], arrows:[], msg:'Data arrives from multiple heterogeneous sources.' },
+    { label:'SparkContext / Driver', color:'#a855f7', nodes:[{x:220,y:160,txt:'Driver\nProgram'}],
+      arrows:[{fx:60,fy:80,tx:220,ty:160},{fx:60,fy:160,tx:220,ty:160},{fx:60,fy:240,tx:220,ty:160}],
+      msg:'The Driver receives Python code and constructs the logical plan (DAG).' },
+    { label:'Logical → Physical Plan', color:'#f59e0b',
+      nodes:[{x:370,y:100,txt:'Stage 1'},{x:370,y:220,txt:'Stage 2'}],
+      arrows:[{fx:220,fy:160,tx:370,ty:100},{fx:220,fy:160,tx:370,ty:220}],
+      msg:'The Catalyst Optimizer converts the logical plan into parallel physical stages.' },
+    { label:'Executors (workers)', color:'#10b981',
+      nodes:[{x:540,y:70,txt:'Exec 1\nPart A'},{x:540,y:160,txt:'Exec 2\nPart B'},{x:540,y:250,txt:'Exec 3\nPart C'}],
+      arrows:[{fx:370,fy:100,tx:540,ty:70},{fx:370,fy:100,tx:540,ty:160},{fx:370,fy:220,tx:540,ty:250}],
+      msg:'Each Executor processes a partition in parallel across its cluster node.' },
+    { label:'Output / Write', color:'#f43f5e', nodes:[{x:650,y:160,txt:'DW /\nParquet'}],
+      arrows:[{fx:540,fy:70,tx:650,ty:160},{fx:540,fy:160,tx:650,ty:160},{fx:540,fy:250,tx:650,ty:160}],
+      msg:'Results are collected and written to the destination target (Parquet, Delta, JDBC…).' }
+  ];
+  let currentStage=-1; const allNodes=[]; const allArrows=[];
+  function drawNode(x,y,txt,color,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color;
+    ctx.beginPath(); ctx.roundRect(x-42,y-22,84,44,8); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+    txt.split('\n').forEach((line,i,arr)=>{ ctx.fillText(line,x,y-(arr.length-1)*7+i*14); });
+    ctx.restore();
+  }
+  function drawArrow(fx,fy,tx,ty,color,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=2;
+    ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.setLineDash([]);
+    const angle=Math.atan2(ty-fy,tx-fx); ctx.fillStyle=color; ctx.beginPath();
+    ctx.moveTo(tx,ty); ctx.lineTo(tx-12*Math.cos(angle-0.35),ty-12*Math.sin(angle-0.35));
+    ctx.lineTo(tx-12*Math.cos(angle+0.35),ty-12*Math.sin(angle+0.35)); ctx.fill(); ctx.restore();
+  }
+  function render(){
+    ctx.clearRect(0,0,W,H); ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    allArrows.forEach(a=>drawArrow(a.fx,a.fy,a.tx,a.ty,a.color,a.alpha));
+    allNodes.forEach(n=>drawNode(n.x,n.y,n.txt,n.color,n.alpha));
+  }
+  function animatePush(items,isArrow,color){
+    let i=0;
+    function tick(){
+      if(i>=items.length){render();return;}
+      const it=items[i++];
+      const obj=isArrow?{fx:it.fx,fy:it.fy,tx:it.tx,ty:it.ty,color,alpha:0}:{x:it.x,y:it.y,txt:it.txt,color,alpha:0};
+      (isArrow?allArrows:allNodes).push(obj);
+      let t=0;
+      function fade(){obj.alpha=Math.min(1,t+=0.08);render();if(obj.alpha<1)requestAnimationFrame(fade);else tick();}
+      fade();
+    }
+    tick();
+  }
+  function step(){
+    if(currentStage>=stages.length-1)return;
+    currentStage++;
+    const s=stages[currentStage];
+    document.getElementById('spark-arch-msg').textContent=s.msg;
+    animatePush(s.arrows||[],true,s.color);
+    setTimeout(()=>animatePush(s.nodes,false,s.color),(s.arrows||[]).length*120+100);
+  }
+  function reset(){
+    currentStage=-1;allNodes.length=0;allArrows.length=0;render();
+    document.getElementById('spark-arch-msg').textContent='Click "Next Stage" to follow the Spark execution flow.';
+  }
+  window.sparkArch={step,reset};
+  reset();
+})();
+</script>
+```
+
+---
+
+## 2. Practice Environment: Databricks Community Edition {#sec-databricks}
+
+All exercises in this section run on **Databricks Community Edition**, which supplies a free Spark cluster without requiring local installation.
+
+### 2.1 Setting Up the Account
+
+1. Navigate to [community.cloud.databricks.com](https://community.cloud.databricks.com) and create a free account.
+2. In the sidebar: **Compute → Create compute** → select runtime **Databricks Runtime 14.x LTS (Spark 3.5, Python 3.11)**.
+3. Create a new **Notebook** (Language: Python).
+
+::: {.callout-important}
+In Databricks, `spark` is pre-instantiated as a global variable—do **not** instantiate a manual `SparkSession`. Simply begin queries with `spark.read...`
+:::
+
+### 2.2 Uploading Datasets to DBFS
+
+```python
+# Databricks File System (DBFS) — cluster file system
+# Option A: Upload files via UI (File → Upload data)
+
+# Option B: Download directly inside notebook using dbutils
+dbutils.fs.mkdirs("dbfs:/datasets/taxi/")
+
+# Download NYC Taxi dataset (Parquet, ~500 MB per month)
+import urllib.request
+url = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet"
+urllib.request.urlretrieve(url, "/tmp/yellow_2023_01.parquet")
+dbutils.fs.mv("file:/tmp/yellow_2023_01.parquet", "dbfs:/datasets/taxi/yellow_2023_01.parquet")
+
+# Verify download
+display(dbutils.fs.ls("dbfs:/datasets/taxi/"))
+```
+
+```python
+# Read from DBFS in Databricks
+df = spark.read.parquet("dbfs:/datasets/taxi/yellow_2023_01.parquet")
+display(df.limit(5))   # display() is Databricks' interactive alternative to show()
+```
+
+### 2.3 Databricks-Specific Commands
+
+| Command | Description |
+|---|---|
+| `display(df)` | Renders interactive tables with built-in charting |
+| `dbutils.fs.ls("dbfs:/path/")` | Lists files in DBFS |
+| `dbutils.fs.mkdirs("dbfs:/path/")` | Creates a directory in DBFS |
+| `dbutils.fs.rm("dbfs:/path/", True)` | Deletes a file or directory |
+| `%sql SELECT ...` | Executes SQL cells against registered tables |
+| `spark.catalog.listTables()` | Lists available tables in the metastore |
+
+::: {.callout-tip}
+**Delta Lake comes pre-installed in Databricks.** There is no need for `pip install delta-spark`—simply pass `.format("delta")` directly.
+:::
+
+### 2.4 Datasets for Exercises
+
+| Dataset | Size | How to obtain in Databricks |
+|---|---|---|
+| **NYC Taxi** (1 month) | ~500 MB | Download via `urllib` (see §2.2) |
+| **NYC Taxi** (Full 2023) | ~6 GB | Loop across all 12 monthly URLs |
+| **Synthetic TPC-H** | Configurable | `%pip install tpch` + `python -m tpch generate` |
+| **Databricks Sample Data** | Various | `dbfs:/databricks-datasets/` (pre-installed) |
+
+```python
+# Explore pre-installed Databricks sample datasets
+display(dbutils.fs.ls("dbfs:/databricks-datasets/"))
+# Includes: nyctaxi, airlines, wine-quality, iot-stream, retail-org, etc.
+
+# Read sample taxi dataset directly
+df_sample = spark.read.format("delta")\
+    .load("dbfs:/databricks-datasets/nyctaxi/tables/nyctaxi_yellow")
+display(df_sample.limit(10))
+```
+
+---
+
+## 3. PySpark: Core Fundamentals {#sec-pyspark-fundamentos}
+
+### 3.1 SparkSession
+
+In **Databricks**, the `SparkSession` is automatically exposed as `spark`. In local environments:
+
+```python
+from pyspark.sql import SparkSession
+
+# Only required outside of Databricks
+spark = (SparkSession.builder
+    .appName("ETL-Data-Mining")
+    .master("local[*]")
+    .config("spark.sql.shuffle.partitions", "8")
+    .getOrCreate())
+```
+
+### 3.2 Spark DataFrames: Lazy vs. Eager Execution
+
+```python
+# Transformations (lazy) — build logical execution graph without computing results
+df = spark.read.parquet("dbfs:/datasets/taxi/yellow_2023_01.parquet")
+df2 = df.filter(df.trip_distance > 1.0)
+df3 = df2.select("tpep_pickup_datetime", "trip_distance", "total_amount")
+
+# Actions — trigger execution of the full DAG
+df3.show(5)    # or display(df3) in Databricks
+df3.count()
+```
+
+| Concept | Meaning |
+|---|---|
+| **Transformation** | `filter`, `select`, `groupBy`, `join` — construct the DAG |
+| **Action** | `show`, `count`, `collect`, `write` — execute the DAG |
+| **Partition** | Parallel unit of work; typically corresponds to one file output per partition |
+| **RDD** | Low-level execution abstraction; use DataFrames unless handling raw custom objects |
+
+### 3.3 Explicit Schemas (Best Practice)
+
+```python
+from pyspark.sql.types import *
+
+schema = StructType([
+    StructField("tpep_pickup_datetime",  TimestampType(), True),
+    StructField("tpep_dropoff_datetime", TimestampType(), True),
+    StructField("passenger_count",       IntegerType(),   True),
+    StructField("trip_distance",         DoubleType(),    True),
+    StructField("fare_amount",           DoubleType(),    True),
+    StructField("tip_amount",            DoubleType(),    True),
+    StructField("total_amount",          DoubleType(),    True),
+    StructField("payment_type",          IntegerType(),   True),
+])
+
+df = spark.read.parquet("dbfs:/datasets/taxi/yellow_2023_01.parquet")
+# Parquet embeds schema metadata; for CSV/JSON files, declare explicit schemas:
+# df = spark.read.csv("dbfs:/path.csv", header=True, schema=schema)
+```
+
+Using `inferSchema=True` forces a full scan over raw files; specifying explicit schemas accelerates read operations and avoids unexpected type inference errors.
+
+---
+
+## References for this Chapter {#sec-etl-refs-intro}
+
+- Chambers & Zaharia. *Spark: The Definitive Guide*. O'Reilly, 2018.
+- [PySpark Documentation](https://spark.apache.org/docs/latest/api/python/)
+- [Databricks Community Edition](https://community.cloud.databricks.com)
+- [Databricks Free Training](https://www.databricks.com/learn/training/home) — official free courses.

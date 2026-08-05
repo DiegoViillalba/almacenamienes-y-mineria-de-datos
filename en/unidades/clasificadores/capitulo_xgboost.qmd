@@ -1,0 +1,771 @@
+---
+title: "Gradient Boosting and XGBoost"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_xgboost.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+XGBoost (*eXtreme Gradient Boosting*) was introduced by Chen and Guestrin in 2016 [@chen2016xgboost] and has since dominated machine learning competitions on Kaggle and benchmark platforms. It is a regularized, second-order optimized implementation of the gradient boosting algorithm [@friedman2001greedy], incorporating key innovations in approximate split finding, efficient sparse data handling, and system-level scalability. This chapter covers the mathematical foundations of the algorithm, its primary hyperparameters, variable importance interpretation using SHAP, and practical implementation in Python.
+
+## From Decision Trees to Boosting
+
+### The Bias–Variance Trade-off and Individual Trees
+
+A deep decision tree has the capacity to memorize training data: as depth increases, the model fits observed data ever more closely and its variance increases. Conversely, a shallow tree (or single-level decision stump) exhibits high bias due to limited expressive capacity. This bias–variance trade-off is central to machine learning and motivates ensemble learning.
+
+Ensemble methods combine multiple weak learners to form a strong predictor. In *bagging* (e.g., Random Forest [@breiman2001random]), decision trees are trained independently on bootstrap samples, and predictions are averaged to reduce variance. In *boosting*, the strategy differs: models are constructed sequentially, where each new tree learns from the residual errors of the preceding ensemble, progressively reducing bias.
+
+```{python}
+#| label: fig-gb-sesgo-varianza
+#| fig-cap: "Illustration of the bias-variance trade-off for decision trees of varying depth. A shallow tree (depth 1) exhibits high bias, while a very deep tree (depth 10) exhibits high variance."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.tree import DecisionTreeRegressor
+
+rng = np.random.default_rng(42)
+n = 80
+X_raw = np.sort(rng.uniform(0, 2 * np.pi, n))
+y_raw = np.sin(X_raw) + rng.normal(0, 0.35, n)
+X_fit = X_raw.reshape(-1, 1)
+
+X_plot = np.linspace(0, 2 * np.pi, 300).reshape(-1, 1)
+
+profundidades = [1, 3, 10]
+titulos = [
+    "Depth 1 Tree (High Bias)",
+    "Depth 3 Tree (Balanced)",
+    "Depth 10 Tree (High Variance)"
+]
+
+fig = make_subplots(rows=1, cols=3, subplot_titles=titulos)
+
+for idx, (depth, titulo) in enumerate(zip(profundidades, titulos), start=1):
+    tree = DecisionTreeRegressor(max_depth=depth, random_state=0)
+    tree.fit(X_fit, y_raw)
+    y_pred = tree.predict(X_plot)
+
+    fig.add_trace(
+        go.Scatter(
+            x=X_raw, y=y_raw,
+            mode="markers",
+            marker=dict(color="#94a3b8", size=5),
+            name="Data",
+            showlegend=(idx == 1)
+        ),
+        row=1, col=idx
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=X_plot.flatten(), y=y_pred,
+            mode="lines",
+            line=dict(color="#2563eb", width=2.5),
+            name="Prediction",
+            showlegend=(idx == 1)
+        ),
+        row=1, col=idx
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=X_plot.flatten(), y=np.sin(X_plot.flatten()),
+            mode="lines",
+            line=dict(color="black", dash="dash", width=1.5),
+            name="True Function",
+            showlegend=(idx == 1)
+        ),
+        row=1, col=idx
+    )
+
+fig.update_layout(
+    height=380,
+    template="plotly_white",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5)
+)
+fig.update_xaxes(title_text="x")
+fig.update_yaxes(title_text="y", col=1)
+fig.show()
+```
+
+@fig-gb-sesgo-varianza demonstrates how tree depth controls the balance between bias and variance. A depth-3 tree achieves a reasonable fit without overfitting noise.
+
+### Boosting: Sequential Residual Learning
+
+Boosting builds an additive model sequentially. Starting from a constant initial prediction:
+
+$$F_0(\mathbf{x}) = \underset{\gamma}{\mathrm{argmin}} \sum_{i=1}^{n} L(y_i, \gamma)$$ {#eq-f0}
+
+At each iteration $m = 1, \ldots, M$, negative gradients (pseudo-residuals) of the loss function evaluated at the current ensemble prediction are computed:
+
+$$r_i^{(m)} = -\left[\frac{\partial L(y_i, F(\mathbf{x}_i))}{\partial F(\mathbf{x}_i)}\right]_{F = F_{m-1}}$$ {#eq-pseudoresiduos}
+
+A weak base learner $h_m$ is fitted to these pseudo-residuals, and the ensemble is updated:
+
+$$F_m(\mathbf{x}) = F_{m-1}(\mathbf{x}) + \eta \cdot h_m(\mathbf{x})$$ {#eq-actualizacion}
+
+where $\eta \in (0, 1]$ is the learning rate or *shrinkage* parameter. For squared error loss $L(y, F) = \tfrac{1}{2}(y - F)^2$, the negative gradient simplifies to ordinary residuals $r_i = y_i - F_{m-1}(\mathbf{x}_i)$. Thus, the algorithm iteratively fits ensemble errors: each new tree targets what previous trees failed to explain.
+
+::: {.callout-note appearance="minimal"}
+**Gradient Boosting (Simplified Overview)**
+
+1. Initialize constant prediction $F_0(\mathbf{x}) = \bar{y}$ (target mean).
+2. For $m = 1, \ldots, M$:
+   - Compute residuals $r_i^{(m)} = y_i - F_{m-1}(\mathbf{x}_i)$.
+   - Fit weak base learner $h_m$ to $\{(\mathbf{x}_i, r_i^{(m)})\}_{i=1}^n$.
+   - Update ensemble $F_m(\mathbf{x}) = F_{m-1}(\mathbf{x}) + \eta \cdot h_m(\mathbf{x})$.
+3. Return final model $F_M(\mathbf{x})$.
+:::
+
+The following interactive plot illustrates the iterative convergence of gradient boosting implemented from scratch:
+
+```{python}
+#| label: fig-gb-pasos
+#| fig-cap: "Iterative convergence of gradient boosting on a 1D regression problem. Each frame shows the accumulated ensemble prediction (blue) and current residuals (orange) after adding M trees."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng2 = np.random.default_rng(7)
+n2 = 60
+X2 = np.sort(rng2.uniform(0, 2 * np.pi, n2)).reshape(-1, 1)
+y2 = np.sin(X2.flatten()) + rng2.normal(0, 0.3, n2)
+X_line = np.linspace(0, 2 * np.pi, 300).reshape(-1, 1)
+y_true_line = np.sin(X_line.flatten())
+
+
+class Stump:
+    def fit(self, X, r):
+        best_feat, best_thr, best_loss = 0, 0, float("inf")
+        for feat in range(X.shape[1]):
+            thresholds = np.unique(X[:, feat])
+            for thr in thresholds:
+                left = r[X[:, feat] <= thr]
+                right = r[X[:, feat] > thr]
+                if len(left) == 0 or len(right) == 0:
+                    continue
+                loss = np.sum((left - left.mean()) ** 2) + np.sum((right - right.mean()) ** 2)
+                if loss < best_loss:
+                    best_loss = loss
+                    best_feat, best_thr = feat, thr
+                    self.val_left, self.val_right = left.mean(), right.mean()
+        self.feat, self.thr = best_feat, best_thr
+
+    def predict(self, X):
+        return np.where(X[:, self.feat] <= self.thr, self.val_left, self.val_right)
+
+
+eta = 0.5
+M_max = 20
+stumps = []
+F_current = np.full(n2, y2.mean())
+
+snapshots = {}
+rondas = [1, 2, 3, 5, 10, 20]
+
+for m in range(1, M_max + 1):
+    residuos = y2 - F_current
+    stump = Stump()
+    stump.fit(X2, residuos)
+    stumps.append(stump)
+    F_current = F_current + eta * stump.predict(X2)
+    if m in rondas:
+        F_line = np.full(300, y2.mean())
+        for s in stumps:
+            F_line = F_line + eta * s.predict(X_line)
+        snapshots[m] = {
+            "F_line": F_line.copy(),
+            "residuos": (y2 - F_current).copy()
+        }
+
+frames = []
+for m in rondas:
+    snap = snapshots[m]
+    frame = go.Frame(
+        data=[
+            go.Scatter(
+                x=X2.flatten(), y=y2,
+                mode="markers",
+                marker=dict(color="#94a3b8", size=6),
+                name="Data"
+            ),
+            go.Scatter(
+                x=X_line.flatten(), y=y_true_line,
+                mode="lines",
+                line=dict(color="black", dash="dash", width=1.5),
+                name="True Function"
+            ),
+            go.Scatter(
+                x=X_line.flatten(), y=snap["F_line"],
+                mode="lines",
+                line=dict(color="#2563eb", width=2.5),
+                name="Prediction F_m"
+            ),
+            go.Scatter(
+                x=X2.flatten(), y=snap["residuos"],
+                mode="markers",
+                marker=dict(color="#f97316", size=6, symbol="diamond"),
+                name="Residuals"
+            )
+        ],
+        name=str(m)
+    )
+    frames.append(frame)
+
+snap0 = snapshots[1]
+fig2 = go.Figure(
+    data=[
+        go.Scatter(x=X2.flatten(), y=y2, mode="markers",
+                   marker=dict(color="#94a3b8", size=6), name="Data"),
+        go.Scatter(x=X_line.flatten(), y=y_true_line, mode="lines",
+                   line=dict(color="black", dash="dash", width=1.5), name="True Function"),
+        go.Scatter(x=X_line.flatten(), y=snap0["F_line"], mode="lines",
+                   line=dict(color="#2563eb", width=2.5), name="Prediction F_m"),
+        go.Scatter(x=X2.flatten(), y=snap0["residuos"], mode="markers",
+                   marker=dict(color="#f97316", size=6, symbol="diamond"), name="Residuals")
+    ],
+    frames=frames
+)
+
+steps = []
+for m in rondas:
+    step = dict(
+        method="animate",
+        args=[[str(m)], {"frame": {"duration": 600, "redraw": True}, "mode": "immediate"}],
+        label=str(m)
+    )
+    steps.append(step)
+
+fig2.update_layout(
+    template="plotly_white",
+    height=440,
+    xaxis_title="x",
+    yaxis_title="y",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+    sliders=[dict(
+        active=0,
+        currentvalue=dict(prefix="M = ", font=dict(size=14)),
+        pad=dict(t=50),
+        steps=steps
+    )],
+    updatemenus=[dict(
+        type="buttons",
+        showactive=False,
+        y=1.1, x=0.5, xanchor="center",
+        buttons=[
+            dict(label="Play", method="animate",
+                 args=[None, {"frame": {"duration": 800, "redraw": True}, "fromcurrent": True}]),
+            dict(label="Pause", method="animate",
+                 args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
+        ]
+    )]
+)
+fig2.show()
+```
+
+As seen in @fig-gb-pasos, residual errors (orange diamonds) progressively shrink as trees are added, and prediction curves (blue) converge toward the underlying true function (dashed black).
+
+Learning rate $\eta$ in @eq-actualizacion acts as a convergence rate controller. Setting $\eta=1$ aggressively corrects errors at each step, accelerating overfitting risks. Smaller $\eta$ values require more boosting rounds but yield superior generalization (*shrinkage*, @friedman2002stochastic).
+
+Gradient boosting (@eq-pseudoresiduos) represents functional gradient descent: updating target functions directly in function space rather than updating parametric weights in Euclidean space [@friedman2001greedy].
+
+## XGBoost Optimization Objective
+
+### Additive Model and Regularized Objective
+
+XGBoost builds additive tree models:
+
+$$\hat{y}_i^{(t)} = \sum_{k=1}^{t} f_k(\mathbf{x}_i), \quad f_k \in \mathcal{F}$$ {#eq-modelo-aditivo}
+
+where $\mathcal{F}$ is the space of regression trees. At round $t$, tree $f_t$ is chosen to minimize the regularized objective:
+
+$$\text{Obj}^{(t)} = \sum_{i=1}^{n} l\!\left(y_i,\, \hat{y}_i^{(t-1)} + f_t(\mathbf{x}_i)\right) + \Omega(f_t) + \text{constant}$$ {#eq-objetivo}
+
+Regularization penalty $\Omega$ penalizes leaf counts and weight magnitudes:
+
+$$\Omega(f) = \gamma T + \frac{1}{2}\lambda\|\mathbf{w}\|^2$$ {#eq-regularizacion}
+
+where $T$ is the number of terminal leaves in $f_t$ and $\mathbf{w}$ denotes leaf weights. Parameter $\gamma$ controls pruning thresholding while $\lambda$ imposes L2 weight regularization.
+
+::: {.callout-note appearance="minimal"}
+**Key Innovation in XGBoost:** Unlike classic gradient boosting [@friedman2001greedy], XGBoost incorporates explicit structural regularization directly into its optimization objective and uses second-order Taylor expansions (hessians) to derive optimal leaf weights analytically.
+:::
+
+### Second-Order Taylor Approximation
+
+Applying a second-order Taylor expansion around $\hat{y}_i^{(t-1)}$:
+
+$$l\!\left(y_i, \hat{y}_i^{(t-1)} + f_t\right) \approx l\!\left(y_i, \hat{y}_i^{(t-1)}\right) + g_i f_t(\mathbf{x}_i) + \frac{1}{2} h_i f_t^2(\mathbf{x}_i)$$ {#eq-taylor}
+
+where:
+
+$$g_i = \frac{\partial\, l(y_i, \hat{y}^{(t-1)})}{\partial\, \hat{y}^{(t-1)}} \quad \text{(first-order gradient)}$$ {#eq-gradiente}
+
+$$h_i = \frac{\partial^2\, l(y_i, \hat{y}^{(t-1)})}{\partial\, (\hat{y}^{(t-1)})^2} \quad \text{(second-order hessian / local curvature)}$$ {#eq-hessiano}
+
+Removing constant terms yields the simplified objective at step $t$:
+
+$$\tilde{\text{Obj}}^{(t)} = \sum_{i=1}^{n}\left[g_i f_t(\mathbf{x}_i) + \frac{1}{2}h_i f_t^2(\mathbf{x}_i)\right] + \gamma T + \frac{1}{2}\lambda\sum_{j=1}^{T}w_j^2$$ {#eq-objetivo-simplificado}
+
+This quadratic formulation is exact for squared error loss and provides an effective local quadratic approximation for any twice-differentiable loss function.
+
+```{python}
+#| label: fig-xgb-taylor
+#| fig-cap: "Second-order Taylor expansion of loss function. Left: true loss curve (black), linear approximation (orange), and quadratic approximation (blue) around expansion point F=-0.3. Right: quadratic objective contribution vs. Delta step, with analytical optimum highlighted."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+y_obs = 1.0
+F0 = -0.3
+
+F_vals = np.linspace(-2.0, 2.5, 400)
+loss_true = 0.5 * (y_obs - F_vals) ** 2
+
+g_i = -(y_obs - F0)
+h_i = 1.0
+
+loss_linear = 0.5 * (y_obs - F0) ** 2 + g_i * (F_vals - F0)
+loss_quadratic = 0.5 * (y_obs - F0) ** 2 + g_i * (F_vals - F0) + 0.5 * h_i * (F_vals - F0) ** 2
+
+lam = 1.0
+delta_vals = np.linspace(-3.0, 3.0, 400)
+obj_delta = g_i * delta_vals + 0.5 * (h_i + lam) * delta_vals ** 2
+delta_opt = -g_i / (h_i + lam)
+obj_opt = g_i * delta_opt + 0.5 * (h_i + lam) * delta_opt ** 2
+
+fig3 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "Loss Curve & Taylor Approximation",
+        "Quadratic Objective Contribution (with lambda)"
+    ]
+)
+
+fig3.add_trace(
+    go.Scatter(x=F_vals, y=loss_true, mode="lines",
+               line=dict(color="black", width=2.5),
+               name="True Loss L(y, F)"),
+    row=1, col=1
+)
+fig3.add_trace(
+    go.Scatter(x=F_vals, y=loss_linear, mode="lines",
+               line=dict(color="#f97316", width=1.8, dash="dot"),
+               name="Linear Approx (1st Order)"),
+    row=1, col=1
+)
+fig3.add_trace(
+    go.Scatter(x=F_vals, y=loss_quadratic, mode="lines",
+               line=dict(color="#2563eb", width=2.0, dash="dash"),
+               name="Quadratic Approx (2nd Order)"),
+    row=1, col=1
+)
+fig3.add_trace(
+    go.Scatter(x=[F0], y=[0.5 * (y_obs - F0) ** 2],
+               mode="markers",
+               marker=dict(color="red", size=10, symbol="circle"),
+               name="Expansion Point F_0"),
+    row=1, col=1
+)
+
+fig3.add_trace(
+    go.Scatter(x=delta_vals, y=obj_delta, mode="lines",
+               line=dict(color="#2563eb", width=2.5),
+               name="g*Delta + (1/2)(h+lambda)*Delta^2",
+               showlegend=True),
+    row=1, col=2
+)
+fig3.add_trace(
+    go.Scatter(
+        x=[delta_opt, delta_opt],
+        y=[obj_delta.min() - 0.3, obj_delta.max()],
+        mode="lines",
+        line=dict(color="red", dash="dash", width=1.8),
+        name="Optimal Delta* = -g/(h+lambda)"
+    ),
+    row=1, col=2
+)
+fig3.add_trace(
+    go.Scatter(x=[delta_opt], y=[obj_opt],
+               mode="markers",
+               marker=dict(color="red", size=10),
+               name="Analytical Minimum",
+               showlegend=False),
+    row=1, col=2
+)
+fig3.add_annotation(
+    x=delta_opt, y=obj_opt - 0.5,
+    text=f"Delta* = {delta_opt:.2f}",
+    showarrow=True, arrowhead=2,
+    font=dict(size=12, color="red"),
+    row=1, col=2
+)
+
+fig3.update_xaxes(title_text="F (Prediction)", row=1, col=1)
+fig3.update_yaxes(title_text="Loss L(y, F)", row=1, col=1)
+fig3.update_xaxes(title_text="Delta (Prediction Change)", row=1, col=2)
+fig3.update_yaxes(title_text="Objective Contribution", row=1, col=2)
+fig3.update_layout(
+    height=420,
+    template="plotly_white",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5)
+)
+fig3.show()
+```
+
+### Optimal Leaf Weights
+
+Grouping sample indices by terminal leaf node $j$ ($I_j = \{i : q(\mathbf{x}_i) = j\}$):
+
+$$\tilde{\text{Obj}}^{(t)} = \sum_{j=1}^{T}\left[\left(\sum_{i\in I_j}g_i\right)w_j + \frac{1}{2}\left(\sum_{i\in I_j}h_i + \lambda\right)w_j^2\right] + \gamma T$$ {#eq-objetivo-hojas}
+
+Defining $G_j = \sum_{i\in I_j} g_i$ and $H_j = \sum_{i\in I_j} h_i$, solving $\frac{\partial \tilde{\text{Obj}}}{\partial w_j} = 0$ yields optimal leaf weight $w_j^*$:
+
+$$w_j^* = -\frac{G_j}{H_j + \lambda}$$ {#eq-peso-optimo}
+
+Substituting optimal weights back into the objective yields the structure score:
+
+$$\text{Obj}^* = -\frac{1}{2}\sum_{j=1}^{T}\frac{G_j^2}{H_j + \lambda} + \gamma T$$ {#eq-objetivo-optimo}
+
+### Split Gain Metric
+
+For a node split dividing parent node $P$ into left ($L$) and right ($R$) children:
+
+$$\text{Gain} = \frac{1}{2}\left[\frac{G_L^2}{H_L+\lambda} + \frac{G_R^2}{H_R+\lambda} - \frac{G_P^2}{H_P+\lambda}\right] - \gamma$$ {#eq-ganancia}
+
+If $\text{Gain} \le 0$, the candidate split is pruned.
+
+```{python}
+#| label: fig-xgb-ganancia
+#| fig-cap: "Split gain as a function of cut threshold for a synthetic 1D dataset. Dashed red line indicates optimal split threshold (maximum gain). Dashed gray line indicates Gain=0 pruning threshold when gamma=0."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng3 = np.random.default_rng(21)
+n3 = 150
+X3 = np.sort(rng3.uniform(0, 10, n3))
+y3 = 2.0 * np.sin(X3 * 0.8) + rng3.normal(0, 0.5, n3)
+
+F_prev = np.full(n3, y3.mean())
+g_vals = -(y3 - F_prev)
+h_vals = np.ones(n3)
+
+lam3 = 1.0
+G_total = g_vals.sum()
+H_total = h_vals.sum()
+score_parent = G_total ** 2 / (H_total + lam3)
+
+thresholds = np.unique(X3)[1:-1]
+gains = []
+
+for thr in thresholds:
+    left_mask = X3 <= thr
+    right_mask = ~left_mask
+    G_L = g_vals[left_mask].sum()
+    H_L = h_vals[left_mask].sum()
+    G_R = g_vals[right_mask].sum()
+    H_R = h_vals[right_mask].sum()
+    if H_L + lam3 <= 0 or H_R + lam3 <= 0:
+        gains.append(float("nan"))
+        continue
+    gain = 0.5 * (G_L ** 2 / (H_L + lam3) + G_R ** 2 / (H_R + lam3) - score_parent)
+    gains.append(gain)
+
+gains = np.array(gains)
+best_idx = np.nanargmax(gains)
+best_thr = thresholds[best_idx]
+best_gain = gains[best_idx]
+
+fig4 = go.Figure()
+
+fig4.add_trace(go.Scatter(
+    x=thresholds, y=gains,
+    mode="lines",
+    fill="tozeroy",
+    fillcolor="rgba(37, 99, 235, 0.15)",
+    line=dict(color="#2563eb", width=2.0),
+    name="Gain"
+))
+fig4.add_trace(go.Scatter(
+    x=[best_thr, best_thr],
+    y=[gains.min() - 0.5, best_gain],
+    mode="lines",
+    line=dict(color="red", dash="dash", width=2.0),
+    name=f"Optimal Threshold = {best_thr:.2f}"
+))
+fig4.add_trace(go.Scatter(
+    x=[thresholds.min(), thresholds.max()],
+    y=[0, 0],
+    mode="lines",
+    line=dict(color="gray", dash="dash", width=1.5),
+    name="Gain = 0 (Pruning)"
+))
+fig4.add_annotation(
+    x=best_thr, y=best_gain + 0.3,
+    text=f"Optimal: thr={best_thr:.2f}, Gain={best_gain:.2f}",
+    showarrow=True, arrowhead=2,
+    font=dict(size=12, color="red")
+)
+fig4.update_layout(
+    template="plotly_white",
+    height=400,
+    xaxis_title="Split Threshold",
+    yaxis_title="Gain",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
+)
+fig4.show()
+```
+
+### Approximate Split Finding and Sparsity Awareness
+
+For massive datasets, exact greedy split search is computationally prohibitive. XGBoost employs a weighted quantile sketch strategy to propose candidate split points $\mathcal{S}_k = \{s_{k1}, s_{k2}, \ldots, s_{kl}\}$ based on feature distributions weighted by hessians $h_i$ [@chen2016xgboost]:
+
+$$\text{rank}_k(z) = \frac{\sum_{(x,h): x_k < z} h}{\sum_{(x,h)} h}$$ {#eq-rank}
+
+XGBoost also features native **sparsity awareness**: it learns default split directions for missing or zero values at each node, bypassing pre-imputation requirements.
+
+## Key Hyperparameters
+
+| Parameter | Description | Typical Value |
+|---|---|---|
+| `n_estimators` | Total boosting rounds (trees) | 100–1000 |
+| `max_depth` | Maximum tree depth per weak learner | 3–8 |
+| `learning_rate` ($\eta$) | Shrinkage step size | 0.01–0.3 |
+| `subsample` | Row subsampling ratio per tree | 0.6–1.0 |
+| `colsample_bytree` | Feature subsampling ratio per tree | 0.6–1.0 |
+| `min_child_weight` | Minimum sum of instance hessian $H_j$ per leaf | 1–10 |
+| `gamma` ($\gamma$) | Minimum gain threshold required for node split | 0–5 |
+| `reg_alpha` | L1 regularization weight on leaf values | 0–1 |
+| `reg_lambda` | L2 regularization weight on leaf values | 1 (default) |
+
+: Primary XGBoost Hyperparameters. {#tbl-hiperparametros}
+
+### Early Stopping Demonstration
+
+```python
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_ca = fetch_california_housing()
+X_ca, y_ca = data_ca.data, data_ca.target
+X_tr, X_va, y_tr, y_va = train_test_split(X_ca, y_ca, test_size=0.2, random_state=42)
+
+dtrain = xgb.DMatrix(X_tr, label=y_tr)
+dval = xgb.DMatrix(X_va, label=y_va)
+
+params = {
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "seed": 42
+}
+
+evals_result = {}
+model_conv = xgb.train(
+    params,
+    dtrain,
+    num_boost_round=300,
+    evals=[(dtrain, "train"), (dval, "validation")],
+    early_stopping_rounds=20,
+    evals_result=evals_result,
+    verbose_eval=False
+)
+
+best_round = model_conv.best_iteration
+print(f"Optimal boosting round (early stopping): {best_round + 1}")
+```
+
+## Variable Importance Metrics
+
+XGBoost evaluates feature importance via three metrics:
+
+1. **Weight (frequency):** Relative count of splits on feature $k$ across all trees.
+2. **Gain:** Average loss reduction achieved by splits on feature $k$ ($\text{Gain}_k = \frac{1}{|\mathcal{T}_k|} \sum_{t \in \mathcal{T}_k} \text{Gain}_t$, @eq-importancia-gain).
+3. **Coverage:** Average sample count passing through splits on feature $k$.
+
+## Feature Contributions (SHAP Values) {#sec-shap}
+
+SHAP values (@lundberg2017unified; @lundberg2020local2global) decompose individual predictions into additive feature contributions:
+
+$$\hat{y}_i = \phi_0 + \sum_{j=1}^{p} \phi_j$$ {#eq-shap}
+
+where $\phi_0 = \mathbb{E}[\hat{y}]$ is baseline expectation and $\phi_j$ is feature $j$'s localized contribution for instance $i$.
+
+```{python}
+#| label: fig-xgb-waterfall
+#| fig-cap: "Waterfall plot displaying localized feature contributions for a single instance in California Housing. Green bars increase prediction; red bars decrease prediction."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+data_wf = fetch_california_housing()
+X_wf, y_wf = data_wf.data, data_wf.target
+feat_names_wf = list(data_wf.feature_names)
+
+X_tr_wf, X_te_wf, y_tr_wf, y_te_wf = train_test_split(X_wf, y_wf, test_size=0.2, random_state=42)
+
+dtrain_wf = xgb.DMatrix(X_tr_wf, label=y_tr_wf, feature_names=feat_names_wf)
+
+params_wf = {
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "seed": 42
+}
+evals_wf = {}
+model_wf = xgb.train(
+    params_wf, dtrain_wf,
+    num_boost_round=300,
+    evals=[(dtrain_wf, "train")],
+    evals_result=evals_wf,
+    verbose_eval=False
+)
+
+obs_idx = 42
+X_single = X_te_wf[obs_idx:obs_idx + 1]
+d_single = xgb.DMatrix(X_single, feature_names=feat_names_wf)
+
+contribs = model_wf.predict(d_single, pred_contribs=True)[0]
+bias = contribs[-1]
+feature_contribs = contribs[:-1]
+
+sorted_idx = np.argsort(np.abs(feature_contribs))[::-1]
+sorted_feats = [feat_names_wf[i] for i in sorted_idx]
+sorted_contribs = feature_contribs[sorted_idx]
+
+running = [bias]
+for c in sorted_contribs:
+    running.append(running[-1] + c)
+
+final_pred = running[-1]
+labels = ["Base"] + sorted_feats
+measures = ["absolute"] + ["relative"] * len(sorted_feats)
+
+fig9 = go.Figure(go.Waterfall(
+    orientation="v",
+    measure=measures,
+    x=labels,
+    y=[bias] + sorted_contribs.tolist(),
+    connector=dict(line=dict(color="gray", width=1)),
+    increasing=dict(marker=dict(color="#16a34a")),
+    decreasing=dict(marker=dict(color="#dc2626")),
+    totals=dict(marker=dict(color="#6366f1"))
+))
+
+fig9.add_annotation(
+    x=len(labels) - 1,
+    y=final_pred + 0.15,
+    text=f"Final Prediction: {final_pred:.3f}",
+    showarrow=True,
+    arrowhead=2,
+    font=dict(size=12, color="black")
+)
+
+fig9.update_layout(
+    title="Individual Feature Contributions (TreeSHAP)",
+    template="plotly_white",
+    height=480,
+    xaxis_title="Feature",
+    yaxis_title="Prediction Contribution",
+    showlegend=False
+)
+fig9.show()
+```
+
+## XGBoost for Classification
+
+- **Binary Classification:** `objective="binary:logistic"`, $p_i = \sigma(\hat{y}_i)$, $g_i = p_i - y_i$, $h_i = p_i(1-p_i)$.
+- **Multiclass Classification:** `objective="multi:softprob"` with `num_class=K`.
+
+```python
+from sklearn.datasets import load_breast_cancer
+from sklearn.metrics import roc_auc_score
+import xgboost as xgb
+
+data_clf = load_breast_cancer()
+X_c, y_c = data_clf.data, data_clf.target
+X_tr_c, X_te_c, y_tr_c, y_te_c = train_test_split(X_c, y_c, test_size=0.2, random_state=42)
+
+clf = xgb.XGBClassifier(
+    n_estimators=100, max_depth=4, learning_rate=0.1,
+    subsample=0.8, colsample_bytree=0.8, eval_metric="logloss",
+    random_state=42, verbosity=0
+)
+clf.fit(X_tr_c, y_tr_c)
+auc_score = roc_auc_score(y_te_c, clf.predict_proba(X_te_c)[:, 1])
+print(f"Test ROC-AUC: {auc_score:.4f}")
+```
+
+## Best Practices and Ensemble Comparisons
+
+| Method | Complexity | Interpretability | Typical Performance |
+|---|---|---|---|
+| Single Tree | Low | High | Low |
+| Random Forest | Medium | Medium | Good |
+| Gradient Boosting (sklearn) | Medium | Medium | Very Good |
+| XGBoost | Medium-High | Medium (+ SHAP) | Excellent |
+| LightGBM / CatBoost | Medium-High | Medium (+ SHAP) | Excellent |
+
+: Model Comparison across Ensemble Frameworks. {#tbl-comparacion}
+
+Key operational recommendations:
+
+1. Always enforce **early stopping** (`early_stopping_rounds`) on validation sets.
+2. Enable feature and instance subsampling (`subsample=0.8`, `colsample_bytree=0.8`).
+3. Evaluate global feature importance via `gain` rather than `weight`.
+4. Utilize SHAP waterfall plots for granular localized prediction explanations.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

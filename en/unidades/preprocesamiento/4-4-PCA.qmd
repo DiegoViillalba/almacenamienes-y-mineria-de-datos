@@ -1,0 +1,529 @@
+---
+title: "Dimensionality Reduction with PCA"
+format:
+  html:
+    code-fold: true
+    theme: cosmo
+execute:
+  echo: true
+  warning: false
+---
+
+```{python}
+#| include: false
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.datasets import load_iris, make_blobs
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+Exploratory data analysis (EDA) has evolved significantly in recent years. While classic approaches focused on descriptive statistics and basic visualizations, modern multivariate EDA recognizes that real-world data is inherently high-dimensional and that understanding it requires integrating multiple analytical levels in a structured manner.
+
+# The Curse of Dimensionality
+
+When the number of variables $p$ grows, spatial geometry becomes deeply counterintuitive. The phenomenon known as the **curse of dimensionality** (Bellman, 1957) describes how spatial volume expands so rapidly that data points inevitably become sparse.
+
+Consider a hypersphere of radius $r$ inscribed within a hypercube of side length $2r$ in $\mathbb{R}^d$. The ratio of sphere volume to hypercube volume is:
+
+$$
+\frac{V_{\text{sphere}}}{V_{\text{cube}}} = \frac{\pi^{d/2} r^d}{\Gamma(d/2 + 1) \cdot (2r)^d} = \frac{\pi^{d/2}}{2^d \, \Gamma(d/2 + 1)}
+$$
+
+In 2 and 3 dimensions, this ratio is relatively large (~78% and ~52% respectively), as shown in the following interactive visualization where $r=1$.
+
+```{python}
+#| echo: false
+
+# --- 2D: circle inscribed in square ---
+theta = np.linspace(0, 2 * np.pi, 300)
+cx, cy = np.cos(theta), np.sin(theta)
+square_x = [-1, 1, 1, -1, -1]
+square_y = [-1, -1, 1, 1, -1]
+
+# --- 3D: sphere inscribed in cube ---
+u = np.linspace(0, np.pi, 40)
+v = np.linspace(0, 2 * np.pi, 40)
+sx = np.outer(np.sin(u), np.cos(v))
+sy = np.outer(np.sin(u), np.sin(v))
+sz = np.outer(np.cos(u), np.ones_like(v))
+
+corners = np.array([[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+                    [-1,-1, 1],[1,-1, 1],[1,1, 1],[-1,1, 1]])
+edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),
+         (0,4),(1,5),(2,6),(3,7)]
+
+fig = make_subplots(
+    rows=1, cols=2,
+    column_widths=[0.45, 0.55],
+    specs=[[{"type": "xy"}, {"type": "scene"}]],
+    subplot_titles=[
+        "d = 2 · Circle in square (~78%)",
+        "d = 3 · Sphere in cube (~52%)"
+    ]
+)
+
+# 2D — square
+fig.add_trace(go.Scatter(
+    x=square_x, y=square_y,
+    mode='lines', line=dict(color='royalblue', width=2.5),
+    fill='toself', fillcolor='rgba(65,105,225,0.10)',
+    name='Square', showlegend=False
+), row=1, col=1)
+
+# 2D — circle
+fig.add_trace(go.Scatter(
+    x=cx, y=cy,
+    mode='lines', line=dict(color='crimson', width=2.5),
+    fill='toself', fillcolor='rgba(220,20,60,0.18)',
+    name='Circle', showlegend=False
+), row=1, col=1)
+
+fig.add_annotation(
+    x=0, y=-1.38, xref='x', yref='y',
+    text="<b>V<sub>circle</sub> / V<sub>square</sub> = π/4 ≈ 78%</b>",
+    showarrow=False, font=dict(size=13, color='crimson'), xanchor='center'
+)
+
+fig.update_xaxes(range=[-1.5, 1.5], scaleanchor='y',
+                 showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+fig.update_yaxes(range=[-1.6, 1.3],
+                 showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+
+# 3D — cube edges
+for (i, j) in edges:
+    p0, p1 = corners[i], corners[j]
+    fig.add_trace(go.Scatter3d(
+        x=[p0[0], p1[0]], y=[p0[1], p1[1]], z=[p0[2], p1[2]],
+        mode='lines', line=dict(color='royalblue', width=4),
+        showlegend=False
+    ), row=1, col=2)
+
+# 3D — sphere
+fig.add_trace(go.Surface(
+    x=sx, y=sy, z=sz,
+    colorscale=[[0, 'rgba(220,20,60,0.50)'], [1, 'rgba(255,120,120,0.50)']],
+    showscale=False, name='Sphere'
+), row=1, col=2)
+
+fig.update_layout(
+    height=460,
+    margin=dict(t=50, b=10, l=10, r=10),
+    plot_bgcolor='white',
+    scene=dict(
+        xaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        yaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        zaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        aspectmode='cube',
+        annotations=[dict(
+            x=0, y=0, z=-1.5,
+            text="<b>V<sub>sphere</sub>/V<sub>cube</sub> = π/6 ≈ 52%</b>",
+            showarrow=False, font=dict(size=12, color='crimson')
+        )]
+    )
+)
+fig.show()
+```
+
+However, this ratio **tends to zero** as $d \to \infty$. This means that most of the hypercube's volume concentrates in the corners, while the sphere (representing the region of interest) occupies a diminishing fraction of the total space.
+
+```{python}
+#| echo: false
+from scipy.special import gamma
+
+dims = np.arange(1,20)
+ratio = (np.pi**(dims/2)) / (2**dims * gamma(dims/2 + 1))
+
+r2 = (np.pi**(2/2)) / (2**2 * gamma(2/2 + 1))
+r3 = (np.pi**(3/2)) / (2**3 * gamma(3/2 + 1))
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=dims, y=ratio,
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=5),
+    name='V_sphere / V_cube',
+    hovertemplate="d=%{x}<br>Ratio=%{y:.4f}<extra></extra>"
+))
+
+# Marker d=2
+fig.add_vline(x=2, line_dash="dash", line_color="crimson", line_width=1.8)
+fig.add_trace(go.Scatter(
+    x=[2], y=[r2],
+    mode='markers+text',
+    marker=dict(size=13, color='crimson', symbol='circle'),
+    text=[f"  d=2 ({r2:.2f})"],
+    textposition='middle right',
+    textfont=dict(color='crimson', size=12),
+    name='d=2',
+    hovertemplate=f"d=2<br>Ratio={r2:.4f}<extra></extra>"
+))
+
+# Marker d=3
+fig.add_vline(x=3, line_dash="dash", line_color="darkorange", line_width=1.8)
+fig.add_trace(go.Scatter(
+    x=[3], y=[r3],
+    mode='markers+text',
+    marker=dict(size=13, color='darkorange', symbol='circle'),
+    text=[f"  d=3 ({r3:.2f})"],
+    textposition='middle right',
+    textfont=dict(color='darkorange', size=12),
+    name='d=3',
+    hovertemplate=f"d=3<br>Ratio={r3:.4f}<extra></extra>"
+))
+
+fig.update_layout(
+    title="Fraction of Hypercube Volume Occupied by Hypersphere",
+    xaxis_title="Dimension d",
+    yaxis_title="V_sphere / V_cube",
+)
+fig.show()
+```
+
+This implies that for **high-dimensional data analysis**, maintaining a fixed sampling density $\rho$ in $\mathbb{R}^d$ requires the number of observations to scale as:
+
+$$
+n \sim \rho \cdot L^d
+$$
+
+With $p = 20$ features, there are $\binom{20}{2} = 190$ pairwise correlations. With $p = 100$, there are 4,950. Manually inspecting every relationship becomes impossible. Thus, we need methods that compress information without sacrificing core structure.
+
+
+# Mathematical Foundations of PCA
+
+Principal Component Analysis (PCA) is a dimensionality reduction technique that transforms a dataset with correlated features into a new system of uncorrelated variables called **principal components**. Each component is a linear combination of original features and represents a direction of maximum variance, preserving as much original data information as possible.
+
+## Mathematical Formulation and Procedure
+
+Given a dataset $X \in \mathbb{R}^{n \times p}$, where $n$ is the number of samples and $p$ the number of features, the process follows a precise sequence:
+
+1. **Standardization and Centering**
+
+    To prevent measurement scales from distorting the analysis, variables are transformed to a shared scale:
+
+    - **Centering:** subtract the mean of each feature  
+    - **Scaling:** divide by its standard deviation  
+
+    This ensures each variable has zero mean and unit variance.
+
+    $$
+    \tilde{X}_{ij} = \frac{X_{ij} - \mu_j}{\sigma_j}
+    $$
+
+    where:
+    - $\mu_j$ is the mean of feature $j$  
+    - $\sigma_j$ is its standard deviation  
+
+2.  **Covariance Matrix Calculation:** The sample covariance matrix $S$ summarizes feature variability and pairwise relationships:
+
+    $$S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$$
+
+    Element-wise:
+
+    $$s_{jk} = \frac{1}{n-1} \sum_{i=1}^n (x_{ij} - \mu_j)(x_{ik} - \mu_k)$$
+
+    where:
+    - $s_{jj}$ represents the **variance** of feature $j$
+    - $s_{jk}$ represents the **covariance** between features $j$ and $k$
+
+    This matrix is symmetric and positive semi-definite, guaranteeing real, non-negative eigenvalues.
+
+3.  **Spectral Decomposition:** The eigenvalue problem is solved to identify principal directions:
+    $$S \mathbf{v} = \lambda \mathbf{v}$$
+    Here, $\lambda$ represents the eigenvalues (explained variance in that direction) and $\mathbf{v}$ the eigenvectors (loadings/directions).
+
+4.  **Optimization and Ranking:** The first principal component $w_1$ is the eigenvector associated with the largest eigenvalue $\lambda_1$. Subsequent components maximize remaining variance subject to orthogonality constraints: $\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_p$.
+
+5.  **Projection and Reduction:** Finally, original data points are projected onto the subspace spanned by the top $k$ components:
+    $$\mathbf{Z} = \tilde{X} \mathbf{V}_k$$
+    where $\mathbf{V}_k$ contains the first $k$ ranked eigenvectors.
+
+Each component captures a fraction of total data variance ($\sum \lambda_j$). The contribution of each component is measured by the **Proportion of Variance Explained (PVE)**:
+
+$$\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}$$
+
+This enables reducing dimensionality while retaining, for instance, 95% of cumulative original variance.
+
+## Practical Example: Step-by-Step Manual Calculation
+
+We demonstrate the full process using a two-variable raw dataset ($p=2$):
+
+1.  **Original Data Matrix:**
+    Suppose $n=3$ observations across $p=2$ features:
+    $$X = \begin{pmatrix} 2 & 3 \\ 3 & 4 \\ 4 & 5 \end{pmatrix}$$
+
+2.  **Data Centering:**
+    Column means are $\bar{x}_1 = 3$ and $\bar{x}_2 = 4$. Subtracting means yields $\tilde{X}$:
+    $$\tilde{X} = \begin{pmatrix} 2-3 & 3-4 \\ 3-3 & 4-4 \\ 4-3 & 5-4 \end{pmatrix} = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix}$$
+
+3.  **Covariance Matrix ($S$):**
+    Applying $S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$ with $n-1 = 2$:
+    $$S = \frac{1}{2} \begin{pmatrix} -1 & 0 & 1 \\ -1 & 0 & 1 \end{pmatrix} \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} = \frac{1}{2} \begin{pmatrix} 2 & 2 \\ 2 & 2 \end{pmatrix} = \begin{pmatrix} 1 & 1 \\ 1 & 1 \end{pmatrix}$$
+
+4.  **Eigenvalue Computation ($\lambda$):**
+    Solving $\det(S - \lambda I) = 0$:
+    $$\det \begin{pmatrix} 1-\lambda & 1 \\ 1 & 1-\lambda \end{pmatrix} = (1-\lambda)^2 - 1 = 0 \implies \lambda^2 - 2\lambda = 0$$
+    Yielding **$\lambda_1 = 2$** and **$\lambda_2 = 0$**. Total variance is $2+0=2$. The first component explains 100% of variance.
+
+5.  **Eigenvector Computation ($\mathbf{v}$):**
+    For $\lambda_1 = 2$, solving $(S - 2I)\mathbf{v}_1 = 0$:
+    $$\begin{pmatrix} -1 & 1 \\ 1 & -1 \end{pmatrix} \begin{pmatrix} v_{11} \\ v_{21} \end{pmatrix} = 0 \implies v_{11} = v_{21}$$
+    Normalizing so $\|v\|=1$: **$v_1 = \begin{pmatrix} 1/\sqrt{2} \\ 1/\sqrt{2} \end{pmatrix} \approx \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix}$**.
+
+6.  **Data Projection ($k=1$):**
+    Projecting centered data onto PC1: $Z = \tilde{X} v_1$:
+    $$Z = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix} = \begin{pmatrix} -1.414 \\ 0 \\ 1.414 \end{pmatrix}$$
+
+7.  **Conclusion:**
+    Since original data points were perfectly colinear ($x_2 = x_1 + 1$), PCA reduces dimensionality from 2D to 1D with zero information loss.
+
+# PCA and Singular Value Decomposition (SVD)
+
+Modern software libraries computing PCA (e.g., [scikit-learn](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html)) do not perform direct eigendecomposition of $S$. Instead, they apply **Singular Value Decomposition (SVD)** directly to the centered matrix $\tilde{X}$, providing superior numerical stability and efficiency.
+
+Any matrix $\tilde{X} \in \mathbb{R}^{n \times p}$ can be decomposed as:
+
+$$
+\tilde{X} = U \Sigma V^T
+$$
+
+where:
+
+- $U \in \mathbb{R}^{n \times n}$: orthogonal matrix of **left singular vectors**
+- $\Sigma \in \mathbb{R}^{n \times p}$: diagonal matrix of **singular values** $\sigma_1 \geq \sigma_2 \geq \cdots \geq \sigma_{\min(n,p)} \geq 0$
+- $V \in \mathbb{R}^{p \times p}$: orthogonal matrix of **right singular vectors**
+
+The connection between SVD and PCA is direct:
+
+$$
+S = \frac{1}{n-1}\tilde{X}^T\tilde{X} = \frac{1}{n-1} V \Sigma^2 V^T
+$$
+
+Therefore:
+
+- **Columns of $V$** match the **eigenvectors of $S$**
+- **Eigenvalues** of $S$ equal $\lambda_k = \sigma_k^2 / (n-1)$
+- **Principal component scores** are $Z = \tilde{X}V = U\Sigma$
+
+```{python}
+#| code-fold: false
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import load_iris
+
+X = load_iris().data
+X_std = StandardScaler().fit_transform(X)
+
+S = np.cov(X_std.T)
+eigenvalues, eigenvectors = np.linalg.eigh(S)
+idx = np.argsort(eigenvalues)[::-1]
+eigenvalues = eigenvalues[idx]
+eigenvectors = eigenvectors[:, idx]
+
+U, sigma, Vt = np.linalg.svd(X_std, full_matrices=False)
+lambda_svd = sigma**2 / (len(X_std) - 1)
+
+print("Eigenvalues via S:  ", np.round(eigenvalues, 6))
+print("Eigenvalues via SVD:", np.round(lambda_svd, 6))
+print("Identical results:", np.allclose(eigenvalues, lambda_svd))
+```
+
+---
+
+# Practical Example: Iris Dataset Walkthrough
+
+## Dataset: Iris {.unnumbered}
+
+```{python}
+iris = load_iris()
+X = iris.data
+y = iris.target
+nombres = iris.target_names
+feature_names = ['Sepal Length', 'Sepal Width', 'Petal Length', 'Petal Width']
+
+df_iris = pd.DataFrame(X, columns=feature_names)
+df_iris['Species'] = [nombres[i] for i in y]
+df_iris.describe().round(3)
+```
+
+## Step 1: Standardization {.unnumbered}
+
+```{python}
+scaler = StandardScaler()
+X_std = scaler.fit_transform(X)
+
+df_check = pd.DataFrame({
+    'Feature': feature_names,
+    'Original Mean': X.mean(axis=0).round(3),
+    'Original Std': X.std(axis=0).round(3),
+    'Standardized Mean': X_std.mean(axis=0).round(10),
+    'Standardized Std': X_std.std(axis=0).round(3)
+})
+df_check
+```
+
+## Step 2: Covariance Matrix {.unnumbered}
+
+```{python}
+S = np.cov(X_std.T)
+
+fig = go.Figure(data=go.Heatmap(
+    z=S,
+    x=feature_names,
+    y=feature_names,
+    colorscale='RdBu_r',
+    zmid=0, zmin=-1, zmax=1,
+    text=np.round(S, 3),
+    texttemplate='%{text}',
+    textfont=dict(size=13),
+    colorbar=dict(title='Covariance')
+))
+fig.update_layout(
+    title="Covariance Matrix — Standardized Data (= Pearson Correlation Matrix)",
+    height=420
+)
+fig.show()
+```
+
+## Step 3: Eigendecomposition via SVD {.unnumbered}
+
+```{python}
+pca = PCA()
+scores = pca.fit_transform(X_std)
+
+eigenvalues = pca.explained_variance_
+pve = pca.explained_variance_ratio_ * 100
+pve_acum = np.cumsum(pve)
+
+df_pca = pd.DataFrame({
+    'Component': [f'PC{i+1}' for i in range(len(eigenvalues))],
+    'Eigenvalue (λ)': eigenvalues.round(4),
+    '% Variance': pve.round(2),
+    '% Cumulative': pve_acum.round(2)
+})
+df_pca
+```
+
+## Step 4: Scree Plot {.unnumbered}
+
+```{python}
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=df_pca['Component'], y=df_pca['% Variance'],
+    name='% Variance',
+    text=[f"{v:.1f}%" for v in pve],
+    textposition='outside'
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=df_pca['Component'], y=pve_acum,
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=9),
+    name='% Cumulative'
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color="gray",
+              annotation_text="80%", secondary_y=True)
+
+fig.update_yaxes(title_text="% Variance per Component", secondary_y=False)
+fig.update_yaxes(title_text="% Cumulative Variance", range=[0, 110], secondary_y=True)
+fig.update_layout(
+    title="Scree Plot — Kaiser Rule: Retain Components with λ > 1",
+    height=380
+)
+fig.show()
+```
+
+## Step 5: Biplot {.unnumbered}
+
+```{python}
+loadings = pca.components_
+scores_df = pd.DataFrame(scores[:, :2], columns=['PC1', 'PC2'])
+scores_df['Species'] = [nombres[i] for i in y]
+
+fig = go.Figure()
+
+for especie in nombres:
+    mask = scores_df['Species'] == especie
+    fig.add_trace(go.Scatter(
+        x=scores_df.loc[mask, 'PC1'],
+        y=scores_df.loc[mask, 'PC2'],
+        mode='markers',
+        marker=dict(size=7, opacity=0.7),
+        name=especie
+    ))
+
+escala = 3.0
+for i, feat in enumerate(feature_names):
+    fig.add_annotation(
+        x=loadings[0, i] * escala,
+        y=loadings[1, i] * escala,
+        ax=0, ay=0,
+        arrowhead=3, arrowwidth=2,
+        xref='x', yref='y', axref='x', ayref='y',
+        showarrow=True
+    )
+    fig.add_annotation(
+        x=loadings[0, i] * escala * 1.15,
+        y=loadings[1, i] * escala * 1.15,
+        text=f"<b>{feat}</b>",
+        showarrow=False,
+        font=dict(size=11)
+    )
+
+fig.update_xaxes(title_text=f"PC1 ({pve[0]:.1f}%)",
+                 zeroline=True, zerolinecolor='lightgray')
+fig.update_yaxes(title_text=f"PC2 ({pve[1]:.1f}%)",
+                 zeroline=True, zerolinecolor='lightgray',
+                 scaleanchor='x')
+fig.update_layout(
+    title="Biplot: Scores + Loadings — Iris",
+    height=480,
+    legend=dict(title='Species')
+)
+fig.show()
+```
+
+---
+
+# Limitations of PCA
+
+## Linearity
+
+PCA evaluates linear variance directions and cannot unroll non-linear manifolds.
+
+## Outlier Sensitivity
+
+Minimizing mean squared reconstruction error renders PCA **highly sensitive to outliers**.
+
+## Class Unawareness
+
+PCA is **unsupervised** and maximizes overall variance without considering class labels. Supervised alternatives like **Linear Discriminant Analysis (LDA)** explicitly maximize class separability.
+
+---
+
+# Beyond PCA: Non-Linear Techniques
+
+Non-linear dimension reduction techniques like **t-SNE** and **UMAP** excel at preserving local manifold relationships.
+
+---
+
+# Proposed Exercises
+
+1. **PCA from Scratch**: Implement PCA using only `numpy.linalg.svd`. Verify eigenvalues and eigenvectors match `sklearn.decomposition.PCA`.
+2. **Impact of Standardization**: Apply PCA to Iris with and without feature scaling. Justify mathematically why loadings and variance ratios alter.
+3. **Reconstruction Error**: Given dataset $X$ and rank-$k$ PCA projection, reconstruct $\hat{X} = Z_k W_k^T + \mu$. Plot Frobenius reconstruction error $\|X - \hat{X}\|_F$ as a function of $k$.
+4. **t-SNE vs UMAP Benchmark**: Compare t-SNE and UMAP on `sklearn.datasets.load_digits` regarding execution runtime and cluster separation quality.
+5. **Kaiser Rule Proof**: Prove why Kaiser's $\lambda > 1$ rule strictly applies to standardized correlation matrices.

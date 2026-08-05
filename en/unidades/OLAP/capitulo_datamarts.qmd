@@ -1,0 +1,391 @@
+---
+title: "Data Marts: From the Data Warehouse to Business Unit Consumption"
+subtitle: "Architecture, Dimensional Design, and Reproducible Example"
+author: "Diego Villalba"
+date: today
+format: html
+bibliography: referencias_datamarts.bib
+---
+
+```{=html}
+<style>
+.dm-visual {
+  --dm-blue: #2563eb;
+  --dm-blue-soft: #eff6ff;
+  --dm-green: #15803d;
+  --dm-green-soft: #f0fdf4;
+  --dm-amber: #b45309;
+  --dm-amber-soft: #fffbeb;
+  --dm-purple: #7e22ce;
+  --dm-purple-soft: #faf5ff;
+  --dm-red: #b91c1c;
+  --dm-red-soft: #fef2f2;
+  --dm-slate: #475569;
+  margin: 1.75rem 0;
+  color: #1e293b;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.dm-visual * { box-sizing: border-box; }
+.dm-visual .dm-caption {
+  margin-top: .75rem;
+  color: #64748b;
+  font-size: .88rem;
+  line-height: 1.45;
+  text-align: center;
+}
+.dm-visual .dm-grid { display: grid; gap: 1rem; }
+.dm-visual .dm-card {
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: .8rem;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .06);
+}
+.dm-visual .dm-title { font-weight: 750; margin-bottom: .35rem; }
+.dm-visual .dm-small { color: #475569; font-size: .9rem; line-height: 1.45; }
+.dm-visual .dm-arrow { color: #64748b; font-size: 1.45rem; font-weight: 700; text-align: center; }
+@media (max-width: 760px) {
+  .dm-visual .dm-flow { grid-template-columns: 1fr !important; }
+  .dm-visual .dm-arrow { transform: rotate(90deg); }
+}
+
+.dm-arch-root { font-family: inherit; background:#f8f9fb; border:1px solid #d8dee6; border-radius:8px; padding:18px 22px; margin:2em 0; }
+.dm-arch-tabs { display:flex; gap:8px; justify-content:center; margin-bottom:14px; flex-wrap:wrap; }
+.dm-arch-btn {
+  padding:6px 16px; border:1px solid #aab; background:#fff;
+  border-radius:5px; cursor:pointer; font-size:0.85em;
+  font-family:inherit; transition:background .15s,color .15s;
+}
+.dm-arch-btn:hover  { background:#eef2f7; }
+.dm-arch-btn.active { background:#1a3a5c; color:#fff; border-color:#1a3a5c; }
+.dm-arch-panel { display:none; }
+.dm-arch-panel.active { display:block; }
+.dm-arch-desc { text-align:center; font-size:0.85em; color:#444; margin-bottom:10px; min-height: 2.4em; }
+</style>
+```
+
+In the previous chapter, an OLAP data cube was defined as an aggregation function over dimensions: $C:D_1\times\cdots\times D_k\to\mathbb{R}^m$. To calculate this function efficiently, data must be organized dimensionally. A fundamental question follows: where do the underlying fact and dimension tables queried by the cube originate? In most enterprise environments, the answer is a **data mart**: a specialized subset of the enterprise data warehouse tailored to a specific business domain, serving as the foundation for cubes, dashboards, reports, and analytical consumption APIs.
+
+This chapter formalizes the concept of data marts, evaluates architectural paradigms (dependent, independent, and hybrid), introduces Kimball's dimensional design framework, and applies it to an end-to-end retail hardware case study [@kimball2013data; @inmon2005building]. The data mart built here serves as the authoritative backend for the Location × Time × Department cube explored previously.
+
+## What is a Data Mart?
+
+An enterprise **data warehouse** (DW) integrates data across multiple business processes—sales, inventory, human resources, finance—into a single, historical, consistent repository. However, individual business analysts rarely require access to the entire warehouse. The Sales team focuses on transaction records; Human Resources analyzes payroll and turnover. Querying a monolithic DW containing dozens of fact tables and hundreds of attributes creates performance bottlenecks and unnecessary analytical complexity.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A **data mart** is a specialized, domain-specific subset of a data warehouse focused on a single functional area or business process, designed to serve the analytical queries of a dedicated user group.
+$$
+DM_j \subseteq DW, \qquad DM_j = \pi_{A_j}\big(\sigma_{P_j}(DW)\big)
+$$
+:::
+
+Here, $\sigma_{P_j}$ selects fact records corresponding to business process $P_j$ (e.g., retail sales), and $\pi_{A_j}$ projects only the relevant dimensions and attributes for business unit $A_j$. The result is a streamlined analytical model that is faster to query and simpler to analyze [@devlin1988architecture].
+
+Three characteristics distinguish a data mart from an enterprise data warehouse:
+
+1. **Focused Scope:** Serves a single business process or department rather than the entire enterprise.
+2. **Targeted Audience:** Optimized for specific business questions and operational workflows.
+3. **Explicit Dimensional Schema:** Implemented as star or snowflake schemas optimized for analytical aggregations.
+
+```{=html}
+<div class="dm-visual" role="img" aria-label="From Data Warehouse to Domain Data Marts">
+  <div class="dm-grid dm-flow" style="grid-template-columns: minmax(170px,1fr) auto minmax(230px,1.3fr) auto minmax(170px,1fr); align-items:center;">
+    <div class="dm-card" style="border-top:4px solid var(--dm-blue);">
+      <div class="dm-title">OLTP Sources</div>
+      <div class="dm-small">Sales, Inventory, HR, Finance: Disparate operational systems.</div>
+    </div>
+    <div class="dm-arrow" aria-hidden="true">&rarr;</div>
+    <div class="dm-card" style="border-top:4px solid var(--dm-green);">
+      <div class="dm-title">Data Warehouse</div>
+      <div class="dm-small">Integrated, historical, enterprise-wide repository.</div>
+    </div>
+    <div class="dm-arrow" aria-hidden="true">&rarr;</div>
+    <div class="dm-card" style="border-top:4px solid var(--dm-purple);">
+      <div class="dm-title">Data Marts</div>
+      <div class="dm-small">Sales &middot; Inventory &middot; HR &middot; Finance: Domain-specific dimensional subsets.</div>
+    </div>
+  </div>
+  <div class="dm-caption">Architectural flow. Each data mart inherits dimensions and grain from the enterprise model while scoping data to a single business domain.</div>
+</div>
+```
+
+## Architectural Approaches: Dependent, Independent, and Hybrid
+
+How a data mart ingests data—either downstream from a central DW or directly from operational source systems—defines its architectural model and determines data consistency across the enterprise.
+
+### Dependent Data Marts (Inmon Top-Down Approach)
+
+In Bill Inmon's corporate information factory (CIF) framework, an Enterprise Data Warehouse (EDW) is constructed first as a fully normalized repository (Third Normal Form, 3NF) integrating all source data [@inmon2005building]. Dependent data marts are constructed *downstream* as dimensional views derived from the centralized EDW.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A data mart is **dependent** when its sole data source is the integrated enterprise data warehouse.
+$$
+DM_j = f_j(DW), \qquad \text{with } DW \text{ as single source of truth}
+$$
+:::
+
+The primary advantage is strict enterprise consistency: because all data marts derive from a single integrated repository, dimensions like Customer, Product, or Employee retain identical definitions across all data marts. The primary drawback is implementation speed: building a normalized enterprise DW before releasing the first data mart requires substantial upfront time and capital.
+
+### Independent Data Marts (Bottom-Up Approach)
+
+In the bottom-up approach associated with Ralph Kimball, organizations bypass building a centralized 3NF warehouse first. Instead, independent data marts are built directly from operational source systems to serve immediate business needs.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A data mart is **independent** when built directly from operational source systems without an intermediary enterprise warehouse.
+$$
+DM_j = g_j(S_1, S_2, \ldots, S_n), \qquad S_i \text{ = operational source systems}
+$$
+:::
+
+The advantage is rapid time-to-value: individual departments can build and deploy data marts within weeks. The critical risk is the creation of uncoordinated **data silos**: if Sales and Marketing define "active customer" or "net revenue" differently, cross-departmental metrics will conflict.
+
+### Hybrid Architecture: The Kimball Bus Architecture
+
+Kimball reconciles time-to-value with enterprise consistency through the **Data Warehouse Bus Architecture**. Data marts are built iteratively, process by process, but share a set of **conformed dimensions**—standardized, enterprise-wide definitions for Time, Product, Customer, Location, etc., agreed upon before development [@kimball2013data]. The collection of conformed data marts forms a virtual Enterprise Data Warehouse without requiring a monolithic 3NF repository upfront.
+
+```{=html}
+<div class="dm-arch-root">
+  <div style="text-align:center;margin-bottom:6px;">
+    <span style="font-size:1.02em;font-weight:bold;color:#1a2e45;">Comparison of Data Mart Architectures</span>
+  </div>
+  <div class="dm-arch-tabs">
+    <button class="dm-arch-btn active" onclick="dmArchShow('dep')" id="dm-btn-dep">Dependent (Inmon)</button>
+    <button class="dm-arch-btn" onclick="dmArchShow('indep')" id="dm-btn-indep">Independent</button>
+    <button class="dm-arch-btn" onclick="dmArchShow('bus')" id="dm-btn-bus">Bus / Hybrid (Kimball)</button>
+  </div>
+
+  <div class="dm-arch-panel active" id="dm-panel-dep">
+    <div class="dm-arch-desc">Normalized EDW built first; data marts derived downstream. Maximum consistency, longer initial delivery timeline.</div>
+    <div class="dm-visual" style="margin:0;">
+      <div class="dm-grid dm-flow" style="grid-template-columns: minmax(150px,1fr) auto minmax(170px,1fr) auto minmax(150px,1fr) minmax(150px,1fr);">
+        <div class="dm-card" style="border-top:4px solid var(--dm-blue);"><div class="dm-title" style="font-size:.92em;">OLTP Sources</div></div>
+        <div class="dm-arrow">&rarr;</div>
+        <div class="dm-card" style="border-top:4px solid var(--dm-green);"><div class="dm-title" style="font-size:.92em;">EDW (3NF)</div><div class="dm-small">Single integration point</div></div>
+        <div class="dm-arrow">&rarr;</div>
+        <div class="dm-card" style="border-top:4px solid var(--dm-purple);grid-column: span 2;">
+          <div class="dm-title" style="font-size:.92em;">Sales DM &nbsp;|&nbsp; HR DM &nbsp;|&nbsp; Finance DM</div>
+          <div class="dm-small">Derived, consistent across enterprise</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dm-arch-panel" id="dm-panel-indep">
+    <div class="dm-arch-desc">Each data mart built directly from operational sources. Fast delivery, high risk of isolated data silos.</div>
+    <div class="dm-visual" style="margin:0;">
+      <div class="dm-grid" style="grid-template-columns: repeat(3, 1fr); gap: 1.2rem;">
+        <div class="dm-card" style="border-top:4px solid var(--dm-red);"><div class="dm-title" style="font-size:.9em;">Sales Sources</div><div class="dm-arrow" style="font-size:1em;">&darr;</div><div class="dm-small">Sales DM</div></div>
+        <div class="dm-card" style="border-top:4px solid var(--dm-red);"><div class="dm-title" style="font-size:.9em;">HR Sources</div><div class="dm-arrow" style="font-size:1em;">&darr;</div><div class="dm-small">HR DM</div></div>
+        <div class="dm-card" style="border-top:4px solid var(--dm-red);"><div class="dm-title" style="font-size:.9em;">Finance Sources</div><div class="dm-arrow" style="font-size:1em;">&darr;</div><div class="dm-small">Finance DM</div></div>
+      </div>
+      <div class="dm-caption" style="color:var(--dm-red);">Lacking shared dimensions, "Customer" or "Product" definitions diverge between marts.</div>
+    </div>
+  </div>
+
+  <div class="dm-arch-panel" id="dm-panel-bus">
+    <div class="dm-arch-desc">Data marts built iteratively per business process, linked by shared conformed dimensions.</div>
+    <div class="dm-visual" style="margin:0;">
+      <div class="dm-grid" style="grid-template-columns: repeat(3, 1fr); gap: 1.2rem;">
+        <div class="dm-card" style="border-top:4px solid var(--dm-green);"><div class="dm-title" style="font-size:.9em;">Sales DM</div></div>
+        <div class="dm-card" style="border-top:4px solid var(--dm-green);"><div class="dm-title" style="font-size:.9em;">Inventory DM</div></div>
+        <div class="dm-card" style="border-top:4px solid var(--dm-green);"><div class="dm-title" style="font-size:.9em;">Finance DM</div></div>
+      </div>
+      <div class="dm-card" style="margin-top:1rem;border-top:4px solid var(--dm-amber);background:var(--dm-amber-soft);">
+        <div class="dm-title" style="font-size:.9em;">Conformed Dimension Bus</div>
+        <div class="dm-small">Time &middot; Location &middot; Product &middot; Customer &mdash; single definition shared across all data marts.</div>
+      </div>
+    </div>
+  </div>
+  <div class="dm-caption">Click tabs above to compare data flow across architectural styles.</div>
+</div>
+
+<script>
+function dmArchShow(mode){
+  document.querySelectorAll('.dm-arch-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.dm-arch-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('dm-panel-'+mode).classList.add('active');
+  document.getElementById('dm-btn-'+mode).classList.add('active');
+}
+</script>
+```
+
+| Criterion | Dependent (Inmon) | Independent | Bus / Hybrid (Kimball) |
+|---|---|---|---|
+| Data Source | Integrated 3NF EDW | Direct operational sources | Direct operational sources |
+| Cross-Domain Consistency | High | Low without governance | High via conformed dimensions |
+| Initial Time-to-Value | Long (requires upfront EDW) | Short | Short per data mart iteration |
+| Primary Risk | Upfront time/cost of EDW build | Data silos, conflicting definitions | Requires initial governance discipline |
+| Organizational Scalability | High once EDW exists | Low without coordination | High, scales incrementally per mart |
+
+## Conformed Dimensions and the Bus Matrix
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A **conformed dimension** is a dimension table maintaining identical keys, attributes, and business definitions across multiple data marts, enabling cross-process drill-across analysis without transformation.
+:::
+
+The primary planning framework for identifying conformed dimensions is the **Data Warehouse Bus Matrix**: a matrix mapping business processes (rows) to candidate dimensions (columns).
+
+| Business Process | Time | Location | Product/Dept | Customer | Employee |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Sales | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Inventory | ✔ | ✔ | ✔ | &nbsp; | &nbsp; |
+| Human Resources | ✔ | ✔ | &nbsp; | &nbsp; | ✔ |
+| Finance | ✔ | ✔ | &nbsp; | &nbsp; | &nbsp; |
+
+The bus matrix highlights **Time** and **Location** as primary candidates for early conformation, as they intersect every core business process.
+
+## Four-Step Dimensional Design Process
+
+Kimball outlines four sequential steps for designing any dimensional data mart [@kimball2013data]:
+
+1. **Select the Business Process:** Identify the operational activity to model (e.g., retail point-of-sale transactions).
+2. **Declare the Grain:** Define what an individual fact table row represents atomically.
+3. **Identify the Dimensions:** Determine the surrounding context (Who, What, Where, When, Why).
+4. **Identify the Facts:** Select the numeric measures accumulated by the business process.
+
+### Case Study: Hardware Retail Sales Data Mart
+
+Applying this process to our hardware retail case study:
+
+1. **Business Process:** Store sales transactions.
+2. **Grain:** One row per store transaction line item per department per quarter.
+3. **Dimensions:** `dim_tiempo` (quarter, year), `dim_ubicacion` (city, region), `dim_departamento` (department, category).
+4. **Facts:** `monto_venta` (additive revenue measure), `unidades` (additive quantity measure).
+
+The resulting star schema structure:
+
+```{=html}
+<div class="dm-visual" role="img" aria-label="Sales Data Mart Star Schema">
+  <div class="dm-grid" style="grid-template-columns: 1fr 1.3fr 1fr; gap: 1rem; align-items:center;">
+    <div class="dm-card" style="border-top:4px solid var(--dm-blue);">
+      <div class="dm-title">dim_tiempo</div>
+      <div class="dm-small">time_key (PK)<br>quarter<br>year</div>
+    </div>
+    <div class="dm-card" style="border-top:4px solid var(--dm-purple);text-align:center;">
+      <div class="dm-title">fact_ventas</div>
+      <div class="dm-small">time_key (FK)<br>location_key (FK)<br>dept_key (FK)<br><strong>sales_amount</strong><br><strong>units</strong></div>
+    </div>
+    <div class="dm-card" style="border-top:4px solid var(--dm-green);">
+      <div class="dm-title">dim_ubicacion</div>
+      <div class="dm-small">location_key (PK)<br>city<br>region</div>
+    </div>
+  </div>
+  <div class="dm-grid" style="grid-template-columns: 1fr; margin-top:.8rem;">
+    <div class="dm-card" style="border-top:4px solid var(--dm-amber); max-width: 320px; margin: 0 auto;">
+      <div class="dm-title">dim_departamento</div>
+      <div class="dm-small">dept_key (PK)<br>department<br>category</div>
+    </div>
+  </div>
+  <div class="dm-caption">Star Schema: A central fact table surrounded by three conformed dimension tables. The Location &times; Time &times; Department cube is an aggregated view over <code>fact_ventas</code>.</div>
+</div>
+```
+
+## Reproducible Python Data Mart Implementation
+
+We construct this physical data mart using `pandas`:
+
+```{python}
+import pandas as pd
+
+dim_tiempo = pd.DataFrame({
+    "time_key": [1, 2],
+    "quarter": ["Q1", "Q2"],
+    "year": [2025, 2025],
+})
+
+dim_ubicacion = pd.DataFrame({
+    "location_key": [1, 2, 3, 4],
+    "city": ["CDMX", "Guadalajara", "Monterrey", "Merida"],
+    "region": ["Central", "West", "North", "Southeast"],
+})
+
+dim_departamento = pd.DataFrame({
+    "dept_key": [1, 2, 3, 4],
+    "department": ["Wood", "Plumbing", "Decoration", "Electrical"],
+})
+
+# fact_ventas: (time_key, location_key, dept_key, sales_amount)
+fact_ventas = pd.DataFrame([
+    (1, 1, 1, 70), (1, 1, 2, 40), (1, 1, 3, 20), (1, 1, 4, 30),
+    (2, 1, 1, 50), (2, 1, 2, 60), (2, 1, 3, 22), (2, 1, 4, 28),
+    (1, 2, 1, 60), (1, 2, 2, 35), (1, 2, 3, 25), (1, 2, 4, 40),
+    (2, 2, 1, 45), (2, 2, 2, 50), (2, 2, 3, 30), (2, 2, 4, 35),
+    (1, 3, 1, 48), (1, 3, 2, 38), (1, 3, 3, 18), (1, 3, 4, 26),
+    (2, 3, 1, 36), (2, 3, 2, 55), (2, 3, 3, 25), (2, 3, 4, 30),
+    (1, 4, 1, 52), (1, 4, 2, 42), (1, 4, 3, 15), (1, 4, 4, 37),
+    (2, 4, 1, 44), (2, 4, 2, 33), (2, 4, 3, 20), (2, 4, 4, 28),
+], columns=["time_key", "location_key", "dept_key", "sales_amount"])
+
+fact_ventas.head()
+```
+
+The equivalent SQL query joining facts to dimensions:
+
+```sql
+SELECT
+    u.region,
+    t.quarter,
+    d.department,
+    SUM(f.sales_amount) AS total_sales
+FROM fact_ventas f
+JOIN dim_tiempo       t ON f.time_key = t.time_key
+JOIN dim_ubicacion    u ON f.location_key = u.location_key
+JOIN dim_departamento d ON f.dept_key = d.dept_key
+GROUP BY u.region, t.quarter, d.department
+ORDER BY u.region, t.quarter, d.department
+```
+
+In `pandas`, this dimensional join and aggregation is expressed as:
+
+```{python}
+report = (
+    fact_ventas
+    .merge(dim_tiempo, on="time_key")
+    .merge(dim_ubicacion, on="location_key")
+    .merge(dim_departamento, on="dept_key")
+    .groupby(["region", "quarter", "department"], as_index=False)["sales_amount"]
+    .sum()
+    .rename(columns={"sales_amount": "total_sales"})
+    .sort_values(["region", "quarter", "department"])
+)
+
+report
+```
+
+### Performing a Regional Roll-Up Query
+
+Rolling up locations to macro zones:
+
+```{python}
+zone_map = pd.DataFrame({
+    "region": ["Central", "West", "North", "Southeast"],
+    "zone": ["North-Central Zone", "West-Southeast Zone",
+             "North-Central Zone", "West-Southeast Zone"],
+})
+
+zone_report = (
+    fact_ventas
+    .merge(dim_tiempo, on="time_key")
+    .merge(dim_ubicacion, on="location_key")
+    .merge(zone_map, on="region")
+    .groupby(["zone", "quarter"], as_index=False)["sales_amount"]
+    .sum()
+    .rename(columns={"sales_amount": "total_sales"})
+    .sort_values(["zone", "quarter"])
+)
+
+zone_report
+```
+
+## Data Marts to Data Products
+
+In modern data architectures, data marts have evolved into **data products** within a **data mesh** framework: domain teams own their data marts as products complete with SLAs, quality contracts, and standardized consumption APIs [@dehghani2022datamesh]. The next chapter explores how to expose this data mart via REST and semantic layer APIs.
+
+## Conclusions
+
+A data mart bridges raw operational data and business analytics. Adopting a Kimball bus architecture with conformed dimensions guarantees that individual data marts scale incrementally without degrading into isolated data silos.
+
+## References
+
+::: {#refs}
+:::

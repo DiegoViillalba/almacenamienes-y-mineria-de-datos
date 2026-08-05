@@ -1,0 +1,163 @@
+# Introduction
+
+## Architecture in Computer Science
+
+In Computer Science (CS) and Software Engineering, the term **architecture** does not refer to the aesthetic design of a physical building, but to the definition and structure of complex digital systems.
+
+::: {.callout-note appearance="minimal"}
+**Definition (Data Systems Architecture)**. The structural organization of hardware, software, and storage systems that enable capturing, transforming, organizing, and querying data at scale, defining information flows and operational boundaries between system components.
+:::
+
+A solid data architecture ensures that information is available to those who need it, in the proper format, securely, and with predictable performance. Yet that definition conceals a more fundamental question: **why is it not enough to simply "save data to disk and call it a day"?** Why has the industry spent four decades designing and redesigning how analytical data is persisted?
+
+The answer has little to do with aesthetics or technological trends, and much to do with three very concrete physical constraints:
+
+1.  **How information is laid out on disk/memory determines how fast (and how expensive) it is to answer a query.**
+2.  **How rigid or flexible the persistence system is determines which data types it can store efficiently, and how far it can scale.**
+3.  **How strict the consistency guarantees offered by the system are determines how costly it is to coordinate concurrent writes.**
+
+Every storage architecture—Data Warehouse, Data Lake, or Data Lakehouse, which we will study in subsequent chapters—is ultimately a distinct design choice along these three axes. Before defining them by name, it is worth understanding *why* they exist: their fundamental purpose from a technical perspective.
+
+---
+
+## Axis 1: The Cost of Reading Data — Rows vs. Columns
+
+When a database engine executes a query, the bottleneck is rarely CPU performance; it is the volume of data that must be **read from disk** to answer it. How records are physically organized on storage—row by row or column by column—radically alters how much data must be fetched.
+
+::: {.callout-note appearance="minimal"}
+**Definition (Row-oriented Storage)**. A persistence model where all values belonging to a single record (row) are stored contiguously on disk. This is the classic model for transactional systems (OLTP).
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definition (Column-oriented Storage)**. A persistence model where all values of a single attribute (column) are stored contiguously on disk, separating each table column into its own physical block. This is the dominant model for analytical systems (OLAP).
+:::
+
+### Visualization: Same Data, Two Distinct Physical Layouts
+
+```{=html}
+<div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin: 1.5rem 0; font-family: system-ui, -apple-system, sans-serif;">
+
+  <!-- Row-oriented -->
+  <div style="flex: 1; min-width: 260px; max-width: 340px; border: 1px solid #ccd; border-radius: 8px; padding: 15px; background: rgba(0,0,0,0.02);">
+    <div style="font-size: 0.8em; font-weight: bold; color: #666; text-transform: uppercase; margin-bottom: 8px; text-align: center;">Row-oriented (OLTP)</div>
+    <div style="font-size: 0.8em; opacity: 0.85; margin-bottom: 10px; text-align: center;">Ideal for: <code>INSERT</code>, <code>UPDATE</code>, and fetching full records.</div>
+    <div style="font-family: monospace; font-size: 0.78em; background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 10px; line-height: 1.7; overflow-x: auto;">
+      [ 1, Ana, Sales, 3200 ]<br>
+      [ 2, Luis, IT, 4100 ]<br>
+      [ 3, Eva, Sales, 2900 ]<br>
+      [ 4, Iván, IT, 4600 ]
+    </div>
+    <div style="font-size: 0.78em; opacity: 0.85; margin-top: 8px;">To compute average salary, the engine must read <strong>all</strong> blocks, even though it only needs a single column.</div>
+  </div>
+
+  <!-- Column-oriented -->
+  <div style="flex: 1; min-width: 260px; max-width: 340px; border: 1px solid #0d47a1; border-radius: 8px; padding: 15px; background: rgba(13, 71, 161, 0.05);">
+    <div style="font-size: 0.8em; font-weight: bold; color: #0d47a1; text-transform: uppercase; margin-bottom: 8px; text-align: center;">Column-oriented (OLAP)</div>
+    <div style="font-size: 0.8em; opacity: 0.85; margin-bottom: 10px; text-align: center;">Ideal for: aggregations (<code>AVG</code>, <code>SUM</code>) across few columns and many rows.</div>
+    <div style="font-family: monospace; font-size: 0.78em; background: #fff; border: 1px solid #90caf9; border-radius: 6px; padding: 10px; line-height: 1.7; overflow-x: auto;">
+      id: [1, 2, 3, 4]<br>
+      name: [Ana, Luis, Eva, Iván]<br>
+      department: [Sales, IT, Sales, IT]<br>
+      <strong style="color:#0d47a1;">salary: [3200, 4100, 2900, 4600]</strong>
+    </div>
+    <div style="font-size: 0.78em; opacity: 0.85; margin-top: 8px;">For <code>AVG(salary)</code>, the engine reads <strong>only</strong> the <code>salary</code> column block, skipping everything else.</div>
+  </div>
+
+</div>
+```
+
+This structural distinction, which might seem like an implementation detail, has massive implications at scale:
+
+*   **Reduced I/O**: If a table has 50 columns and an analytical query only requires 3, a columnar engine reads, in theory, only 6% of the data a row-oriented engine would fetch.
+*   **Superior Compression**: A single column holds homogenous data types with lower cardinality (for example, repeating department names), allowing far more aggressive compression algorithms than heterogeneous rows permit.
+*   **Vectorized Execution**: Because values for a column sit contiguously in memory, CPUs can apply SIMD operations (summing, filtering, comparing) across entire vectors rather than evaluating record by record.
+
+Consequently, transactional systems (operational databases for e-commerce, banking, or logistics) are **row-oriented**—they require fast writes and single-record lookups—while analytical systems (Data Warehouses, Data Lakehouses) are **column-oriented**, or use columnar file formats like **Parquet** or **ORC**, because their dominant workload involves aggregations over massive row counts.
+
+### OLTP vs. OLAP: Two Distinct Workloads
+
+The choice between row-oriented and column-oriented storage is not arbitrary: it stems from the recognition, since the 1990s, that computing workloads fall into two fundamentally opposing paradigms.
+
+::: {.callout-note appearance="minimal"}
+**Definition (OLTP / Online Transaction Processing)**. Workload dominated by high-concurrency write and read operations on individual records, demanding low latency per operation. This is the characteristic pattern of operational applications.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definition (OLAP / Online Analytical Processing)**. Workload dominated by complex aggregation and exploratory queries over massive volumes of records, typically scanning a subset of columns with lower concurrency and tolerance for higher per-query latency.
+:::
+
+| Criterion | OLTP | OLAP |
+|---|---|---|
+| Objective | Record daily business operations | Analyze historical business performance |
+| Typical Operation | `INSERT` / `UPDATE` of single records | `SELECT ... GROUP BY` across millions of rows |
+| Operation Volume | Few rows, all columns fetched | Many rows, few columns fetched |
+| Storage Pattern | Row-oriented | Column-oriented |
+| Users | Operational applications (thousands of concurrent transactions) | Data Analysts / BI (fewer, heavier queries) |
+| Example | Processing a sale at a Point of Sale | Computing average regional sales over the past year |
+
+This comparison highlights why a **Data Warehouse** is never queried directly off an operational production database: they represent competing workloads vying for shared resources while requiring opposing physical storage layouts.
+
+---
+
+## Axis 2: The Cost of Rigidity — Homogeneous vs. Heterogeneous Data
+
+The second axis does not concern *how* data is laid out inside a table, but rather **how willing the persistence system is to accept data that does not fit into a predefined tabular schema**.
+
+A traditional relational database requires data to match a rigid schema (defined columns, data types, and constraints) before ingestion. While exceptional for enforcing integrity, this creates a major barrier for **non-tabular data**: server logs, product images, nested JSON payloads with evolving structures, or audio transcripts.
+
+For decades, organizations either discarded such unstructured data, forcibly transformed it into relational tables (losing context along the way), or stored it in isolated file servers detached from analytics pipelines.
+
+Modern persistence systems solved this dilemma by combining two key concepts:
+
+*   **Object Storage** (such as Amazon S3 or Google Cloud Storage): Storage systems that accept files without imposing schema constraints, offer low storage costs per byte, and scale near-infinitely.
+*   **Self-Describing Open File Formats** (Parquet, Avro, JSON, ORC): Files that embed their own schema metadata, allowing structured, semi-structured, and unstructured data to coexist within the same repository without sacrificing query readability.
+
+This pairing enables a **Data Lake**—and, subsequently, a **Data Lakehouse**—to house transactional tables, raw product images, and streaming web clickstreams side by side without requiring upfront schema enforcement. Schema resolution, when needed, occurs **on read** rather than on write.
+
+### Scaling Up vs. Scaling Out
+
+The flexibility of a persistence system is also bound to its scaling strategy when data volumes surpass the limits of a single machine. Two primary strategies exist:
+
+::: {.callout-note appearance="minimal"}
+**Definition (Scale-Up / Vertical Scaling)**. Strategy that increases system capacity by adding resources (CPU, RAM, disk) to a single machine. This is the traditional scaling model of monolithic relational databases.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definition (Scale-Out / Horizontal Scaling)**. Strategy that increases system capacity by adding more nodes (servers), distributing data and processing tasks across a cluster. This is the native pattern of object storage and distributed computing.
+:::
+
+Vertical scaling hits a physical and economic ceiling: single servers have hard limits on CPU and RAM, and high-end enterprise servers scale exponentially in cost as they approach those limits. Traditional Data Warehouse relational engines inherited this constraint.
+
+Horizontal scaling, conversely, expands by appending nodes built from commodity hardware. This makes it cost-effective to persist petabytes of heterogeneous data in a Data Lake: capacity scales by adding distributed storage across commodity disks rather than upgrading expensive single-node hardware.
+
+---
+
+## Axis 3: The Cost of Consistency — ACID vs. BASE
+
+The third axis focuses not on read speed or data flexibility, but on **how strictly the system guarantees that stored data remains in a consistent state**, even amidst concurrent write operations or system failures.
+
+::: {.callout-note appearance="minimal"}
+**Definition (ACID)**. Set of guarantees—*Atomicity*, *Consistency*, *Isolation*, and *Durability*—ensuring that every transaction executes fully or not at all, preventing partial writes or corrupt states.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definition (BASE)**. Set of relaxed guarantees—*Basically Available*, *Soft state*, and *Eventual consistency*—prioritizing availability and fault tolerance in distributed environments, accepting that different readers may temporarily observe slightly different versions of the data.
+:::
+
+Enforcing ACID compliance incurs computational overhead: it demands synchronization primitives (locks, transaction logs, constraints) that become increasingly expensive across distributed nodes. Traditional relational databases (designed to scale vertically on single nodes or tightly coupled clusters) enforce ACID efficiently, whereas massively distributed object storage systems (designed to scale out across thousands of nodes) historically adopted BASE guarantees, accepting short consistency delays in exchange for infinite scale and high availability.
+
+This challenge gave rise to the **Data Lakehouse**: introducing a transactional metadata layer that restores ACID guarantees *on top of* scalable, BASE-oriented object storage.
+
+---
+
+## The Purpose of Data Storage Architectures
+
+No single system simultaneously maximizes all three axes: **query speed** (rows vs. columns), **schema flexibility** (scale-up vs. scale-out), and **consistency guarantees** (ACID vs. BASE) exist in trade-off states, as each guarantee carries computational or architectural overhead.
+
+This three-way trade-off defines the design choices behind modern data storage architectures:
+
+*   A system may prioritize **Axis 1** and **Axis 3** (columnar storage and strict ACID), restricting inputs to structured data in exchange for exceptional query performance and absolute consistency.
+*   A system may prioritize **Axis 2** (horizontal scaling and BASE), ingesting any data format with near-unlimited scale, while relinquishing immediate transactional consistency.
+*   A system may combine all three, overlaying a transactional metadata layer (ACID) on top of scalable, flexible object storage.
+
+In subsequent chapters, we will examine the **Data Warehouse**, **Data Lake**, and **Data Lakehouse**—concrete implementations of these architectural trade-offs. The key insight is that none of these patterns are mere trends; each exists to solve, through deliberate design trade-offs, the fundamental physical constraints of data engineering.

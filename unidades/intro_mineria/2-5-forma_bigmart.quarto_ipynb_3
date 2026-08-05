@@ -1,0 +1,531 @@
+{
+  "cells": [
+    {
+      "cell_type": "raw",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "title: Medidas de forma en Big Mart Sales\n",
+        "number-sections: false\n",
+        "format:\n",
+        "  html:\n",
+        "    toc: true\n",
+        "    page-layout: full\n",
+        "  pdf:\n",
+        "    toc: true\n",
+        "---"
+      ],
+      "id": "34fcb4d0"
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Introducción\n",
+        "\n",
+        "En una etapa inicial del análisis exploratorio de datos se estudian las **medidas de localización** y las **medidas de variabilidad** con el fin de identificar, respectivamente, el comportamiento central de una variable y el grado en que sus observaciones se dispersan alrededor de un valor representativo. Sin embargo, una descripción estadística rigurosa no se agota en estas dos dimensiones. Dos distribuciones pueden compartir una media y una desviación estándar semejantes, y aun así diferir de manera importante en su estructura global. Por ello es necesario incorporar el estudio de la **forma** de la distribución.\n",
+        "\n",
+        "Las medidas de forma permiten caracterizar aspectos tales como la **asimetría** y el grado de **concentración de masa alrededor del centro o en las colas**, usualmente descrito mediante la **curtosis**. En términos aplicados, estas medidas ayudan a responder preguntas como las siguientes: ¿la mayor parte de los productos tiene ventas moderadas con unos cuantos casos excepcionalmente altos?, ¿las observaciones se reparten de forma aproximadamente simétrica?, ¿aparecen colas pesadas o valores extremos frecuentes?, ¿una transformación puede facilitar la interpretación visual y estadística del fenómeno? Además, estas medidas orientan decisiones posteriores del EDA, como la revisión de valores atípicos, la conveniencia de usar medidas robustas o la necesidad de transformar variables para facilitar su análisis.\n",
+        "\n",
+        "En este capítulo se estudian las **medidas de forma** en el dataset de BigMart, utilizando como variable principal `Item_Outlet_Sales`. No obstante, varias de las herramientas presentadas pueden aplicarse también a otras variables numéricas del conjunto de datos, como `Item_MRP`, `Item_Visibility` y `Item_Weight`.\n",
+        "\n",
+        "## Preparación del entorno\n",
+        "\n",
+        "Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), para esta sección usaremos Python y las bibliotecas pandas, numpy, plotly y matplotlib.\n"
+      ],
+      "id": "592e9e4d"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import matplotlib.pyplot as plt\n",
+        "import plotly.express as px\n",
+        "import plotly.graph_objects as go\n",
+        "from scipy import stats\n",
+        "\n",
+        "plt.rcParams[\"figure.figsize\"] = (8, 5)\n",
+        "plt.rcParams[\"axes.grid\"] = True\n",
+        "\n",
+        "DATA_PATH = \"../../data/bigmart_sales.csv\"\n",
+        "\n",
+        "df = pd.read_csv(DATA_PATH)\n",
+        "df.head()"
+      ],
+      "id": "41b810ed",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Antes de proceder conviene verificar el tipo de las variables y concentrarnos en aquellas que sean cuantitativas."
+      ],
+      "id": "851ba442"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "df.info()"
+      ],
+      "id": "a2fab6f1",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "num_cols = df.select_dtypes(include=np.number).columns.tolist()\n",
+        "num_cols"
+      ],
+      "id": "63c6fe17",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Fundamentos teóricos\n",
+        "\n",
+        "### Asimetría\n",
+        "\n",
+        "La asimetría describe el grado en que una distribución se desvía de la simetría respecto de su centro. Intuitivamente:\n",
+        "\n",
+        "- una distribución **simétrica** presenta masas comparables a la izquierda y derecha del centro;\n",
+        "- una distribución con **asimetría positiva** presenta una cola más larga hacia valores altos;\n",
+        "- una distribución con **asimetría negativa** presenta una cola más larga hacia valores bajos.\n",
+        "\n",
+        "Una medida común de asimetría es el coeficiente:\n",
+        "\n",
+        "$$\n",
+        "g_1 = \\frac{\\frac{1}{n}\\sum_{i=1}^{n}(x_i-\\bar{x})^3}{\\left(\\frac{1}{n}\\sum_{i=1}^{n}(x_i-\\bar{x})^2\\right)^{3/2}}.\n",
+        "$$\n",
+        "\n",
+        "Cuando $g_1 > 0$, la cola derecha tiende a ser más extensa; cuando $g_1 < 0$, domina la cola izquierda; y cuando $g_1 \\approx 0$, la distribución puede considerarse aproximadamente simétrica, aunque esta interpretación siempre debe acompañarse de una inspección gráfica.\n",
+        "\n",
+        "### Curtosis\n",
+        "\n",
+        "La curtosis resume el peso relativo de las colas y la concentración de observaciones alrededor del centro. Una expresión frecuente es:\n",
+        "\n",
+        "$$\n",
+        "g_2 = \\frac{\\frac{1}{n}\\sum_{i=1}^{n}(x_i-\\bar{x})^4}{\\left(\\frac{1}{n}\\sum_{i=1}^{n}(x_i-\\bar{x})^2\\right)^2} - 3.\n",
+        "$$\n",
+        "\n",
+        "La resta de 3 permite comparar la distribución con la normal estándar:\n",
+        "\n",
+        "- si $g_2 \\approx 0$, la curtosis es similar a la de una normal;\n",
+        "- si $g_2 > 0$, la distribución exhibe colas relativamente pesadas y mayor propensión a valores extremos;\n",
+        "- si $g_2 < 0$, las colas son relativamente ligeras y la distribución resulta más plana.\n",
+        "\n",
+        "La curtosis no debe leerse únicamente como “pico” central: en la práctica, suele ser más útil interpretarla en términos de **presencia de colas pesadas y extremos**.\n",
+        "\n",
+        "## Exploración gráfica inicial de la variable de ventas\n",
+        "\n",
+        "Comenzamos con la variable de mayor interés económico: $\\texttt{Item\\_Outlet\\_Sales}$."
+      ],
+      "id": "169ddd05"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "sales = df[\"Item_Outlet_Sales\"].dropna()\n",
+        "\n",
+        "sales.describe()"
+      ],
+      "id": "b6bb1676",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = px.histogram(\n",
+        "    df,\n",
+        "    x=\"Item_Outlet_Sales\",\n",
+        "    nbins=50,\n",
+        "    marginal=\"box\",\n",
+        "    title=\"Distribución de Item_Outlet_Sales\"\n",
+        ")\n",
+        "fig.update_layout(bargap=0.05)\n",
+        "fig.show()"
+      ],
+      "id": "aa0614a0",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "A partir del histograma y el boxplot, se pueden responder varias preguntas sobre la forma de la distribución.\n",
+        "\n",
+        "En primer lugar, **no se observa simetría visual**. La distribución presenta una clara **asimetría positiva (sesgo a la derecha)**: la mayor parte de las observaciones se concentra en valores relativamente bajos, mientras que una cola se extiende hacia valores de ventas más altos.\n",
+        "\n",
+        "En segundo lugar, **sí aparecen colas largas**, especialmente hacia la derecha. Esto indica que, aunque la mayoría de los productos presenta niveles de ventas moderados, existen algunos casos con ventas considerablemente mayores que el resto.\n",
+        "\n",
+        "En tercer lugar, **se observan posibles valores extremos**, lo cual también se confirma en el boxplot superior, donde varios puntos aparecen fuera de los bigotes. Estos puntos corresponden a observaciones con ventas muy superiores al comportamiento típico.\n",
+        "\n",
+        "Finalmente, la gráfica muestra que **la masa principal de los datos se concentra en una región relativamente acotada**, aproximadamente en el rango bajo y medio de la distribución, mientras que un número reducido de observaciones alcanza valores de ventas mucho más altos. Esto sugiere que el comportamiento típico de las ventas está dominado por valores moderados, pero con algunos productos o combinaciones producto–tienda que generan ventas excepcionalmente elevadas.\n",
+        "\n",
+        "Para reforzar la interpretación puede añadirse una curva de densidad aproximada."
+      ],
+      "id": "27dc5546"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "import numpy as np\n",
+        "import plotly.graph_objects as go\n",
+        "from scipy import stats\n",
+        "\n",
+        "xs = np.linspace(sales.min(), sales.max(), 400)\n",
+        "kde = stats.gaussian_kde(sales)\n",
+        "\n",
+        "fig = go.Figure()\n",
+        "\n",
+        "# Histograma en densidad\n",
+        "fig.add_trace(\n",
+        "    go.Histogram(\n",
+        "        x=sales,\n",
+        "        nbinsx=40,\n",
+        "        histnorm=\"probability density\",\n",
+        "        opacity=0.6,\n",
+        "        name=\"Histograma\"\n",
+        "    )\n",
+        ")\n",
+        "\n",
+        "# Curva KDE\n",
+        "fig.add_trace(\n",
+        "    go.Scatter(\n",
+        "        x=xs,\n",
+        "        y=kde(xs),\n",
+        "        mode=\"lines\",\n",
+        "        name=\"Densidad estimada\",\n",
+        "        line=dict(width=2)\n",
+        "    )\n",
+        ")\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    title=\"Histograma y densidad estimada de Item_Outlet_Sales\",\n",
+        "    xaxis_title=\"Item_Outlet_Sales\",\n",
+        "    yaxis_title=\"Densidad\",\n",
+        "    bargap=0.02,\n",
+        "    height=500,\n",
+        "    width=900\n",
+        ")\n",
+        "\n",
+        "fig.show()"
+      ],
+      "id": "ced0c000",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "La superposición del histograma con la curva de densidad permite observar con mayor claridad la forma general de la distribución. Mientras el histograma muestra la frecuencia relativa por intervalos, la curva KDE suaviza esa información y ayuda a identificar la concentración principal de los datos, la presencia de asimetría y la posible existencia de colas largas.\n",
+        "\n",
+        "## Cálculo de asimetría y curtosis"
+      ],
+      "id": "8b90576b"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "skew_sales = sales.skew()\n",
+        "kurt_sales = sales.kurt()\n",
+        "\n",
+        "pd.DataFrame({\n",
+        "    \"medida\": [\"asimetría\", \"curtosis_exceso\"],\n",
+        "    \"valor\": [skew_sales, kurt_sales]\n",
+        "})"
+      ],
+      "id": "89bb595f",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Una interpretación orientativa puede apoyarse en criterios simples:\n",
+        "\n",
+        "- $|\\text{asimetría}| < 0.5$: asimetría baja;\n",
+        "- $0.5 \\le |\\text{asimetría}| < 1$: asimetría moderada;\n",
+        "- $|\\text{asimetría}| \\ge 1$: asimetría marcada.\n",
+        "\n",
+        "Estos umbrales no son absolutos, pero ayudan a construir una primera lectura del fenómeno. En datasets comerciales es frecuente observar asimetría positiva: muchos productos exhiben ventas moderadas, mientras un grupo reducido alcanza ventas muy elevadas.\n",
+        "\n",
+        "## Comparación de forma en varias variables numéricas\n",
+        "\n",
+        "La forma no tiene por qué ser igual en todas las variables del conjunto de datos. Conviene comparar la asimetría y curtosis de todas las columnas numéricas disponibles."
+      ],
+      "id": "c917e541"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "shape_table = pd.DataFrame({\n",
+        "    \"variable\": num_cols,\n",
+        "    \"asimetria\": [df[c].dropna().skew() for c in num_cols],\n",
+        "    \"curtosis_exceso\": [df[c].dropna().kurt() for c in num_cols]\n",
+        "}).sort_values(\"asimetria\", key=np.abs, ascending=False)\n",
+        "\n",
+        "shape_table"
+      ],
+      "id": "d9f9452b",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = px.bar(\n",
+        "    shape_table,\n",
+        "    x=\"variable\",\n",
+        "    y=\"asimetria\",\n",
+        "    title=\"Asimetría por variable numérica\",\n",
+        "    text_auto=True\n",
+        ")\n",
+        "fig.show()"
+      ],
+      "id": "59a94bd0",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = px.bar(\n",
+        "    shape_table,\n",
+        "    x=\"variable\",\n",
+        "    y=\"curtosis_exceso\",\n",
+        "    title=\"Curtosis (exceso) por variable numérica\",\n",
+        "    text_auto=True\n",
+        ")\n",
+        "fig.show()"
+      ],
+      "id": "b8b0b9e1",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "La comparación de **asimetría** y **curtosis en exceso** muestra que no todas las variables numéricas presentan la misma estructura de forma. En particular, `Item_Outlet_Sales` exhibe una asimetría positiva de **1.177531** y una curtosis en exceso de **1.615877**, mientras que `Item_Visibility` presenta una asimetría de **1.167091** y una curtosis en exceso de **1.679445**. Estos valores sugieren distribuciones con **colas derechas largas** y una posible presencia de **valores extremos**, por lo que en ambas variables conviene reforzar el análisis con medidas robustas, boxplots y, si resulta útil, transformaciones como la logarítmica.\n",
+        "\n",
+        "En cambio, `Item_MRP` muestra una asimetría mucho más baja (**0.127202**) y una curtosis en exceso negativa (**-0.889769**), mientras que `Item_Weight` presenta una asimetría de **0.082426** y una curtosis en exceso de **-1.227766**. Esto sugiere que ambas variables tienen una forma más cercana a la simetría y una distribución relativamente menos influida por colas pesadas.\n",
+        "\n",
+        "Por su parte, `Outlet_Establishment_Year` registra una asimetría negativa de **-0.396641** y una curtosis en exceso de **-1.205694**. Aunque su forma no parece especialmente extrema, esta variable requiere una interpretación adicional debido a su naturaleza temporal, ya que su análisis no debe basarse únicamente en criterios de distribución continua.\n",
+        "\n",
+        "En conjunto, estos resultados indican que el EDA debe adaptarse a la forma específica de cada variable y no aplicar una misma lectura descriptiva a todas por igual.\n",
+        "\n",
+        "## Transformaciones y su efecto sobre la forma\n",
+        "\n",
+        "Cuando una variable presenta fuerte asimetría positiva, una transformación logarítmica puede facilitar tanto la visualización como el modelado posterior. En el caso de las ventas, una opción práctica es usar:\n",
+        "\n",
+        "$$\n",
+        "y^{\\ast} = \\log(1+y),\n",
+        "$$\n",
+        "\n",
+        "que evita problemas cuando existen observaciones cercanas a cero."
+      ],
+      "id": "40ffdb37"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "df[\"log_Item_Outlet_Sales\"] = np.log1p(df[\"Item_Outlet_Sales\"])\n",
+        "log_sales = df[\"log_Item_Outlet_Sales\"].dropna()\n",
+        "\n",
+        "pd.DataFrame({\n",
+        "    \"variable\": [\"Item_Outlet_Sales\", \"log_Item_Outlet_Sales\"],\n",
+        "    \"asimetria\": [sales.skew(), log_sales.skew()],\n",
+        "    \"curtosis_exceso\": [sales.kurt(), log_sales.kurt()]\n",
+        "})"
+      ],
+      "id": "4f4eaf4d",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = px.histogram(\n",
+        "    df,\n",
+        "    x=\"log_Item_Outlet_Sales\",\n",
+        "    nbins=50,\n",
+        "    marginal=\"box\",\n",
+        "    title=\"Distribución de log(1 + Item_Outlet_Sales)\"\n",
+        ")\n",
+        "fig.show()"
+      ],
+      "id": "fc01ff10",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "plt.figure()\n",
+        "plt.hist(log_sales, bins=40, density=True, alpha=0.6)\n",
+        "xs_log = np.linspace(log_sales.min(), log_sales.max(), 400)\n",
+        "kde_log = stats.gaussian_kde(log_sales)\n",
+        "plt.plot(xs_log, kde_log(xs_log), linewidth=2)\n",
+        "plt.title(\"Histograma y densidad de log(1 + Item_Outlet_Sales)\")\n",
+        "plt.xlabel(\"log(1 + Item_Outlet_Sales)\")\n",
+        "plt.ylabel(\"Densidad\")\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "ae20fa32",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "La comparación entre la variable original y su versión transformada permite mostrar un punto importante del EDA: las medidas de forma no son meramente descriptivas, también orientan decisiones analíticas posteriores. Si la asimetría disminuye sustancialmente bajo la transformación, esto sugiere una representación más equilibrada del fenómeno.\n",
+        "\n",
+        "En particular, una **transformación logarítmica** puede ser útil cuando la distribución presenta una **asimetría positiva marcada**, es decir, cuando existen valores muy altos que alargan la cola derecha de la distribución. Al aplicar el logaritmo, los valores grandes se comprimen relativamente más que los valores pequeños, lo que tiende a reducir la asimetría y a concentrar mejor los datos alrededor del centro.\n",
+        "\n",
+        "Desde el punto de vista del EDA, esta transformación ayuda a:\n",
+        "\n",
+        "- **visualizar mejor la estructura de la distribución**, evitando que unos pocos valores muy grandes dominen el gráfico;\n",
+        "- **comparar observaciones en términos relativos**, ya que las diferencias en escala logarítmica representan cambios proporcionales;\n",
+        "- **reducir la influencia de valores extremos**, facilitando una lectura más clara del comportamiento típico de los datos.\n",
+        "\n",
+        "Además, esta transformación puede ser útil para **análisis posteriores**, especialmente cuando se emplean métodos estadísticos o modelos que funcionan mejor con distribuciones más simétricas o con variabilidad más estable. En contextos de modelado, por ejemplo, trabajar con una variable transformada puede mejorar la interpretación de los resultados, estabilizar la varianza y facilitar el ajuste de modelos lineales o regresiones.\n",
+        "\n",
+        "En síntesis, el uso del logaritmo en el EDA no solo mejora la interpretación visual de distribuciones muy asimétricas, sino que también prepara los datos para etapas posteriores del análisis, donde una representación más equilibrada de la variable puede resultar analíticamente más conveniente.\n",
+        "\n",
+        "## Gráfico cuantil-cuantil como apoyo visual\n",
+        "\n",
+        "Otra herramienta útil para estudiar la forma es el gráfico Q-Q frente a la distribución normal. No debe interpretarse como una prueba definitiva, pero sí como un recurso visual para detectar desviaciones sistemáticas respecto a simetría y colas gaussianas."
+      ],
+      "id": "6981b30e"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "plt.figure()\n",
+        "stats.probplot(sales, dist=\"norm\", plot=plt)\n",
+        "plt.title(\"Gráfico Q-Q de Item_Outlet_Sales\")\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "8fe558d6",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "plt.figure()\n",
+        "stats.probplot(log_sales, dist=\"norm\", plot=plt)\n",
+        "plt.title(\"Gráfico Q-Q de log(1 + Item_Outlet_Sales)\")\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "a1d02f73",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Si la versión transformada se alinea mejor con la recta de referencia que la variable original, ello aporta evidencia visual de una mejora en la regularidad de la forma, aunque no implica normalidad perfecta.\n",
+        "\n",
+        "## Mini-dashboard de forma\n",
+        "\n",
+        "La siguiente sección integra un dashboard simple para resumir la forma de la variable de ventas y su transformación."
+      ],
+      "id": "055e7064"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "from plotly.subplots import make_subplots\n",
+        "\n",
+        "fig = make_subplots(\n",
+        "    rows=2,\n",
+        "    cols=2,\n",
+        "    subplot_titles=(\n",
+        "        \"Ventas originales\",\n",
+        "        \"Ventas transformadas con log(1+y)\",\n",
+        "        \"Asimetría comparada\",\n",
+        "        \"Curtosis comparada\"\n",
+        "    )\n",
+        ")\n",
+        "\n",
+        "fig.add_trace(\n",
+        "    go.Histogram(x=sales, nbinsx=40, name=\"Ventas originales\"),\n",
+        "    row=1, col=1\n",
+        ")\n",
+        "fig.add_trace(\n",
+        "    go.Histogram(x=log_sales, nbinsx=40, name=\"Ventas log\"),\n",
+        "    row=1, col=2\n",
+        ")\n",
+        "fig.add_trace(\n",
+        "    go.Bar(\n",
+        "        x=[\"Original\", \"Log\"],\n",
+        "        y=[sales.skew(), log_sales.skew()],\n",
+        "        name=\"Asimetría\"\n",
+        "    ),\n",
+        "    row=2, col=1\n",
+        ")\n",
+        "fig.add_trace(\n",
+        "    go.Bar(\n",
+        "        x=[\"Original\", \"Log\"],\n",
+        "        y=[sales.kurt(), log_sales.kurt()],\n",
+        "        name=\"Curtosis\"\n",
+        "    ),\n",
+        "    row=2, col=2\n",
+        ")\n",
+        "\n",
+        "fig.update_layout(\n",
+        "    title=\"Dashboard básico de medidas de forma\",\n",
+        "    height=700,\n",
+        "    showlegend=False\n",
+        ")\n",
+        "fig.show()"
+      ],
+      "id": "231c949b",
+      "execution_count": null,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "name": "python3",
+      "language": "python",
+      "display_name": "Python 3 (ipykernel)",
+      "path": "/Users/diegovillalba/.pyenv/versions/data_minning/share/jupyter/kernels/python3"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}

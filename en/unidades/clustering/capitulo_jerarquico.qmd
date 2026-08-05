@@ -1,0 +1,241 @@
+---
+title: "Hierarchical Clustering"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clustering.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Hierarchical clustering constructs a tree-like nested decomposition (dendrogram) of instances rather than a flat partition. Users cut the dendrogram at height thresholds to extract arbitrary $k$-cluster partitions [@hastie2009elements; @aggarwal2013].
+
+## Agglomerative Linkage Criteria
+
+- **Single Linkage:** $d_{\text{single}}(C_i,C_j) = \min_{\mathbf{x}\in C_i,\mathbf{y}\in C_j} d(\mathbf{x},\mathbf{y})$ {#eq-single-linkage}
+- **Complete Linkage:** $d_{\text{complete}}(C_i,C_j) = \max_{\mathbf{x}\in C_i,\mathbf{y}\in C_j} d(\mathbf{x},\mathbf{y})$ {#eq-complete-linkage}
+- **Average Linkage (UPGMA):** $d_{\text{avg}}(C_i,C_j) = \frac{1}{|C_i||C_j|}\sum_{\mathbf{x}\in C_i}\sum_{\mathbf{y}\in C_j}d(\mathbf{x},\mathbf{y})$ {#eq-average-linkage}
+- **Ward Linkage:** Minimizes increase in intra-cluster variance upon merge [@ward1963]:
+  $$d_{\text{Ward}}(C_i,C_j) = \frac{|C_i||C_j|}{|C_i|+|C_j|}\|\boldsymbol{\mu}_i-\boldsymbol{\mu}_j\|^2$$ {#eq-ward-linkage}
+
+```{=html}
+<div id="hc-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Hierarchical Clustering — Interactive Dendrogram</span><br>
+    <span style="font-size:0.81em;color:#666;">Select linkage criterion and adjust cutoff threshold</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">Linkage:</label>
+    <select id="hc-link" style="font-size:0.83em;padding:3px 8px;border:1px solid #d0d7e3;border-radius:5px;background:#fff;">
+      <option value="ward">Ward</option>
+      <option value="complete">Complete</option>
+      <option value="single">Single</option>
+      <option value="average">Average</option>
+    </select>
+    <label style="font-size:0.83em;color:#444;margin-left:12px;">Threshold = <strong id="hc-tv">1.8</strong></label>
+    <input id="hc-tsl" type="range" min="0" max="100" step="1" value="45" style="flex:1;min-width:120px;accent-color:#1a3a5c;">
+  </div>
+  <div id="hc-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="hc-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const PTS=[
+    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],
+    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],
+    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4]
+  ];
+  const N=PTS.length;
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2','#be185d','#0f766e'];
+  const cv=document.getElementById('hc-cv');
+  const W=680,H=380,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+
+  function eucl(a,b){return Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2);}
+
+  function buildDendrogram(link){
+    const clusters=PTS.map((_,i)=>({pts:[i],height:0,left:null,right:null,id:i}));
+    const merges=[];
+    while(clusters.length>1){
+      let minD=Infinity,bi=-1,bj=-1;
+      for(let i=0;i<clusters.length;i++)for(let j=i+1;j<clusters.length;j++){
+        const d=linkDist(clusters[i],clusters[j],link);
+        if(d<minD){minD=d;bi=i;bj=j;}
+      }
+      const newC={pts:[...clusters[bi].pts,...clusters[bj].pts],height:minD,left:clusters[bi],right:clusters[bj],id:N+merges.length};
+      merges.push({c1:clusters[bi],c2:clusters[bj],h:minD,merged:newC});
+      clusters.splice(bj,1);clusters.splice(bi,1);clusters.push(newC);
+    }
+    return{root:clusters[0],merges};
+  }
+
+  function linkDist(ca,cb,link){
+    const pairs=[];
+    ca.pts.forEach(i=>cb.pts.forEach(j=>pairs.push(eucl(PTS[i],PTS[j]))));
+    if(link==='single')return Math.min(...pairs);
+    if(link==='complete')return Math.max(...pairs);
+    if(link==='average')return pairs.reduce((s,v)=>s+v,0)/pairs.length;
+    if(link==='ward'){
+      const na=ca.pts.length,nb=cb.pts.length;
+      const muA=ca.pts.reduce((s,i)=>[s[0]+PTS[i][0],s[1]+PTS[i][1]],[0,0]).map(v=>v/na);
+      const muB=cb.pts.reduce((s,i)=>[s[0]+PTS[i][0],s[1]+PTS[i][1]],[0,0]).map(v=>v/nb);
+      return(na*nb)/(na+nb)*eucl(muA,muB)**2;
+    }
+    return 0;
+  }
+
+  function assignColors(root,threshold){
+    const labels=new Array(N).fill(0);
+    let ci=0;
+    function visit(node){
+      if(node.height<=threshold||(!node.left&&!node.right)){
+        node.pts.forEach(i=>labels[i]=ci);ci++;
+      } else {if(node.left)visit(node.left);if(node.right)visit(node.right);}
+    }
+    visit(root);
+    return{labels,nGroups:ci};
+  }
+
+  function leafOrder(node){
+    if(!node.left&&!node.right)return[node.id];
+    return[...leafOrder(node.left),...leafOrder(node.right)];
+  }
+
+  let dend=buildDendrogram('ward');
+
+  function draw(threshold){
+    const{labels,nGroups}=assignColors(dend.root,threshold);
+    ctx.clearRect(0,0,W,H);
+
+    const LP={l:44,r:W/2-8,t:16,b:H-28};
+    const LW=LP.r-LP.l,LH=LP.b-LP.t;
+    const sx=x=>LP.l+x/9*LW,sy=y=>LP.t+LH*(1-y/7);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW,LH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(LP.l,LP.t,LW,LH);
+    PTS.forEach((p,i)=>{
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),6,0,2*Math.PI);
+      ctx.fillStyle=COLS[labels[i]%COLS.length]+'cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    });
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Scatter ('+nGroups+' clusters)',LP.l+LW/2,LP.t-4);
+
+    const RP={l:W/2+8,r:W-10,t:16,b:H-28};
+    const RW=RP.r-RP.l,RH=RP.b-RP.t;
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
+    const order=leafOrder(dend.root).filter(id=>id<N);
+    const maxH=dend.root.height*1.1||1;
+    const dx=RW/(N+1);
+    const dendY=h=>RP.b-4-h/maxH*(RH-20);
+    const leafX=new Map();
+    order.forEach((id,i)=>leafX.set(id,RP.l+dx*(i+1)));
+
+    function drawNode(node){
+      if(!node.left&&!node.right){
+        const x=leafX.get(node.id);
+        ctx.beginPath();ctx.arc(x,dendY(0),3,0,2*Math.PI);
+        ctx.fillStyle=COLS[labels[node.id]%COLS.length];ctx.fill();
+        return x;
+      }
+      const lx=drawNode(node.left);
+      const rx=drawNode(node.right);
+      const my=dendY(node.height);
+      const isAbove=node.height>threshold;
+      ctx.strokeStyle=isAbove?'#94a3b8':COLS[labels[node.pts[0]]%COLS.length];
+      ctx.lineWidth=isAbove?1.2:2;
+      ctx.beginPath();ctx.moveTo(lx,dendY(node.left.height));ctx.lineTo(lx,my);ctx.lineTo(rx,my);ctx.lineTo(rx,dendY(node.right.height));ctx.stroke();
+      return(lx+rx)/2;
+    }
+    drawNode(dend.root);
+
+    const ty=dendY(threshold);
+    ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.setLineDash([6,3]);
+    ctx.beginPath();ctx.moveTo(RP.l+2,ty);ctx.lineTo(RP.r-2,ty);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Dendrogram',RP.l+RW/2,RP.t-4);
+
+    document.getElementById('hc-info').innerHTML=
+      `Linkage: <strong>${document.getElementById('hc-link').value}</strong>&ensp;·&ensp;`+
+      `Threshold = <strong>${threshold.toFixed(2)}</strong>&ensp;·&ensp;`+
+      `Clusters = <strong>${nGroups}</strong>`;
+  }
+
+  function update(){
+    const link=document.getElementById('hc-link').value;
+    dend=buildDendrogram(link);
+    const t01=parseFloat(document.getElementById('hc-tsl').value)/100;
+    const threshold=t01*dend.root.height*1.1;
+    document.getElementById('hc-tv').textContent=threshold.toFixed(2);
+    draw(threshold);
+  }
+
+  document.getElementById('hc-link').addEventListener('change',update);
+  document.getElementById('hc-tsl').addEventListener('input',update);
+  update();
+})();
+</script>
+```
+
+## Cophenetic Correlation
+
+::: {.callout-note appearance="minimal"}
+Definition. Cophenetic Correlation Coefficient $r_c$:
+$$
+r_c = \text{corr}(d_{ij}, c_{ij}),
+$$ {#eq-cophenetic}
+where $d_{ij}$ is original pairwise distance and $c_{ij}$ is dendrogram cophenetic merge distance.
+:::
+
+```{python}
+from scipy.cluster.hierarchy import linkage, cophenet
+from scipy.spatial.distance import pdist
+from sklearn.datasets import make_blobs
+
+X, _ = make_blobs(n_samples=80, centers=3, cluster_std=0.8, random_state=42)
+
+for method in ["single", "complete", "average", "ward"]:
+    Z = linkage(X, method=method)
+    c, _ = cophenet(Z, pdist(X))
+    print(f"Method: {method:10s} | Cophenetic r: {c:.4f}")
+```
+
+## Summary
+
+Hierarchical clustering builds binary dendrograms without requiring prior cluster count specification ($k$). Linkage criteria (Single, Complete, Average, Ward) control merge dynamics [@hastie2009elements; @ward1963].
+
+## References
+
+::: {#refs}
+:::

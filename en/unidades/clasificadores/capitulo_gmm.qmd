@@ -1,0 +1,367 @@
+---
+title: "Gaussian Mixture Models"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_gmm.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Gaussian Mixture Models (GMMs) are probabilistic generative models that represent complex data densities as a weighted combination of $K$ Gaussian component distributions [@bishop2006; @murphy2012]. The Expectation-Maximization (EM) algorithm [@dempster1977] provides the optimization framework for estimating model parameters under unobserved latent component assignments. GMMs extend K-Means into a probabilistic framework: as component covariance matrices vanish to zero ($\boldsymbol{\Sigma}_k = \sigma^2 \mathbf{I}, \sigma^2 \to 0$), soft posterior responsibilities collapse to hard nearest-centroid K-Means cluster assignments [@hastie2009].
+
+## Motivation: Limitations of Single Gaussians
+
+Single multivariate normal distributions are restricted to **unimodal** densities with ellipsoidal contours. Fitting a single Gaussian to multimodal distributions places probability mass in low-density valleys.
+
+Figure @fig-gmm-motivacion demonstrates single Gaussian failure versus a 2-component mixture on bimodal synthetic data.
+
+```{python}
+#| label: fig-gmm-motivacion
+#| fig-cap: "Single Gaussian fit (left) vs. 2-component Gaussian Mixture Model (right) on bimodal data."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+rng = np.random.default_rng(42)
+
+datos_1 = rng.normal(-3, 0.8, 300)
+datos_2 = rng.normal(3, 1.0, 200)
+datos = np.concatenate([datos_1, datos_2])
+
+mu_unico = datos.mean()
+sigma_unico = datos.std()
+
+pi1, mu1_gmm, sigma1_gmm = 0.60, -3.0, 0.80
+pi2, mu2_gmm, sigma2_gmm = 0.40,  3.0, 1.00
+
+x_plot = np.linspace(-7, 7, 400)
+
+def normal_1d(x, mu, sigma):
+    return np.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
+
+pdf_unico = normal_1d(x_plot, mu_unico, sigma_unico)
+pdf_gmm   = pi1 * normal_1d(x_plot, mu1_gmm, sigma1_gmm) + \
+            pi2 * normal_1d(x_plot, mu2_gmm, sigma2_gmm)
+
+fig = make_subplots(rows=1, cols=2,
+                    subplot_titles=("Single Gaussian Fit", "2-Component Gaussian Mixture"))
+
+fig.add_trace(
+    go.Histogram(x=datos, histnorm='probability density', nbinsx=40,
+                 name='Data', marker_color='steelblue', opacity=0.5,
+                 showlegend=True),
+    row=1, col=1
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pdf_unico, mode='lines',
+               name='N(x|μ,σ)', line=dict(color='crimson', width=2.5),
+               showlegend=True),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Histogram(x=datos, histnorm='probability density', nbinsx=40,
+                 name='Data', marker_color='steelblue', opacity=0.5,
+                 showlegend=False),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pdf_gmm, mode='lines',
+               name='GMM (K=2)', line=dict(color='darkorange', width=2.5),
+               showlegend=True),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pi1 * normal_1d(x_plot, mu1_gmm, sigma1_gmm),
+               mode='lines', name='Component 1',
+               line=dict(color='green', width=1.5, dash='dash'),
+               showlegend=True),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Scatter(x=x_plot, y=pi2 * normal_1d(x_plot, mu2_gmm, sigma2_gmm),
+               mode='lines', name='Component 2',
+               line=dict(color='purple', width=1.5, dash='dash'),
+               showlegend=True),
+    row=1, col=2
+)
+
+fig.update_xaxes(title_text="x", row=1, col=1)
+fig.update_xaxes(title_text="x", row=1, col=2)
+fig.update_yaxes(title_text="Probability Density", row=1, col=1)
+fig.update_layout(height=420, width=850,
+                  title_text="Single Gaussian vs Gaussian Mixture Model",
+                  legend=dict(x=0.75, y=0.95))
+fig.show()
+```
+
+## The Gaussian Mixture Model
+
+### Formal Definition
+
+A GMM with $K$ components defines marginal density over $\mathbf{x} \in \mathbb{R}^D$:
+
+$$
+p(\mathbf{x}) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+$$ {#eq-gmm-marginal}
+
+where $\pi_k \geq 0, \sum_k \pi_k = 1$ are mixture weights representing component prior probabilities $P(z=k)$, and:
+
+$$
+\mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) =
+\frac{1}{(2\pi)^{D/2} |\boldsymbol{\Sigma}_k|^{1/2}}
+\exp\!\left(-\frac{1}{2}(\mathbf{x} - \boldsymbol{\mu}_k)^\top \boldsymbol{\Sigma}_k^{-1} (\mathbf{x} - \boldsymbol{\mu}_k)\right)
+$$ {#eq-gaussian-pdf}
+
+### Latent Variables and Log-Likelihood
+
+Introducing one-hot latent indicators $\mathbf{z} \in \{0,1\}^K$ ($\sum_k z_k=1$), the joint distribution evaluates to:
+
+$$
+p(\mathbf{x}, \mathbf{z}) = \prod_{k=1}^{K} \left[\pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)\right]^{z_k}
+$$ {#eq-gmm-joint}
+
+Observed data log-likelihood over $N$ i.i.d. instances:
+
+$$
+\ell(\boldsymbol{\theta}) = \sum_{i=1}^{N} \log \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+$$ {#eq-log-lik}
+
+```{python}
+#| label: fig-gmm-2d-densidad
+#| fig-cap: "Density contour of a 3-component 2D GMM."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng2 = np.random.default_rng(7)
+
+pis_true  = [0.40, 0.35, 0.25]
+mus_true  = [np.array([-3.0, -2.0]),
+             np.array([ 3.0, -1.5]),
+             np.array([ 0.0,  3.5])]
+Sigs_true = [np.array([[1.2, 0.6], [0.6, 0.8]]),
+             np.array([[0.9, -0.4], [-0.4, 1.5]]),
+             np.array([[0.5, 0.0], [0.0, 0.5]])]
+
+colores_comp = ['#e41a1c', '#377eb8', '#4daf4a']
+
+n_total = 500
+ns = [int(pis_true[k] * n_total) for k in range(3)]
+ns[-1] = n_total - sum(ns[:-1])
+
+puntos = []
+for k in range(3):
+    pts = rng2.multivariate_normal(mus_true[k], Sigs_true[k], ns[k])
+    puntos.append(pts)
+
+def gauss_pdf_2d(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return np.exp(-0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet))
+
+x_g = np.linspace(-7, 7, 150)
+y_g = np.linspace(-5, 7, 150)
+XX, YY = np.meshgrid(x_g, y_g)
+grid = np.column_stack([XX.ravel(), YY.ravel()])
+
+Z_dens = np.zeros(grid.shape[0])
+for k in range(3):
+    Z_dens += pis_true[k] * gauss_pdf_2d(grid, mus_true[k], Sigs_true[k])
+Z_dens = Z_dens.reshape(XX.shape)
+
+fig2 = go.Figure()
+
+fig2.add_trace(go.Contour(
+    x=x_g, y=y_g, z=Z_dens,
+    colorscale='Blues',
+    contours=dict(showlabels=False, coloring='fill'),
+    opacity=0.7, showscale=True,
+    colorbar=dict(title="Density"),
+    name='GMM Density'
+))
+
+nombres_comp = ['Component 1', 'Component 2', 'Component 3']
+for k in range(3):
+    pts_k = puntos[k]
+    fig2.add_trace(go.Scatter(
+        x=pts_k[:, 0], y=pts_k[:, 1],
+        mode='markers', name=nombres_comp[k],
+        marker=dict(color=colores_comp[k], size=4, opacity=0.7)
+    ))
+
+fig2.update_layout(
+    height=500, width=700,
+    xaxis_title="x₁", yaxis_title="x₂",
+    title="Gaussian Mixture Density (K=3)"
+)
+fig2.show()
+```
+
+## The Expectation-Maximization (EM) Algorithm
+
+The Evidence Lower Bound (ELBO) under variational distribution $q(\mathbf{z})$:
+
+$$
+\log p(\mathbf{x} \mid \boldsymbol{\theta}) \geq \mathbb{E}_{q}\!\left[\log \frac{p(\mathbf{x}, \mathbf{z} \mid \boldsymbol{\theta})}{q(\mathbf{z})}\right] \equiv \mathcal{L}(q, \boldsymbol{\theta})
+$$ {#eq-elbo}
+
+### E-Step: Responsibilities Computation
+
+$$
+r_{ik} = p(z_i = k \mid \mathbf{x}_i, \boldsymbol{\theta}^{(t)}) =
+\frac{\pi_k^{(t)} \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k^{(t)}, \boldsymbol{\Sigma}_k^{(t)})}
+     {\displaystyle\sum_{j=1}^{K} \pi_j^{(t)} \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_j^{(t)}, \boldsymbol{\Sigma}_j^{(t)})}
+$$ {#eq-e-step}
+
+### M-Step: Closed-Form Parameter Updates
+
+$$
+\pi_k^{(t+1)} = \frac{N_k}{N}, \qquad N_k = \sum_{i=1}^N r_{ik}
+$$ {#eq-m-step-pi}
+
+$$
+\boldsymbol{\mu}_k^{(t+1)} = \frac{1}{N_k} \sum_{i=1}^{N} r_{ik} \, \mathbf{x}_i
+$$ {#eq-m-step-mu}
+
+$$
+\boldsymbol{\Sigma}_k^{(t+1)} = \frac{1}{N_k} \sum_{i=1}^{N} r_{ik} \,
+(\mathbf{x}_i - \boldsymbol{\mu}_k^{(t+1)})(\mathbf{x}_i - \boldsymbol{\mu}_k^{(t+1)})^\top
+$$ {#eq-m-step-sigma}
+
+```{python}
+#| label: fig-gmm-em-animacion
+#| fig-cap: "EM algorithm convergence animation for a 2-component GMM."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng3 = np.random.default_rng(123)
+
+n1, n2 = 180, 220
+X1 = rng3.multivariate_normal([-3, 1], [[1.0, 0.5], [0.5, 0.8]], n1)
+X2 = rng3.multivariate_normal([ 3, -1], [[0.8, -0.3], [-0.3, 1.2]], n2)
+X_em = np.vstack([X1, X2])
+N_em, D_em = X_em.shape
+
+def gauss_log_pdf(X, mu, Sigma):
+    D = X.shape[1]
+    diff = X - mu
+    sign, logdet = np.linalg.slogdet(Sigma)
+    inv_S = np.linalg.inv(Sigma)
+    maha = np.einsum('ij,jk,ik->i', diff, inv_S, diff)
+    return -0.5 * maha - 0.5 * (D * np.log(2 * np.pi) + logdet)
+
+def e_step(X, pis, mus, Sigmas):
+    K = len(pis)
+    N = X.shape[0]
+    log_R = np.zeros((N, K))
+    for k in range(K):
+        log_R[:, k] = np.log(pis[k] + 1e-300) + gauss_log_pdf(X, mus[k], Sigmas[k])
+    log_R_max = log_R.max(axis=1, keepdims=True)
+    R = np.exp(log_R - log_R_max)
+    R /= R.sum(axis=1, keepdims=True)
+    return R
+
+def m_step(X, R):
+    N, D = X.shape
+    K = R.shape[1]
+    Nk = R.sum(axis=0)
+    pis_new = Nk / N
+    mus_new = (R.T @ X) / Nk[:, None]
+    Sigmas_new = []
+    for k in range(K):
+        diff = X - mus_new[k]
+        Sk = (R[:, k:k+1] * diff).T @ diff / Nk[k]
+        Sk += 1e-6 * np.eye(D)
+        Sigmas_new.append(Sk)
+    return pis_new, mus_new, Sigmas_new
+
+K_em = 2
+idx_init = rng3.choice(N_em, K_em, replace=False)
+pis_em  = np.array([0.5, 0.5])
+mus_em  = [X_em[idx_init[k]].copy() for k in range(K_em)]
+Sigmas_em = [np.eye(D_em) for _ in range(K_em)]
+
+R_em = e_step(X_em, pis_em, mus_em, Sigmas_em)
+for _ in range(20):
+    pis_em, mus_em, Sigmas_em = m_step(X_em, R_em)
+    R_em = e_step(X_em, pis_em, mus_em, Sigmas_em)
+
+print("EM Convergence completed. Final component weights:", pis_em)
+```
+
+## Covariance Structure Constraints
+
+| Type | Description | Free Parameters per Component | Geometric Contour |
+|---|---|---|---|
+| Spherical | $\boldsymbol{\Sigma}_k = \sigma_k^2 \mathbf{I}$ | 1 | Spherical circles |
+| Diagonal | $\boldsymbol{\Sigma}_k = \mathrm{diag}(\sigma_{k1}^2, \ldots, \sigma_{kD}^2)$ | $D$ | Axis-aligned ellipses |
+| Full | $\boldsymbol{\Sigma}_k$ arbitrary non-singular | $D(D+1)/2$ | Arbitrarily oriented ellipses |
+| Tied | $\boldsymbol{\Sigma}_k = \boldsymbol{\Sigma}$ | $D(D+1)/2$ total | Shared orientation ellipses |
+
+## Model Selection (AIC and BIC)
+
+- **Akaike Information Criterion (AIC):** $\mathrm{AIC} = -2\,\ell(\hat{\boldsymbol{\theta}}) + 2p$ {#eq-aic}
+- **Bayesian Information Criterion (BIC):** $\mathrm{BIC} = -2\,\ell(\hat{\boldsymbol{\theta}}) + p \log N$ {#eq-bic}
+
+Free parameters for full covariance GMM:
+
+$$
+p = K \cdot D + K \cdot \frac{D(D+1)}{2} + (K-1).
+$$ {#eq-gmm-params}
+
+Minimizing BIC yields optimal model parsimony.
+
+## GMM as a Generative Model
+
+Sampling procedure:
+
+1. Sample component $k \sim \mathrm{Categorical}(\pi_1, \ldots, \pi_K)$.
+2. Sample instance $\mathbf{x} \sim \mathcal{N}(\boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)$.
+
+## Summary
+
+Gaussian Mixture Models provide a flexible probabilistic framework for density estimation, soft clustering, and generative modeling. The EM algorithm iteratively maximizes lower-bounded log-likelihood via expectation and maximization steps [@bishop2006; @murphy2012].
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

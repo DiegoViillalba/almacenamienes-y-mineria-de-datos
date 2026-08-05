@@ -1,0 +1,923 @@
+---
+title: "Association Rules: Fundamentals, Interpretation, and Selection"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_asociacion.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+```{python}
+#| label: setup-capitulo
+#| echo: false
+
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, association_rules
+
+np.random.seed(42)
+
+# Reference dataset: representative sample from Groceries
+transacciones_raw = [
+    ["whole milk", "yogurt", "bread"],
+    ["whole milk", "butter", "eggs"],
+    ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"],
+    ["whole milk", "soda", "chips"],
+    ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"],
+    ["eggs", "butter", "cheese"],
+    ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"],
+    ["whole milk", "bread", "eggs"],
+    ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"],
+    ["bread", "eggs", "cheese"],
+    ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"],
+    ["chips", "soda", "beer"],
+    ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"],
+    ["whole milk", "bread", "sugar"],
+    ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"],
+    ["coffee", "sugar", "bread"],
+    ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"],
+    ["bread", "chips", "soda"],
+    ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"],
+    ["whole milk", "butter", "cheese"],
+    ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"],
+    ["chips", "candy", "soda"],
+    ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"],
+    ["yogurt", "cheese", "eggs"],
+    ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"],
+    ["whole milk", "vegetables", "eggs"],
+    ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"],
+    ["whole milk", "fruit", "cheese"],
+    ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"],
+    ["coffee", "bread", "butter"],
+    ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"],
+    ["whole milk", "sugar", "butter"],
+    ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"],
+    ["granola", "yogurt", "fruit"],
+]
+
+te = TransactionEncoder()
+te_array = te.fit_transform(transacciones_raw)
+df = pd.DataFrame(te_array, columns=te.columns_)
+
+itemsets = apriori(df, min_support=0.10, use_colnames=True)
+reglas = association_rules(itemsets, metric="lift", min_threshold=0.5)
+reglas["antecedents_str"] = reglas["antecedents"].apply(lambda x: ", ".join(sorted(x)))
+reglas["consequents_str"] = reglas["consequents"].apply(lambda x: ", ".join(sorted(x)))
+reglas["regla"] = reglas["antecedents_str"] + " → " + reglas["consequents_str"]
+
+# Zhang's metric (not included in mlxtend)
+def zhang(row):
+    pab = row["support"]
+    pa  = row["antecedent support"]
+    pb  = row["consequent support"]
+    num = pab - pa * pb
+    den = max(pab * (1 - pa), pa * (pb - pab))
+    return num / den if den != 0 else 0.0
+
+reglas["zhang"] = reglas.apply(zhang, axis=1)
+```
+
+## Introduction {#sec-intro}
+
+In most contexts where transactional data is collected —retail sales, medical records, web browsing histories, digital platform interactions— there is a recurring question that precedes any predictive model: *which items tend to appear together?* This seemingly simple question gives rise to one of the most thoroughly studied problems in data mining: the discovery of association rules.
+
+The problem was formalized by @agrawal1994fast in the context of market basket analysis, where each transaction in a supermarket records the set of products purchased by a customer during a single visit. The original motivation was directly commercial: identifying products that are frequently bought together makes it possible to optimize the physical layout of items in the store, design cross-promotional strategies, and personalize recommendations. The same formalism, however, has since been applied in domains as diverse as bioinformatics —to identify co-expressed genes—, epidemiology —to detect co-occurring symptoms in patients—, and cybersecurity —to recognize access patterns preceding intrusions [@han2011data].
+
+What makes this problem pedagogically valuable is not merely its applicability, but the tension it reveals between two tasks that seem equivalent but are not: *generating* rules is computationally straightforward; *interpreting and selecting* useful rules requires genuine statistical judgment. An analyst who generates rules without a critical understanding of the underlying metrics can arrive at erroneous conclusions backed by apparent quantitative rigor. This chapter seeks to progressively build the conceptual tools needed to avoid such mistakes.
+
+The exposition is organized from concrete concepts to formal definitions. We begin with definitions motivated by real-world examples, develop the process of rule generation, and dedicate the largest portion of the chapter to the problem that turns out to be the most challenging: not how to obtain rules, but how to decide which ones are worthwhile.
+
+## Fundamental Definitions {#sec-definiciones}
+
+### The Data Model: Transactions and Items
+
+The starting point is a set of transactions $\mathcal{D} = \{T_1, T_2, \ldots, T_n\}$, where each transaction $T_i$ is a subset of a finite universe of items $\mathcal{I} = \{i_1, i_2, \ldots, i_m\}$. In the context of a supermarket, $\mathcal{I}$ is the complete catalog of products and each $T_i$ is the set of products purchased in a particular visit. It is important to note that this model does not record quantities or prices: only the presence or absence of each item in each transaction [@tan2006introduction].
+
+An *itemset* is any subset $X \subseteq \mathcal{I}$. An itemset of cardinality $k$ is called a $k$-itemset. For example, $\{$milk, bread$\}$ is a 2-itemset, and $\{$milk, bread, butter$\}$ is a 3-itemset.
+
+### Support
+
+The first fundamental metric is support, which measures the prevalence of a pattern across the dataset.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** The *support* of an itemset $X$ in $\mathcal{D}$ is the fraction of transactions that contain $X$:
+
+$$\text{supp}(X) = \frac{|\{T_i \in \mathcal{D} : X \subseteq T_i\}|}{|\mathcal{D}|}$$ {#eq-support}
+:::
+
+In probabilistic terms, $\text{supp}(X) = P(X)$, that is, the empirical probability of observing the itemset $X$ in a randomly chosen transaction. For a rule $A \Rightarrow B$, the support is $P(A \cup B)$: the probability that both the antecedent and the consequent are present in the same transaction.
+
+Support possesses a relevant formal property known as the *anti-monotonicity property* or Apriori principle: if an itemset $X$ has a support lower than a minimum threshold $\sigma_{\min}$, then any superset $Y \supset X$ will also have a support lower than $\sigma_{\min}$. Formally proven in @agrawal1994fast, this property serves as the algorithmic foundation that renders searching for frequent patterns tractable in datasets containing thousands of items.
+
+**Interpretation and Intuition.** Support answers the question: *how common is this pattern in the data?* A low support indicates that the pattern is rare, which may be due to a genuinely infrequent relationship or simply because both items are rare individually. A high support is a necessary —yet insufficient— condition for a rule to be useful in practice.
+
+### Confidence
+
+Confidence measures the predictive power of a rule: given that the antecedent occurs, how frequently does the consequent also occur?
+
+::: {.callout-note appearance="minimal"}
+**Definition.** The *confidence* of the rule $A \Rightarrow B$ is the empirical conditional probability of $B$ given $A$:
+
+$$\text{conf}(A \Rightarrow B) = \frac{\text{supp}(A \cup B)}{\text{supp}(A)} = P(B \mid A)$$ {#eq-confidence}
+:::
+
+A confidence of 0.80 for the rule $A \Rightarrow B$ means that in 80% of the transactions containing $A$, $B$ also appears. This interpretation as conditional probability makes confidence intuitive: it is the accuracy rate of the rule as a prediction rule.
+
+**The Fundamental Limitation of Confidence.** Despite its intuitiveness, confidence presents a critical limitation that frequently goes unnoticed: *it ignores the baseline frequency of the consequent*. Consider the following scenario: in a supermarket where 65% of all transactions include whole milk, any rule with whole milk as its consequent will automatically have a confidence of at least 65%, regardless of what the antecedent is. A confidence of 0.70 for the rule $\{$bread$\} \Rightarrow \{$whole milk$\}$ is not impressive if whole milk appears in 65% of transactions: bread adds less than 10 percentage points over the baseline rate. The rule possesses minimal predictive power.
+
+This problem —confusing high confidence with a strong relationship— is the most common mistake in association rule analysis and motivates the need for lift as a complementary metric.
+
+### Lift
+
+Lift quantifies how far the relationship between $A$ and $B$ deviates from statistical independence.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** The *lift* of the rule $A \Rightarrow B$ is the ratio of the observed confidence to the expected confidence under independence:
+
+$$\text{lift}(A \Rightarrow B) = \frac{\text{conf}(A \Rightarrow B)}{P(B)} = \frac{P(A \cup B)}{P(A) \cdot P(B)}$$ {#eq-lift}
+:::
+
+The probabilistic interpretation is straightforward: if $A$ and $B$ were statistically independent, the probability of their co-occurrence would be $P(A) \cdot P(B)$. Lift is precisely the factor by which the observed co-occurrence exceeds (or falls below) this expectation under independence [@tan2006introduction].
+
+- $\text{lift} = 1$: $A$ and $B$ are statistically independent. The presence of $A$ provides no information about $B$.
+- $\text{lift} > 1$: $A$ and $B$ co-occur more frequently than expected under independence. The rule indicates a positive association.
+- $\text{lift} < 1$: $A$ and $B$ co-occur less frequently than expected. The presence of $A$ inhibits the presence of $B$.
+
+An important algebraic property is that lift is symmetric: $\text{lift}(A \Rightarrow B) = \text{lift}(B \Rightarrow A)$. This has significant practical implications discussed in @sec-interpretacion.
+
+### A Concrete Example
+
+To ground these definitions, consider the following dataset of five transactions:
+
+| Transaction | Items |
+|---|---|
+| $T_1$ | milk, bread, butter |
+| $T_2$ | milk, bread |
+| $T_3$ | milk, butter |
+| $T_4$ | bread, butter |
+| $T_5$ | milk, bread, cheese |
+
+For the rule $\{$bread$\} \Rightarrow \{$milk$\}$:
+
+$$\text{supp}(\{\text{bread}, \text{milk}\}) = \frac{3}{5} = 0.60$$
+
+$$\text{conf}(\{\text{bread}\} \Rightarrow \{\text{milk}\}) = \frac{\text{supp}(\{\text{bread}, \text{milk}\})}{\text{supp}(\{\text{bread}\})} = \frac{3/5}{4/5} = 0.75$$
+
+$$\text{lift}(\{\text{bread}\} \Rightarrow \{\text{milk}\}) = \frac{0.75}{P(\{\text{milk}\})} = \frac{0.75}{4/5} = 0.9375$$
+
+The lift of 0.9375 — lower than 1 — reveals that, despite an apparently high confidence of 0.75, the presence of bread actually *slightly reduces* the probability of finding milk in the same transaction relative to the base rate of milk (which is 0.80). The confidence of 75% was misleading because milk was already very frequent.
+
+## Frequent Rule Generation {#sec-generacion}
+
+### From Frequent Itemsets to Rules
+
+The process of discovering association rules is divided into two stages [@agrawal1994fast; @han2011data]:
+
+1. **Frequent Itemset Mining:** Identify all itemsets $X \subseteq \mathcal{I}$ whose support exceeds a minimum threshold $\sigma_{\min}$ specified by the analyst.
+
+2. **Rule Generation from Frequent Itemsets:** For each frequent itemset $X$ of cardinality $k \geq 2$, generate all possible rules $A \Rightarrow B$ where $A \cup B = X$, $A \cap B = \emptyset$, $A \neq \emptyset$, and $B \neq \emptyset$, retaining only those whose confidence exceeds a minimum threshold $\gamma_{\min}$.
+
+The separation between these two stages is not arbitrary: the first stage is computationally expensive —the space of all possible subsets of $\mathcal{I}$ has cardinality $2^{|\mathcal{I}|}$— whereas the second stage, once frequent itemsets are known, is relatively fast.
+
+### The Apriori Algorithm
+
+The Apriori algorithm, proposed by @agrawal1994fast, was the first to efficiently solve the first stage using a breadth-first search strategy that exploits the anti-monotonicity property of support. The core idea is that evaluating the support of a $k$-itemset is unnecessary if any of its $(k-1)$-subsets is already infrequent: by anti-monotonicity, the $k$-itemset will also be infrequent. This allows pruning the search space drastically.
+
+The high-level workflow is as follows: in each iteration $k$, the algorithm generates candidates of size $k$ from the frequent itemsets of size $k-1$ (join step), discards those containing infrequent subsets (pruning step), and scans the dataset to compute the support of the remaining candidates. The process terminates when no new frequent candidates can be generated.
+
+```{=html}
+<div id="apriori-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+
+  <div style="text-align:center;margin-bottom:6px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Apriori Algorithm — Step-by-Step Visualizer</span><br>
+    <span style="font-size:0.82em;color:#666;">Dataset: 5 transactions · 4 items · adjust minimum support and observe pruning</span>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin:14px 0 18px;flex-wrap:wrap;">
+    <label style="font-size:0.88em;font-weight:bold;color:#1a3a5c;">
+      Minimum support &sigma;<sub>min</sub>:
+      <span id="ap-sval" style="color:#e05800;font-size:1.1em;">0.40</span>
+    </label>
+    <input id="ap-slider" type="range" min="1" max="5" step="1" value="2"
+      style="width:180px;accent-color:#1a3a5c;"
+      oninput="aprioriUpdate(this.value)">
+    <span style="font-size:0.78em;color:#888;">0.20 &nbsp;·&nbsp; 0.40 &nbsp;·&nbsp; 0.60 &nbsp;·&nbsp; 0.80</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+
+    <!-- Left: transaction database -->
+    <div>
+      <div style="font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:6px;letter-spacing:.03em;">TRANSACTION DATABASE</div>
+      <table id="ap-db" style="width:100%;border-collapse:collapse;font-size:0.82em;">
+        <thead>
+          <tr style="background:#e8edf3;">
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccd;">Trans.</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccd;">Items</th>
+          </tr>
+        </thead>
+        <tbody id="ap-db-body"></tbody>
+      </table>
+      <div style="margin-top:14px;font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:6px;letter-spacing:.03em;">BASE FREQUENCIES</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.81em;">
+        <thead>
+          <tr style="background:#e8edf3;">
+            <th style="padding:4px 8px;text-align:left;border:1px solid #ccd;">Item</th>
+            <th style="padding:4px 8px;text-align:right;border:1px solid #ccd;">Count</th>
+            <th style="padding:4px 8px;text-align:right;border:1px solid #ccd;">Support</th>
+          </tr>
+        </thead>
+        <tbody id="ap-freq-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Right: Apriori iterations -->
+    <div id="ap-iterations"></div>
+  </div>
+
+  <!-- Legend -->
+  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:0.79em;color:#555;justify-content:center;">
+    <span><span style="display:inline-block;width:12px;height:12px;background:#c8efc8;border:1px solid #5a9;border-radius:2px;vertical-align:middle;"></span> Frequent (&ge; &sigma;<sub>min</sub>)</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#fde8d8;border:1px solid #d97;border-radius:2px;vertical-align:middle;"></span> Infrequent (&lt; &sigma;<sub>min</sub>)</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#f0e0f0;border:1px solid #a8a;border-radius:2px;vertical-align:middle;"></span> Pruned (anti-monotonicity)</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#eeeeee;border:1px solid #bbb;border-radius:2px;vertical-align:middle;"></span> Not generated</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* ── dataset ─────────────────────────────────────────── */
+  const TXS = [
+    {id:"T1", items:["milk","bread","butter"]},
+    {id:"T2", items:["milk","bread"]},
+    {id:"T3", items:["milk","butter"]},
+    {id:"T4", items:["bread","butter"]},
+    {id:"T5", items:["milk","bread","cheese"]},
+  ];
+  const N = TXS.length;
+  const ALL_ITEMS = ["milk","bread","butter","cheese"];
+
+  /* ── populate transaction table ──────────────────────── */
+  const dbBody = document.getElementById('ap-db-body');
+  TXS.forEach(t => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="padding:4px 8px;border:1px solid #dde;font-weight:bold;">${t.id}</td>
+      <td style="padding:4px 8px;border:1px solid #dde;">${t.items.join(', ')}</td>`;
+    dbBody.appendChild(tr);
+  });
+
+  /* ── support helper ──────────────────────────────────── */
+  function countSupport(itemset) {
+    return TXS.filter(t => itemset.every(x => t.items.includes(x))).length;
+  }
+
+  /* ── populate base frequency table ──────────────────── */
+  const freqBody = document.getElementById('ap-freq-body');
+  ALL_ITEMS.forEach(item => {
+    const cnt = countSupport([item]);
+    const sup = (cnt/N).toFixed(2);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="padding:3px 8px;border:1px solid #dde;">${item}</td>
+      <td style="padding:3px 8px;border:1px solid #dde;text-align:right;">${cnt}/${N}</td>
+      <td style="padding:3px 8px;border:1px solid #dde;text-align:right;">${sup}</td>`;
+    freqBody.appendChild(tr);
+  });
+
+  /* ── generate combinations ───────────────────────────── */
+  function combinations(arr, k) {
+    if (k === 1) return arr.map(x => [x]);
+    const result = [];
+    for (let i = 0; i < arr.length; i++)
+      for (const rest of combinations(arr.slice(i+1), k-1))
+        result.push([arr[i], ...rest]);
+    return result;
+  }
+
+  function subsetsOfSize(set, k) {
+    return combinations(set, k);
+  }
+
+  function setKey(set) { return [...set].sort().join(','); }
+
+  /* ── run Apriori ─────────────────────────────────────── */
+  function runApriori(sigmaMin) {
+    const iterations = [];
+    let prevFrequent = null;    // L_{k-1}
+    let prevFreqSet  = null;    // Set of keys of L_{k-1}
+
+    for (let k = 1; k <= 3; k++) {
+      let candidates;
+      let prunedByAntimonotony = new Set();
+
+      if (k === 1) {
+        candidates = ALL_ITEMS.map(x => [x]);
+      } else {
+        // Generate C_k from L_{k-1}: join step
+        const items = [...new Set(prevFrequent.flat())].sort();
+        candidates = combinations(items, k);
+
+        // Prune step: remove candidates with any infrequent (k-1)-subset
+        const filtered = [];
+        for (const cand of candidates) {
+          const subs = subsetsOfSize(cand, k-1);
+          const anyInfrequent = subs.some(s => !prevFreqSet.has(setKey(s)));
+          if (anyInfrequent) {
+            prunedByAntimonotony.add(setKey(cand));
+          } else {
+            filtered.push(cand);
+          }
+        }
+      }
+
+      const rows = candidates.map(cand => {
+        const key = setKey(cand);
+        if (k > 1 && prunedByAntimonotony.has(key)) {
+          return { itemset: cand, count: '—', support: '—', status: 'pruned' };
+        }
+        const cnt = countSupport(cand);
+        const sup = cnt / N;
+        return {
+          itemset: cand,
+          count: cnt,
+          support: sup,
+          status: sup >= sigmaMin ? 'frequent' : 'infrequent'
+        };
+      });
+
+      const frequentRows = rows.filter(r => r.status === 'frequent');
+      iterations.push({ k, rows, prunedByAntimonotony });
+
+      if (frequentRows.length === 0) break;
+
+      prevFrequent = frequentRows.map(r => r.itemset);
+      prevFreqSet  = new Set(frequentRows.map(r => setKey(r.itemset)));
+    }
+    return iterations;
+  }
+
+  /* ── render ──────────────────────────────────────────── */
+  const STEP_LABELS = {
+    frequent:   { bg:'#c8efc8', bd:'#5a9', label:'frequent' },
+    infrequent: { bg:'#fde8d8', bd:'#d97', label:'infrequent' },
+    pruned:     { bg:'#f0e0f0', bd:'#a8a', label:'pruned (anti-monotonicity)' },
+  };
+
+  function renderIterations(sigmaMin) {
+    const container = document.getElementById('ap-iterations');
+    container.innerHTML = '';
+    const iterations = runApriori(sigmaMin);
+
+    iterations.forEach(({k, rows}) => {
+      const nFreq = rows.filter(r=>r.status==='frequent').length;
+      const section = document.createElement('div');
+      section.style.cssText = 'margin-bottom:14px;';
+
+      section.innerHTML = `<div style="font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:5px;letter-spacing:.03em;">
+        ITERATION k = ${k}
+        <span style="font-weight:normal;color:#666;">— ${nFreq} frequent itemset${nFreq!==1?'s':''}</span>
+      </div>`;
+
+      const tbl = document.createElement('table');
+      tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.80em;';
+      tbl.innerHTML = `<thead><tr style="background:#e8edf3;">
+        <th style="padding:4px 7px;text-align:left;border:1px solid #ccd;">${k}-itemset</th>
+        <th style="padding:4px 7px;text-align:right;border:1px solid #ccd;">Count</th>
+        <th style="padding:4px 7px;text-align:right;border:1px solid #ccd;">Support</th>
+        <th style="padding:4px 7px;text-align:left;border:1px solid #ccd;">Status</th>
+      </tr></thead>`;
+
+      const tbody = document.createElement('tbody');
+      rows.forEach(r => {
+        const s = STEP_LABELS[r.status] || {bg:'#eee',bd:'#bbb',label:r.status};
+        const tr = document.createElement('tr');
+        tr.style.background = s.bg;
+        tr.innerHTML = `<td style="padding:3px 7px;border:1px solid #dde;font-weight:bold;">{${r.itemset.join(', ')}}</td>
+          <td style="padding:3px 7px;border:1px solid #dde;text-align:right;">${r.count !== '—' ? r.count+'/'+N : '—'}</td>
+          <td style="padding:3px 7px;border:1px solid #dde;text-align:right;">${typeof r.support==='number' ? r.support.toFixed(2) : '—'}</td>
+          <td style="padding:3px 7px;border:1px solid #dde;color:#444;">${s.label}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      section.appendChild(tbl);
+      container.appendChild(section);
+    });
+
+    // Show termination message if no k=3
+    if (iterations.length < 3) {
+      const msg = document.createElement('div');
+      msg.style.cssText = 'font-size:0.81em;color:#888;font-style:italic;margin-top:6px;';
+      msg.textContent = 'No candidates generated for k = ' + (iterations.length+1) + '. Algorithm terminates.';
+      container.appendChild(msg);
+    }
+  }
+
+  const SIGMA_VALUES = [0.20, 0.40, 0.60, 0.80];
+
+  window.aprioriUpdate = function(v) {
+    const s = SIGMA_VALUES[parseInt(v)-1];
+    document.getElementById('ap-sval').textContent = s.toFixed(2);
+    renderIterations(s);
+  };
+
+  /* ── init ────────────────────────────────────────────── */
+  renderIterations(0.40);
+})();
+</script>
+```
+
+It is not the purpose of this chapter to detail the implementation of the algorithm — for that, see @han2011data, Chapter 6, or @tan2006introduction, Chapter 5. What matters here is understanding its parameters and their impact on the results.
+
+### Parameters as Decisions of the Analyst
+
+Running Apriori requires specifying at least two thresholds:
+
+- **$\sigma_{\min}$ (minimum support):** Controls how frequent a pattern must be to be considered. A low value produces more frequent itemsets —and potentially more rules— but also more noise. A high value filters aggressively and may eliminate genuine, less frequent patterns.
+
+- **$\gamma_{\min}$ (minimum confidence):** Controls how predictive a rule must be to be reported. As will be discussed in @sec-problema, this threshold has no direct statistical interpretation: its appropriate value depends on the domain.
+
+A crucial aspect that introductory texts rarely emphasize is that *the results depend directly on the chosen parameters*. The number of rules obtained can vary by an order of magnitude when changing $\sigma_{\min}$ by a few percentage points. This implies that reporting rules without disclosing the parameters used to generate them is a methodologically flawed practice.
+
+The following code block empirically illustrates this sensitivity:
+
+```{python}
+#| label: sensibilidad-parametros
+#| fig-cap: "Number of generated rules as a function of minimum support (fixed minimum confidence at 0.3). The drop is steep: moving from support 0.08 to 0.14 can reduce the number of rules by half."
+
+soportes = [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]
+resultados_sens = []
+
+for s in soportes:
+    its = apriori(df, min_support=s, use_colnames=True)
+    if len(its) == 0:
+        resultados_sens.append({"min_support": s, "n_reglas": 0, "lift_med": np.nan})
+        continue
+    r = association_rules(its, metric="confidence", min_threshold=0.3)
+    resultados_sens.append({
+        "min_support": round(s, 2),
+        "n_reglas": len(r),
+        "lift_med": round(r["lift"].median(), 3) if len(r) > 0 else np.nan,
+    })
+
+df_sens = pd.DataFrame(resultados_sens)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=df_sens["min_support"], y=df_sens["n_reglas"],
+    mode="lines+markers", name="No. of rules",
+    line=dict(color="#e63946", width=2), marker=dict(size=8),
+    yaxis="y1",
+))
+fig.add_trace(go.Scatter(
+    x=df_sens["min_support"], y=df_sens["lift_med"],
+    mode="lines+markers", name="Median lift",
+    line=dict(color="#457b9d", width=2, dash="dash"), marker=dict(size=8),
+    yaxis="y2",
+))
+fig.update_layout(
+    xaxis=dict(title="Minimum support (σ_min)"),
+    yaxis=dict(title="No. of generated rules", side="left"),
+    yaxis2=dict(title="Median lift", overlaying="y", side="right"),
+    legend=dict(x=0.65, y=0.95),
+    height=400,
+    title="Sensitivity of results to minimum support",
+)
+fig.show()
+```
+
+Notice the contrasting behavior of both curves: as $\sigma_{\min}$ increases, the number of rules decreases while median lift tends to increase. This is no coincidence: frequent itemsets with very low support are the most susceptible to being statistical artifacts, and filtering them preserves patterns with higher relative signal.
+
+## The Problem of Too Many Rules {#sec-problema}
+
+### Combinatorial Explosion
+
+Suppose a dataset contains 100 distinct items and $\sigma_{\min} = 0.01$. The number of possible itemsets is $2^{100} - 1$, an astronomical figure. Even with the pruning of the Apriori algorithm and a reasonably restrictive minimum support, it is possible to generate tens of thousands of rules from moderate-sized datasets. The original Groceries dataset, with 9,835 transactions and 169 items, can generate anywhere from several hundred to several thousand rules depending on the chosen parameters [@han2011data].
+
+This volume of output creates a second-order problem: the proliferation of rules makes manual review infeasible, while automated selection requires criteria that, if poorly chosen, can introduce systematic bias.
+
+### Redundancy and Irrelevance
+
+Part of the issue is structural. Given a frequent itemset $X = \{A, B, C\}$, the algorithm generates all possible partitions as rules: $\{A\} \Rightarrow \{B, C\}$, $\{B\} \Rightarrow \{A, C\}$, $\{C\} \Rightarrow \{A, B\}$, $\{A, B\} \Rightarrow \{C\}$, $\{A, C\} \Rightarrow \{B\}$, $\{B, C\} \Rightarrow \{A\}$. Many of these rules share the same co-occurrence information and are, to some extent, redundant with respect to each other. The choice of the most appropriate consequent depends on the application context, not the algorithm.
+
+An additional layer of difficulty is irrelevance. A rule can be formally valid —support and confidence above thresholds— while simultaneously failing to offer any actionable insight. This occurs systematically when the consequent is a highly frequent item: the rule appears predictive because its confidence is high, but in reality it reflects the mere ubiquity of the consequent, not a genuine relationship with the antecedent.
+
+This is the central issue that any rigorous association rule analysis methodology must address, and which the evaluation metrics described in the next section attempt to resolve.
+
+## Evaluation Metrics: Deep Interpretation {#sec-metricas}
+
+### Support: Prevalence, Not Interest
+
+Support, as defined in @sec-definiciones, answers strictly the question *how frequent is this pattern?* It says nothing about whether the pattern is unexpected, interesting, or actionable. A rule with very high support can be trivial: if 80% of customers buy bottled water, the rule $\{X\} \Rightarrow \{\text{water}\}$ will have high support for practically any $X$, without revealing anything useful.
+
+Support does serve an important role as a **statistical reliability threshold**: a pattern backed by very few observations is unstable and may disappear or alter substantially when adding new data. In a dataset of 50 transactions, a support of 0.10 corresponds to a mere 5 observations — insufficient for robust statistical claims. With larger datasets (on the order of thousands of transactions), support thresholds can and should be more demanding.
+
+### Confidence: Conditional Predictivity with Structural Bias
+
+Confidence measures $P(B \mid A)$: the probability that the consequent is present given the antecedent. Its interpretation as conditional probability is clear and directly useful in recommendation systems: if 80% of customers who buy bread also buy butter, that confidence directly justifies recommending butter to someone who just placed bread in their cart.
+
+However, confidence carries a well-documented structural bias [@tan2006introduction]: it is monotonically increasing in $P(B)$. For a fixed antecedent $A$:
+
+$$\text{conf}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A)} \leq \frac{P(B)}{P(A)} \cdot P(A) = P(B) \cdot \frac{1}{P(A)}$$
+
+Confidence depends directly on $P(B)$. A highly frequent item $B$ will, ceteris paribus, yield high-confidence rules for any antecedent $A$, simply because $B$ appears in nearly all transactions. This dependency makes confidence non-comparable across rules with consequents of vastly different frequencies, introducing a systematic source of bias if used as the sole selection criterion.
+
+The practical takeaway is this: before declaring that a rule has "high confidence," it is necessary to compare that confidence with $P(B)$. Only if $\text{conf}(A \Rightarrow B) \gg P(B)$ can we assert that the presence of $A$ genuinely contributes to predicting $B$.
+
+::: {.callout-important}
+**Nontrivial Confidence Threshold.** For the rule $A \Rightarrow B$ to have lift $> k$, it is required that:
+$$\text{conf}(A \Rightarrow B) > k \cdot P(B)$$
+In particular, for a rule to be simply nontrivial (lift $> 1$), confidence must exceed the base frequency of the consequent: $\text{conf}(A \Rightarrow B) > P(B)$.
+:::
+
+### Lift: The Central Metric of Interest
+
+Lift, defined in @eq-lift, corrects the bias of confidence by normalizing by $P(B)$. Its interpretation as a likelihood ratio makes it directly comparable across rules with different consequents.
+
+From a probability perspective, lift is the ratio of observed joint probability to expected joint probability under independence:
+
+$$\text{lift}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A) \cdot P(B)}$$
+
+A lift significantly greater than 1 constitutes evidence in favor of a genuine association between $A$ and $B$. A lift close to 1 indicates that knowing $A$ does not alter the probability of $B$, rendering the rule informationally void [@tan2006introduction].
+
+**Symmetry of Lift.** As noted at the end of @sec-definiciones, lift is symmetric: $\text{lift}(A \Rightarrow B) = \text{lift}(B \Rightarrow A)$. This may be surprising since confidence is asymmetric. The reason is algebraic: lift compares $P(A \cup B)$ with $P(A) \cdot P(B)$, treating $A$ and $B$ symmetrically.
+
+This symmetry has practical implications: when generating the rules $A \Rightarrow B$ and $B \Rightarrow A$, both have the exact same lift but can have very different confidences. Which direction to prefer in a real application depends on the context: if the goal is to recommend $B$ given $A$, the confidence of $A \Rightarrow B$ is the relevant metric; if the goal is to recommend $A$ given $B$, $\text{conf}(B \Rightarrow A)$ is key.
+
+**Limitations of Lift.** Despite its superiority over confidence for detecting nontrivial associations, lift has two major limitations:
+
+1. *Instability with low support.* In small datasets or with rare items, lift can be artificially inflated. If $A$ and $B$ are rare items —$P(A) = P(B) = 0.01$— and co-occur only once, their support is $P(A \cup B) = 0.01$ and their lift is $1/0.01 = 100$. This value is huge but backed by a single observation, making it statistically insignificant.
+
+2. *Variable ceiling.* The maximum value lift can reach is not universal: it depends on the individual supports of $A$ and $B$. The theoretical maximum lift is $1/\max(P(A), P(B))$, implying that comparing lifts across rules with different frequency levels is invalid without this correction.
+
+These limitations motivate the use of complementary metrics, introduced in @sec-seleccion.
+
+### Comparative Summary
+
+@tbl-metricas synthesizes the properties of the three fundamental metrics.
+
+| Metric | Question answered | Scale | Main limitation |
+|---|---|---|---|
+| Support | How common is the pattern? | $[0, 1]$ | Does not measure interest |
+| Confidence | How predictable is $B$ given $A$? | $[0, 1]$ | Biased by $P(B)$ |
+| Lift | Is co-occurrence greater than chance? | $(0, +\infty)$ | Unstable with low support |
+
+: Properties of fundamental association rule metrics. {#tbl-metricas}
+
+None of the three metrics is sufficient on its own. Proper practice consists of using them together, favoring rules that prove robust under multiple criteria.
+
+## Visual Interpretation of the Rule Space {#sec-visual}
+
+### Representation in Support-Confidence-Lift Space
+
+The set of rules generated by Apriori can be visualized as a point cloud in a three-dimensional space defined by support, confidence, and lift. This representation allows immediate identification of different types of rules —useful, misleading, and trivial— and guides selection more effectively than inspecting tables alone.
+
+The most convenient way to project this 3D space onto a 2D chart is plotting confidence and lift along Cartesian axes while encoding support in marker size. Using color to represent lift adds visual redundancy that highlights regions of interest.
+
+```{python}
+#| label: fig-scatter-reglas
+#| fig-cap: "Rule space: confidence (horizontal axis) vs. lift (vertical axis), with support encoded in marker size and lift in color. The dashed red line marks lift = 1, the boundary of statistical independence. Rules below this line are spurious or trivial. Hovering over any point reveals the complete rule."
+
+fig = px.scatter(
+    reglas,
+    x="confidence",
+    y="lift",
+    size="support",
+    hover_data={
+        "regla": True,
+        "support": ":.3f",
+        "confidence": ":.3f",
+        "lift": ":.3f",
+    },
+    color="lift",
+    color_continuous_scale="RdYlGn",
+    labels={
+        "confidence": "Confidence",
+        "lift": "Lift",
+        "support": "Support",
+    },
+    size_max=28,
+)
+
+fig.add_hline(
+    y=1.0,
+    line_dash="dash",
+    line_color="crimson",
+    annotation_text="Lift = 1 (statistical independence)",
+    annotation_position="top left",
+    annotation_font_color="crimson",
+)
+
+fig.update_layout(
+    height=500,
+    xaxis=dict(range=[0, 1.05], title="Confidence"),
+    yaxis=dict(title="Lift"),
+    coloraxis_colorbar=dict(title="Lift"),
+)
+fig.show()
+```
+
+### Reading the Plot: Four Quadrants
+
+@fig-scatter-reglas implicitly defines four interpretation zones:
+
+**Zone I — Desirable quadrant (high lift, high confidence, large marker).** Rules in this region are the strongest candidates: they possess predictive power (high confidence), represent a genuine association unexplained by base frequencies (lift > 1), and are supported by a reasonable volume of transactions (high support). These are the most actionable patterns.
+
+**Zone II — High confidence, low lift (below the red line).** This is the highest risk area for an uncritical analyst. Rules here may exhibit impressive confidence values —0.70, 0.80, or higher— but a lift near or below 1. In most cases, this is due to the base frequency problem: the consequent is so ubiquitous that it appears regardless of the antecedent. Relying on these rules for decision-making is at best useless and at worst counterproductive.
+
+**Zone III — High lift, low support (small markers above the line).** These rules signal potentially strong associations but are backed by few observations. Their high lift could be a statistical artifact: in a dataset of 50 transactions, two items co-occurring just 5 times might show high lift purely by chance. The rule may be genuine, but caution and validation with additional data are required.
+
+**Zone IV — Low across all metrics.** Rules lacking support, relevant confidence, and with lift near 1. There is no argument for retaining them.
+
+### Raw Co-occurrence: The Transaction Matrix
+
+Before interpreting formal metrics, a useful complementary visualization is the co-occurrence matrix among the most frequent items. This matrix records, for each pair of items, the absolute number of transactions in which both appear simultaneously.
+
+```{python}
+#| label: fig-coocurrencia
+#| fig-cap: "Co-occurrence matrix among the top 10 most frequent items in the dataset. The diagonal is set to zero (an item does not co-occur with itself). High-intensity orange cells should be interpreted with caution when involving items with high base frequency."
+
+freq = df.sum().sort_values(ascending=False)
+top_items = freq.head(10).index.tolist()
+df_top = df[top_items]
+cooc = df_top.T.dot(df_top)
+np.fill_diagonal(cooc.values, 0)
+
+fig = px.imshow(
+    cooc,
+    color_continuous_scale="Oranges",
+    labels={"color": "Co-occurrences"},
+    aspect="auto",
+    text_auto=True,
+)
+fig.update_layout(height=430)
+fig.show()
+```
+
+An important observation regarding @fig-coocurrencia: cells with higher intensity tend to correspond to pairs involving the most frequent items —in this case, *whole milk* and *bread*. This is not evidence of a particularly strong association between them; it is largely a consequence of their high individual frequencies. Raw co-occurrence is the numerator of $P(A \cup B)$, but it excludes the denominators $P(A)$ and $P(B)$ necessary to evaluate whether the relationship is nontrivial. The most informative cells are those with high intensity between items of moderate frequency, such as the *granola-yogurt-fruit* cluster.
+
+## Selection of Useful Rules {#sec-seleccion}
+
+### Practical Filtering Criteria
+
+Selecting useful rules is not an entirely automated procedure: it requires analyst decisions informed by domain context. However, a general set of guidelines serves as a solid starting point [@tan2006introduction; @han2011data]:
+
+**Criterion 1: Substantially greater lift than 1.** A rule whose lift does not noticeably exceed the baseline of independence (1.0) reveals no genuine association between antecedent and consequent. A pragmatic threshold is lift $\geq 1.2$ for weak relationships and lift $\geq 1.5$ for moderate relationships. In large datasets and applications where decision costs are high, stricter values (lift $\geq 2.0$) are appropriate.
+
+**Criterion 2: Support backed by sufficient observations.** Minimum support should translate to an absolute number of transactions that is statistically sensible. In a 50-transaction dataset, support $= 0.10$ corresponds to just 5 observations — highly unstable. In a 9,000-transaction dataset, that same support represents 900 observations, which is robust.
+
+**Criterion 3: Confidence exceeding the consequent's base frequency.** As derived in @sec-metricas, the condition $\text{conf}(A \Rightarrow B) > P(B)$ is equivalent to lift $> 1$. A good practice is explicitly calculating the "nontrivial confidence threshold" for every potential consequent prior to evaluating rules, as illustrated below:
+
+```{python}
+#| label: tbl-umbrales-confianza
+#| tbl-cap: "Minimum confidence threshold required for a rule to be nontrivial (lift > 1) or substantially nontrivial (lift > 1.5), computed from the base frequency of each item."
+
+umbrales = []
+for item in df.columns:
+    p = df[item].mean()
+    umbrales.append({
+        "Item": item,
+        "P(item)": round(p, 3),
+        "min conf for lift > 1.0": round(p, 3),
+        "min conf for lift > 1.5": round(1.5 * p, 3),
+    })
+
+pd.DataFrame(umbrales).sort_values("P(item)", ascending=False).head(10)
+```
+
+This table serves as a diagnostic tool: before getting excited about a rule with *whole milk* as consequent, verify that confidence exceeds 0.58 (for lift > 1) or 0.87 (for lift > 1.5). If observed confidence falls short of these values, the rule provides no value.
+
+### Complementary Metrics
+
+Data mining literature proposes numerous alternative metrics to lift for evaluating rule interest [@tan2006introduction]. Three of the most widely used in practice are:
+
+**Leverage.**
+
+$$\text{lev}(A \Rightarrow B) = P(A \cup B) - P(A) \cdot P(B)$$
+
+Leverage measures the absolute difference between observed co-occurrence and expected co-occurrence under independence. Its interpretation is more direct than lift: it measures how many *additional* transactions, beyond the independence baseline, contain both $A$ and $B$. A leverage of 0.05 in a 1,000-transaction dataset means roughly 50 additional transactions contain both $A$ and $B$ beyond expectation. The range of leverage is $[-P(A) \cdot P(B), \min(P(A), P(B)) - P(A) \cdot P(B)]$.
+
+**Conviction.**
+
+$$\text{conv}(A \Rightarrow B) = \frac{1 - P(B)}{1 - \text{conf}(A \Rightarrow B)}$$
+
+Conviction measures how often the rule $A \Rightarrow B$ is "wrong" — that is, how often $A$ occurs without $B$ — relative to expectation under independence. Unlike lift, conviction is asymmetric: $\text{conv}(A \Rightarrow B) \neq \text{conv}(B \Rightarrow A)$ in general, making it more appropriate for evaluating directional rules. As confidence approaches 1, conviction approaches infinity, indicating a quasi-deterministic rule. Conviction $= 1$ indicates independence.
+
+**Zhang's Metric.**
+
+$$Z(A, B) = \frac{P(A \cup B) - P(A) \cdot P(B)}{\max\{P(A \cup B)(1 - P(A)),\; P(A)(P(B) - P(A \cup B))\}}$$
+
+Proposed to address limitations of lift, Zhang's metric ranges from $[-1, 1]$ and is symmetric. Its main advantage is normalizing correctly across both high and low co-occurrence regimes, making it more robust against highly frequent items. A Zhang value near 0 indicates independence; positive values near 1 indicate strong association.
+
+```{python}
+#| label: tbl-metricas-completas
+#| tbl-cap: "Comparison of metrics for the top 8 rules by lift. Additional metrics —leverage, conviction, and Zhang— help confirm or question what lift suggests."
+
+cols_mostrar = ["regla", "support", "confidence", "lift", "leverage", "conviction", "zhang"]
+reglas.sort_values("lift", ascending=False).head(8)[cols_mostrar].round(3)
+```
+
+### Strong Rules vs. Weak Rules: A Contrast
+
+To illustrate the difference between a well-supported rule and a misleading one, consider the two extremes of the rule space:
+
+```{python}
+#| label: contraste-reglas
+
+print("=== RULES WITH HIGH CONFIDENCE BUT LOW LIFT ===")
+print("(apparent strength, actual triviality)\n")
+debiles = reglas[reglas["confidence"] > 0.45].sort_values("lift").head(3)
+print(debiles[["regla", "support", "confidence", "lift", "zhang"]].round(3).to_string(index=False))
+
+print("\n=== RULES WITH HIGH LIFT AND REASONABLE SUPPORT ===")
+print("(genuine signal backed by multiple metrics)\n")
+fuertes = reglas[
+    (reglas["lift"] > 1.3) & (reglas["support"] >= 0.10)
+].sort_values("lift", ascending=False).head(3)
+print(fuertes[["regla", "support", "confidence", "lift", "zhang"]].round(3).to_string(index=False))
+```
+
+Rules in the first group show respectable confidence, but lifts near 1 and low Zhang values reveal no genuine association between antecedent and consequent. Rules in the second group, even with modest absolute confidence, are far more informative because they represent real deviations from expected behavior under independence.
+
+### Systematic Selection Pipeline
+
+The following procedure condenses these criteria into an evaluation function applicable to any set of rules:
+
+```{python}
+#| label: pipeline-seleccion
+
+def evaluar_regla(row, n_transacciones=50, verbose=True):
+    """
+    Evaluates association rule quality across four criteria.
+    Returns a qualitative classification: ROBUST, CANDIDATE, or DISCARD.
+    """
+    observaciones = []
+    puntos = 0
+
+    # Criterion 1: Lift
+    if row["lift"] > 1.5:
+        observaciones.append("Strong lift (> 1.5)")
+        puntos += 3
+    elif row["lift"] > 1.1:
+        observaciones.append("Moderate lift (1.1 – 1.5)")
+        puntos += 1
+    else:
+        observaciones.append("Weak lift (≤ 1.1) — nontrivial")
+
+    # Criterion 2: Absolute support
+    n_obs = int(row["support"] * n_transacciones)
+    if n_obs >= 10:
+        observaciones.append(f"Solid support ({n_obs} transactions)")
+        puntos += 2
+    elif n_obs >= 5:
+        observaciones.append(f"Minimum support ({n_obs} transactions)")
+        puntos += 1
+    else:
+        observaciones.append(f"Insufficient support ({n_obs} transactions)")
+
+    # Criterion 3: Zhang
+    if row["zhang"] > 0.3:
+        observaciones.append("Robust Zhang (> 0.3)")
+        puntos += 2
+    elif row["zhang"] > 0.1:
+        observaciones.append("Moderate Zhang (0.1 – 0.3)")
+        puntos += 1
+    else:
+        observaciones.append("Weak Zhang (≤ 0.1)")
+
+    # Criterion 4: Conviction
+    if row["conviction"] > 1.5:
+        observaciones.append("High conviction (> 1.5)")
+        puntos += 1
+
+    clasificacion = (
+        "ROBUST" if puntos >= 6
+        else "CANDIDATE" if puntos >= 3
+        else "DISCARD"
+    )
+
+    if verbose:
+        print(f"Rule: {row['regla']}")
+        for obs in observaciones:
+            print(f"  • {obs}")
+        print(f"  → Classification: {clasificacion} (score: {puntos}/8)\n")
+    return clasificacion
+
+# Apply to top 5 rules by lift
+print("Evaluation of top 5 rules by lift:\n")
+for _, row in reglas.sort_values("lift", ascending=False).head(5).iterrows():
+    evaluar_regla(row)
+```
+
+This pipeline should not be viewed as a rigid algorithm: threshold values and weights should be adapted to the domain. Its pedagogical value lies in explicitly demonstrating the multidimensional nature of evaluating rule quality, contrasting with the flawed practice of using a single metric as an absolute threshold.
+
+## Limitations of the Approach {#sec-limitaciones}
+
+### The Causality Issue
+
+Perhaps the most significant limitation of association rule analysis, and the most frequently ignored, is that rules are *descriptive* and *correlational*, never *causal* [@pearl2009causality]. The rule $\{$bread$\} \Rightarrow \{\text{butter}\}$ with high lift indicates that buyers of bread tend to buy butter more often than expected. It does not imply that buying bread *causes* buying butter, nor that placing bread next to butter will *cause* more joint purchases. Confusing correlation with causation in data analysis is a well-documented source of costly business and policy mistakes [@pearl2009causality].
+
+This distinction is especially crucial in high-stakes fields like medicine or epidemiology. Identifying that certain symptoms co-occur with a diagnosis is not equivalent to understanding the causal mechanism connecting them. Inferring causality requires experimental designs or formal frameworks such as causal graphs [@pearl2009causality].
+
+### Dominant Items and Base Frequency Bias
+
+As analyzed throughout this chapter, items with very high support introduce structural bias into rule mining. In the Groceries dataset, *whole milk* appears in roughly 26% of all 9,835 original transactions —and 58% of the 50-transaction sample used in our computational examples. This dominance causes *whole milk* to appear as consequent in numerous high-confidence rules, most of which do not represent genuine associations.
+
+A practical mitigation strategy is removing or special-handling items exceeding a high support threshold (e.g., 40–50%) prior to mining, or analyzing sub-segments of the dataset with more homogeneous item distributions.
+
+### Lack of Temporal Structure
+
+The transaction data model —unordered sets— cannot capture temporal sequences. If sequential behavior matters (e.g., customers buy a primary item first and an accessory in a later visit), Apriori ignores it. Sequential pattern mining algorithms like GSP (*Generalized Sequential Patterns*) and PrefixSpan extend Apriori principles to handle ordered itemset sequences [@han2011data].
+
+### Instability with Small Datasets
+
+The computational examples in this chapter use 50 transactions, suitable for illustrating concepts but insufficient for robust statistical claims. On small datasets, support is highly sensitive to minor fluctuations: adding or removing a single transaction alters itemset support by 2 percentage points (1/50), potentially pushing patterns across threshold boundaries. In practice, association rule mining requires at least several hundred transactions to be reliable, and preferably thousands.
+
+### Parameter Sensitivity
+
+As demonstrated in @sec-generacion, rule quantity and character depend heavily on user parameters. This sensitivity has two methodological consequences: (1) results are not objective in the sense of being independent of analyst choices, and (2) two analyses of the same dataset with different parameters can yield superficially contradictory conclusions. Best practice calls for systematically exploring parameter space and reporting how robust findings are to reasonable parameter shifts.
+
+## Conceptual Summary {#sec-resumen}
+
+This chapter developed the foundations of association rule analysis with an emphasis on critical interpretation. Key takeaways include:
+
+**On Fundamental Definitions:**
+
+- Support measures pattern prevalence; confidence measures conditional predictivity; lift measures deviation from statistical independence.
+- No single metric suffices on its own: high support does not imply interest, high confidence does not imply a genuine relationship, and high lift with low support may be noise.
+
+**On Rule Generation:**
+
+- Rule generation is automated and yields massive rule sets; selection requires statistical judgment and domain expertise.
+- Apriori parameters ($\sigma_{\min}$, $\gamma_{\min}$) are analyst decisions without intrinsic statistical foundations; they must always be reported alongside results.
+
+**On the Core Problem:**
+
+- High confidence does not equal a strong relationship when the consequent is frequent. Lift corrects for this bias.
+- The minimum confidence threshold for a rule to be nontrivial is $\text{conf}(A \Rightarrow B) > P(B)$.
+
+**On Selecting Useful Rules:**
+
+- The lift-vs-confidence scatter plot with support-encoded marker size is the most informative visualization for exploring rule space.
+- Complementary metrics such as leverage, conviction, and Zhang's metric validate or challenge what lift suggests. Robust rules demonstrate strength across multiple criteria simultaneously.
+- Rule direction matters for decision making: lift is symmetric, but confidence is asymmetric.
+
+**On Limitations:**
+
+- Association rules are descriptive, correlational tools; they do not infer causality.
+- The approach lacks temporal structure; ordered sequences require specialized algorithms.
+- Results are unstable on small datasets and highly sensitive to parameter choices.
+
+The ultimate goal is not to maximize the number of rules discovered, but to identify the small subset of rules representing genuinely nontrivial patterns, supported by sufficient observations, and consistent across multiple evaluation metrics. Achieving this requires, beyond algorithmic mastery, a solid understanding of the statistical principles underlying each metric.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

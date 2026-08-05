@@ -1,0 +1,581 @@
+---
+title: "Bayesian Classifiers"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_bayesianos.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Supervised learning methods can be understood from two complementary perspectives. In a deterministic framework, the goal is learning a mapping $f(\mathbf{x})$ that directly assigns instances to discrete classes or forecasts continuous responses. In a probabilistic framework, the primary focus is explicitly modeling uncertainty: rather than merely deciding a class label, we estimate the conditional probability of each candidate class given observed evidence. If no feature evidence is observed, optimal decision-making defaults to prior class probabilities.
+
+To illustrate, consider the classic *Monty Hall* game show scenario. A contestant is presented with 3 closed doors. Behind one door is a sports car; behind the other two are goats. Prior to receiving any hint, the prior probability of choosing the car is $\frac{1}{3}$ across all three doors, making a uniform random choice optimal.
+
+![Prior probability of finding the car behind closed doors is $\frac{1}{3}$, while finding a goat is $\frac{2}{3}$.](https://upload.wikimedia.org/wikipedia/commons/thumb/7/79/Monty_closed_doors.svg/1920px-Monty_closed_doors.svg.png){width="65%"}
+
+Suppose the contestant selects Door 1. The host (who knows what is behind each door) opens Door 3, revealing a goat. Should the contestant switch to Door 2? Intuition often incorrectly suggests a 50/50 chance between the two remaining closed doors.
+
+![Opening a goat door constraints the host to reveal a goat, shifting the conditional probability of winning by switching to $\frac{2}{3}$.](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/Monty_open_door_chances.svg/1920px-Monty_open_door_chances.svg.png){width="65%"}
+
+Formally, prior probabilities before door opening are:
+
+$$
+P(A_1)=P(A_2)=P(A_3)=\frac{1}{3}
+$$
+
+where $A_i$ denotes the event that the car is behind Door $i$.
+
+The host knows the car's location and always opens a door containing a goat. If the host has two goat doors to choose from (when the contestant initially picked the car), he chooses randomly between them.
+
+```{=html}
+<div id="cgv3" style="font-family:'Segoe UI',system-ui,sans-serif;max-width:940px;margin:1.5rem auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:1.4rem 1.8rem;">
+
+  <div style="margin-bottom:1.1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;">
+    <span style="font-weight:700;color:#1e293b;font-size:.95rem;">Select your initial door:</span>
+    <div id="cgv3-btns" style="display:flex;gap:6px;"></div>
+  </div>
+
+  <div style="margin-bottom:1rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.6rem 1rem;font-size:.86rem;color:#1e40af;">
+    The decision tree illustrates <strong>all possible game outcomes</strong>.
+    High-probability branches (p = 1/3) contribute 2 units to state counts;
+    low-probability branches (p = 1/6) contribute 1. Switching wins in 4 out of 6 weighted states.
+  </div>
+
+  <svg id="cgv3-svg" viewBox="0 0 920 490" xmlns="http://www.w3.org/2000/svg"
+       style="width:100%;display:block;border-radius:10px;background:white;border:1px solid #f1f5f9;"></svg>
+
+  <div id="cgv3-counter" style="margin-top:.9rem;"></div>
+</div>
+
+<script>
+(function () {
+  var cgv3Choice = 1;
+  var LX = [105, 315, 580, 805];
+  var RX = 460;
+
+  function getLeaves(d) {
+    var oth = [1,2,3].filter(function(x){ return x!==d; }).sort(function(a,b){ return a-b; });
+    return [
+      { auto:d,      chabelo:oth[0], switchTo:oth[1], switchWins:false, dots:1, pFrac:'1/6', edgeP:'1/2' },
+      { auto:d,      chabelo:oth[1], switchTo:oth[0], switchWins:false, dots:1, pFrac:'1/6', edgeP:'1/2' },
+      { auto:oth[0], chabelo:oth[1], switchTo:oth[0], switchWins:true,  dots:2, pFrac:'1/3', edgeP:'1'   },
+      { auto:oth[1], chabelo:oth[0], switchTo:oth[1], switchWins:true,  dots:2, pFrac:'1/3', edgeP:'1'   },
+    ];
+  }
+
+  function bez(x1,y1,x2,y2) {
+    var my=(y1+y2)/2;
+    return 'M'+x1+','+y1+' C'+x1+','+my+' '+x2+','+my+' '+x2+','+y2;
+  }
+
+  function edge(x1,y1,x2,y2,col,sw) {
+    return '<path d="'+bez(x1,y1,x2,y2)+'" stroke="'+col
+          +'" stroke-width="'+(sw||2.2)+'" fill="none" stroke-linecap="round"/>';
+  }
+
+  function edgeLbl(x1,y1,x2,y2,txt,col) {
+    var mx=(x1+x2)/2, my=(y1+y2)/2;
+    return '<rect x="'+(mx-24)+'" y="'+(my-10)+'" width="48" height="18" rx="5" fill="white"/>'
+          +'<text x="'+mx+'" y="'+(my+4)+'" text-anchor="middle" font-size="11.5" '
+          +'font-family="\'Segoe UI\',sans-serif" font-weight="600" fill="'+(col||'#475569')+'">'+txt+'</text>';
+  }
+
+  function bx(cx,cy,bw,bh,lines,bg,fg) {
+    var x=cx-bw/2, y=cy-bh/2, lh=18;
+    var th=lines.length*lh, sy=cy-th/2+lh*0.72;
+    var s='<g>';
+    s+='<rect x="'+x+'" y="'+y+'" width="'+bw+'" height="'+bh+'" rx="8" fill="'+bg+'"/>';
+    lines.forEach(function(l,i){
+      s+='<text x="'+cx+'" y="'+(sy+i*lh)+'" text-anchor="middle" font-family="\'Segoe UI\',sans-serif" '
+        +'font-size="'+(i===0?13:12)+'" font-weight="'+(i===0?'700':'400')+'" fill="'+fg+'">'+l+'</text>';
+    });
+    return s+'</g>';
+  }
+
+  function render(choice) {
+    var leaves = getLeaves(choice);
+    var oth = [1,2,3].filter(function(x){ return x!==choice; }).sort(function(a,b){ return a-b; });
+    var l1x = [(LX[0]+LX[1])/2, LX[2], LX[3]];
+
+    var Yr = 44,  BHr = 46;
+    var Yl = 152, BHl = 48;
+    var Yc = 284, BHc = 58;
+    var Yo = 402, BHo = 46;
+    var Yd = 466;
+    var Yw = 488;
+    var BW = 160;
+
+    var svg = '';
+
+    var lx0 = LX[0]-BW/2-12, lx1 = LX[1]+BW/2+12;
+    svg += '<rect x="'+lx0+'" y="'+(Yr-28)+'" width="'+(lx1-lx0)+'" height="'+(Yw-Yr+28+12)+'" rx="10" fill="#fef2f2" opacity="0.6"/>';
+    var lx2 = LX[2]-BW/2-12, lx3 = LX[3]+BW/2+12;
+    svg += '<rect x="'+lx2+'" y="'+(Yr-28)+'" width="'+(lx3-lx2)+'" height="'+(Yw-Yr+28+12)+'" rx="10" fill="#f0fdf4" opacity="0.6"/>';
+
+    var rootBot = Yr+BHr/2, l1Top = Yl-BHl/2;
+    [0,1,2].forEach(function(j){
+      svg += edge(RX, rootBot, l1x[j], l1Top, '#94a3b8');
+      svg += edgeLbl(RX, rootBot, l1x[j], l1Top, '1/3');
+    });
+
+    var l1Bot = Yl+BHl/2, l2Top = Yc-BHc/2;
+    svg += edge(l1x[0], l1Bot, LX[0], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[0], l1Bot, LX[0], l2Top, '1/2');
+    svg += edge(l1x[0], l1Bot, LX[1], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[0], l1Bot, LX[1], l2Top, '1/2');
+    svg += edge(l1x[1], l1Bot, LX[2], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[1], l1Bot, LX[2], l2Top, '1');
+    svg += edge(l1x[2], l1Bot, LX[3], l2Top, '#94a3b8');
+    svg += edgeLbl(l1x[2], l1Bot, LX[3], l2Top, '1');
+
+    var l2Bot = Yc+BHc/2, outTop = Yo-BHo/2;
+    leaves.forEach(function(lf,i){
+      var col = lf.switchWins ? '#16a34a' : '#dc2626';
+      svg += edge(LX[i], l2Bot, LX[i], outTop, col, 2.8);
+      svg += edgeLbl(LX[i], l2Bot, LX[i], outTop, 'p='+lf.pFrac, col);
+    });
+
+    svg += bx(RX, Yr, 200, BHr, ['Chosen Door: '+choice], '#6366f1', '#fff');
+
+    [0,1,2].forEach(function(j){
+      var lbl = j===0 ? ['Car at Door '+choice, 'p = 1/3']
+                      : ['Car at Door '+oth[j-1], 'p = 1/3'];
+      svg += bx(l1x[j], Yl, BW, BHl, lbl, '#475569', '#fff');
+    });
+
+    leaves.forEach(function(lf,i){
+      svg += bx(LX[i], Yc, BW, BHc,
+        ['Host opens', 'Door '+lf.chabelo], '#0284c7', '#fff');
+    });
+
+    leaves.forEach(function(lf,i){
+      var col = lf.switchWins ? '#16a34a' : '#dc2626';
+      var changeTxt = lf.switchWins ? 'Switch: WIN' : 'Switch: LOSE';
+      var stayTxt = lf.switchWins ? 'Stay: LOSE' : 'Stay: WIN';
+      var x=LX[i]-BW/2, y=Yo-BHo/2;
+      svg += '<rect x="'+x+'" y="'+y+'" width="'+BW+'" height="'+BHo+'" rx="8" fill="'+col+'"/>';
+      svg += '<text x="'+LX[i]+'" y="'+(y+17)+'" text-anchor="middle" font-size="13.5" '
+            +'font-family="\'Segoe UI\',sans-serif" fill="white" font-weight="700">'+changeTxt+'</text>';
+      svg += '<text x="'+LX[i]+'" y="'+(y+33)+'" text-anchor="middle" font-size="11" '
+            +'font-family="\'Segoe UI\',sans-serif" fill="rgba(255,255,255,.9)">'+stayTxt+'</text>';
+    });
+
+    var dotR = 12, dotGap = 7;
+    leaves.forEach(function(lf,i){
+      var col = lf.switchWins ? '#16a34a' : '#dc2626';
+      var totalW = lf.dots*(dotR*2) + (lf.dots-1)*dotGap;
+      var sx = LX[i] - totalW/2 + dotR;
+      for (var d=0; d<lf.dots; d++){
+        svg += '<circle cx="'+(sx+d*(dotR*2+dotGap))+'" cy="'+Yd+'" r="'+dotR
+              +'" fill="'+col+'" stroke="white" stroke-width="2.5"/>';
+      }
+      var wlbl = lf.dots===1 ? 'x1' : 'x2';
+      svg += '<text x="'+LX[i]+'" y="'+Yw+'" text-anchor="middle" font-size="11" '
+            +'font-family="\'Segoe UI\',sans-serif" font-weight="700" fill="'+col+'">'+wlbl+'</text>';
+    });
+
+    var bktY = Yd + dotR + 6;
+    var bktLx = LX[0]-dotR-4, bktRx = LX[1]+dotR+4;
+    svg += '<line x1="'+bktLx+'" y1="'+bktY+'" x2="'+bktRx+'" y2="'+bktY+'" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="3 2"/>';
+    var bktLx2 = LX[2]-dotR-4, bktRx2 = LX[3]+dotR+4+8;
+    svg += '<line x1="'+bktLx2+'" y1="'+bktY+'" x2="'+bktRx2+'" y2="'+bktY+'" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="3 2"/>';
+
+    document.getElementById('cgv3-svg').innerHTML = svg;
+
+    var dotsHTML = '';
+    for (var r=0; r<2; r++){
+      dotsHTML += '<div style="width:36px;height:36px;border-radius:50%;background:#dc2626;'
+               +  'border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,.18);'
+               +  'display:flex;align-items:center;justify-content:center;'
+               +  'color:white;font-size:.8rem;font-weight:700;">'+(r+1)+'</div>';
+    }
+    dotsHTML += '<div style="width:1px;height:36px;background:#d1d5db;margin:0 6px;"></div>';
+    for (var g=0; g<4; g++){
+      dotsHTML += '<div style="width:36px;height:36px;border-radius:50%;background:#16a34a;'
+               +  'border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,.18);'
+               +  'display:flex;align-items:center;justify-content:center;'
+               +  'color:white;font-size:.8rem;font-weight:700;">'+(g+3)+'</div>';
+    }
+
+    document.getElementById('cgv3-counter').innerHTML =
+      '<div style="display:flex;align-items:center;gap:1.2rem;padding:.85rem 1.1rem;'
+     +'background:white;border:1px solid #e2e8f0;border-radius:10px;flex-wrap:wrap;">'
+     +'<div style="font-size:.88rem;font-weight:700;color:#1e293b;min-width:160px;">'
+     +'State Count<br><span style="font-weight:400;color:#64748b;">(each circle = 1/6 sample space)</span></div>'
+     +'<div style="display:flex;gap:6px;align-items:center;">'+ dotsHTML +'</div>'
+     +'<div style="border-left:2px solid #e2e8f0;padding-left:1.1rem;font-size:.9rem;line-height:1.6;">'
+     +'<div><span style="color:#dc2626;font-weight:700;">2 of 6</span>'
+     +' -> lose switching = 1/3</div>'
+     +'<div><span style="color:#16a34a;font-weight:700;">4 of 6</span>'
+     +' -> <strong>win switching = 2/3</strong></div>'
+     +'</div>'
+     +'</div>';
+  }
+
+  window.cgv3SetChoice = function(d) {
+    cgv3Choice = d;
+    [1,2,3].forEach(function(i){
+      var b=document.getElementById('cgv3-b'+i);
+      var on=i===d;
+      b.style.background  = on?'#6366f1':'white';
+      b.style.color       = on?'white':'#374151';
+      b.style.borderColor = on?'#6366f1':'#cbd5e1';
+    });
+    render(d);
+  };
+
+  var btns = document.getElementById('cgv3-btns');
+  [1,2,3].forEach(function(i){
+    var b=document.createElement('button');
+    b.id='cgv3-b'+i;
+    b.textContent='Door '+i;
+    b.setAttribute('onclick','cgv3SetChoice('+i+')');
+    b.style.cssText='padding:6px 18px;border-radius:8px;border:2px solid #cbd5e1;background:white;'
+                   +'color:#374151;cursor:pointer;font-size:.9rem;font-weight:600;transition:all .15s;';
+    btns.appendChild(b);
+  });
+
+  cgv3SetChoice(1);
+})();
+</script>
+```
+
+When the host opens Door 3 revealing a goat, we condition on this evidence:
+
+| Case | Car Location | Prior $P(A_i)$ | $P(\text{Host opens Door 3} \mid A_i)$ | Joint Probability |
+|---|---:|---:|---:|---:|
+| 1 | Door 1 | $\frac{1}{3}$ | $\frac{1}{2}$ | $\frac{1}{6}$ |
+| 2 | Door 2 | $\frac{1}{3}$ | $1$ | $\frac{1}{3}$ |
+| 3 | Door 3 | $\frac{1}{3}$ | $0$ | $0$ |
+
+Total probability $P(\text{Host opens Door 3}) = \frac{1}{6} + \frac{1}{3} + 0 = \frac{1}{2}$.
+
+Applying Bayes' Theorem:
+
+$$
+P(A_1 \mid \text{Host opens Door 3}) = \frac{1/6}{1/2} = \frac{1}{3}
+$$
+
+$$
+P(A_2 \mid \text{Host opens Door 3}) = \frac{1/3}{1/2} = \frac{2}{3}
+$$
+
+Switching to Door 2 doubles the winning probability to $\frac{2}{3}$. This highlights the core principle of Bayesian reasoning: updating initial beliefs upon observing new evidence.
+
+```{python}
+import random
+import plotly.graph_objects as go
+
+def simular_monty_hall_plotly(n_simulaciones=10_000):
+    puertas = [1, 2, 3]
+
+    gana_quedandose = 0
+    gana_cambiando = 0
+
+    probabilidades_quedandose = []
+    probabilidades_cambiando = []
+    simulaciones = []
+
+    for i in range(1, n_simulaciones + 1):
+        puerta_auto = random.choice(puertas)
+        eleccion_inicial = 1
+
+        puertas_posibles_para_abrir = [
+            puerta for puerta in puertas
+            if puerta != eleccion_inicial and puerta != puerta_auto
+        ]
+        puerta_abierta = random.choice(puertas_posibles_para_abrir)
+
+        puerta_cambio = [
+            puerta for puerta in puertas
+            if puerta != eleccion_inicial and puerta != puerta_abierta
+        ][0]
+
+        if eleccion_inicial == puerta_auto:
+            gana_quedandose += 1
+        if puerta_cambio == puerta_auto:
+            gana_cambiando += 1
+
+        probabilidades_quedandose.append(gana_quedandose / i)
+        probabilidades_cambiando.append(gana_cambiando / i)
+        simulaciones.append(i)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=simulaciones, y=probabilidades_quedandose,
+        mode="lines", name="Stay Strategy",
+        line=dict(color="#1f77b4", width=2)
+    ))
+    fig.add_trace(go.Scatter(
+        x=simulaciones, y=probabilidades_cambiando,
+        mode="lines", name="Switch Strategy",
+        line=dict(color="#d62728", width=2)
+    ))
+    fig.add_hline(y=1/3, line_dash="dash", line_color="#1f77b4", annotation_text="Theoretical: 1/3")
+    fig.add_hline(y=2/3, line_dash="dash", line_color="#d62728", annotation_text="Theoretical: 2/3")
+
+    fig.update_layout(
+        title="Monty Hall Simulation: Empirical Convergence to Bayesian Posteriors",
+        xaxis_title="Number of Simulations",
+        yaxis_title="Empirical Cumulative Win Rate",
+        template="plotly_white",
+        yaxis=dict(range=[0, 1])
+    )
+    fig.show()
+
+simular_monty_hall_plotly(n_simulaciones=10_000)
+```
+
+## Probabilistic Perspective on Classification
+
+Given observation $\mathbf{x}\in\mathbb{R}^d$ and candidate classes $\Omega=\{\omega_1,\dots,\omega_c\}$, Bayes' Theorem calculates posterior class probabilities $P(\omega_i\mid \mathbf{x})$:
+
+::: {.callout-note appearance="minimal"}
+Definition. Posterior class probability $P(\omega_i\mid \mathbf{x})$:
+$$
+P(\omega_i\mid \mathbf{x}) = \frac{p(\mathbf{x}\mid \omega_i)P(\omega_i)}{p(\mathbf{x})}
+$$ {#eq-bayes-posterior}
+:::
+
+where $p(\mathbf{x}\mid\omega_i)$ is class-conditional likelihood, $P(\omega_i)$ is prior class probability, and $p(\mathbf{x}) = \sum_{j=1}^c p(\mathbf{x}\mid\omega_j)P(\omega_j)$ is marginal evidence.
+
+::: {.callout-note appearance="minimal"}
+Definition. Maximum A Posteriori (MAP) Decision Rule assigns instance $\mathbf{x}$ to the class maximizing posterior probability:
+$$
+\hat{\omega}(\mathbf{x}) = \arg\max_{\omega_i\in\Omega} P(\omega_i\mid\mathbf{x})
+$$ {#eq-map-rule}
+:::
+
+```{python}
+import numpy as np
+
+def clasificador_bayesiano(verosimilitudes, priors, clases):
+    verosimilitudes = np.array(verosimilitudes, dtype=float)
+    priors = np.array(priors, dtype=float)
+    clases = np.array(clases)
+
+    evidencia = np.sum(verosimilitudes * priors)
+    posteriores = (verosimilitudes * priors) / evidencia
+
+    indice_decision = np.argmax(posteriores)
+    decision = clases[indice_decision]
+    return posteriores, decision
+
+clases = ["Normal", "Disease"]
+verosimilitudes = [0.2, 0.4]
+priors = [0.9, 0.1]
+
+posteriores, decision = clasificador_bayesiano(verosimilitudes, priors, clases)
+print(f"Posteriors: P(Normal|x) = {posteriores[0]:.3f}, P(Disease|x) = {posteriores[1]:.3f}")
+print("MAP Decision:", decision)
+```
+
+```{=html}
+<div id="bayes-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Bayesian Update — Prior → Posterior</span><br>
+    <span style="font-size:0.81em;color:#666;">Adjust prior P(ω₁) and likelihoods p(x|ω) to observe posterior shifts</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+    <div>
+      <label style="font-size:0.8em;color:#444;">P(ω₁) prior = <strong id="bpv">0.90</strong></label><br>
+      <input id="bps" type="range" min="0.05" max="0.95" step="0.05" value="0.90" style="width:100%;accent-color:#1a3a5c;">
+    </div>
+    <div>
+      <label style="font-size:0.8em;color:#444;">p(x|ω₁) = <strong id="bl1v">0.20</strong></label><br>
+      <input id="bl1" type="range" min="0.01" max="0.99" step="0.01" value="0.20" style="width:100%;accent-color:#2563eb;">
+    </div>
+    <div>
+      <label style="font-size:0.8em;color:#444;">p(x|ω₂) = <strong id="bl2v">0.40</strong></label><br>
+      <input id="bl2" type="range" min="0.01" max="0.99" step="0.01" value="0.40" style="width:100%;accent-color:#dc2626;">
+    </div>
+  </div>
+  <div id="bayes-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="bayes-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const cv=document.getElementById('bayes-cv');
+  const W=680,H=260,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const C1='#2563eb',C2='#dc2626';
+
+  function bar(x,y,w,h,col,alpha){
+    ctx.globalAlpha=alpha||1;
+    ctx.fillStyle=col;ctx.fillRect(x,y,w,h);
+    ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.globalAlpha=1;
+    ctx.strokeRect(x,y,w,h);
+  }
+
+  function draw(){
+    const pw1=parseFloat(document.getElementById('bps').value);
+    const lk1=parseFloat(document.getElementById('bl1').value);
+    const lk2=parseFloat(document.getElementById('bl2').value);
+    const pw2=1-pw1;
+    const evidence=lk1*pw1+lk2*pw2;
+    const post1=lk1*pw1/evidence;
+    const post2=lk2*pw2/evidence;
+    const lr=lk1/lk2;
+
+    ctx.clearRect(0,0,W,H);
+    const panW=W/3-16,pH=H-60,base=H-30,pad=24;
+
+    const ph1L=pw1*pH,ph2L=pw2*pH;
+    bar(pad,base-ph1L,panW*0.42,ph1L,C1,0.8);
+    bar(pad+panW*0.48,base-ph2L,panW*0.42,ph2L,C2,0.8);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Priors',pad+panW*0.45,22);
+
+    const mx=W/3+8;
+    const ph1M=lk1*pH,ph2M=lk2*pH;
+    bar(mx,base-ph1M,panW*0.42,ph1M,C1,0.8);
+    bar(mx+panW*0.48,base-ph2M,panW*0.42,ph2M,C2,0.8);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Likelihoods',mx+panW*0.45,22);
+
+    const rx=2*W/3+8;
+    const ph1R=post1*pH,ph2R=post2*pH;
+    bar(rx,base-ph1R,panW*0.42,ph1R,C1,0.9);
+    bar(rx+panW*0.48,base-ph2R,panW*0.42,ph2R,C2,0.9);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Posteriors',rx+panW*0.45,22);
+
+    const dec=post1>post2?'ω₁':'ω₂';
+    const decCol=post1>post2?C1:C2;
+    ctx.strokeStyle='#e0e5ed';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(W/3,35);ctx.lineTo(W/3,H-20);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(2*W/3,35);ctx.lineTo(2*W/3,H-20);ctx.stroke();
+
+    document.getElementById('bayes-info').innerHTML=
+      `Likelihood Ratio ℓ(x) = <strong>${lr.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `Threshold = P(ω₂)/P(ω₁) = <strong>${(pw2/pw1).toFixed(3)}</strong>&ensp;·&ensp;`+
+      `MAP Decision: <strong style="color:${decCol}">${dec}</strong>`;
+  }
+
+  ['bps','bl1','bl2'].forEach(id=>{
+    document.getElementById(id).addEventListener('input',draw);
+  });
+  draw();
+})();
+</script>
+```
+
+## Minimum-Error Rate Classification
+
+Under zero-one loss (where all classification errors incur unit cost), the MAP rule minimizes average error probability [@duda2001pattern].
+
+::: {.callout-note appearance="minimal"}
+Definition. Conditional classification error $P(e\mid\mathbf{x})$:
+$$
+P(e\mid\mathbf{x})=
+\begin{cases}
+P(\omega_2\mid\mathbf{x}), & \text{if deciding }\omega_1,\\
+P(\omega_1\mid\mathbf{x}), & \text{if deciding }\omega_2.
+\end{cases}
+$$ {#eq-conditional-error}
+:::
+
+Likelihood ratio formulation:
+
+$$
+\ell(\mathbf{x})=\frac{p(\mathbf{x}\mid\omega_1)}{p(\mathbf{x}\mid\omega_2)} \gtrless_{\omega_2}^{\omega_1} \frac{P(\omega_2)}{P(\omega_1)}.
+$$ {#eq-likelihood-ratio}
+
+## Naïve Bayes Classifier
+
+Naïve Bayes simplifies multidimensional density estimation by assuming feature conditional independence given class $\omega_i$ [@mccallum1998comparison; @murphy2012machine]:
+
+::: {.callout-note appearance="minimal"}
+Definition. Naïve Bayes Conditional Independence Assumption:
+$$
+p(\mathbf{x}\mid\omega_i)=p(x_1,x_2,\dots,x_d\mid\omega_i)=\prod_{k=1}^{d}p(x_k\mid\omega_i)
+$$ {#eq-naive-bayes-assumption}
+:::
+
+Log-likelihood MAP decision rule:
+
+$$
+\hat{\omega}(\mathbf{x})=\arg\max_i \left[\log P(\omega_i)+\sum_{k=1}^{d}\log p(x_k\mid\omega_i)\right].
+$$
+
+Multinomial Naïve Bayes for text incorporating Laplace smoothing parameter $\alpha$:
+
+$$
+\theta_{ik} = \frac{N_{ik}+\alpha}{\sum_{r=1}^{d}N_{ir}+\alpha d}.
+$$
+
+## Gaussian Bayes Classifiers
+
+Modeling class-conditional densities via multivariate normal distributions:
+
+::: {.callout-note appearance="minimal"}
+Definition. Multivariate Gaussian density $\mathcal{N}(\boldsymbol{\mu}_i,\boldsymbol{\Sigma}_i)$:
+$$
+p(\mathbf{x}\mid\omega_i) = \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}_i|^{1/2}}
+\exp\left[-\frac{1}{2}(\mathbf{x}-\boldsymbol{\mu}_i)^T\boldsymbol{\Sigma}_i^{-1}(\mathbf{x}-\boldsymbol{\mu}_i)\right]
+$$ {#eq-normal-multivariate}
+:::
+
+- **Quadratic Discriminant Analysis (QDA):** Distinct covariance matrices $\boldsymbol{\Sigma}_i \neq \boldsymbol{\Sigma}_j$ yield quadratic decision boundaries.
+- **Linear Discriminant Analysis (LDA):** Shared covariance matrix $\boldsymbol{\Sigma}_i = \boldsymbol{\Sigma}$ yields linear decision hyperplanes [@fisher1936use; @hastie2009elements].
+
+## Bayesian Minimum-Risk Classification
+
+When classification errors carry unequal costs, decision theory minimizes expected conditional risk [@berger1985statistical].
+
+::: {.callout-note appearance="minimal"}
+Definition. Loss Matrix $\lambda_{ij} = \lambda(\alpha_i,\omega_j)$ and Conditional Risk $R(\alpha_i\mid\mathbf{x})$:
+$$
+R(\alpha_i\mid\mathbf{x})=\sum_{j=1}^{c}\lambda(\alpha_i,\omega_j)P(\omega_j\mid\mathbf{x})
+$$ {#eq-conditional-risk}
+:::
+
+Minimum-risk decision rule selects action $\alpha^*(\mathbf{x}) = \arg\min_i R(\alpha_i\mid\mathbf{x})$.
+
+## Minimax Criterion for Uncertain Priors
+
+When prior probabilities $P(\omega_i)$ are unknown or non-stationary, the Minimax criterion selects decision rules minimizing worst-case risk across all admissible prior distributions [@berger1985statistical]:
+
+$$
+\alpha_{\text{minimax}} = \arg\min_{\alpha}\max_{\pi\in\Pi} R(\alpha;\pi).
+$$ {#eq-minimax-rule}
+
+## Conclusions
+
+Bayesian classification provides a rigorous framework for decision-making under uncertainty. The MAP rule minimizes misclassification rates under symmetric costs, while Minimum-Risk Bayes incorporates asymmetric domain loss functions. Naïve Bayes handles high-dimensional spaces efficiently, and Gaussian discriminant classifiers model continuous feature spaces.
+
+## References
+
+::: {#refs}
+:::

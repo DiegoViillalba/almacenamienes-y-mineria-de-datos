@@ -1,0 +1,887 @@
+---
+title: "Classification and Decision Trees"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clasificacion_arboles.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+## Introduction
+
+Classification is one of the fundamental tasks in supervised learning. Its goal is to learn a decision rule from previously observed examples capable of assigning a categorical label to new observations. Unlike numerical prediction (regression), where the output belongs to a continuous or ordered discrete space, in classification the output belongs to a finite set of discrete classes: for example, `spam` or `non-spam`, `approve` or `reject`, `positive`, `negative`, or `neutral` [@hastie2009elements; @james2021introduction].
+
+In general terms, a classification problem starts with a training dataset composed of pairs
+
+$$
+\mathcal{D} = \{(\mathbf{x}_i, y_i)\}_{i=1}^{n},
+$$
+
+where $\mathbf{x}_i \in \mathcal{X}$ represents the predictor variables or available observations, while $y_i \in \mathcal{Y}$ represents the target class. The objective is to construct a function
+
+$$
+\hat{f}: \mathcal{X} \to \mathcal{Y}
+$$
+
+that generalizes well to unseen data.
+
+This chapter explores decision trees as interpretable classification models. The exposition focuses on the general logic of tree induction, Hunt's algorithm, the ID3 algorithm, entropy, information gain, and the extraction of classification rules.
+
+## Classification as a Supervised Problem
+
+In a classification problem, historical examples are available where the true class is known. The model leverages these examples to learn patterns connecting explanatory variables to target labels.
+
+Typical examples include:
+
+- Classifying an email as `spam` or `non-spam`;
+- Deciding whether a credit application should be `approved` or `rejected`;
+- Identifying whether a patient presents hypertension;
+- Categorizing a review as `positive`, `negative`, or `neutral`;
+- Predicting whether a customer will purchase a laptop.
+
+The distinction between classification and regression depends on the type of target variable. If the output is categorical, it is a classification problem. If the output is numerical, it is a regression problem.
+
+| Task | Output Type | Example |
+|---|---:|---|
+| Classification | Categorical | Pass / Fail |
+| Regression | Numerical | Tomorrow's Temperature |
+
+::: {.callout-note appearance="minimal"}
+Definition. A supervised classification problem consists of estimating a function $\hat{f}$ that maps each observation $\mathbf{x}$ to a class $y$ within a finite set of labels $\mathcal{Y}$:
+$$
+\hat{f}: \mathcal{X} \to \mathcal{Y}, \qquad |\mathcal{Y}| < \infty.
+$$ {#eq-classification-function}
+:::
+
+## Training, Testing, and Generalization
+
+Classification workflows are typically divided into two main phases: training and testing. During training, the algorithm adjusts its internal rules using labeled data. During testing, the model is evaluated on unseen data to estimate its generalization capability.
+
+This separation is essential because a model can memorize training data without learning useful underlying patterns. This phenomenon is known as overfitting. In decision trees, overfitting occurs when a tree grows too deep, creating highly specific partitions for individual training cases [@breiman1984classification; @quinlan1986induction].
+
+::: {.callout-note appearance="minimal"}
+Definition. Given a training set $\mathcal{D}_{\text{train}}$ and a test set $\mathcal{D}_{\text{test}}$, the generalization capability of a classifier is evaluated by estimating its performance on examples not used during model fitting:
+$$
+\mathcal{D} = \mathcal{D}_{\text{train}} \cup \mathcal{D}_{\text{test}}, \qquad
+\mathcal{D}_{\text{train}} \cap \mathcal{D}_{\text{test}} = \varnothing.
+$$ {#eq-train-test-split}
+:::
+
+## Data Preparation Before Classifier Building
+
+Before training a classifier, data preparation is required. Model quality depends directly on feature quality. Three common tasks are data cleaning, transformation, and dimensionality reduction.
+
+Data cleaning involves correcting invalid or inconsistent entries (such as negative ages or misspelled categories) and deciding how to handle missing values. Data transformation includes encoding categorical variables, scaling numerical features, and parsing dates into usable features. Dimensionality reduction removes redundant, irrelevant, or noisy features.
+
+For decision trees, feature scaling is less critical than in linear models or neural networks, as trees are invariant to monotonic feature transformations. However, category quality, missing value strategies, and handling of continuous features remain important considerations [@james2021introduction; @geron2022hands].
+
+```{python}
+import pandas as pd
+
+clientes = pd.DataFrame({
+    "income": ["high", "low", "medium", "low", "medium"],
+    "credit_history": ["good", "bad", "good", "fair", "bad"],
+    "debt": ["low", "high", "low", "high", "medium"],
+    "stable_employment": ["yes", "no", "yes", "no", "yes"],
+    "decision": ["approve", "reject", "approve", "reject", "reject"]
+})
+
+clientes
+```
+
+The example above represents a binary classification task: deciding whether to approve or reject a credit application. Predictor variables are categorical, and the target label is `decision`.
+
+## Decision Trees
+
+A decision tree is a predictive model that organizes sequential decisions in a hierarchical structure. Each internal node represents a test on an attribute, each branch represents a test outcome, and each leaf node assigns a class. Predicting a new observation involves traversing the tree from the root to a leaf.
+
+Decision trees are particularly valued for their interpretability. Unlike opaque models, a tree can be translated directly into human-readable IF-THEN rules [@breiman1984classification; @quinlan1993c45].
+
+::: {.callout-note appearance="minimal"}
+Definition. A classification decision tree is a hierarchical structure composed of internal nodes, branches, and leaves. Each internal node applies a test $h_j(\mathbf{x})$, each branch corresponds to a test outcome, and each leaf assigns a class $c \in \mathcal{Y}$:
+$$
+T(\mathbf{x}) = c, \qquad c \in \mathcal{Y}.
+$$ {#eq-decision-tree}
+:::
+
+Core elements of a tree include:
+
+| Element | Description |
+|---|---|
+| Root Node | The topmost node containing all training examples before splitting. |
+| Internal Node | A node where an attribute test is evaluated to split the dataset. |
+| Branch | A outcome path originating from a node test. |
+| Leaf Node | A terminal node assigning a final class label. |
+
+## Data Partitioning in Decision Trees
+
+Tree induction relies on recursively partitioning data. At each node, an attribute is chosen to split the dataset into subsets.
+
+For categorical attributes, the tree may create one branch per category. For instance, if `Outlook` takes values `Sunny`, `Overcast`, and `Rain`, three branches are formed. In binary trees, categories are evaluated via boolean tests like "Is color red?".
+
+For continuous attributes, a split threshold must be selected. For example, `Income` might be split into `Income <= 25000` and `Income > 25000`. Although ID3 was designed primarily for categorical features, extensions such as C4.5 handle continuous variables smoothly [@quinlan1986induction; @quinlan1993c45].
+
+## Hunt's Algorithm
+
+Hunt's algorithm outlines a general recursive framework for building decision trees. The core logic is simple: if all examples reaching a node belong to the same class, the node becomes a leaf. Otherwise, an attribute test is chosen to partition the data, and the procedure recurses on each subset.
+
+Let $D_t$ be the set of training records reaching node $t$. The algorithm proceeds as follows:
+
+1. If all records in $D_t$ belong to class $y$, create a leaf node with label $y$.
+2. If $D_t$ is empty, create a leaf node labeled with a default class (typically the majority class of the parent node).
+3. If records belong to multiple classes, select an attribute test to split $D_t$.
+4. Partition $D_t$ into subsets based on test outcomes.
+5. Recursively apply the algorithm to each subset.
+
+This approach is top-down (moving from root to leaves) and follows a divide-and-conquer strategy.
+
+::: {.callout-note appearance="minimal"}
+Definition. Let $D_t$ be the set of examples reaching node $t$. A node is pure if all examples in $D_t$ belong to the exact same class:
+$$
+\exists c \in \mathcal{Y} \; \text{such that} \; y_i = c \quad \forall (\mathbf{x}_i,y_i) \in D_t.
+$$ {#eq-pure-node}
+:::
+
+## Stopping Criteria
+
+Tree partitioning cannot continue indefinitely. Common stopping criteria include:
+
+- All examples at the node belong to a single class;
+- No remaining attributes are available for splitting;
+- The number of examples at the node falls below a minimum threshold;
+- Maximum tree depth has been reached;
+- Information gain from further splitting falls below a minimum threshold.
+
+In classic ID3, if no attributes remain and examples belong to multiple classes, the node is assigned the majority class label.
+
+## ID3: Feature Selection via Information Gain
+
+ID3 (*Iterative Dichotomiser 3*) is a classic decision tree algorithm proposed by Quinlan. It uses information gain at each node to select the attribute that best separates the target classes [@quinlan1986induction].
+
+The intuition is that a good splitting attribute produces subsets that are purer (more homogeneous) than the original set. To quantify impurity, ID3 uses entropy from information theory [@shannon1948mathematical].
+
+The workflow is:
+
+1. Start with all training records at the root node.
+2. Calculate current dataset entropy.
+3. Evaluate all available candidate attributes.
+4. Compute weighted average entropy after splitting for each attribute.
+5. Select the attribute yielding highest Information Gain.
+6. Recurse on child branches.
+
+## Entropy as an Impurity Measure
+
+Entropy measures the degree of randomness or impurity in a dataset. If all examples belong to a single class, entropy is 0. If classes are evenly split, entropy reaches its maximum value.
+
+::: {.callout-note appearance="minimal"}
+Definition. Let $S$ be a dataset with $c$ target classes, and let $p_i$ be the proportion of examples belonging to class $i$. The entropy of $S$ is defined as:
+$$
+H(S) = -\sum_{i=1}^{c} p_i \log_2(p_i).
+$$ {#eq-entropy}
+:::
+
+By convention, $0\log_2(0)=0$, since $\lim_{p \to 0^+} p\log_2(p) = 0$.
+
+For example, if $S$ contains 15 records with 9 `Yes` and 6 `No` labels:
+
+$$
+p(\text{Yes}) = \frac{9}{15}, \qquad p(\text{No}) = \frac{6}{15}.
+$$
+
+Thus,
+
+$$
+H(S) = -\frac{9}{15}\log_2\left(\frac{9}{15}\right)
+       -\frac{6}{15}\log_2\left(\frac{6}{15}\right)
+       \approx 0.971.
+$$
+
+```{python}
+import numpy as np
+
+def entropy(labels):
+    values, counts = np.unique(labels, return_counts=True)
+    probs = counts / counts.sum()
+    return -np.sum(probs * np.log2(probs))
+
+labels = ["Yes"] * 9 + ["No"] * 6
+entropy(labels)
+```
+
+## Information Gain
+
+Information Gain measures the reduction in entropy achieved by partitioning a dataset on a given attribute. A split producing pure child nodes yields high information gain.
+
+::: {.callout-note appearance="minimal"}
+Definition. Let $S$ be a dataset and $A$ an attribute taking values $v \in \operatorname{Values}(A)$. If $S_v$ denotes the subset of examples where attribute $A$ takes value $v$, Information Gain is defined as:
+$$
+\operatorname{Gain}(S,A) = H(S) - \sum_{v\in \operatorname{Values}(A)} \frac{|S_v|}{|S|} H(S_v).
+$$ {#eq-information-gain}
+:::
+
+The first term, $H(S)$, represents initial dataset impurity. The second term represents expected entropy after splitting, weighted by subset sizes. Information Gain reflects the impurity reduction obtained by splitting on $A$.
+
+## Example: Building a Tree for Baseball Game Prediction
+
+Consider a dataset predicting whether a baseball game will be played (`Play`). Predictor features are `Outlook`, `Temperature`, `Humidity`, and `Wind`.
+
+```{python}
+import pandas as pd
+
+df = pd.DataFrame({
+    "Outlook": [
+        "Sunny", "Sunny", "Overcast", "Rain", "Rain",
+        "Rain", "Overcast", "Sunny", "Sunny", "Rain",
+        "Sunny", "Overcast", "Overcast", "Rain", "Sunny"
+    ],
+    "Temperature": [
+        "Hot", "Hot", "Hot", "Mild", "Cool",
+        "Cool", "Cool", "Mild", "Cool", "Mild",
+        "Mild", "Mild", "Hot", "Mild", "Cool"
+    ],
+    "Humidity": [
+        "High", "High", "High", "High", "Normal",
+        "Normal", "Normal", "High", "Normal", "Normal",
+        "Normal", "High", "Normal", "High", "High"
+    ],
+    "Wind": [
+        "Weak", "Strong", "Weak", "Weak", "Weak",
+        "Strong", "Strong", "Weak", "Weak", "Weak",
+        "Weak", "Strong", "Weak", "Strong", "Weak"
+    ],
+    "Play": [
+        "No", "No", "Yes", "Yes", "Yes",
+        "No", "Yes", "No", "Yes", "Yes",
+        "Yes", "Yes", "Yes", "No", "No"
+    ]
+})
+
+df
+```
+
+First, compute initial dataset entropy:
+
+```{python}
+H_total = entropy(df["Play"])
+H_total
+```
+
+With 9 `Yes` and 6 `No` instances, initial entropy is approximately $0.971$.
+
+Next, evaluate Information Gain for each attribute:
+
+```{python}
+def information_gain(data, attribute, target):
+    total_entropy = entropy(data[target])
+    weighted_entropy = 0.0
+    for value, subset in data.groupby(attribute):
+        weight = len(subset) / len(data)
+        weighted_entropy += weight * entropy(subset[target])
+    return total_entropy - weighted_entropy
+
+attributes = ["Outlook", "Temperature", "Humidity", "Wind"]
+
+gains = {
+    attr: information_gain(df, attr, "Play")
+    for attr in attributes
+}
+
+pd.Series(gains).sort_values(ascending=False)
+```
+
+Gain values are approximately:
+
+| Attribute | Information Gain |
+|---|---:|
+| Outlook | 0.280 |
+| Humidity | 0.186 |
+| Wind | 0.145 |
+| Temperature | 0.013 |
+
+`Outlook` yields the highest gain and is selected as the root node.
+
+## Branch Construction Following Root Selection
+
+Splitting on `Outlook` creates three child branches:
+
+- `Outlook = Overcast`;
+- `Outlook = Sunny`;
+- `Outlook = Rain`.
+
+For `Outlook = Overcast`, all 4 examples belong to class `Yes` ($H = 0$), forming a pure leaf node.
+
+```{python}
+df[df["Outlook"] == "Overcast"]
+```
+
+For `Outlook = Sunny`, class mixture remains (2 `Yes`, 4 `No`), requiring further evaluation on remaining features: `Temperature`, `Humidity`, `Wind`.
+
+```{python}
+sunny = df[df["Outlook"] == "Sunny"]
+remaining = ["Temperature", "Humidity", "Wind"]
+
+pd.Series({
+    attr: information_gain(sunny, attr, "Play")
+    for attr in remaining
+}).sort_values(ascending=False)
+```
+
+`Humidity` yields the highest gain (0.918). Splitting on `Humidity`:
+
+- `Outlook = Sunny` and `Humidity = High` $\implies$ `Play = No`;
+- `Outlook = Sunny` and `Humidity = Normal` $\implies$ `Play = Yes`.
+
+For `Outlook = Rain`, evaluating remaining features identifies `Wind` as the top splitter (gain = 0.971).
+
+```{python}
+rain = df[df["Outlook"] == "Rain"]
+
+pd.Series({
+    attr: information_gain(rain, attr, "Play")
+    for attr in remaining
+}).sort_values(ascending=False)
+```
+
+Splitting on `Wind`:
+
+- `Outlook = Rain` and `Wind = Weak` $\implies$ `Play = Yes`;
+- `Outlook = Rain` and `Wind = Strong` $\implies$ `Play = No`.
+
+## Final Tree Structure
+
+The final decision tree is summarized as:
+
+```{mermaid}
+flowchart TD
+    A[Outlook]
+    A -->|Overcast| B[Yes]
+    A -->|Sunny| C[Humidity]
+    A -->|Rain| D[Wind]
+    C -->|High| E[No]
+    C -->|Normal| F[Yes]
+    D -->|Weak| G[Yes]
+    D -->|Strong| H[No]
+```
+
+Notice that not all features are required across all branches. In the `Overcast` branch, `Temperature`, `Humidity`, and `Wind` are unused because class determination is complete.
+
+```{=html}
+<div id="id3-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+
+  <div style="text-align:center;margin-bottom:10px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">ID3 Algorithm — Step-by-Step Construction</span><br>
+    <span style="font-size:0.82em;color:#666;">Dataset: Play Baseball? &nbsp;·&nbsp; n = 15 examples &nbsp;·&nbsp; 4 attributes</span>
+  </div>
+
+  <div style="text-align:center;margin-bottom:8px;">
+    <span id="id3-badge" style="background:#1a3a5c;color:#fff;padding:3px 16px;border-radius:12px;font-size:0.8e;"></span>
+  </div>
+
+  <svg id="id3-svg" width="680" height="368" style="display:block;margin:0 auto;overflow:visible;"></svg>
+
+  <div id="id3-panel" style="margin:8px 0 6px;padding:10px 14px;background:#fff;border:1px solid #e0e5ed;border-radius:6px;font-size:0.82em;min-height:76px;"></div>
+
+  <div id="id3-desc" style="font-size:0.84em;color:#3a3a3a;line-height:1.6;min-height:52px;margin:6px 4px 12px;"></div>
+
+  <div style="display:flex;align-items:center;justify-content:center;gap:14px;">
+    <button id="id3-prev" class="id3btn" onclick="id3Nav(-1)">← Previous</button>
+    <span id="id3-ctr" style="font-size:0.82em;color:#666;min-width:80px;text-align:center;"></span>
+    <button id="id3-next" class="id3btn" onclick="id3Nav(+1)">Next →</button>
+  </div>
+</div>
+
+<style>
+.id3btn{padding:5px 16px;border:1px solid #aab;background:#fff;border-radius:4px;cursor:pointer;
+        font-family:Georgia,serif;font-size:0.82em;transition:background .12s;}
+.id3btn:hover{background:#eef2f7;}.id3btn:disabled{opacity:0.38;cursor:default;}
+</style>
+
+<script>
+(function(){
+
+/* ── nodes & edges ─────────────────────────────────────── */
+const N = {
+  root:    {x:340, y:52,  lbl:"Outlook",     t:"int"},
+  nub_lf:  {x:90,  y:200, lbl:"Yes",         t:"leaf", cls:"si"},
+  humedad: {x:285, y:200, lbl:"Humidity",    t:"int"},
+  viento:  {x:548, y:200, lbl:"Wind",        t:"int"},
+  alta_lf: {x:185, y:335, lbl:"No",          t:"leaf", cls:"no"},
+  norm_lf: {x:385, y:335, lbl:"Yes",         t:"leaf", cls:"si"},
+  deb_lf:  {x:462, y:335, lbl:"Yes",         t:"leaf", cls:"si"},
+  fue_lf:  {x:635, y:335, lbl:"No",          t:"leaf", cls:"no"},
+};
+
+const E = [
+  ["root",   "nub_lf",  "Overcast",186, 112],
+  ["root",   "humedad", "Sunny",   307, 108],
+  ["root",   "viento",  "Rain",    459, 108],
+  ["humedad","alta_lf", "High",    221, 260],
+  ["humedad","norm_lf", "Normal",  342, 260],
+  ["viento", "deb_lf",  "Weak",    497, 260],
+  ["viento", "fue_lf",  "Strong",  600, 260],
+];
+
+/* ── steps ─────────────────────────────────────────────── */
+const STEPS = [
+  { badge:"Step 1 of 9", title:"Initial Entropy — Root Node",
+    desc:"ID3 begins with all 15 examples at the root node. Initial entropy H(S) = 0.971 indicates impurity (9 'Yes', 6 'No'). In binary classification, H = 1 is maximum uncertainty and H = 0 represents a pure node.",
+    vN:["root"], vE:[], hl:"root",
+    panel:{t:"ent", lbl:"Root Node (n = 15)", si:9, no:6, H:0.971}},
+
+  { badge:"Step 2 of 9", title:"Root Attribute Selection",
+    desc:"Gain(S, A) is computed across all 4 attributes. Outlook achieves the highest gain (0.280) because the Overcast subset is completely pure. Outlook is selected as the root node.",
+    vN:["root"], vE:[], hl:"root",
+    panel:{t:"gains", gains:[
+      {a:"Outlook",     g:0.280, best:true},
+      {a:"Humidity",    g:0.186},
+      {a:"Wind",        g:0.145},
+      {a:"Temperature", g:0.013}]}},
+
+  { badge:"Step 3 of 9", title:"Splitting on Outlook — Three Branches",
+    desc:"The root splits into 3 subsets. Overcast (n = 4) has H = 0 (all 'Yes'), forming a pure leaf node. Sunny and Rain subsets remain impure and require further splitting.",
+    vN:["root","nub_lf","humedad","viento"], vE:[0,1,2], hl:null,
+    panel:{t:"sub", subs:[
+      {lbl:"Overcast (n = 4)", si:4, no:0, H:0.000, pure:true},
+      {lbl:"Sunny (n = 6)",    si:2, no:4, H:0.918, pure:false},
+      {lbl:"Rain (n = 5)",     si:3, no:2, H:0.971, pure:false}]}},
+
+  { badge:"Step 4 of 9", title:"Overcast Branch → Pure 'Yes' Leaf",
+    desc:"All 4 Overcast examples belong to class 'Yes'. H = 0 → pure node. Leaf created. Extracted rule: IF Outlook = Overcast → Play = Yes.",
+    vN:["root","nub_lf","humedad","viento"], vE:[0,1,2], hl:"nub_lf",
+    panel:{t:"ent", lbl:"Outlook = Overcast (n = 4)", si:4, no:0, H:0.000}},
+
+  { badge:"Step 5 of 9", title:"Sunny Branch → Selecting Next Attribute",
+    desc:"The 6 Sunny examples (2 Yes, 4 No) are impure (H = 0.918). Remaining features are evaluated. Humidity eliminates all impurity with gain 0.918 (the maximum possible). Humidity is selected.",
+    vN:["root","nub_lf","humedad","viento"], vE:[0,1,2], hl:"humedad",
+    panel:{t:"gains", gains:[
+      {a:"Humidity",    g:0.918, best:true},
+      {a:"Wind",        g:0.294},
+      {a:"Temperature", g:0.170}]}},
+
+  { badge:"Step 6 of 9", title:"Splitting Humidity on Sunny Branch",
+    desc:"Sunny + High → 4 examples, all 'No' (H = 0). Sunny + Normal → 2 examples, all 'Yes' (H = 0). Both subsets are pure leaf nodes. Rules: IF Sunny ∧ High → No; IF Sunny ∧ Normal → Yes.",
+    vN:["root","nub_lf","humedad","viento","alta_lf","norm_lf"], vE:[0,1,2,3,4], hl:null,
+    panel:{t:"sub", subs:[
+      {lbl:"Sunny + High (n = 4)",   si:0, no:4, H:0.000, pure:true},
+      {lbl:"Sunny + Normal (n = 2)", si:2, no:0, H:0.000, pure:true}]}},
+
+  { badge:"Step 7 of 9", title:"Rain Branch → Selecting Next Attribute",
+    desc:"The 5 Rain examples (3 Yes, 2 No) are impure (H = 0.971). Wind produces two pure subsets (gain = 0.971, maximum possible). Wind is selected.",
+    vN:["root","nub_lf","humedad","viento","alta_lf","norm_lf"], vE:[0,1,2,3,4], hl:"viento",
+    panel:{t:"gains", gains:[
+      {a:"Wind",        g:0.971, best:true},
+      {a:"Humidity",    g:0.020},
+      {a:"Temperature", g:0.020}]}},
+
+  { badge:"Step 8 of 9", title:"Splitting Wind on Rain Branch",
+    desc:"Rain + Weak → 3 examples, all 'Yes' (H = 0). Rain + Strong → 2 examples, all 'No' (H = 0). Both subsets pure: final leaf nodes created. Rules: IF Rain ∧ Weak → Yes; IF Rain ∧ Strong → No.",
+    vN:["root","nub_lf","humedad","viento","alta_lf","norm_lf","deb_lf","fue_lf"],
+    vE:[0,1,2,3,4,5,6], hl:null,
+    panel:{t:"sub", subs:[
+      {lbl:"Rain + Weak (n = 3)",   si:3, no:0, H:0.000, pure:true},
+      {lbl:"Rain + Strong (n = 2)", si:0, no:2, H:0.000, pure:true}]}},
+
+  { badge:"Step 9 of 9", title:"Complete Tree — 5 Classification Rules",
+    desc:"The ID3 tree is fully constructed. Depth 2, 5 leaves, 3 of 4 attributes used (Temperature was not selected). All leaf nodes are pure, achieving 100% training accuracy.",
+    vN:["root","nub_lf","humedad","viento","alta_lf","norm_lf","deb_lf","fue_lf"],
+    vE:[0,1,2,3,4,5,6], hl:null,
+    panel:{t:"rules"}},
+];
+
+/* ── SVG helpers ────────────────────────────────────────── */
+const svg = document.getElementById('id3-svg');
+const NS  = "http://www.w3.org/2000/svg";
+
+function mk(tag, attrs, txt) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (txt != null) e.textContent = txt;
+  return e;
+}
+
+function drawTree(step) {
+  svg.innerHTML = '';
+  const {vN, vE, hl} = step;
+
+  const defs = mk('defs', {});
+  const marker = mk('marker', {id:'arr', markerWidth:6, markerHeight:6,
+    refX:5, refY:3, orient:'auto'});
+  marker.appendChild(mk('path', {d:'M0,0 L0,6 L6,3 z', fill:'#99aabb'}));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  E.forEach(([fid, tid, lbl, lx, ly], i) => {
+    if (!vE.includes(i)) return;
+    const f = N[fid], t = N[tid];
+
+    const dx = t.x - f.x, dy = t.y - f.y;
+    const len = Math.hypot(dx, dy);
+    const rf = (f.t === 'int') ? (fid === 'root' ? 33 : 28) : 0;
+    const rt = (t.t === 'int') ? 28 : 16;
+    const sx = f.x + dx/len*rf,  sy = f.y + dy/len*rf;
+    const ex = t.x - dx/len*rt,  ey = t.y - dy/len*rt;
+
+    svg.appendChild(mk('line', {
+      x1:sx, y1:sy, x2:ex, y2:ey,
+      stroke:'#8899bb', 'stroke-width':1.6,
+      'marker-end':'url(#arr)'
+    }));
+
+    svg.appendChild(mk('rect', {
+      x:lx-22, y:ly-9, width:44, height:16, rx:4,
+      fill:'white', stroke:'#ccd', 'stroke-width':0.8
+    }));
+    svg.appendChild(mk('text', {
+      x:lx, y:ly+4, 'text-anchor':'middle',
+      'font-size':'10', 'font-family':'Georgia,serif', fill:'#445'
+    }, lbl));
+  });
+
+  for (const [nid, node] of Object.entries(N)) {
+    if (!vN.includes(nid)) continue;
+    const isHL = (nid === hl);
+
+    if (node.t === 'int') {
+      const r = nid === 'root' ? 33 : 28;
+      svg.appendChild(mk('circle', {
+        cx:node.x, cy:node.y, r:r,
+        fill: isHL ? '#2a5285' : '#1a3a5c',
+        stroke: isHL ? '#f4a03a' : '#0c2040',
+        'stroke-width': isHL ? 3 : 1.5
+      }));
+      svg.appendChild(mk('text', {
+        x:node.x, y:node.y+5, 'text-anchor':'middle',
+        'font-size': nid==='root'?'12.5':'11.5',
+        'font-family':'Georgia,serif', 'font-weight':'bold', fill:'white'
+      }, node.lbl));
+
+    } else {
+      const w=52, h=30;
+      const fill = isHL
+        ? (node.cls==='si' ? '#1b5e20' : '#7f0000')
+        : (node.cls==='si' ? '#2d6a4f' : '#9d0208');
+      svg.appendChild(mk('rect', {
+        x:node.x-w/2, y:node.y-h/2, width:w, height:h, rx:7,
+        fill:fill, stroke: isHL?'#f4a03a':'rgba(0,0,0,0.18)',
+        'stroke-width': isHL?3:1
+      }));
+      svg.appendChild(mk('text', {
+        x:node.x, y:node.y+5, 'text-anchor':'middle',
+        'font-size':'14', 'font-family':'Georgia,serif',
+        'font-weight':'bold', fill:'white'
+      }, node.lbl));
+    }
+
+    if (isHL) {
+      const r2 = (node.t==='int') ? (nid==='root'?33:28) : 20;
+      const ring = mk('circle', {
+        cx:node.x, cy:node.y, r:r2+7,
+        fill:'none', stroke:'#f4a03a', 'stroke-width':1.5,
+        opacity:0.55
+      });
+      svg.appendChild(ring);
+    }
+  }
+}
+
+/* ── info panel ─────────────────────────────────────────── */
+function renderPanel(p) {
+  const div = document.getElementById('id3-panel');
+  if (p.t === 'ent') {
+    const tot = p.si + p.no;
+    div.innerHTML =
+      `<strong style="color:#1a3a5c;">${p.lbl}</strong>
+       <div style="display:flex;gap:20px;margin-top:6px;align-items:center;flex-wrap:wrap;">
+         <div>
+           <span style="background:#2d6a4f;color:#fff;padding:1px 9px;border-radius:3px;">Yes: ${p.si}</span>
+           &nbsp;
+           <span style="background:#9d0208;color:#fff;padding:1px 9px;border-radius:3px;">No: ${p.no}</span>
+           &nbsp; n = ${tot}
+         </div>
+         <div style="color:#333;">
+           H = −<sup>${p.si}</sup>⁄<sub>${tot}</sub>·log₂(<sup>${p.si}</sup>⁄<sub>${tot}</sub>)
+           − <sup>${p.no}</sup>⁄<sub>${tot}</sub>·log₂(<sup>${p.no}</sup>⁄<sub>${tot}</sub>)
+           = <strong>${p.H.toFixed(3)}</strong>
+           ${p.H===0 ? '&nbsp;<span style="color:#2d6a4f;font-weight:bold;">← pure node ✓</span>' : ''}
+         </div>
+         <div style="flex:1;max-width:160px;">
+           <div style="height:8px;background:#e8ecf0;border-radius:4px;overflow:hidden;">
+             <div style="height:100%;width:${p.H*100}%;background:linear-gradient(to right,#2d6a4f,#9d0208);border-radius:4px;"></div>
+           </div>
+           <div style="font-size:0.77em;color:#999;margin-top:2px;">Impurity: ${(p.H*100).toFixed(0)}%</div>
+         </div>
+       </div>`;
+  }
+  else if (p.t === 'gains') {
+    const mx = Math.max(...p.gains.map(g=>g.g));
+    div.innerHTML =
+      `<strong style="color:#1a3a5c;">Gain(S, A) — Information Gain per Attribute</strong>
+       <table style="width:100%;margin-top:7px;border-collapse:collapse;font-size:0.85em;">
+         <tr style="color:#666;border-bottom:1px solid #ddd;">
+           <th style="text-align:left;padding:2px 8px;">Attribute</th>
+           <th style="text-align:left;padding:2px 8px;">Gain</th>
+           <th style="padding:2px 8px;min-width:110px;"></th>
+           <th style="padding:2px 4px;"></th>
+         </tr>
+         ${p.gains.map(g => `
+           <tr style="border-bottom:1px solid #eef;${g.best?'background:#f0f5ff;':''}">
+             <td style="padding:4px 8px;font-weight:${g.best?'bold':'normal'};">${g.a}</td>
+             <td style="padding:4px 8px;font-weight:${g.best?'bold':'normal'};">${g.g.toFixed(3)}</td>
+             <td style="padding:4px 8px;">
+               <div style="height:7px;background:#e0e8f0;border-radius:3px;overflow:hidden;">
+                 <div style="height:100%;width:${g.g/mx*100}%;background:${g.best?'#1a3a5c':'#7ca3c0'};border-radius:3px;"></div>
+               </div>
+             </td>
+             <td style="padding:4px 6px;color:#1a6f25;font-weight:bold;white-space:nowrap;">${g.best?'← selected':''}</td>
+           </tr>`).join('')}
+       </table>`;
+  }
+  else if (p.t === 'sub') {
+    div.innerHTML =
+      `<strong style="color:#1a3a5c;">Child Subsets Resulting from Split</strong>
+       <div style="display:flex;gap:9px;margin-top:8px;flex-wrap:wrap;">
+         ${p.subs.map(s => `
+           <div style="flex:1;min-width:155px;border:1px solid ${s.pure?'#2d6a4f':'#bbc'};
+                       border-radius:5px;padding:7px 11px;background:${s.pure?'#f0faf4':'#fafafa'};">
+             <div style="font-weight:bold;font-size:0.82em;color:#333;margin-bottom:4px;">${s.lbl}</div>
+             <div style="font-size:0.81em;margin-bottom:3px;">
+               <span style="background:#2d6a4f;color:#fff;padding:0 6px;border-radius:3px;">Yes: ${s.si}</span>
+               <span style="background:#9d0208;color:#fff;padding:0 6px;border-radius:3px;margin-left:4px;">No: ${s.no}</span>
+             </div>
+             <div style="font-size:0.81em;">H = <strong>${s.H.toFixed(3)}</strong>
+               ${s.pure?'<span style="color:#2d6a4f;"> ← pure ✓</span>':''}
+             </div>
+           </div>`).join('')}
+       </div>`;
+  }
+  else if (p.t === 'rules') {
+    div.innerHTML =
+      `<strong style="color:#1a3a5c;">Extracted IF-THEN Classification Rules</strong>
+       <ol style="margin:6px 0 0;padding-left:18px;line-height:2;font-size:0.82em;">
+         <li><code>IF Outlook = Overcast</code>
+             → <span style="background:#2d6a4f;color:#fff;padding:0 7px;border-radius:3px;">Yes</span></li>
+         <li><code>IF Outlook = Sunny ∧ Humidity = High</code>
+             → <span style="background:#9d0208;color:#fff;padding:0 7px;border-radius:3px;">No</span></li>
+         <li><code>IF Outlook = Sunny ∧ Humidity = Normal</code>
+             → <span style="background:#2d6a4f;color:#fff;padding:0 7px;border-radius:3px;">Yes</span></li>
+         <li><code>IF Outlook = Rain ∧ Wind = Weak</code>
+             → <span style="background:#2d6a4f;color:#fff;padding:0 7px;border-radius:3px;">Yes</span></li>
+         <li><code>IF Outlook = Rain ∧ Wind = Strong</code>
+             → <span style="background:#9d0208;color:#fff;padding:0 7px;border-radius:3px;">No</span></li>
+       </ol>
+       <div style="margin-top:5px;font-size:0.78em;color:#888;">
+         Training Accuracy: 15/15 = 100% &nbsp;·&nbsp; Temperature was unselected across all splits
+       </div>`;
+  }
+}
+
+/* ── controller ─────────────────────────────────────────── */
+let cur = 0;
+
+function render() {
+  const s = STEPS[cur];
+  document.getElementById('id3-badge').textContent = s.badge;
+  document.getElementById('id3-desc').textContent  = s.desc;
+  document.getElementById('id3-ctr').textContent   = `${cur+1} / ${STEPS.length}`;
+  document.getElementById('id3-prev').disabled = (cur === 0);
+  document.getElementById('id3-next').disabled = (cur === STEPS.length-1);
+  drawTree(s);
+  renderPanel(s.panel);
+}
+
+window.id3Nav = function(d) {
+  cur = Math.max(0, Math.min(STEPS.length-1, cur+d));
+  render();
+};
+
+render();
+})();
+</script>
+```
+
+## Extracting Classification Rules
+
+A primary benefit of decision trees is their direct conversion into classification rules. Each root-to-leaf path produces a single IF-THEN rule.
+
+From the tree above, we extract:
+
+1. IF `Outlook = Sunny` AND `Humidity = High`, THEN `Play = No`.
+2. IF `Outlook = Sunny` AND `Humidity = Normal`, THEN `Play = Yes`.
+3. IF `Outlook = Overcast`, THEN `Play = Yes`.
+4. IF `Outlook = Rain` AND `Wind = Weak`, THEN `Play = Yes`.
+5. IF `Outlook = Rain` AND `Wind = Strong`, THEN `Play = No`.
+
+::: {.callout-note appearance="minimal"}
+Definition. A classification rule extracted from a decision tree is a logical implication comprising conditions along a root-to-leaf path:
+$$
+\text{IF } (A_1=v_1) \land (A_2=v_2) \land \cdots \land (A_k=v_k) \text{ THEN } y=c.
+$$ {#eq-classification-rule}
+:::
+
+These rules are intuitive and easy to communicate to non-technical domain experts. Consequently, decision trees are widely applied in medical diagnostics, credit scoring, predictive maintenance, and customer churn analysis [@breiman1984classification; @james2021introduction].
+
+## Implementation with `scikit-learn`
+
+While the preceding examples computed entropy and information gain manually, production environments utilize optimized machine learning libraries. In Python, `scikit-learn` provides efficient decision tree implementations [@scikit-learn].
+
+Categorical features are typically one-hot encoded before fitting a tree configured with `criterion="entropy"`.
+
+```{python}
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+
+X = df.drop(columns="Play")
+y = df["Play"]
+
+categorical_features = X.columns.tolist()
+
+preprocess = ColumnTransformer(
+    transformers=[
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+    ]
+)
+
+model = DecisionTreeClassifier(
+    criterion="entropy",
+    max_depth=3,
+    random_state=42
+)
+
+clf = Pipeline(steps=[
+    ("preprocess", preprocess),
+    ("model", model)
+])
+
+clf.fit(X, y)
+clf.predict(X)
+```
+
+On small datasets, evaluating performance on training data serves only as a technical sanity check. Real-world validation requires held-out test sets or cross-validation.
+
+```{python}
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y,
+    test_size=0.30,
+    random_state=42,
+    stratify=y
+)
+
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+```
+
+## Tree Visualization
+
+```{python}
+import matplotlib.pyplot as plt
+
+clf.fit(X, y)
+
+feature_names = clf.named_steps["preprocess"].get_feature_names_out()
+tree_model = clf.named_steps["model"]
+
+plt.figure(figsize=(14, 7))
+plot_tree(
+    tree_model,
+    feature_names=feature_names,
+    class_names=tree_model.classes_,
+    filled=True,
+    rounded=True
+)
+plt.show()
+```
+
+Visualizing trees allows inspecting feature usage and split points. On larger trees, visual diagrams can become unwieldy; hyperparameters such as `max_depth`, `min_samples_split`, and `min_samples_leaf` should be tuned to maintain model interpretability and prevent overfitting.
+
+## Computational Complexity
+
+The computational complexity of tree building depends on the number of records $n$, number of attributes $m$, number of classes, and split evaluation costs. For categorical features, a simplified per-node split evaluation cost is $O(mn)$.
+
+Summing across tree levels, a balanced tree of depth $d$ processes roughly $n$ examples per level, yielding a total induction complexity estimate of:
+
+$$
+O(mn d),
+$$
+
+where $d$ is tree depth. In the worst case, depth can reach $n$, incurring higher costs and producing non-generalizable unpruned trees. Continuous features require sorting or threshold scanning, modifying training complexity [@hastie2009elements; @scikit-learn].
+
+::: {.callout-note appearance="minimal"}
+Definition. For $n$ examples, $m$ attributes, and tree depth $d$, a simplified computational complexity estimate for categorical tree induction is:
+$$
+T(n,m,d) = O(mnd).
+$$ {#eq-tree-complexity}
+:::
+
+Inference with a trained tree is highly efficient: classifying a new record requires traversing a single path from root to leaf, taking $O(d)$ time.
+
+## Pros and Cons
+
+Decision trees offer several major advantages:
+
+- Intuitive interpretability;
+- Direct extraction of human-readable rules;
+- Seamless handling of both numerical and categorical variables;
+- Minimal feature scaling requirements;
+- Natural capture of non-linear feature interactions.
+
+However, they also carry key limitations:
+
+- High risk of overfitting if grown unconstrained;
+- Instability and sensitivity to small training data fluctuations;
+- ID3 bias toward attributes with many distinct categories;
+- Standard ID3 lacks native handling of continuous numerical features;
+- Greedy local optimization does not guarantee a globally optimal tree.
+
+The greedy nature of ID3 means it selects locally optimal splits at each node without backtracking. While computationally efficient, this does not guarantee globally optimal trees. In practice, techniques like pruning, cross-validation, and ensemble methods (Random Forests, Gradient Boosting) substantially improve generalization performance [@breiman1984classification; @hastie2009elements].
+
+## Conclusions
+
+Supervised classification aims to assign categorical labels to new instances based on historical observations. Decision trees offer an intuitive, interpretable framework for solving classification tasks through sequential feature tests.
+
+Hunt's algorithm provides the general recursive blueprint for tree construction. ID3 specifies a split selection criterion grounded in entropy and Information Gain. Entropy measures class impurity, while Information Gain quantifies impurity reduction following a split.
+
+The baseball example illustrated how initial entropy is computed, candidate features are evaluated, root nodes selected, and branches recursively grown until pure leaves are reached. Converting trained trees into IF-THEN rules bridges the gap between quantitative predictive modeling and human explainability.
+
+In real-world machine learning pipelines, decision trees require careful hyperparameter tuning and regularization to avoid overfitting. Nevertheless, they remain a foundational model family in data science due to their unique balance of simplicity, transparency, and competitive predictive capability.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

@@ -1,0 +1,479 @@
+---
+title: "Measures of Location in BigMart Sales"
+number-sections: false
+format:
+  html:
+    toc: true
+    page-layout: full
+  pdf:
+    toc: true
+jupyter: python3
+---
+
+From an exploratory data analysis perspective, measures of location address a fundamental question: **in what region of values does the observed phenomenon tend to concentrate?**. In practical terms, this allows us to identify typical values, compare distributions, and begin interpreting the general behavior of the system before moving on to measures of dispersion, shape, or segmentation.
+
+The dataset includes numerical variables such as `Item_Weight`, `Item_Visibility`, `Item_MRP`, and `Item_Outlet_Sales`, along with categorical variables associated with product type, establishment, and outlet location. For this initial analysis, we will focus on the univariate behavior of numerical variables using measures such as the **mean**, **median**, **mode**, and selected **quantiles**.
+
+## Environment Setup
+
+We will work with the following [BigMart dataset](../../data/bigmart_sales.csv). For this section, we will use Python along with pandas, numpy, plotly, and matplotlib.
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.rcParams["figure.figsize"] = (8, 4.5)
+plt.rcParams["axes.grid"] = True
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+
+df = pd.read_csv(DATA_PATH)
+df.head()
+```
+
+## Initial Inspection
+
+Before calculating measures of location, it is good practice to identify available variable types and confirm which numerical columns will be analyzed.
+
+```{python}
+df.info()
+```
+
+```{python}
+num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+
+num_cols, cat_cols[:10]
+```
+
+At this stage, it is worth highlighting that not all numerical variables carry the same meaning. For instance, `Item_MRP` represents the maximum retail price of a product, while `Item_Outlet_Sales` corresponds to total sales of a product at a specific outlet. The interpretation of the "center" of each variable therefore depends on the economic context of the measurement.
+
+## Variable Selection for Location Analysis
+
+For this stage, we will work with a subset of especially interpretable numerical variables:
+
+- `Item_Weight`
+- `Item_Visibility`
+- `Item_MRP`
+- `Item_Outlet_Sales`
+
+We will create a new DataFrame with these columns to facilitate analysis, while also identifying the number of missing values present in them.
+
+```{python}
+vars_localizacion = [
+    "Item_Weight",
+    "Item_Visibility",
+    "Item_MRP",
+    "Item_Outlet_Sales",
+]
+
+missing_report = df[vars_localizacion].isna().sum().to_frame("missing")
+missing_report["missing_pct"] = 100 * missing_report["missing"] / len(df)
+missing_report
+```
+
+### Missing Data and Its Impact on Location Analysis
+
+The presence of missing values in `Item_Weight` does not prevent us from initiating descriptive location analysis; **however, dropping them without analyzing their origin can introduce bias into the results**. Therefore, before computing descriptive statistics, it is necessary to examine the magnitude and potential pattern of missing data. Extracting a DataFrame with missing cases in `Item_Weight` gives:
+
+```{python}
+missing_weight = df[df["Item_Weight"].isna()]
+missing_weight.head()
+```
+
+While resolving missing data is not the primary objective of this section, maintaining a clear understanding of its impact is essential. To that end, three key questions guide our evaluation:
+
+1. **What percentage of data is missing for the variable?**
+
+This step assesses the magnitude of the issue. Calculating the proportion of missing values relative to total observations helps determine whether missingness represents a tiny fraction of the dataset or is large enough to impact representation.
+
+```{python}
+print(f"Percentage of missing values in Item_Weight: {missing_report.loc['Item_Weight', 'missing_pct']:.2f}%")
+```
+
+In our case, the variable exhibits approximately 17% missing values, implying that nearly one-sixth of the observations lack information for this attribute. This proportion is non-negligible, so before excluding these records, we should check if missingness follows a systematic pattern and evaluate potential bias from dropping them.
+
+2. **Are there missingness patterns related to other variables?**
+
+Here we examine whether missing data occurs randomly or concentrates within specific groups (e.g., specific product categories, outlet types, or price ranges). Detecting non-random missingness patterns is critical because it signals potential bias.
+
+Let us analyze the average missing rate for `Item_Weight` by product type and outlet type:
+
+```{python}
+df['Item_Weight'].isna().groupby(df['Item_Type']).mean()
+```
+
+```{python}
+df['Item_Weight'].isna().groupby(df['Outlet_Type']).mean()
+```
+
+We observe that missing data in `Item_Weight` is primarily concentrated in two outlet types: `Grocery Store` and `Supermarket Type1`. This suggests that missingness is not entirely random, whereas the distribution across `Item_Type` is more balanced.
+
+This missingness pattern may be tied to the nature of products sold at those outlets or specific data entry practices, meaning that dropping these cases without prior inspection could skew descriptive analysis.
+
+```{python}
+import pandas as pd
+import plotly.express as px
+
+# Missing proportion of Item_Weight by Outlet_Type
+missing_outlet = (
+    df['Item_Weight']
+    .isna()
+    .groupby(df['Outlet_Type'])
+    .mean()
+    .mul(100)
+    .reset_index(name='pct_missing')
+    .sort_values('pct_missing', ascending=False)
+)
+
+fig = px.bar(
+    missing_outlet,
+    x='Outlet_Type',
+    y='pct_missing',
+    color='pct_missing',
+    color_continuous_scale='Reds',
+    text='pct_missing',
+    labels={
+        'Outlet_Type': 'Outlet Type',
+        'pct_missing': '% Missing in Item_Weight'
+    },
+    title='Percentage of Missing Item_Weight Values by Outlet_Type'
+)
+
+fig.update_traces(
+    texttemplate='%{text:.1f}%',
+    textposition='outside'
+)
+
+fig.update_layout(
+    yaxis_title='% Missing',
+    xaxis_title='Outlet Type',
+    coloraxis_colorbar_title='% Missing'
+)
+
+fig.show()
+```
+
+3. **What is the potential impact of removing missing cases on the analysis?**
+
+At this point, the key question is no longer just whether missing data exists, but whether removing it alters our overall interpretation. A natural step in EDA is comparing location measures before and after excluding incomplete records. If measures remain stable, omitting those records has limited impact; if they shift noticeably, missingness affects interpretation.
+
+We will evaluate these associated location measures in the following sections.
+
+## Basic Measures of Location
+
+As seen in the previous section, the most widely used measures at this stage are:
+
+- **Mean**: 
+  $$
+  \bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i
+  $$
+- **Median**: the value splitting the lower and upper 50% of observations.
+- **Mode**: the most frequent value. For continuous variables, it is often more useful to reference the modal region observed in a histogram.
+- **Quantiles**: percentiles such as $Q_{0.25}$, $Q_{0.50}$, and $Q_{0.75}$.
+
+These can be computed quickly in pandas using methods `mean()`, `median()`, `mode()`, and `quantile()`. To facilitate comparative reading, it is helpful to build a summary table of these measures for each key numerical variable.
+
+```{python}
+def mode_series(s):
+    m = s.mode(dropna=True)
+    if len(m) == 0:
+        return np.nan
+    if len(m) == 1:
+        return m.iloc[0]
+    return m.iloc[:5].tolist()
+
+summary_loc = pd.DataFrame({
+    "mean": df[vars_localizacion].mean(numeric_only=True),
+    "median": df[vars_localizacion].median(numeric_only=True),
+    "mode": [mode_series(df[c]) for c in vars_localizacion],
+    "q25": df[vars_localizacion].quantile(0.25),
+    "q75": df[vars_localizacion].quantile(0.75),
+    "min": df[vars_localizacion].min(numeric_only=True),
+    "max": df[vars_localizacion].max(numeric_only=True),
+})
+summary_loc
+```
+
+This table enables an initial comparative inspection. The relationship between mean and median is particularly informative. If both values are close, the distribution may be relatively symmetric or at least unaffected by extreme tails. If they diverge significantly, skewness should be anticipated in subsequent steps.
+
+## Statistical Interpretation of Mean and Median
+
+In sales data, right-skewed distributions are common. This means most observations cluster at lower or moderate levels, but a long right tail of high values pulls the mean upward. In such cases, the mean becomes less representative of a "typical" value than the median.
+
+We can illustrate this directly with histograms overlaid with vertical lines for both metrics.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_localizacion
+)
+
+for i, col in enumerate(vars_localizacion):
+    s = df[col].dropna()
+    row = i // 2 + 1
+    col_pos = i % 2 + 1
+
+    media = s.mean()
+    mediana = s.median()
+
+    # Histogram
+    fig.add_trace(
+        go.Histogram(
+            x=s,
+            nbinsx=30,
+            name=col,
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+
+    # Mean line
+    fig.add_vline(
+        x=media,
+        line_dash="dash",
+        line_width=2,
+        annotation_text=f"Mean = {media:.2f}",
+        annotation_position="top right",
+        row=row, col=col_pos
+    )
+
+    # Median line
+    fig.add_vline(
+        x=mediana,
+        line_dash="dot",
+        line_width=2,
+        annotation_text=f"Median = {mediana:.2f}",
+        annotation_position="top left",
+        row=row, col=col_pos
+    )
+
+    fig.update_xaxes(title_text=col, row=row, col=col_pos)
+    fig.update_yaxes(title_text="Frequency", row=row, col=col_pos)
+
+fig.update_layout(
+    height=700,
+    width=1000,
+    bargap=0.05
+)
+
+fig.show()
+```
+
+Overlaying these vertical lines offers immediate interpretation. Specifically, if for `Item_Outlet_Sales` the mean falls noticeably to the right of the median, we conclude that sales are right-skewed and driven upward by high-volume outlier cases. Conversely, if for `Item_MRP` both measures are close, the pricing structure is more balanced and symmetric.
+
+## Quantiles and Expanded Inspection of the Center
+
+When discussing **location**, summarizing a variable with a single value like mean or median is not always sufficient. Describing the **central region** containing the majority of observations is often more informative. For this purpose, **quantiles** are particularly valuable.
+
+Specifically, the 25th, 50th, and 75th percentiles define the range containing the **middle 50% of the data**. This information answers richer questions than a simple "what is the average?", such as:
+
+- Between what values does the central half of observations lie?
+- How far do high values extend beyond the center?
+- Does the median accurately reflect the distribution center, or does significant skewness exist?
+
+```{python}
+quantiles = df[vars_localizacion].quantile([0.10, 0.25, 0.50, 0.75, 0.90])
+quantiles
+```
+
+The quantiles table expands our inspection of the center. While the mean summarizes location in one number, quantiles reveal how data spreads around that center. Thus, the 25th percentile marks the point below which 25% of observations fall, the median divides the distribution into two equal halves, and the 75th percentile marks the upper bound of the middle 50%.
+
+To complement this analysis, boxplots provide a visual representation of median, quartiles, central spread, and potential outliers.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_localizacion
+)
+
+for i, var in enumerate(vars_localizacion):
+    row = i // 2 + 1
+    col = i % 2 + 1
+    
+    fig.add_trace(
+        go.Box(
+            y=df[var].dropna(),
+            name=var,
+            boxpoints="outliers",
+            showlegend=False
+        ),
+        row=row, col=col
+    )
+
+fig.update_layout(
+    title="Boxplots of Selected Variables",
+    height=700,
+    width=900
+)
+
+fig.show()
+```
+
+From these plots, interpretation extends beyond a single "average" to focus on overall distribution structure. Specifically, boxplots show:
+
+- median location;
+- interquartile range (IQR) width;
+- distribution symmetry vs. skewness;
+- presence of outliers that might distort the mean.
+
+Thus, quantiles and boxplots enrich location analysis by showcasing not just a numerical center, but the region where most data actually concentrates.
+
+## Impact of Removing Missing Values in `Item_Weight`
+
+To assess whether dropping records with missing `Item_Weight` values introduces bias, we compare dataset behavior before and after filtering. The goal is to verify if sample reduction significantly alters location measures of key variables or overall data composition.
+
+First, we create two subsets:
+
+- the original dataset;
+- the filtered dataset containing only records with complete `Item_Weight` entries.
+
+```{python}
+df_complete_weight = df[df["Item_Weight"].notna()].copy()
+
+n_total = len(df)
+n_complete = len(df_complete_weight)
+n_removed = n_total - n_complete
+
+print(f"Total observations: {n_total}")
+print(f"Observations with Item_Weight available: {n_complete}")
+print(f"Removed observations: {n_removed}")
+print(f"Percentage removed: {100 * n_removed / n_total:.2f}%")
+```
+
+A primary way to evaluate potential bias is comparing location measures of key variables before and after filtering.
+
+```{python}
+vars_compare = ["Item_MRP", "Item_Outlet_Sales", "Item_Visibility"]
+
+summary_compare = pd.DataFrame({
+    "original_mean": df[vars_compare].mean(),
+    "filtered_mean": df_complete_weight[vars_compare].mean(),
+    "original_median": df[vars_compare].median(),
+    "filtered_median": df_complete_weight[vars_compare].median()
+})
+
+summary_compare["abs_mean_diff"] = summary_compare["filtered_mean"] - summary_compare["original_mean"]
+summary_compare["pct_mean_diff"] = 100 * summary_compare["abs_mean_diff"] / summary_compare["original_mean"]
+
+summary_compare["abs_median_diff"] = summary_compare["filtered_median"] - summary_compare["original_median"]
+summary_compare["pct_median_diff"] = 100 * summary_compare["abs_median_diff"] / summary_compare["original_median"]
+
+summary_compare.round(3)
+```
+
+Beyond numerical comparison, it is insightful to visually verify if distribution shapes shift upon excluding records with missing `Item_Weight`.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+vars_compare = ["Item_MRP", "Item_Outlet_Sales", "Item_Visibility"]
+
+fig = make_subplots(
+    rows=1, cols=3,
+    subplot_titles=vars_compare
+)
+
+for i, var in enumerate(vars_compare, start=1):
+    fig.add_trace(
+        go.Histogram(
+            x=df[var].dropna(),
+            name="Original",
+            opacity=0.55,
+            nbinsx=30,
+            histnorm="probability density",
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+    
+    fig.add_trace(
+        go.Histogram(
+            x=df_complete_weight[var].dropna(),
+            name="Complete Item_Weight",
+            opacity=0.55,
+            nbinsx=30,
+            histnorm="probability density",
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+
+fig.update_layout(
+    title="Distributions Before and After Dropping Missing Item_Weight Records",
+    barmode="overlay",
+    height=450,
+    width=1100
+)
+
+fig.show()
+```
+
+To reinforce location evaluation, we can also compare boxplots under both scenarios.
+
+```{python}
+fig = make_subplots(
+    rows=1, cols=3,
+    subplot_titles=vars_compare
+)
+
+for i, var in enumerate(vars_compare, start=1):
+    fig.add_trace(
+        go.Box(
+            y=df[var].dropna(),
+            name="Original",
+            boxpoints=False,
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+    
+    fig.add_trace(
+        go.Box(
+            y=df_complete_weight[var].dropna(),
+            name="Complete Item_Weight",
+            boxpoints=False,
+            showlegend=(i == 1)
+        ),
+        row=1, col=i
+    )
+
+fig.update_layout(
+    title="Boxplot Comparison Before and After Filtering",
+    height=450,
+    width=1100
+)
+
+fig.show()
+```
+
+Finally, we inspect whether dropping missing records alters the composition of key business groups.
+
+```{python}
+comp_outlet = pd.concat([
+    df["Outlet_Type"].value_counts(normalize=True).rename("original"),
+    df_complete_weight["Outlet_Type"].value_counts(normalize=True).rename("filtered")
+], axis=1)
+
+comp_outlet["pct_point_diff"] = 100 * (comp_outlet["filtered"] - comp_outlet["original"])
+comp_outlet.round(4)
+```
+
+The results demonstrate that dropping observations with missing `Item_Weight` produces minor changes in location measures across analyzed variables. While percentage differences slightly exceed 2% in a few cases (e.g., `Item_Outlet_Sales` and `Item_Visibility`), the magnitude of these shifts is insufficient to alter our overall interpretation of distribution centers. Therefore, within the context of this EDA, working with complete cases represents a reasonable decision carrying minimal risk of location bias.
+
+## Suggested Exercise
+
+Build an initial Quarto dashboard version including:
+
+- a summary table with mean, median, and quantiles for selected numerical variables;
+- a histogram with mean and median vertical lines for `Item_Outlet_Sales`;
+- a bar chart displaying median sales by `Outlet_Type`;
+- a brief commentary comparing mean vs. median usage.

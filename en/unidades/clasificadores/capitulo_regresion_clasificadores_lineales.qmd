@@ -1,0 +1,1156 @@
+---
+title: "Linear Regression and Linear Classifiers"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: references_example.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Supervised learning explores problems where input observations are paired with target response labels. Given a training dataset, the objective is learning a mapping function capable of predicting responses for unseen future observations. Formally, training data are structured as:
+
+$$
+\mathcal{D}=\{(\mathbf{x}_i,y_i)\}_{i=1}^n,
+$$
+
+where $\mathbf{x}_i\in\mathbb{R}^p$ represents a feature vector and $y_i$ represents the target response. When $y_i$ is a continuous scalar magnitude, the problem is formulated as **regression**; when $y_i$ represents a discrete categorical class, it is formulated as **classification** [@hastie2009elements; @bishop2006pattern].
+
+This chapter explores two central families of deterministic models in supervised learning: linear regression (used for numerical target forecasting) and linear classifiers (used for separating classes using hyperplanes). We first develop simple and multiple linear regression, review evaluation metrics for continuous response models, and present Fisher's Linear Discriminant and the Perceptron as foundational linear classification algorithms [@goodfellow2016deep; @vapnik1998statistical].
+
+## Regression: Continuous Variable Prediction
+
+In regression problems, the target response variable takes real-valued continuous numbers. Typical examples include house prices, ambient temperatures, monthly income, or patient length of stay. The task consists of learning a mapping function $f$ such that:
+
+$$
+\widehat{y}=f(\mathbf{x})
+$$
+
+serves as an accurate prediction of observed target $y$.
+
+::: {.callout-note appearance="minimal"}
+Definition. Supervised regression estimates a mapping function $f:\mathcal{X}\to\mathbb{R}$ from paired training instances $\mathcal{D}=\{(\mathbf{x}_i,y_i)\}_{i=1}^n$ such that predicted responses $\widehat{y}_i=f(\mathbf{x}_i)$ approximate target values $y_i$:
+$$
+\widehat{y}_i=f(\mathbf{x}_i),\qquad y_i\in\mathbb{R}.
+$$ {#eq-regression-problem}
+:::
+
+Regression can be tackled using models of varying complexity, including linear regression, polynomial regression, decision trees, random forests, and gradient boosted trees [@breiman2001random; @chen2016xgboost]. However, linear regression occupies a foundational position due to its analytical solvability, interpretability, and clear coefficient semantics.
+
+### Simple and Multiple Linear Regression
+
+**Simple linear regression** uses a single predictor feature $x$:
+
+$$
+\widehat{y}=\beta_0+\beta_1 x,
+$$
+
+where $\beta_0$ represents the intercept and $\beta_1$ represents the slope (expected change in $y$ per unit change in $x$).
+
+**Multiple linear regression** generalizes this formulation to $p$ predictor variables:
+
+$$
+y=\beta_0+\beta_1x_1+\beta_2x_2+\cdots+\beta_px_p+\varepsilon,
+$$
+
+where $\varepsilon$ denotes the unobserved zero-mean error term.
+
+::: {.callout-note appearance="minimal"}
+Definition. The multiple linear regression model expresses target response $y_i$ as a linear combination of $p$ predictor variables plus an error term:
+$$
+y_i=\beta_0+\sum_{j=1}^{p}\beta_jx_{ij}+\varepsilon_i,
+\qquad i=1,\ldots,n.
+$$ {#eq-multiple-linear-regression}
+:::
+
+For example, predicting a student's final grade using study hours, attendance rate, and submitted assignments:
+
+$$
+\widehat{\text{grade}}=20+5(\text{hours})+0.3(\text{attendance})+2(\text{assignments}).
+$$
+
+Here, $\beta_1 = 5$ suggests that each additional study hour is associated with an expected 5-point increase in final grade, holding attendance and assignment counts constant.
+
+```{=html}
+<div id="lr-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:18px 22px;margin:2em 0;">
+  <div style="text-align:center;margin-bottom:10px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Simple Linear Regression — Interactive Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Adjust β₀ and β₁ to observe how residual errors and metrics update in real time</span>
+  </div>
+
+  <canvas id="lr-cv" style="display:block;margin:0 auto;border:1px solid #dde;border-radius:4px;"></canvas>
+
+  <div style="display:flex;gap:20px;margin:12px 0 8px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:200px;">
+      <label style="font-size:0.83em;color:#444;">β₀ (intercept) = <strong id="lr-b0v">5.00</strong></label>
+      <input type="range" id="lr-b0" min="-6" max="22" step="0.1" value="5.0"
+             style="width:100%;accent-color:#1a3a5c;" oninput="lrDraw()">
+    </div>
+    <div style="flex:1;min-width:200px;">
+      <label style="font-size:0.83em;color:#444;">β₁ (slope) = <strong id="lr-b1v">0.50</strong></label>
+      <input type="range" id="lr-b1" min="-1" max="5" step="0.05" value="0.5"
+             style="width:100%;accent-color:#1a3a5c;" oninput="lrDraw()">
+    </div>
+  </div>
+
+  <div id="lr-metrics" style="text-align:center;font-size:0.83em;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:28px;"></div>
+
+  <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+    <button class="lrbtn" onclick="lrOLS()">Optimal OLS Solution</button>
+    <button class="lrbtn" onclick="lrToggleRes()">Show / Hide Residuals</button>
+    <button class="lrbtn" onclick="lrReset()">Reset</button>
+  </div>
+</div>
+
+<style>
+.lrbtn{padding:5px 14px;border:1px solid #aab;background:#fff;border-radius:4px;cursor:pointer;
+       font-family:Georgia,serif;font-size:0.81em;}.lrbtn:hover{background:#eef2f7;}
+</style>
+
+<script>
+(function(){
+const XD=[1,2,3,4,5,6,7,8,9,10];
+const YD=[2.1,4.3,5.8,7.9,10.2,11.8,14.0,16.1,17.9,20.2];
+const N=XD.length;
+const xbar=XD.reduce((a,b)=>a+b,0)/N;
+const ybar=YD.reduce((a,b)=>a+b,0)/N;
+const sxy=XD.reduce((s,x,i)=>s+(x-xbar)*(YD[i]-ybar),0);
+const sxx=XD.reduce((s,x)=>s+(x-xbar)**2,0);
+const OB1=sxy/sxx, OB0=ybar-OB1*xbar;
+
+let showRes=true;
+
+const cv=document.getElementById('lr-cv');
+const ctx=cv.getContext('2d');
+const DPR=window.devicePixelRatio||1;
+const W=640, H=275;
+cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+ctx.scale(DPR,DPR);
+
+const PL=56,PR=14,PT=14,PB=36;
+const PW=W-PL-PR, PH=H-PT-PB;
+const xMn=0,xMx=11,yMn=-3,yMx=23;
+const px=x=>PL+(x-xMn)/(xMx-xMn)*PW;
+const py=y=>PT+PH-(y-yMn)/(yMx-yMn)*PH;
+
+function mets(b0,b1){
+  const yh=XD.map(x=>b0+b1*x);
+  const sse=yh.reduce((s,v,i)=>s+(YD[i]-v)**2,0);
+  const sst=YD.reduce((s,v)=>s+(v-ybar)**2,0);
+  return{yh, mse:sse/N, rmse:Math.sqrt(sse/N), r2:1-sse/sst};
+}
+
+window.lrDraw=function(){
+  const b0=+document.getElementById('lr-b0').value;
+  const b1=+document.getElementById('lr-b1').value;
+  document.getElementById('lr-b0v').textContent=b0.toFixed(2);
+  document.getElementById('lr-b1v').textContent=b1.toFixed(2);
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle='#eaecf0'; ctx.lineWidth=0.8;
+  for(let x=1;x<=10;x++){ctx.beginPath();ctx.moveTo(px(x),PT);ctx.lineTo(px(x),PT+PH);ctx.stroke();}
+  for(let y=0;y<=20;y+=4){ctx.beginPath();ctx.moveTo(PL,py(y));ctx.lineTo(PL+PW,py(y));ctx.stroke();}
+
+  ctx.strokeStyle='#aaa'; ctx.lineWidth=1.1;
+  ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(PL,py(0));ctx.lineTo(PL+PW,py(0));ctx.stroke();
+
+  ctx.fillStyle='#888'; ctx.font='11px Georgia'; ctx.textAlign='center';
+  for(let x=2;x<=10;x+=2) ctx.fillText(x,px(x),PT+PH+16);
+  ctx.textAlign='right';
+  for(let y=0;y<=20;y+=4) ctx.fillText(y,PL-6,py(y)+4);
+
+  ctx.fillStyle='#666'; ctx.font='12px Georgia'; ctx.textAlign='center';
+  ctx.fillText('x (study hours)', PL+PW/2, H-2);
+  ctx.save(); ctx.translate(13,PT+PH/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('y (grade)', 0, 0); ctx.restore();
+
+  const m=mets(b0,b1);
+
+  if(showRes){
+    XD.forEach((xi,i)=>{
+      const yh=m.yh[i];
+      const x0=px(xi), y0=py(YD[i]), y1=py(yh);
+      const h=y1-y0, side=Math.min(Math.abs(h)*0.4,14);
+      ctx.fillStyle='rgba(180,30,30,0.08)';
+      ctx.fillRect(x0-side,Math.min(y0,y1),side,Math.abs(h));
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x0,y1);
+      ctx.strokeStyle='rgba(180,30,30,0.65)'; ctx.lineWidth=1.8;
+      ctx.setLineDash([]); ctx.stroke();
+    });
+  }
+
+  const atOLS = Math.abs(b0-OB0)<0.08 && Math.abs(b1-OB1)<0.04;
+  if(!atOLS){
+    ctx.beginPath();
+    ctx.moveTo(px(0.4),py(OB0+OB1*0.4));
+    ctx.lineTo(px(10.6),py(OB0+OB1*10.6));
+    ctx.strokeStyle='rgba(30,140,80,0.3)'; ctx.lineWidth=1.8;
+    ctx.setLineDash([7,4]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='rgba(30,140,80,0.55)'; ctx.font='10px Georgia'; ctx.textAlign='left';
+    ctx.fillText('Optimal OLS', px(10.6)+4, py(OB0+OB1*10.6)+4);
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(px(0.3),py(b0+b1*0.3));
+  ctx.lineTo(px(10.7),py(b0+b1*10.7));
+  ctx.strokeStyle='#1a3a5c'; ctx.lineWidth=2.3; ctx.setLineDash([]); ctx.stroke();
+
+  const labY=b0+b1*6;
+  if(labY>yMn+1&&labY<yMx-1){
+    ctx.fillStyle='#1a3a5c'; ctx.font='bold 11px Georgia'; ctx.textAlign='left';
+    ctx.fillText(`ŷ = ${b0>=0?'':'-'}${Math.abs(b0).toFixed(2)} ${b1>=0?'+':'-'} ${Math.abs(b1).toFixed(2)}·x`, px(6.2), py(labY)-7);
+  }
+
+  XD.forEach((xi,i)=>{
+    ctx.beginPath(); ctx.arc(px(xi),py(YD[i]),5.5,0,Math.PI*2);
+    ctx.fillStyle='#c0392b'; ctx.fill();
+    ctx.strokeStyle='#922b21'; ctx.lineWidth=1; ctx.stroke();
+  });
+
+  const r2c=m.r2>0.96?'#1a7a3a':m.r2>0.70?'#b7770d':'#c0392b';
+  document.getElementById('lr-metrics').innerHTML=
+    `MSE = <strong>${m.mse.toFixed(3)}</strong>
+     &nbsp;&nbsp;·&nbsp;&nbsp;
+     RMSE = <strong>${m.rmse.toFixed(3)}</strong>
+     &nbsp;&nbsp;·&nbsp;&nbsp;
+     R² = <strong style="color:${r2c};">${m.r2.toFixed(4)}</strong>
+     ${atOLS?'&nbsp;&nbsp;<span style="color:#1a7a3a;">← global OLS minimum ✓</span>':''}`;
+};
+
+window.lrOLS=function(){
+  document.getElementById('lr-b0').value=OB0.toFixed(2);
+  document.getElementById('lr-b1').value=OB1.toFixed(2);
+  lrDraw();
+};
+window.lrToggleRes=function(){ showRes=!showRes; lrDraw(); };
+window.lrReset=function(){
+  document.getElementById('lr-b0').value='5.0';
+  document.getElementById('lr-b1').value='0.5';
+  showRes=true; lrDraw();
+};
+lrDraw();
+})();
+</script>
+```
+
+## Matrix Representation of Linear Regression
+
+Matrix notation simplifies multiple linear regression mechanics:
+
+$$
+\mathbf{y}=\begin{bmatrix}y_1\\y_2\\\vdots\\y_n\end{bmatrix},
+\qquad
+\mathbf{X}=\begin{bmatrix}
+1 & x_{11} & x_{12} & \cdots & x_{1p}\\
+1 & x_{21} & x_{22} & \cdots & x_{2p}\\
+\vdots & \vdots & \vdots & \ddots & \vdots\\
+1 & x_{n1} & x_{n2} & \cdots & x_{np}
+\end{bmatrix},
+\qquad
+\boldsymbol{\beta}=\begin{bmatrix}\beta_0\\\beta_1\\\vdots\\\beta_p\end{bmatrix}.
+$$
+
+::: {.callout-note appearance="minimal"}
+Definition. Design matrix $\mathbf{X}\in\mathbb{R}^{n\times(p+1)}$ contains one row per sample and one column per feature, plus a leading bias column of ones:
+$$
+\mathbf{y}=\mathbf{X}\boldsymbol{\beta}+\boldsymbol{\varepsilon}.
+$$ {#eq-matrix-linear-model}
+:::
+
+Ordinary Least Squares (OLS) minimizes Sum of Squared Errors (SSE) [@legendre1805nouvelles; @gauss1809theoria]:
+
+$$
+\min_{\boldsymbol{\beta}}\;\|\mathbf{y}-\mathbf{X}\boldsymbol{\beta}\|_2^2.
+$$
+
+If $\mathbf{X}^\top\mathbf{X}$ is non-singular (full column rank), the closed-form analytical OLS solution is:
+
+$$
+\widehat{\boldsymbol{\beta}}=(\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{X}^\top\mathbf{y}.
+$$ {#eq-ols-definition}
+
+Predicted target responses and residual vectors are computed as:
+
+$$
+\widehat{\mathbf{y}}=\mathbf{X}\widehat{\boldsymbol{\beta}},
+\qquad
+\widehat{\boldsymbol{\varepsilon}}=\mathbf{y}-\widehat{\mathbf{y}}.
+$$
+
+```{python}
+#| label: fig-ols-superficie
+#| fig-cap: "Loss surface SSE(β₀, β₁) for simple linear regression. Global minimum (red diamond) marks OLS parameter solution."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+XD = np.array([1,2,3,4,5,6,7,8,9,10], dtype=float)
+YD = np.array([2.1,4.3,5.8,7.9,10.2,11.8,14.0,16.1,17.9,20.2])
+N = len(XD)
+
+xbar, ybar = XD.mean(), YD.mean()
+b1_opt = np.dot(XD - xbar, YD - ybar) / np.dot(XD - xbar, XD - xbar)
+b0_opt = ybar - b1_opt * xbar
+
+b0_vals = np.linspace(b0_opt - 4, b0_opt + 4, 60)
+b1_vals = np.linspace(b1_opt - 0.8, b1_opt + 0.8, 60)
+B0, B1 = np.meshgrid(b0_vals, b1_vals)
+
+Yhat = B0[:, :, None] + B1[:, :, None] * XD[None, None, :]
+SSE = np.sum((YD[None, None, :] - Yhat) ** 2, axis=2)
+
+fig = go.Figure()
+fig.add_trace(go.Surface(
+    x=B0, y=B1, z=SSE,
+    colorscale="Blues", opacity=0.82,
+    colorbar=dict(title="SSE"), showscale=True
+))
+
+sse_opt = float(np.sum((YD - (b0_opt + b1_opt * XD))**2))
+fig.add_trace(go.Scatter3d(
+    x=[b0_opt], y=[b1_opt], z=[sse_opt],
+    mode="markers+text",
+    marker=dict(size=8, color="#dc2626", symbol="diamond"),
+    text=["OLS Minimum"], textposition="top center",
+    name="OLS Minimum"
+))
+
+fig.update_layout(
+    title="Loss Surface SSE(β₀, β₁)",
+    scene=dict(xaxis_title="β₀", yaxis_title="β₁", zaxis_title="SSE"),
+    height=500, template="plotly_white"
+)
+fig.show()
+```
+
+### Invertibility and Multicollinearity
+
+Analytical OLS requires $\mathbf{X}^\top\mathbf{X}$ to be non-singular. If features are collinear, column vectors become linearly dependent, leading to rank deficiency. High multicollinearity produces large coefficient variance [@hoerl1970ridge; @golub2013matrix].
+
+## Multiple Linear Regression in Python
+
+```python
+import numpy as np
+import pandas as pd
+
+datos = pd.DataFrame({
+    "hours": [2, 4, 6, 8],
+    "attendance": [60, 70, 80, 90],
+    "assignments": [4, 5, 6, 7],
+    "grade": [56, 71, 86, 101]
+})
+
+X = datos[["hours", "attendance", "assignments"]].to_numpy(dtype=float)
+y = datos["grade"].to_numpy(dtype=float)
+
+X_design = np.column_stack([np.ones(len(X)), X])
+beta_hat = np.linalg.pinv(X_design) @ y
+print("Estimated Coefficients (β0, β1, β2, β3):", beta_hat)
+```
+
+## Regression Evaluation Metrics
+
+::: {.callout-note appearance="minimal"}
+Definition. Sum of Squared Errors (SSE) measures cumulative squared residual discrepancies:
+$$
+\mathrm{SSE}=\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2.
+$$ {#eq-sse}
+:::
+
+- **Mean Squared Error (MSE):** $\mathrm{MSE}=\frac{1}{n}\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2$
+- **Root Mean Squared Error (RMSE):** $\mathrm{RMSE}=\sqrt{\frac{1}{n}\sum_{i=1}^{n}(y_i-\widehat{y}_i)^2}$
+- **Mean Absolute Error (MAE):** $\mathrm{MAE}=\frac{1}{n}\sum_{i=1}^{n}|y_i-\widehat{y}_i|$ {#eq-mae}
+- **Coefficient of Determination ($R^2$):** $R^2=1-\frac{\mathrm{SSE}}{\mathrm{SST}}$ {#eq-r2}
+
+```{=html}
+<div id="met-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Regression Metrics — Outlier Sensitivity</span><br>
+    <span style="font-size:0.81em;color:#666;">Drag the outlier slider to compare MAE vs. RMSE sensitivity to extreme errors</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">Outlier error magnitude: <strong id="met-ov">0.0</strong> units</label>
+    <input id="met-sl" type="range" min="0" max="9" step="0.1" value="0"
+           style="flex:1;min-width:160px;accent-color:#c0392b;">
+  </div>
+  <canvas id="met-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;margin-bottom:10px;"></canvas>
+  <div id="met-info" style="font-size:0.82em;text-align:center;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;min-height:22px;"></div>
+</div>
+
+<script>
+(function(){
+  const BASE=[0.4,-0.3,0.7,-0.5,0.2,-0.6,0.8,-0.2,0.5,-0.4];
+  const N=BASE.length;
+
+  const cv=document.getElementById('met-cv');
+  const W=660, H=240, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  const LP={l:46,r:W/2-8,t:24,b:210};
+  const RP={l:W/2+8,r:W-12,t:24,b:210};
+  const LW=LP.r-LP.l, LH=LP.b-LP.t;
+  const RW=RP.r-RP.l, RH=RP.b-RP.t;
+
+  function draw(outlier){
+    const res=[...BASE]; res[N-1]=outlier;
+    const mae =res.reduce((s,r)=>s+Math.abs(r),0)/N;
+    const mse =res.reduce((s,r)=>s+r*r,0)/N;
+    const rmse=Math.sqrt(mse);
+
+    ctx.clearRect(0,0,W,H);
+
+    ctx.fillStyle='#f8f9fb'; ctx.fillRect(LP.l,LP.t,LW,LH);
+    const maxAbs=Math.max(1.5,Math.abs(outlier)*1.1);
+    const zy=LP.t+LH/2;
+    const ys=y=>zy-y*(LH/2)/maxAbs;
+
+    [-1,1].forEach(v=>{
+      ctx.strokeStyle='#dde';ctx.lineWidth=0.8;ctx.setLineDash([4,3]);
+      ctx.beginPath();ctx.moveTo(LP.l,ys(v));ctx.lineTo(LP.r,ys(v));ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='#bbb';ctx.font='9px Georgia,serif';ctx.textAlign='right';
+      ctx.fillText(v>0?'+1':'-1',LP.l-3,ys(v)+3);
+    });
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.3;
+    ctx.beginPath();ctx.moveTo(LP.l,zy);ctx.lineTo(LP.r,zy);ctx.stroke();
+    ctx.fillStyle='#aaa';ctx.font='9px Georgia,serif';ctx.textAlign='right';
+    ctx.fillText('0',LP.l-3,zy+3);
+
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Residual Distribution eᵢ',LP.l+LW/2,LP.t-7);
+    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';
+    ctx.fillText('Observation i',LP.l+LW/2,LP.b+15);
+
+    const xStep=LW/(N+1);
+    res.forEach((r,i)=>{
+      const xx=LP.l+(i+1)*xStep;
+      const yy=ys(r);
+      const isOut=(i===N-1);
+      ctx.strokeStyle=isOut?'#c0392b':'rgba(37,99,235,0.55)';
+      ctx.lineWidth=isOut?2.2:1.5;
+      ctx.beginPath();ctx.moveTo(xx,zy);ctx.lineTo(xx,yy);ctx.stroke();
+      ctx.beginPath();ctx.arc(xx,yy,isOut?6:4,0,2*Math.PI);
+      ctx.fillStyle=isOut?'#c0392b':'#2563eb';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();
+    });
+    if(Math.abs(outlier)>0.5){
+      const oxo=LP.l+N*xStep, oyo=ys(outlier);
+      ctx.fillStyle='#c0392b';ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText('outlier',oxo,outlier>0?Math.max(oyo-8,LP.t+4):Math.min(oyo+14,LP.b-2));
+    }
+
+    ctx.fillStyle='#f8f9fb'; ctx.fillRect(RP.l,RP.t,RW,RH);
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText('Error Metrics',RP.l+RW/2,RP.t-7);
+
+    const metrics=[
+      {lbl:'MAE',val:mae,col:'#2563eb',sub:'mean |eᵢ|'},
+      {lbl:'RMSE',val:rmse,col:'#16a34a',sub:'√ mean eᵢ²'},
+      {lbl:'MSE',val:mse,col:'#e05c2a',sub:'mean eᵢ²'},
+    ];
+    const maxV=Math.max(...metrics.map(m=>m.val))*1.12;
+    const bW=RW*0.2;
+    metrics.forEach((m,i)=>{
+      const bx=RP.l+RW*(i+1)/(metrics.length+1)-bW/2;
+      const bh=Math.min((m.val/maxV)*(RH-30),RH-30);
+      const by=RP.b-bh-4;
+      ctx.fillStyle=m.col+'bb';ctx.fillRect(bx,by,bW,bh);
+      ctx.strokeStyle=m.col;ctx.lineWidth=1.5;ctx.strokeRect(bx,by,bW,bh);
+      ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(m.val.toFixed(3),bx+bW/2,by-5);
+      ctx.fillStyle=m.col;ctx.font='bold 12px Georgia,serif';
+      ctx.fillText(m.lbl,bx+bW/2,RP.b+12);
+      ctx.fillStyle='#888';ctx.font='9px Georgia,serif';
+      ctx.fillText(m.sub,bx+bW/2,RP.b+23);
+    });
+
+    const ratio=mae>0?(rmse/mae).toFixed(2):'—';
+    document.getElementById('met-info').innerHTML=
+      `MAE = <strong style="color:#2563eb">${mae.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `RMSE = <strong style="color:#16a34a">${rmse.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `MSE = <strong style="color:#e05c2a">${mse.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#777">RMSE/MAE = <strong>${ratio}</strong> `+
+      `<em>(near 1.0 without outliers; diverges with extreme values)</em></span>`;
+  }
+
+  document.getElementById('met-sl').addEventListener('input',function(){
+    const v=parseFloat(this.value);
+    document.getElementById('met-ov').textContent=v.toFixed(1);
+    draw(v);
+  });
+  draw(0);
+})();
+</script>
+```
+
+## Linear Classifiers
+
+Binary linear classifiers assign labels based on the sign of an affine discriminant function:
+
+$$
+g(\mathbf{x})=\mathbf{w}^\top\mathbf{x}+w_0.
+$$
+
+::: {.callout-note appearance="minimal"}
+Definition. A binary linear classifier assigns class labels via:
+$$
+\widehat{y}=\operatorname{sign}(\mathbf{w}^\top\mathbf{x}+w_0),
+\qquad \widehat{y}\in\{-1,+1\}.
+$$ {#eq-linear-classifier}
+:::
+
+```{=html}
+<div id="clf-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Linear Decision Boundary — Interactive Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Adjust w₁, w₂, and w₀ to rotate and shift decision boundary g(x)=w₁x₁+w₂x₂+w₀</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+    <div>
+      <label style="font-size:0.82em;color:#444;">w₁ = <strong id="clf-w1v">1.0</strong></label>
+      <input id="clf-w1" type="range" min="-3" max="3" step="0.1" value="1" style="width:100%;accent-color:#1a3a5c;">
+    </div>
+    <div>
+      <label style="font-size:0.82em;color:#444;">w₂ = <strong id="clf-w2v">1.0</strong></label>
+      <input id="clf-w2" type="range" min="-3" max="3" step="0.1" value="1" style="width:100%;accent-color:#1a3a5c;">
+    </div>
+    <div>
+      <label style="font-size:0.82em;color:#444;">w₀ = <strong id="clf-w0v">-6.0</strong></label>
+      <input id="clf-w0" type="range" min="-8" max="4" step="0.1" value="-6" style="width:100%;accent-color:#1a3a5c;">
+    </div>
+  </div>
+  <div id="clf-acc" style="text-align:center;font-size:0.83em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:24px;"></div>
+  <canvas id="clf-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div style="margin-top:8px;display:flex;gap:18px;justify-content:center;font-size:0.79em;color:#555;">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#2563eb;margin-right:4px;vertical-align:middle;"></span>Class +1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#e05c2a;margin-right:4px;vertical-align:middle;"></span>Class −1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;border:2px solid #dc2626;background:transparent;margin-right:4px;vertical-align:middle;"></span>Misclassified</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  const Cp=[[1.2,3.8],[2.0,4.2],[1.5,3.0],[0.8,4.5],[2.3,3.5],[1.0,2.8],[1.8,4.8],[2.5,4.0]];
+  const Cn=[[4.5,1.2],[5.0,0.8],[3.8,1.5],[5.2,2.0],[4.0,0.5],[5.5,1.8],[4.8,0.3],[3.5,2.2]];
+
+  const cv=document.getElementById('clf-cv');
+  const W=660, H=340, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  const PL=46,PR=12,PT=18,PB=36;
+  const PW=W-PL-PR, PH=H-PT-PB;
+  const xMn=0,xMx=6.5,yMn=0,yMx=5.8;
+  const sx=x=>PL+(x-xMn)/(xMx-xMn)*PW;
+  const sy=y=>PT+PH-(y-yMn)/(yMx-yMn)*PH;
+  const ixs=cx=>xMn+(cx-PL)/PW*(xMx-xMn);
+
+  function draw(){
+    const w1=+document.getElementById('clf-w1').value;
+    const w2=+document.getElementById('clf-w2').value;
+    const w0=+document.getElementById('clf-w0').value;
+    document.getElementById('clf-w1v').textContent=w1.toFixed(1);
+    document.getElementById('clf-w2v').textContent=w2.toFixed(1);
+    document.getElementById('clf-w0v').textContent=w0.toFixed(1);
+
+    ctx.clearRect(0,0,W,H);
+
+    for(let cx=PL;cx<PL+PW;cx+=3){
+      const xd=ixs(cx);
+      if(Math.abs(w2)>1e-4){
+        const yb=-(w1*xd+w0)/w2;
+        const yb_cl=Math.max(yMn,Math.min(yMx,yb));
+        const cyb=sy(yb_cl);
+        const posAbove=w2>0;
+        ctx.fillStyle=posAbove?'rgba(37,99,235,0.07)':'rgba(224,92,42,0.07)';
+        ctx.fillRect(cx,PT,3,Math.max(0,cyb-PT));
+        ctx.fillStyle=posAbove?'rgba(224,92,42,0.07)':'rgba(37,99,235,0.07)';
+        ctx.fillRect(cx,cyb,3,Math.max(0,PT+PH-cyb));
+      } else {
+        const xb=Math.abs(w1)>1e-4?-w0/w1:Infinity;
+        ctx.fillStyle=(xd>xb)===(w1>0)?'rgba(37,99,235,0.07)':'rgba(224,92,42,0.07)';
+        ctx.fillRect(cx,PT,3,PH);
+      }
+    }
+
+    ctx.strokeStyle='#e5e9f0';ctx.lineWidth=0.7;
+    for(let gx=0;gx<=6;gx++){ctx.beginPath();ctx.moveTo(sx(gx),PT);ctx.lineTo(sx(gx),PT+PH);ctx.stroke();}
+    for(let gy=0;gy<=5;gy++){ctx.beginPath();ctx.moveTo(PL,sy(gy));ctx.lineTo(PL+PW,sy(gy));ctx.stroke();}
+
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.lineTo(PL+PW,PT+PH);ctx.stroke();
+
+    ctx.fillStyle='#888';ctx.font='11px Georgia,serif';ctx.textAlign='center';
+    for(let gx=0;gx<=6;gx++) ctx.fillText(gx,sx(gx),PT+PH+14);
+    ctx.textAlign='right';
+    for(let gy=0;gy<=5;gy++) ctx.fillText(gy,PL-5,sy(gy)+4);
+
+    const score=x=>w1*x[0]+w2*x[1]+w0;
+
+    if(Math.abs(w2)>1e-4){
+      const y0=-(w1*0+w0)/w2, y1=-(w1*6.5+w0)/w2;
+      ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+      ctx.beginPath();ctx.moveTo(sx(0),sy(y0));ctx.lineTo(sx(6.5),sy(y1));ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function drawPts(pts,label){
+      const yLbl=label===1?1:-1;
+      pts.forEach(p=>{
+        const s=score(p);
+        const pred=s>0?1:-1;
+        const wrong=(pred!==yLbl);
+        const col=label===1?'#2563eb':'#e05c2a';
+        ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),6,0,2*Math.PI);
+        ctx.fillStyle=wrong?'rgba(255,255,255,0.9)':col+'cc';ctx.fill();
+        ctx.strokeStyle=wrong?'#dc2626':col;
+        ctx.lineWidth=wrong?2.5:1.5;ctx.stroke();
+        if(wrong){
+          ctx.strokeStyle='#dc2626';ctx.lineWidth=2;
+          const cx2=sx(p[0]),cy2=sy(p[1]),r=8;
+          ctx.beginPath();ctx.moveTo(cx2-r,cy2-r);ctx.lineTo(cx2+r,cy2+r);ctx.stroke();
+          ctx.beginPath();ctx.moveTo(cx2+r,cy2-r);ctx.lineTo(cx2-r,cy2+r);ctx.stroke();
+        }
+      });
+    }
+    drawPts(Cp,1); drawPts(Cn,-1);
+
+    const all=[...Cp.map(p=>({p,y:1})),...Cn.map(p=>({p,y:-1}))];
+    const correct=all.filter(({p,y})=>(score(p)>0?1:-1)===y).length;
+    const acc=(correct/all.length*100).toFixed(0);
+    const acol=correct===all.length?'#16a34a':correct>all.length*0.6?'#ca8a04':'#dc2626';
+    document.getElementById('clf-acc').innerHTML=
+      `Correctly classified: <strong style="color:${acol}">${correct}/${all.length}</strong> &ensp;·&ensp; `+
+      `Accuracy: <strong style="color:${acol}">${acc}%</strong>&ensp;·&ensp;`+
+      `<span style="color:#888">Boundary: ${w1>=0?'':'-'}${Math.abs(w1).toFixed(1)}x₁ ${w2>=0?'+':'-'} ${Math.abs(w2).toFixed(1)}x₂ ${w0>=0?'+':'-'} ${Math.abs(w0).toFixed(1)} = 0</span>`;
+  }
+
+  ['clf-w1','clf-w2','clf-w0'].forEach(id=>document.getElementById(id).addEventListener('input',draw));
+  draw();
+})();
+</script>
+```
+
+## Fisher's Linear Discriminant
+
+Fisher's Linear Discriminant finds a projection vector $\mathbf{w}$ maximizing between-class variance relative to within-class variance [@fisher1936use].
+
+::: {.callout-note appearance="minimal"}
+Definition. Fisher's criterion maximizes class mean separation relative to within-class scatter:
+$$
+J_F(\mathbf{w})=\frac{\mathbf{w}^\top\mathbf{S}_B\mathbf{w}}{\mathbf{w}^\top\mathbf{S}_W\mathbf{w}}.
+$$ {#eq-fisher-criterion}
+:::
+
+The optimal projection vector is:
+
+$$
+\mathbf{w}^*\propto \mathbf{S}_W^{-1}(\mathbf{m}_1-\mathbf{m}_2).
+$$
+
+```{=html}
+<div id="lda-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:22px 26px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:14px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Fisher's Linear Discriminant — Interactive Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Rotate projection direction vector to observe class separation changes</span>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px;flex-wrap:wrap;">
+    <label style="font-size:0.83em;color:#444;">Projection angle θ = <strong id="lda-angv">0°</strong></label>
+    <input id="lda-ang" type="range" min="0" max="180" value="0" step="1"
+           style="flex:1;min-width:140px;accent-color:#2563eb;">
+    <button id="lda-opt-btn" onclick="ldaOptimal()"
+            style="padding:5px 13px;background:#1a2e45;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:0.82em;">
+      Optimal Fisher Direction
+    </button>
+  </div>
+
+  <div id="lda-jval" style="text-align:center;font-size:0.83em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:26px;"></div>
+
+  <canvas id="lda-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+
+  <div style="margin-top:8px;display:flex;gap:18px;justify-content:center;font-size:0.79em;color:#555;">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#2563eb;margin-right:4px;vertical-align:middle;"></span>Class 1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#e05c2a;margin-right:4px;vertical-align:middle;"></span>Class 2</span>
+    <span><span style="display:inline-block;width:18px;height:3px;background:#16a34a;margin-right:4px;vertical-align:middle;"></span>Direction w</span>
+    <span><span style="display:inline-block;width:18px;height:3px;background:#9333ea;margin-right:4px;vertical-align:middle;border-top:2px dashed #9333ea;"></span>Optimal Direction</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  const C1=[[-0.11,1.68],[0.68,2.39],[1.29,1.52],[1.54,2.71],[2.18,1.94],
+             [0.91,1.14],[1.82,2.55],[0.42,2.10],[1.66,1.38],[2.37,2.13],
+             [1.12,2.88],[0.75,1.81],[1.41,2.02],[2.09,1.59],[0.58,2.44],
+             [1.94,2.25],[1.23,1.72],[0.87,2.63],[1.57,1.95],[2.24,1.46]];
+  const C2=[[3.12,2.54],[4.36,3.71],[3.87,2.92],[4.68,3.45],[3.55,4.12],
+             [4.91,2.83],[3.29,3.58],[4.14,4.27],[4.52,3.18],[3.76,2.71],
+             [5.08,3.89],[3.43,3.25],[4.79,2.64],[3.98,4.04],[4.23,3.37],
+             [5.31,3.52],[3.61,2.89],[4.47,4.18],[3.84,3.06],[4.12,3.73]];
+
+  function mean(pts){ const n=pts.length; let mx=0,my=0; pts.forEach(p=>{mx+=p[0];my+=p[1];}); return [mx/n,my/n]; }
+  function scatter(pts,m){ let s00=0,s01=0,s11=0; pts.forEach(p=>{const dx=p[0]-m[0],dy=p[1]-m[1];s00+=dx*dx;s01+=dx*dy;s11+=dy*dy;}); return [[s00,s01],[s01,s11]]; }
+  const m1=mean(C1), m2=mean(C2);
+  const S1=scatter(C1,m1), S2=scatter(C2,m2);
+  const SW=[[S1[0][0]+S2[0][0],S1[0][1]+S2[0][1]],[S1[1][0]+S2[1][0],S1[1][1]+S2[1][1]]];
+
+  function inv2(M){ const det=M[0][0]*M[1][1]-M[0][1]*M[1][0]; return [[M[1][1]/det,-M[0][1]/det],[-M[1][0]/det,M[0][0]/det]]; }
+  const SWinv=inv2(SW);
+  const dm=[m2[0]-m1[0],m2[1]-m1[1]];
+  const wopt_raw=[SWinv[0][0]*dm[0]+SWinv[0][1]*dm[1], SWinv[1][0]*dm[0]+SWinv[1][1]*dm[1]];
+  const wopt_norm=Math.sqrt(wopt_raw[0]**2+wopt_raw[1]**2);
+  const wopt=[wopt_raw[0]/wopt_norm, wopt_raw[1]/wopt_norm];
+  const optAngle=Math.round((Math.atan2(wopt[1],wopt[0])*180/Math.PI+360)%180);
+
+  const cv=document.getElementById('lda-cv');
+  const W=680, H=480, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  const SC={l:44,r:16,t:16,b:210};
+  const PR={l:44,r:16,t:H-196,b:H-56};
+  const SCW=W-SC.l-SC.r, SCH=H-SC.t-SC.b;
+  const PRW=W-PR.l-PR.r, PRH=PR.b-PR.t;
+
+  const allX=[...C1.map(p=>p[0]),...C2.map(p=>p[0])];
+  const allY=[...C1.map(p=>p[1]),...C2.map(p=>p[1])];
+  const xMn=Math.min(...allX)-0.5, xMx=Math.max(...allX)+0.5;
+  const yMn=Math.min(...allY)-0.5, yMx=Math.max(...allY)+0.5;
+
+  const sx=x=>SC.l+(x-xMn)/(xMx-xMn)*SCW;
+  const sy=y=>SC.t+SCH-(y-yMn)/(yMx-yMn)*SCH;
+
+  let curAng=0;
+
+  function computeJ(w){
+    const proj=pts=>pts.map(p=>p[0]*w[0]+p[1]*w[1]);
+    const p1=proj(C1), p2=proj(C2);
+    const mu1=p1.reduce((a,v)=>a+v,0)/p1.length;
+    const mu2=p2.reduce((a,v)=>a+v,0)/p2.length;
+    const v1=p1.reduce((a,v)=>a+(v-mu1)**2,0)/p1.length;
+    const v2=p2.reduce((a,v)=>a+(v-mu2)**2,0)/p2.length;
+    return {J:(mu1-mu2)**2/(v1+v2+1e-9), mu1, mu2, v1, v2, p1, p2};
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const ang=curAng*Math.PI/180;
+    const w=[Math.cos(ang),Math.sin(ang)];
+    const {J,mu1,mu2,v1,v2,p1,p2}=computeJ(w);
+    const Jopt=computeJ(wopt).J;
+    const ratio=Math.min(J/Jopt,1);
+
+    ctx.fillStyle='#f8f9fb'; ctx.fillRect(SC.l,SC.t,SCW,SCH);
+    ctx.strokeStyle='#e5e9f0'; ctx.lineWidth=0.8;
+    for(let gx=Math.ceil(xMn);gx<=xMx;gx++){
+      ctx.beginPath();ctx.moveTo(sx(gx),SC.t);ctx.lineTo(sx(gx),SC.t+SCH);ctx.stroke();
+    }
+    for(let gy=Math.ceil(yMn);gy<=yMx;gy++){
+      ctx.beginPath();ctx.moveTo(SC.l,sy(gy));ctx.lineTo(SC.l+SCW,sy(gy));ctx.stroke();
+    }
+    ctx.strokeStyle='#9aa3b5'; ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(SC.l,SC.t);ctx.lineTo(SC.l,SC.t+SCH);ctx.lineTo(SC.l+SCW,SC.t+SCH);ctx.stroke();
+
+    const ctrX=(sx(xMn)+sx(xMx))/2, ctrY=(sy(yMn)+sy(yMx))/2;
+    const optAng=optAngle*Math.PI/180;
+    const rLen=Math.min(SCW,SCH)*0.46;
+    ctx.setLineDash([5,4]); ctx.strokeStyle='#9333ea'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.moveTo(ctrX-Math.cos(optAng)*rLen, ctrY+Math.sin(optAng)*rLen);
+    ctx.lineTo(ctrX+Math.cos(optAng)*rLen, ctrY-Math.sin(optAng)*rLen);
+    ctx.stroke(); ctx.setLineDash([]);
+
+    const axLen=Math.min(SCW,SCH)*0.48;
+    const axX1=ctrX-Math.cos(ang)*axLen, axY1=ctrY+Math.sin(ang)*axLen;
+    const axX2=ctrX+Math.cos(ang)*axLen, axY2=ctrY-Math.sin(ang)*axLen;
+    ctx.strokeStyle='#16a34a'; ctx.lineWidth=2.2;
+    ctx.beginPath();ctx.moveTo(axX1,axY1);ctx.lineTo(axX2,axY2);ctx.stroke();
+
+    function footScreen(p){
+      const dx=axX2-axX1, dy=axY2-axY1;
+      const axLen2=Math.sqrt(dx*dx+dy*dy);
+      const ux=dx/axLen2, uy=dy/axLen2;
+      const px_s=sx(p[0]), py_s=sy(p[1]);
+      const proj2=(px_s-axX1)*ux+(py_s-axY1)*uy;
+      return { fx:axX1+proj2*ux, fy:axY1+proj2*uy, t:proj2 };
+    }
+
+    ctx.lineWidth=0.8; ctx.strokeStyle='rgba(100,120,160,0.35)';
+    [...C1,...C2].forEach(p=>{
+      const {fx,fy}=footScreen(p);
+      ctx.beginPath();ctx.moveTo(sx(p[0]),sy(p[1]));ctx.lineTo(fx,fy);ctx.stroke();
+    });
+
+    function drawPts(pts,col){
+      pts.forEach(p=>{
+        ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),4.5,0,2*Math.PI);
+        ctx.fillStyle=col+'cc';ctx.fill();
+        ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.stroke();
+      });
+    }
+    drawPts(C1,'#2563eb'); drawPts(C2,'#e05c2a');
+
+    ctx.fillStyle='#f0f4fa';
+    ctx.fillRect(PR.l,PR.t,PRW,PRH);
+    ctx.strokeStyle='#c5cfe0';ctx.lineWidth=1;
+    ctx.strokeRect(PR.l,PR.t,PRW,PRH);
+
+    const allProj=[...p1,...p2];
+    const pMn=Math.min(...allProj)-0.5, pMx=Math.max(...allProj)+0.5;
+    const ps=t=>PR.l+(t-pMn)/(pMx-pMn)*PRW;
+
+    const midY=PR.t+PRH/2;
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PR.l,midY);ctx.lineTo(PR.l+PRW,midY);ctx.stroke();
+
+    function drawProj1D(projs,col,yRow){
+      projs.forEach(t=>{
+        ctx.beginPath();ctx.arc(ps(t),yRow,4,0,2*Math.PI);
+        ctx.fillStyle=col+'bb';ctx.fill();
+        ctx.strokeStyle=col;ctx.lineWidth=1;ctx.stroke();
+      });
+    }
+    drawProj1D(p1,'#2563eb',midY-18);
+    drawProj1D(p2,'#e05c2a',midY+18);
+
+    const Jcolor=ratio>0.85?'#16a34a':ratio>0.5?'#ca8a04':'#dc2626';
+    document.getElementById('lda-jval').innerHTML=
+      `J(w) = <strong style="color:${Jcolor}">${J.toFixed(3)}</strong>`+
+      `&ensp;|&ensp;J<sub>opt</sub> = <strong>${Jopt.toFixed(3)}</strong>`+
+      `&ensp;|&ensp;Efficiency = <strong style="color:${Jcolor}">${(ratio*100).toFixed(1)}%</strong>`+
+      `&ensp;|&ensp;θ = ${curAng}°&ensp;(θ<sub>opt</sub> = ${optAngle}°)`;
+  }
+
+  const slider=document.getElementById('lda-ang');
+  const angLabel=document.getElementById('lda-angv');
+  slider.addEventListener('input',function(){
+    curAng=parseInt(this.value);
+    angLabel.textContent=curAng+'°';
+    draw();
+  });
+
+  window.ldaOptimal=function(){
+    curAng=optAngle;
+    slider.value=optAngle;
+    angLabel.textContent=optAngle+'°';
+    draw();
+  };
+
+  draw();
+})();
+</script>
+```
+
+## The Perceptron
+
+Rosenblatt's Perceptron [@rosenblatt1958perceptron] learns decision weights iteratively from classification errors.
+
+::: {.callout-note appearance="minimal"}
+Definition. The Perceptron error-driven update rule adjusts parameter weights upon misclassifying instance $i$:
+$$
+\mathbf{w}^{(t+1)}=\mathbf{w}^{(t)}+\eta y_i\mathbf{x}_i,
+\qquad
+b^{(t+1)}=b^{(t)}+\eta y_i.
+$$ {#eq-perceptron-update}
+:::
+
+Novikoff's Perceptron Convergence Theorem guarantees convergence in finite update steps if data are linearly separable [@novikoff1962convergence; @minsky1969perceptrons].
+
+::: {.callout-note appearance="minimal"}
+Definition. Dataset $\mathcal{D}$ is linearly separable if there exists weight vector $\mathbf{w}$ and bias $b$ satisfying:
+$$
+y_i(\mathbf{w}^\top\mathbf{x}_i+b)>0,
+\qquad i=1,\ldots,n.
+$$ {#eq-linear-separability}
+:::
+
+```{=html}
+<div id="per-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Perceptron Algorithm — Step-by-Step Animation</span><br>
+    <span style="font-size:0.81em;color:#666;">Observe how the perceptron updates its decision boundary whenever it encounters a misclassified point</span>
+  </div>
+  <div style="display:flex;gap:8px;justify-content:center;margin-bottom:10px;flex-wrap:wrap;">
+    <button onclick="perStep()" id="per-btn-step"
+            style="padding:6px 16px;background:#1a2e45;color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:Georgia,serif;font-size:0.83em;">
+      Next Update
+    </button>
+    <button onclick="perEpoch()"
+            style="padding:6px 16px;background:#374151;color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:Georgia,serif;font-size:0.83em;">
+      Complete Epoch
+    </button>
+    <button onclick="perReset()"
+            style="padding:6px 16px;background:#fff;color:#374151;border:1px solid #aab;border-radius:5px;cursor:pointer;font-family:Georgia,serif;font-size:0.83em;">
+      Reset
+    </button>
+  </div>
+  <div id="per-status" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:24px;"></div>
+  <canvas id="per-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div id="per-log" style="margin-top:10px;font-size:0.79em;color:#555;background:#fff;border:1px solid #e0e5ed;border-radius:5px;padding:8px 12px;min-height:36px;max-height:100px;overflow-y:auto;"></div>
+  <div style="margin-top:8px;display:flex;gap:18px;justify-content:center;font-size:0.79em;color:#555;">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#2563eb;margin-right:4px;vertical-align:middle;"></span>Class +1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#e05c2a;margin-right:4px;vertical-align:middle;"></span>Class −1</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;border:2px solid #f59e0b;background:#fef3c7;margin-right:4px;vertical-align:middle;"></span>Active Point</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  const DATA=[
+    {x:[1.0,1.0],y:1},{x:[1.5,0.6],y:1},{x:[0.7,1.5],y:1},
+    {x:[1.3,1.8],y:1},{x:[0.5,0.9],y:1},{x:[1.8,1.3],y:1},
+    {x:[0.9,2.0],y:1},{x:[1.2,0.4],y:1},
+    {x:[3.5,3.2],y:-1},{x:[4.0,3.8],y:-1},{x:[3.2,4.0],y:-1},
+    {x:[4.2,3.0],y:-1},{x:[3.8,4.2],y:-1},{x:[3.0,3.6],y:-1},
+    {x:[4.5,3.5],y:-1},{x:[3.3,2.8],y:-1}
+  ];
+  const N=DATA.length;
+
+  const cv=document.getElementById('per-cv');
+  const W=660, H=320, DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d'); ctx.scale(DPR,DPR);
+
+  const PL=46,PR=12,PT=18,PB=36;
+  const PW=W-PL-PR, PH=H-PT-PB;
+  const xMn=0,xMx=5.5,yMn=0,yMx=5;
+  const sx=x=>PL+(x-xMn)/(xMx-xMn)*PW;
+  const sy=y=>PT+PH-(y-yMn)/(yMx-yMn)*PH;
+
+  let w=[0,0], b=0;
+  let ptr=0, epochN=0, stepN=0, done=false;
+  let activeIdx=-1, logLines=[];
+
+  const sign=v=>v>0?1:-1;
+  function predict(x){ return sign(w[0]*x[0]+w[1]*x[1]+b); }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    if(w[0]!==0||w[1]!==0){
+      for(let cx=PL;cx<PL+PW;cx+=3){
+        const xd=xMn+(cx-PL)/PW*(xMx-xMn);
+        if(Math.abs(w[1])>1e-6){
+          const yb=-(w[0]*xd+b)/w[1];
+          const yb_cl=Math.max(yMn,Math.min(yMx,yb));
+          const cyb=sy(yb_cl);
+          const posAbove=w[1]>0;
+          ctx.fillStyle=posAbove?'rgba(37,99,235,0.06)':'rgba(224,92,42,0.06)';
+          ctx.fillRect(cx,PT,3,Math.max(0,cyb-PT));
+          ctx.fillStyle=posAbove?'rgba(224,92,42,0.06)':'rgba(37,99,235,0.06)';
+          ctx.fillRect(cx,cyb,3,Math.max(0,PT+PH-cyb));
+        } else {
+          const xb=Math.abs(w[0])>1e-6?-b/w[0]:Infinity;
+          ctx.fillStyle=(xd>xb)===(w[0]>0)?'rgba(37,99,235,0.06)':'rgba(224,92,42,0.06)';
+          ctx.fillRect(cx,PT,3,PH);
+        }
+      }
+    }
+
+    ctx.strokeStyle='#e5e9f0';ctx.lineWidth=0.7;
+    for(let gx=0;gx<=5;gx++){ctx.beginPath();ctx.moveTo(sx(gx),PT);ctx.lineTo(sx(gx),PT+PH);ctx.stroke();}
+    for(let gy=0;gy<=5;gy++){ctx.beginPath();ctx.moveTo(PL,sy(gy));ctx.lineTo(PL+PW,sy(gy));ctx.stroke();}
+
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.lineTo(PL+PW,PT+PH);ctx.stroke();
+
+    if(w[0]!==0||w[1]!==0){
+      if(Math.abs(w[1])>1e-6){
+        const y0=-(w[0]*xMn+b)/w[1], y1=-(w[0]*xMx+b)/w[1];
+        ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+        ctx.beginPath();ctx.moveTo(sx(xMn),sy(y0));ctx.lineTo(sx(xMx),sy(y1));ctx.stroke();
+        ctx.setLineDash([]);
+      } else if(Math.abs(w[0])>1e-6){
+        const xb=-b/w[0];
+        ctx.strokeStyle='#1a2e45';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+        ctx.beginPath();ctx.moveTo(sx(xb),PT);ctx.lineTo(sx(xb),PT+PH);ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    DATA.forEach((d,i)=>{
+      const isActive=(i===activeIdx);
+      const wrong=(predict(d.x)!==d.y);
+      const col=d.y===1?'#2563eb':'#e05c2a';
+      const r=isActive?8:6;
+      ctx.beginPath();ctx.arc(sx(d.x[0]),sy(d.x[1]),r,0,2*Math.PI);
+      if(isActive){
+        ctx.fillStyle='#fef3c7';ctx.fill();
+        ctx.strokeStyle='#f59e0b';ctx.lineWidth=2.5;ctx.stroke();
+      } else if(wrong&&(w[0]!==0||w[1]!==0||b!==0)){
+        ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fill();
+        ctx.strokeStyle='#dc2626';ctx.lineWidth=2;ctx.stroke();
+      } else {
+        ctx.fillStyle=col+'cc';ctx.fill();
+        ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.stroke();
+      }
+    });
+
+    const correct=DATA.filter(d=>predict(d.x)===d.y).length;
+    const acol=done?'#16a34a':correct<N*0.6?'#dc2626':'#ca8a04';
+    const wStr=`w=[${w[0].toFixed(1)},${w[1].toFixed(1)}], b=${b.toFixed(1)}`;
+    document.getElementById('per-status').innerHTML=
+      done
+        ? `<strong style="color:#16a34a">Converged</strong> in ${stepN} updates / ${epochN} epochs — all points correctly classified ✓`
+        : `Epoch ${epochN} · Update ${stepN} · `+
+          `Correct: <strong style="color:${acol}">${correct}/${N}</strong> · ${wStr}`;
+  }
+
+  function logPush(msg){
+    logLines.unshift(msg);
+    if(logLines.length>12) logLines.pop();
+    document.getElementById('per-log').innerHTML=logLines.join('<br>');
+  }
+
+  function findNext(){
+    for(let k=0;k<N;k++){
+      const i=(ptr+k)%N;
+      if(predict(DATA[i].x)!==DATA[i].y) return i;
+    }
+    return -1;
+  }
+
+  window.perStep=function(){
+    if(done) return;
+    const i=findNext();
+    if(i===-1){ done=true; draw(); return; }
+    activeIdx=i;
+    const d=DATA[i];
+    const oldPred=predict(d.x);
+    w[0]+=d.y*d.x[0];
+    w[1]+=d.y*d.x[1];
+    b+=d.y;
+    stepN++;
+    if(i<ptr&&i<ptr%N) epochN++;
+    if(i+1>=N&&ptr<=i) epochN++;
+    ptr=(i+1)%N;
+    logPush(`Step ${stepN}: point (${d.x[0].toFixed(1)},${d.x[1].toFixed(1)}) `+
+            `predicted ${oldPred>0?'+1':'−1'} (actual ${d.y>0?'+1':'−1'}) → `+
+            `w=[${w[0].toFixed(1)},${w[1].toFixed(1)}], b=${b.toFixed(1)}`);
+    const allOK=DATA.every(d=>predict(d.x)===d.y);
+    if(allOK){ done=true; epochN++; }
+    draw();
+  };
+
+  window.perEpoch=function(){
+    if(done) return;
+    epochN++;
+    let updates=0;
+    DATA.forEach((d,i)=>{
+      if(predict(d.x)!==d.y){
+        activeIdx=i;
+        w[0]+=d.y*d.x[0];
+        w[1]+=d.y*d.x[1];
+        b+=d.y;
+        stepN++;
+        updates++;
+      }
+    });
+    if(updates===0||DATA.every(d=>predict(d.x)===d.y)){ done=true; }
+    logPush(`Epoch ${epochN}: ${updates} updates — w=[${w[0].toFixed(1)},${w[1].toFixed(1)}], b=${b.toFixed(1)}`);
+    activeIdx=-1;
+    draw();
+  };
+
+  window.perReset=function(){
+    w=[0,0];b=0;ptr=0;epochN=0;stepN=0;done=false;activeIdx=-1;logLines=[];
+    document.getElementById('per-log').innerHTML='';
+    draw();
+  };
+
+  draw();
+  logPush('Initialized w=[0,0], b=0 — click "Next Update"');
+})();
+</script>
+```
+
+```python
+import numpy as np
+
+class PerceptronBinario:
+    def __init__(self, lr=1.0, max_epochs=100):
+        self.lr = lr
+        self.max_epochs = max_epochs
+        self.w = None
+        self.b = 0.0
+        self.errors_ = []
+
+    def fit(self, X, y):
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        self.w = np.zeros(X.shape[1])
+        self.b = 0.0
+
+        for _ in range(self.max_epochs):
+            errores = 0
+            for xi, yi in zip(X, y):
+                if yi * (np.dot(self.w, xi) + self.b) <= 0:
+                    self.w += self.lr * yi * xi
+                    self.b += self.lr * yi
+                    errores += 1
+            self.errors_.append(errores)
+            if errores == 0:
+                break
+        return self
+
+    def decision_function(self, X):
+        return np.asarray(X) @ self.w + self.b
+
+    def predict(self, X):
+        return np.where(self.decision_function(X) >= 0, 1, -1)
+```
+
+## Conceptual Comparison: Linear Regression, Fisher's Discriminant, and Perceptron
+
+| Model | Task | Objective Function | Output |
+|---|---|---|---|
+| Linear Regression | Regression | Minimize SSE loss | Continuous real scalar |
+| Fisher's LDA | Classification | Maximize projected class variance ratio | Class assignment via threshold |
+| Perceptron | Classification | Correct misclassified errors | Discrete binary label ($\{-1, +1\}$) |
+
+## Conclusions
+
+Linear regression and linear classifiers serve as fundamental building blocks of supervised machine learning. Linear regression models continuous responses via analytical OLS estimation. Fisher's Discriminant demonstrates optimal linear subspace projections. The Perceptron illustrates error-driven online weight updates. Understanding these foundational models prepares practitioners for advanced non-linear techniques, regularization frameworks, and deep learning architectures.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

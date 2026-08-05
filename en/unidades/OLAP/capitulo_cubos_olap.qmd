@@ -1,0 +1,744 @@
+---
+title: "Computing OLAP Data Cubes"
+subtitle: "A Technical and Reproducible Approach"
+author: "Diego Villalba"
+date: today
+format:
+  revealjs:
+    theme: unam-theme.scss
+    slide-number: true
+    code-fold: true
+    code-tools: true
+    code-line-numbers: true
+    highlight-style: github
+    fig-align: center
+    fig-width: 7
+    fig-height: 4
+    logo: "Logo_FC_Color.png"
+    execute:
+      echo: true
+      warning: false
+      message: false
+    self-contained: false
+bibliography: referencias_cubos_olap.bib
+---
+
+Data cubes organize multidimensional information for summarized analysis, interactive exploration, and decision-making. In a typical data warehouse architecture, data is extracted from transactional systems, cleaned and integrated, stored in an analytical repository, and presented via reports, data mining models, or OLAP cubes [@santizo2026cubos].
+
+The objective of this chapter is to formalize this pipeline into a technical, reproducible framework. We present the fundamentals of Online Analytical Processing (OLAP), the mathematical formulation of data cubes, core navigation operations, and a practical implementation in Python. This discussion draws upon data warehousing literature [@inmon2005building; @kimball2013data], classic OLAP research [@chaudhuri1997overview; @gray1997data], and modern data analysis libraries such as `pandas` [@mckinney2010data; @pandas2024docs].
+
+An OLAP cube is not merely a geometric three-dimensional block. Rather, it is a mathematical abstraction representing aggregated measures across dimensions. For instance, an enterprise might analyze sales across time, region, and product. Each unique combination of dimensions identifies a specific cell within the cube, housing aggregated measures such as total revenue, units sold, average cost, or profit margin.
+
+## From Data Warehouses to OLAP Analytics
+
+Transactional Online Transaction Processing (OLTP) systems are optimized for individual operational transactions: purchases, payments, inventory updates, customer registrations, or account transfers. Conversely, Online Analytical Processing (OLAP) systems are optimized for querying aggregated data to answer strategic business questions. This architectural distinction requires distinct data structures from those used in operational databases.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** An OLAP system is an analytical framework that organizes quantitative measures across categorical or hierarchical dimensions to facilitate multi-perspective aggregated queries.
+$$
+C : D_1 \times D_2 \times \cdots \times D_k \longrightarrow \mathbb{R}^m
+$$
+:::
+
+In this formulation, $D_1,\ldots,D_k$ represent analytical dimensions (e.g., time, region, product, or store branch). The value $C(d_1,\ldots,d_k)$ contains one or more aggregated measures. For example, if $D_1$ is time, $D_2$ is region, and $D_3$ is product, a single cell represents computer sales in the Central region during Quarter Q1.
+
+Multidimensional architectures comprise three core components:
+
+1. **Dimensions:** Axes of analysis (e.g., time, region, product).
+2. **Hierarchies:** Levels of detail within a dimension (e.g., day $\rightarrow$ month $\rightarrow$ quarter $\rightarrow$ year).
+3. **Measures:** Aggregable quantitative variables (e.g., sales, units, profit, budget).
+
+A key advantage of OLAP is tailoring granularity to user roles. Executive leadership might query total sales by country; regional management examines sales by state; and store supervisors analyze sales per location. The underlying analytical repository supports these perspectives via cube navigation operations.
+
+```{=html}
+<div id="olap-viz-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+
+  <div style="text-align:center;margin-bottom:4px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">OLAP Cube — Interactive Visualizer</span><br>
+    <span style="font-size:0.82em;color:#666;">Dimensions: Region × Time × Product &nbsp;·&nbsp; Measure: Sales (100K MXN)</span>
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:center;margin:14px 0 4px;flex-wrap:wrap;">
+    <button id="obtn-all"    onclick="olapOp('all')"    class="obtn active">Full Cube</button>
+    <button id="obtn-slice"  onclick="olapOp('slice')"  class="obtn">Slice &nbsp;<code style="font-size:0.9em;">time = Q2</code></button>
+    <button id="obtn-rollup" onclick="olapOp('rollup')" class="obtn">Roll-up &nbsp;<code style="font-size:0.9em;">region → zone</code></button>
+    <button id="obtn-dice"   onclick="olapOp('dice')"   class="obtn">Dice &nbsp;<code style="font-size:0.9em;">{N,C}×{Q1,Q4}×{TV,CAM}</code></button>
+  </div>
+
+  <canvas id="olapCanvas" style="display:block;margin:0 auto;cursor:default;"></canvas>
+
+  <div id="olapTip" style="text-align:center;min-height:28px;font-size:0.83em;color:#555;margin-top:6px;padding:0 8px;"></div>
+
+  <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-top:10px;font-size:0.78em;color:#555;">
+    <span>Low sales</span>
+    <span style="display:inline-block;width:80px;height:10px;background:linear-gradient(to right,#cfe8ff,#0d4f8c);border-radius:2px;vertical-align:middle;"></span>
+    <span>High sales</span>
+    <span style="margin-left:16px;color:#bbb;">&#9632;</span>
+    <span style="color:#aaa;">Cell outside active subcube</span>
+  </div>
+</div>
+
+<style>
+.obtn {
+  padding:5px 14px;border:1px solid #aab;background:#fff;
+  border-radius:4px;cursor:pointer;font-size:0.82em;
+  font-family:Georgia,serif;transition:background .15s,color .15s;
+}
+.obtn:hover  { background:#eef2f7; }
+.obtn.active { background:#1a3a5c;color:#fff;border-color:#1a3a5c; }
+</style>
+
+<script>
+(function(){
+  /* ── dataset ─────────────────────────────────────────── */
+  const regiones  = ["North","Central","West","Southeast"];
+  const tiempos   = ["Q1","Q2","Q3","Q4"];
+  const productos = ["Televisions","Computers","Washing Machines","Cameras"];
+
+  const raw = [
+    [35,22,10,14, 28,26,13,17, 18,15,8,12, 30,33,16,15],
+    [40,30,18,11, 32,28,20,14, 25,19,15,10, 38,35,22,16],
+    [20,27, 9, 6, 24,31,11, 8, 29,36, 7, 9, 19,34,10, 5],
+    [26,17,12, 9, 21,20,16,11, 23,18,14,10, 27,24,19,12]
+  ];
+
+  const DATA = [];
+  for (let ri=0;ri<4;ri++)
+    for (let ti=0;ti<4;ti++)
+      for (let pi=0;pi<4;pi++)
+        DATA.push({ri,ti,pi,
+          region:regiones[ri], tiempo:tiempos[ti], producto:productos[pi],
+          ventas:raw[ri][ti*4+pi]});
+
+  const cv  = document.getElementById('olapCanvas');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=680, H=500;
+  cv.width=W*DPR; cv.height=H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const TW=52, TH=26, TZ=30;
+  const OX=335, OY=400;
+
+  function proj(xi,yi,zi){
+    return { x: OX+(xi-yi)*TW/2, y: OY-(xi+yi)*TH/2-zi*TZ };
+  }
+
+  function vColor(v, active){
+    if(!active) return {top:'#dde',right:'#ccd',left:'#bbc'};
+    const mn=5,mx=40, t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));
+    const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
+    const r=lerp(207, 13,t), g=lerp(232, 79,t), b=lerp(255,140,t);
+    return {
+      top:   `rgb(${r},${g},${b})`,
+      right: `rgb(${lerp(160,10,t)},${lerp(190,62,t)},${lerp(220,110,t)})`,
+      left:  `rgb(${lerp(130, 8,t)},${lerp(160,50,t)},${lerp(195, 90,t)})`
+    };
+  }
+
+  function drawCell(xi,yi,zi,ventas,active,hl){
+    const p   = proj(xi,  yi,  zi);
+    const pr  = proj(xi+1,yi,  zi);
+    const pf  = proj(xi,  yi+1,zi);
+    const pt  = proj(xi,  yi,  zi+1);
+    const ptr = proj(xi+1,yi,  zi+1);
+    const ptf = proj(xi,  yi+1,zi+1);
+    const prf = proj(xi+1,yi+1,zi);
+    const prt = proj(xi+1,yi+1,zi+1);
+
+    const c   = vColor(ventas,active);
+    const sw  = hl?2:0.7;
+    const sc  = hl?'#e05800':(active?'rgba(60,80,100,0.35)':'rgba(160,160,180,0.25)');
+
+    function face(pts, fill){
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x,pts[0].y);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+      ctx.closePath();
+      ctx.fillStyle=fill; ctx.fill();
+      ctx.strokeStyle=sc; ctx.lineWidth=sw; ctx.stroke();
+    }
+    face([pt,ptr,prt,ptf], c.top);
+    face([p, pr, ptr, pt], c.right);
+    face([p, pf, ptf, pt], c.left);
+  }
+
+  let filter   = null;
+  let hlCell   = null;
+  let curMode  = 'all';
+
+  const FILTERS = {
+    all:    null,
+    slice:  d => d.tiempo==='Q2',
+    rollup: d => d.region==='North'||d.region==='Central',
+    dice:   d => (d.region==='North'||d.region==='Central')&&
+                 (d.tiempo==='Q1'||d.tiempo==='Q4')&&
+                 (d.producto==='Televisions'||d.producto==='Cameras')
+  };
+
+  const OP_LABEL = {
+    all:    '',
+    slice:  'Slice: Time = Q2   →   subcube Region × Product',
+    rollup: 'Roll-up: Region  →  Zone (North+Central grouped)',
+    dice:   'Dice: {North,Central} × {Q1,Q4} × {Televisions,Cameras}'
+  };
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawGrid();
+
+    const sorted=[...DATA].sort((a,b)=>{
+      const da=a.ti+a.pi, db=b.ti+b.pi;
+      if(db!==da) return db-da;
+      return a.ri-b.ri;
+    });
+
+    for(const d of sorted){
+      const active = filter?filter(d):true;
+      const hl = hlCell&&hlCell.ri===d.ri&&hlCell.ti===d.ti&&hlCell.pi===d.pi;
+      drawCell(d.ti, d.pi, d.ri, d.ventas, active, hl);
+    }
+
+    drawLabels();
+
+    if(curMode!=='all'){
+      ctx.fillStyle='rgba(26,58,92,0.9)';
+      ctx.font='bold 12.5px Georgia';
+      ctx.textAlign='left';
+      ctx.fillText(OP_LABEL[curMode], 20, 26);
+    }
+  }
+
+  function drawGrid(){
+    ctx.strokeStyle='rgba(180,190,205,0.5)';
+    ctx.lineWidth=0.8;
+    for(let i=0;i<=4;i++){
+      const a=proj(i,0,0),b=proj(i,4,0);
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      const c=proj(0,i,0),d=proj(4,i,0);
+      ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(d.x,d.y);ctx.stroke();
+    }
+  }
+
+  function drawLabels(){
+    ctx.font='11px Georgia'; ctx.textAlign='center'; ctx.fillStyle='#444';
+    tiempos.forEach((t,i)=>{
+      const p=proj(i+0.5,4.5,-0.15); ctx.fillText(t,p.x,p.y+4);
+    });
+    { const p=proj(2,5.5,-0.15);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Time',p.x,p.y+4); }
+
+    ctx.textAlign='right'; ctx.font='11px Georgia'; ctx.fillStyle='#444';
+    productos.forEach((pr,i)=>{
+      const p=proj(-0.25,i+0.5,-0.15);
+      const label=pr.length>9?pr.slice(0,8)+'…':pr;
+      ctx.fillText(label,p.x-3,p.y+4);
+    });
+    { const p=proj(-1.1,2,-0.15);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Product',p.x-3,p.y+4); }
+
+    ctx.textAlign='left'; ctx.font='11px Georgia'; ctx.fillStyle='#444';
+    regiones.forEach((r,i)=>{
+      const p=proj(4.2,0,i+0.5); ctx.fillText(r,p.x+5,p.y+4);
+    });
+    { const p=proj(4.5,-0.5,2);
+      ctx.font='bold 13px Georgia'; ctx.fillStyle='#1a3a5c';
+      ctx.fillText('Region',p.x+5,p.y+4); }
+  }
+
+  cv.addEventListener('mousemove',function(e){
+    const r=cv.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    let best=null,bd=22;
+    for(const d of DATA){
+      const p=proj(d.ti+0.5,d.pi+0.5,d.ri+0.5);
+      const dist=Math.hypot(p.x-mx,p.y-my);
+      if(dist<bd){bd=dist;best=d;}
+    }
+    hlCell=best;
+    const tip=document.getElementById('olapTip');
+    if(best){
+      const active=filter?filter(best):true;
+      tip.innerHTML=active
+        ?`<strong>C(${best.region}, ${best.tiempo}, ${best.producto})</strong> = ${best.ventas} (100K MXN)`
+        :`<span style="color:#bbb">C(${best.region}, ${best.tiempo}, ${best.producto}) — outside active subcube</span>`;
+    } else {
+      tip.innerHTML='<span style="color:#aaa">Hover over a cube cell</span>';
+    }
+    draw();
+  });
+
+  cv.addEventListener('mouseleave',function(){
+    hlCell=null;
+    document.getElementById('olapTip').innerHTML=
+      '<span style="color:#aaa">Hover over a cube cell</span>';
+    draw();
+  });
+
+  window.olapOp=function(mode){
+    curMode=mode; filter=FILTERS[mode];
+    document.querySelectorAll('.obtn').forEach(b=>b.classList.remove('active'));
+    document.getElementById('obtn-'+mode).classList.add('active');
+    draw();
+  };
+
+  document.getElementById('olapTip').innerHTML=
+    '<span style="color:#aaa">Hover over a cube cell</span>';
+  draw();
+})();
+</script>
+```
+
+## Multidimensional Model
+
+Consider a transaction set $\mathcal{T}$ where each record contains dimension attributes and a revenue measure. A transaction is represented as:
+
+$$
+t_i = (r_i, \tau_i, p_i, v_i),
+$$
+
+where $r_i$ denotes region, $\tau_i$ time period, $p_i$ product, and $v_i$ revenue. Sum-aggregated cube values are obtained by grouping transactions sharing identical dimensional coordinates.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** Given a set of transactions $\mathcal{T}$, the cell value of a sales cube is defined as the sum of sales values across all transactions matching a specific dimension tuple:
+$$
+C(r,\tau,p)=\sum_{i:\; r_i=r,\; \tau_i=\tau,\; p_i=p} v_i
+$$
+:::
+
+This formulation demonstrates that a data cube is an aggregation function. Production cubes often incorporate dozens of dimensions, such as sales channel, customer segment, store location, marketing campaign, and tax status.
+
+### Dimensions, Measures, and Granularity
+
+**Granularity** defines the atomic level of detail at which data is stored or queried. A table recording daily sales per store and SKU possesses higher granularity than a table recording monthly sales per region and product category. Selecting appropriate granularity is a core design decision balancing storage footprint, query performance, and analytical flexibility [@kimball2013data].
+
+::: {.callout-note appearance="minimal"}
+**Definition.** The granularity of a data cube is the atomic level of detail defining its dimensions:
+$$
+G(C)=\{\ell_1,\ell_2,\ldots,\ell_k\}
+$$
+:::
+
+Here, $\ell_j$ represents the level used in dimension $D_j$. For example, $G(C)=\{\text{month},\text{state},\text{product}\}$ indicates queries operate at month, state, and product resolution. Transitioning from month to week increases granularity; transitioning from state to country decreases granularity.
+
+## Core Operations in OLAP Data Cubes
+
+OLAP operations facilitate navigation across hierarchical levels and subcubes [@santizo2026cubos]. Below, we formalize the five primary operations: *drill-down*, *roll-up*, *slice*, *dice*, and *pivot*.
+
+### Drill-down
+
+*Drill-down* navigates from aggregated summaries to detailed atomic data. For example, if annual sales totaled 1,000 units in 2025, drill-down operations break down sales by quarter, month, state, or SKU.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A drill-down operation replaces an aggregated level $\ell$ of a dimension with a more detailed level $\ell'$ lower in the same hierarchy:
+$$
+\ell' \prec \ell
+$$
+:::
+
+For example, within the temporal hierarchy:
+
+$$
+\text{year} \rightarrow \text{quarter} \rightarrow \text{month} \rightarrow \text{week} \rightarrow \text{day},
+$$
+
+moving from year to quarter or month to week constitutes a *drill-down* operation [@santizo2026cubos].
+
+### Roll-up
+
+*Roll-up* is the inverse operation, aggregating granular data into higher-level summaries. Daily sales aggregate into monthly, quarterly, or annual totals; store-level sales roll up into state or national figures.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A roll-up operation replaces a detailed level $\ell'$ with a higher-level aggregated level $\ell$, combining cells via an aggregation function $A$:
+$$
+C_{\ell}(d)=A\left(\{C_{\ell'}(d'):\; d' \mapsto d\}\right)
+$$
+:::
+
+Function $A$ may be sum, average, maximum, count, or a derived metric. Revenue typically uses summation; pricing metrics utilize weighted averages; inventory metrics apply end-of-period balances.
+
+### Slice
+
+A *slice* operation fixes a single dimension to a specific coordinate value, producing a subcube with one fewer dimension. If the original cube contains Region, Time, and Product dimensions, fixing Product = Tablets yields a 2D Region $\times$ Time slice.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** Given a cube $C:D_1\times\cdots\times D_k\rightarrow\mathbb{R}$, a slice operation binds dimension $D_j$ to a constant value $a\in D_j$:
+$$
+C_{D_j=a}(d_1,\ldots,d_{j-1},d_{j+1},\ldots,d_k)=C(d_1,\ldots,a,\ldots,d_k)
+$$
+:::
+
+### Dice
+
+A *dice* operation extracts a subcube by selecting subsets across two or more dimensions simultaneously. Unlike a slice (which fixes a single dimension to one scalar value), a dice operation filters across multiple values per dimension.
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A dice operation restricts the data cube to subsets $S_j\subseteq D_j$ across one or more dimensions:
+$$
+C_{S_1,\ldots,S_k}=C\big|_{S_1\times\cdots\times S_k}
+$$
+:::
+
+For example, selecting Time $\in \{\text{January},\text{February}\}$ and Product $\in \{\text{Smartphones},\text{Tablets}\}$ creates a 2×2 subcube slice [@santizo2026cubos].
+
+### Pivot or Rotate
+
+A *pivot* operation rotates the visual orientation of the cube without modifying underlying values. Pivoting re-orients row and column headers to highlight alternative analytical comparisons (e.g., swapping product rows and monthly columns).
+
+::: {.callout-note appearance="minimal"}
+**Definition.** A pivot operation applies a permutation $\pi$ to the dimension ordering of a data cube:
+$$
+C^{\pi}(d_{\pi(1)},\ldots,d_{\pi(k)})=C(d_1,\ldots,d_k)
+$$
+:::
+
+## Manual Computation of a Data Cube
+
+To solidify these concepts, we walk through a manual calculation on a small sample dataset.
+
+Consider an enterprise tracking quarterly sales across **Location**, **Time**, and **Department**. Departments are:
+
+$$
+(W,P,D,E)=(\text{Wood},\text{Plumbing},\text{Decoration},\text{Electrical}).
+$$
+
+Dimensions are defined as:
+
+- $D_1=\text{Location}=\{\text{CDMX},\text{Guadalajara},\text{Monterrey},\text{Merida}\}$.
+- $D_2=\text{Time}=\{Q1,Q2\}$.
+- $D_3=\text{Department}=\{W,P,D,E\}$.
+
+The sales cube maps as:
+
+$$
+C:\text{Location}\times \text{Time}\times \text{Department}\longrightarrow \mathbb{R}.
+$$
+
+Raw transactional totals:
+
+| Time | CDMX $(W,P,D,E)$ | Guadalajara $(W,P,D,E)$ |
+|---|---:|---:|
+| Q1 | $(70,40,20,30)$ | $(60,35,25,40)$ |
+| Q2 | $(50,60,22,28)$ | $(45,50,30,35)$ |
+
+| Time | Monterrey $(W,P,D,E)$ | Merida $(W,P,D,E)$ |
+|---|---:|---:|
+| Q1 | $(48,38,18,26)$ | $(52,42,15,37)$ |
+| Q2 | $(36,55,25,30)$ | $(44,33,20,28)$ |
+
+### Step 1: Map Cube Cells
+
+Each value maps directly to a coordinate tuple. For instance:
+
+$$
+C(\text{CDMX},Q1,\text{Wood})=70,
+$$
+
+$$
+C(\text{Merida},Q2,\text{Plumbing})=33.
+$$
+
+The full cube comprises $4 \text{ locations} \times 2 \text{ quarters} \times 4 \text{ departments} = 32$ elementary cells.
+
+### Step 2: Compute Location Totals
+
+Location totals sum across all time periods and departments:
+
+$$
+\text{Total}(u)=\sum_{t\in\{Q1,Q2\}}\sum_{d\in\{W,P,D,E\}} C(u,t,d).
+$$
+
+- **CDMX:** $(70+40+20+30) + (50+60+22+28) = 160 + 160 = 320$.
+- **Guadalajara:** $(60+35+25+40) + (45+50+30+35) = 160 + 160 = 320$.
+- **Monterrey:** $(48+38+18+26) + (36+55+25+30) = 130 + 146 = 276$.
+- **Merida:** $(52+42+15+37) + (44+33+20+28) = 146 + 125 = 271$.
+
+| Location | Total |
+|---|---:|
+| CDMX | 320 |
+| Guadalajara | 320 |
+| Monterrey | 276 |
+| Merida | 271 |
+| **Grand Total** | **1187** |
+
+### Step 3: Compute Time Totals
+
+- **Q1:** $160 + 160 + 130 + 146 = 596$.
+- **Q2:** $160 + 160 + 146 + 125 = 591$.
+
+| Time | Total |
+|---|---:|
+| Q1 | 596 |
+| Q2 | 591 |
+| **Grand Total** | **1187** |
+
+### Step 4: Compute Department Totals
+
+- **Wood:** $70+50+60+45+48+36+52+44 = 405$.
+- **Plumbing:** $40+60+35+50+38+55+42+33 = 353$.
+- **Decoration:** $20+22+25+30+18+25+15+20 = 175$.
+- **Electrical:** $30+28+40+35+26+30+37+28 = 254$.
+
+| Department | Total |
+|---|---:|
+| Wood | 405 |
+| Plumbing | 353 |
+| Decoration | 175 |
+| Electrical | 254 |
+| **Grand Total** | **1187** |
+
+### Step 5: Manual Slice Operation
+
+Applying filter constraints: $\text{location} \in \{\text{CDMX},\text{Merida}\}$, $\text{time} = Q1$, and $\text{department} \in \{\text{Wood},\text{Electrical}\}$:
+
+| Location | Time | Wood | Electrical | Total |
+|---|---|---:|---:|---:|
+| CDMX | Q1 | 70 | 30 | 100 |
+| Merida | Q1 | 52 | 37 | 89 |
+| **Total** |  | **122** | **67** | **189** |
+
+### Step 6: Manual Roll-Up Operation
+
+Rolling up individual store locations into regional zones:
+
+| Location | Region |
+|---|---|
+| Monterrey | North |
+| CDMX | Central |
+| Guadalajara | West |
+| Merida | Southeast |
+
+| Region | Time | Wood | Plumbing | Decoration | Electrical | Total |
+|---|---|---:|---:|---:|---:|---:|
+| Central | Q1 | 70 | 40 | 20 | 30 | 160 |
+| Central | Q2 | 50 | 60 | 22 | 28 | 160 |
+| North | Q1 | 48 | 38 | 18 | 26 | 130 |
+| North | Q2 | 36 | 55 | 25 | 30 | 146 |
+| West | Q1 | 60 | 35 | 25 | 40 | 160 |
+| West | Q2 | 45 | 50 | 30 | 35 | 160 |
+| Southeast | Q1 | 52 | 42 | 15 | 37 | 146 |
+| Southeast | Q2 | 44 | 33 | 20 | 28 | 125 |
+| **Total** |  | **405** | **353** | **175** | **254** | **1187** |
+
+---
+
+## Reproducible Python Implementation
+
+Below, we build the OLAP cube using Python and `pandas` [@santizo2026cubos].
+
+```{python}
+import pandas as pd
+
+records = [
+    # North
+    ("North", "Q1", "Televisions", 35), ("North", "Q1", "Computers", 22),
+    ("North", "Q1", "Washing Machines", 10), ("North", "Q1", "Cameras", 14),
+    ("North", "Q2", "Televisions", 28), ("North", "Q2", "Computers", 26),
+    ("North", "Q2", "Washing Machines", 13), ("North", "Q2", "Cameras", 17),
+    ("North", "Q3", "Televisions", 18), ("North", "Q3", "Computers", 15),
+    ("North", "Q3", "Washing Machines", 8), ("North", "Q3", "Cameras", 12),
+    ("North", "Q4", "Televisions", 30), ("North", "Q4", "Computers", 33),
+    ("North", "Q4", "Washing Machines", 16), ("North", "Q4", "Cameras", 15),
+
+    # Central
+    ("Central", "Q1", "Televisions", 40), ("Central", "Q1", "Computers", 30),
+    ("Central", "Q1", "Washing Machines", 18), ("Central", "Q1", "Cameras", 11),
+    ("Central", "Q2", "Televisions", 32), ("Central", "Q2", "Computers", 28),
+    ("Central", "Q2", "Washing Machines", 20), ("Central", "Q2", "Cameras", 14),
+    ("Central", "Q3", "Televisions", 25), ("Central", "Q3", "Computers", 19),
+    ("Central", "Q3", "Washing Machines", 15), ("Central", "Q3", "Cameras", 10),
+    ("Central", "Q4", "Televisions", 38), ("Central", "Q4", "Computers", 35),
+    ("Central", "Q4", "Washing Machines", 22), ("Central", "Q4", "Cameras", 16),
+
+    # West
+    ("West", "Q1", "Televisions", 20), ("West", "Q1", "Computers", 27),
+    ("West", "Q1", "Washing Machines", 9), ("West", "Q1", "Cameras", 6),
+    ("West", "Q2", "Televisions", 24), ("West", "Q2", "Computers", 31),
+    ("West", "Q2", "Washing Machines", 11), ("West", "Q2", "Cameras", 8),
+    ("West", "Q3", "Televisions", 29), ("West", "Q3", "Computers", 36),
+    ("West", "Q3", "Washing Machines", 7), ("West", "Q3", "Cameras", 9),
+    ("West", "Q4", "Televisions", 19), ("West", "Q4", "Computers", 34),
+    ("West", "Q4", "Washing Machines", 10), ("West", "Q4", "Cameras", 5),
+
+    # Southeast
+    ("Southeast", "Q1", "Televisions", 26), ("Southeast", "Q1", "Computers", 17),
+    ("Southeast", "Q1", "Washing Machines", 12), ("Southeast", "Q1", "Cameras", 9),
+    ("Southeast", "Q2", "Televisions", 21), ("Southeast", "Q2", "Computers", 20),
+    ("Southeast", "Q2", "Washing Machines", 16), ("Southeast", "Q2", "Cameras", 11),
+    ("Southeast", "Q3", "Televisions", 23), ("Southeast", "Q3", "Computers", 18),
+    ("Southeast", "Q3", "Washing Machines", 14), ("Southeast", "Q3", "Cameras", 10),
+    ("Southeast", "Q4", "Televisions", 27), ("Southeast", "Q4", "Computers", 24),
+    ("Southeast", "Q4", "Washing Machines", 19), ("Southeast", "Q4", "Cameras", 12),
+]
+
+df = pd.DataFrame(records, columns=["region", "time", "product", "sales"])
+df.head()
+```
+
+### MultiIndex Representation
+
+```python
+cube = df.set_index(["region", "time", "product"]).sort_index()
+cube.head(10)
+```
+
+```python
+pivot_view = df.pivot_table(
+    index=["region", "time"],
+    columns="product",
+    values="sales",
+    aggfunc="sum",
+    fill_value=0,
+)
+pivot_view
+```
+
+## Executing OLAP Operations in Python
+
+### Slice: Fixing Quarter Q2
+
+```python
+slice_q2 = df[df["time"] == "Q2"]
+slice_q2.pivot_table(
+    index="region",
+    columns="product",
+    values="sales",
+    aggfunc="sum",
+    fill_value=0,
+)
+```
+
+### Dice: Subcube Filtering
+
+```python
+dice = df[
+    df["region"].isin(["North", "Central"])
+    & df["time"].isin(["Q1", "Q4"])
+    & df["producto" if "producto" in df else "product"].isin(["Televisions", "Cameras"])
+]
+
+dice.pivot_table(
+    index=["region", "time"],
+    columns="product",
+    values="sales",
+    aggfunc="sum",
+    fill_value=0,
+)
+```
+
+### Roll-Up: Geographic Zone Aggregation
+
+```python
+zone_map = {
+    "North": "North-Central Zone",
+    "Central": "North-Central Zone",
+    "West": "West-Southeast Zone",
+    "Southeast": "West-Southeast Zone",
+}
+
+df_zones = df.assign(zone=df["region"].map(zone_map))
+
+rollup_zones = df_zones.pivot_table(
+    index=["zone", "time"],
+    columns="product",
+    values="sales",
+    aggfunc="sum",
+    fill_value=0,
+)
+
+rollup_zones
+```
+
+### Pivot: Rotating Orientation
+
+```python
+pivot_product_time = df.pivot_table(
+    index="product",
+    columns="time",
+    values="sales",
+    aggfunc="sum",
+    fill_value=0,
+)
+
+pivot_product_time
+```
+
+## Aggregations and Derived Measures
+
+Measures within an OLAP cube are categorized as additive, semi-additive, or non-additive [@kimball2013data].
+
+::: {.callout-note appearance="minimal"}
+**Definition.** An additive measure can be validly aggregated via summation across all cube dimensions:
+$$
+M(A\cup B)=M(A)+M(B),\qquad A\cap B=\varnothing
+$$
+:::
+
+For non-additive measures (such as conversion rates or profit margins), percentages cannot be summed directly; they must be recomputed dynamically from raw numerators and denominators.
+
+Calculating revenue share per product:
+
+```python
+product_sales = (
+    df.groupby("product", as_index=False)["sales"]
+    .sum()
+    .assign(market_share=lambda x: x["sales"] / x["sales"].sum())
+)
+
+product_sales
+```
+
+Calculating quarter-over-quarter growth per product line:
+
+```python
+time_sales = (
+    df.groupby(["product", "time"], as_index=False)["sales"]
+    .sum()
+    .sort_values(["product", "time"])
+)
+
+time_sales["growth"] = time_sales.groupby("product")["sales"].pct_change()
+time_sales
+```
+
+## Reusable Function for OLAP Views
+
+```python
+def build_olap_view(df, row_dims, col_dims, measure="sales", agg_func="sum"):
+    """Constructs a tabular OLAP view using pandas.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Long-format transactional dataset.
+    row_dims : str or list[str]
+        Dimensions mapped to row headers.
+    col_dims : str or list[str]
+        Dimensions mapped to column headers.
+    measure : str
+        Target numeric metric column.
+    agg_func : str or callable
+        Aggregation function ("sum", "mean", "count").
+    """
+    return df.pivot_table(
+        index=row_dims,
+        columns=col_dims,
+        values=measure,
+        aggfunc=agg_func,
+        fill_value=0,
+    )
+
+build_olap_view(df, row_dims=["region", "time"], col_dims="product")
+```
+
+## Conclusions
+
+OLAP data cubes provide the conceptual foundation for multidimensional analytics. Their core strength resides not just in visual 3D representations, but in the mathematical model linking dimensions, hierarchies, measures, and navigation operations. Mastered together, *drill-down*, *roll-up*, *slice*, *dice*, and *pivot* allow analysts to seamlessly navigate between executive summaries and granular operational data.
+
+## References
+
+::: {#refs}
+:::

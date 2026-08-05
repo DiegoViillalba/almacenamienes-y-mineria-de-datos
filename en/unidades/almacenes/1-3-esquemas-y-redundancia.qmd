@@ -1,0 +1,589 @@
+---
+title: "Dimensional Schemas and Redundancy"
+---
+
+The previous chapter covered facts, dimensions, granularity, and additivity. Now, we examine *how* dimensions are physically structured around fact tables: their degree of normalization, accepted level of redundancy, and the concrete impact of these decisions on storage costs and query performance.
+
+## Star Schema
+
+A star schema consists of a central fact table directly connected to multiple dimension tables. Dimension tables are typically denormalized (controlled redundancy) to minimize joins and optimize analytical query speed.
+
+In our academic example, the student dimension includes attributes like major and department within the same table, simplifying queries such as "average grade by major and semester". The trade-off is accepting string repetition (e.g., repeating "Science" across thousands of student rows).
+
+Structurally, the model is represented as follows:
+
+```{mermaid}
+erDiagram
+
+    ACADEMIC_EVALUATION_FACT {
+        int student_id
+        int course_id
+        int time_id
+        decimal grade
+        int credits
+        int failed_indicator
+    }
+
+    STUDENT_DIMENSION {
+        int student_id
+        varchar name
+        varchar gender
+        varchar cohort
+        varchar major
+        varchar department
+    }
+
+    COURSE_DIMENSION {
+        int course_id
+        varchar course_name
+        varchar course_type
+    }
+
+    TIME_DIMENSION {
+        int time_id
+        varchar semester
+        int year
+        varchar term
+    }
+
+    ACADEMIC_EVALUATION_FACT }o--|| STUDENT_DIMENSION : belongs_to
+    ACADEMIC_EVALUATION_FACT }o--|| COURSE_DIMENSION : corresponds_to
+    ACADEMIC_EVALUATION_FACT }o--|| TIME_DIMENSION : occurs_in
+```
+
+In this schema:
+
+- The fact table resides at the center.
+- All dimensions connect directly to the fact table.
+- No relationships exist between dimension tables.
+- Hierarchical information (e.g., major → department) is denormalized directly inside the dimension table.
+
+## Snowflake Schema
+
+A snowflake schema normalizes dimension tables into sub-dimensions. For example, separating "major" and "department" into distinct hierarchical tables removes data repetition, but increases query complexity and join overhead.
+
+```{mermaid}
+erDiagram
+
+    ACADEMIC_EVALUATION_FACT {
+        int student_id
+        int course_id
+        int time_id
+        decimal grade
+        int credits
+        int failed_indicator
+    }
+
+    STUDENT_DIMENSION {
+        int student_id
+        varchar name
+        varchar gender
+        varchar cohort
+        int major_id
+    }
+
+    MAJOR_DIMENSION {
+        int major_id
+        varchar major_name
+        int department_id
+    }
+
+    DEPARTMENT_DIMENSION {
+        int department_id
+        varchar department_name
+    }
+
+    COURSE_DIMENSION {
+        int course_id
+        varchar course_name
+        varchar course_type
+    }
+
+    TIME_DIMENSION {
+        int time_id
+        varchar semester
+        int year
+        varchar term
+    }
+
+    ACADEMIC_EVALUATION_FACT }o--|| STUDENT_DIMENSION : belongs_to
+    ACADEMIC_EVALUATION_FACT }o--|| COURSE_DIMENSION : corresponds_to
+    ACADEMIC_EVALUATION_FACT }o--|| TIME_DIMENSION : occurs_in
+
+    STUDENT_DIMENSION }o--|| MAJOR_DIMENSION : studies
+    MAJOR_DIMENSION }o--|| DEPARTMENT_DIMENSION : belongs_to
+```
+
+In this schema:
+
+- The student dimension no longer holds the department string directly.
+- Major and department are modeled as independent entities.
+- Data redundancy is minimized.
+- The number of joins required for queries involving department attributes increases.
+
+### Conceptual Comparison
+
+| Aspect | Star Schema | Snowflake Schema |
+|---|---|---|
+| Normalization | Low (Denormalized) | High |
+| Redundancy | Controlled | Minimized |
+| Join Count | Lower | Higher |
+| Conceptual Complexity | Simpler | More Structured |
+| OLAP Performance | Generally Higher | May Decrease |
+| Data Governance | More Flexible | More Rigidly Controlled |
+
+### Code Comparison in SQL
+
+Using a sales domain, the operational difference between schemas appears directly in SQL queries:
+
+```sql
+-- Star Schema: One join per dimension
+select
+  d.year,
+  p.category,
+  sum(f.amount) as sales
+from fact_sales as f
+join dim_date as d using (date_key)
+join dim_product as p using (product_key)
+group by d.year, p.category;
+```
+
+```sql
+-- Snowflake Schema: dim_product lacks "category", requiring an extra join step
+select
+  d.year,
+  c.category,
+  sum(f.amount) as sales
+from fact_sales as f
+join dim_date as d using (date_key)
+join dim_product as p using (product_key)
+join dim_category as c using (category_key)
+group by d.year, c.category;
+```
+
+| Criterion | Star Schema | Snowflake Schema |
+|---|---|---|
+| Querying | Simple, fewer joins | More joins required |
+| Redundancy | Higher | Lower |
+| Maintenance | Direct | More entities and keys |
+| Recommended Use | BI and self-service analytics | Very large or shared hierarchies |
+
+## Controlled Redundancy: The Real Cost of Denormalization
+
+Traditional database literature presents normalization as an absolute good because data repetition consumes disk space. In modern columnar storage engines (Parquet, Delta, BigQuery, Snowflake), that repetition carries negligible storage cost.
+
+Columnar engines do not store raw text strings repeatedly; they apply **dictionary encoding** (storing unique strings once in a dictionary and writing short integer codes per row) alongside **run-length encoding (RLE)** over sorted or low-cardinality columns. If `dim_product` contains 500,000 rows and `category` contains 20 unique values, the engine does not write "Electronics" 25,000 times: it stores the 20-category dictionary once, and writes tiny integer indexes per row.
+
+In practice:
+
+- Storing `category` directly in `dim_product` (Star Schema) costs nearly the same storage space as storing `category_key` (Snowflake Schema)—both end up as small integers on disk.
+- Storage savings promised by normalization are marginal in modern columnar storage compared to 1990s row-oriented relational engines.
+- The meaningful trade-off between Star and Snowflake schemas is not storage volume, but **query execution cost**.
+
+## Query Execution Cost: Joins and Cloud Engines
+
+The technical argument for Star Schema is not "it uses less disk space", but "each query executes fewer join operations". This becomes critical when dimension tables grow large.
+
+Consider a customer dimension with 5 million rows, normalized as `dim_customer → dim_city → dim_state` (a snowflake geographic hierarchy) versus a denormalized star dimension where `state` sits directly on `dim_customer`.
+
+To answer "total sales by state":
+
+- **Star Schema:** `fact_sales` (100M rows) joins once with `dim_customer` (5M rows), which already contains `state`.
+- **Snowflake Schema:** `fact_sales` joins with `dim_customer` (5M rows), and that large intermediate result joins with `dim_city` (5K rows), and then with `dim_state` (32 rows).
+
+The second query is not expensive because of the small sub-dimension tables (`dim_city`, `dim_state`)—it is expensive because it introduces **network shuffle stages** across intermediate join results of size matching `fact_sales`. Every extra hop in a join chain moves massive intermediate datasets across cluster networks.
+
+This impacts cloud billing directly:
+
+- **BigQuery** charges per byte processed/scanned; complex join chains across large intermediate results increase bytes scanned and slot usage.
+- **Snowflake** charges per active warehouse compute time (credits); longer join chains increase warehouse execution duration.
+
+**Rule of Thumb:** Denormalization redundancy in a star schema is inexpensive because it is stored once during ETL loading. The cost of an additional join step is paid on **every single query execution**, multiplied by query frequency. Therefore, BI data marts strongly favor star schemas, while snowflake schemas are reserved for massive hierarchies shared across multiple data marts where maintaining a single source of truth outweighs per-query execution costs.
+
+## Fact Constellation (Galaxy Schema)
+
+When multiple business processes share common dimensions, they should share physical dimension tables—a structure known as a **fact constellation** or **galaxy schema**. Instead of an isolated star schema per process, multiple fact tables link to a set of **conformed dimensions** (identical surrogate keys, grain, and definitions across all referencing facts).
+
+In a healthcare domain: beyond `FACT_APPOINTMENT_CANCELLATION` (one row per scheduled appointment), a hospital also logs `FACT_HOSPITAL_BILLING` (one row per billed line item). Rather than creating redundant dimensions for the second process, both fact tables share `DIM_DATE`, `DIM_HOSPITAL`, `DIM_SERVICE`, `DIM_PATIENT`, and `DIM_INSURER`:
+
+```{mermaid}
+erDiagram
+
+    FACT_APPOINTMENT_CANCELLATION {
+        int appointment_key
+        int date_key
+        int hospital_key
+        int service_key
+        int patient_key
+        int insurer_key
+        int cancelled_flag
+        int no_show_flag
+    }
+
+    FACT_HOSPITAL_BILLING {
+        int invoice_key
+        int date_key
+        int hospital_key
+        int service_key
+        int patient_key
+        int insurer_key
+        decimal billed_amount
+        decimal covered_amount
+        decimal patient_amount
+    }
+
+    DIM_DATE {
+        int date_key
+        date date_val
+        int month
+        int year
+    }
+
+    DIM_HOSPITAL {
+        int hospital_key
+        string hospital_name
+        string state
+    }
+
+    DIM_SERVICE {
+        int service_key
+        string service_name
+        string specialty
+    }
+
+    DIM_PATIENT {
+        int patient_key
+        int age
+        string gender
+    }
+
+    DIM_INSURER {
+        int insurer_key
+        string insurer_name
+        string insurer_type
+    }
+
+    FACT_APPOINTMENT_CANCELLATION }o--|| DIM_DATE : date_key
+    FACT_APPOINTMENT_CANCELLATION }o--|| DIM_HOSPITAL : hospital_key
+    FACT_APPOINTMENT_CANCELLATION }o--|| DIM_SERVICE : service_key
+    FACT_APPOINTMENT_CANCELLATION }o--|| DIM_PATIENT : patient_key
+    FACT_APPOINTMENT_CANCELLATION }o--|| DIM_INSURER : insurer_key
+
+    FACT_HOSPITAL_BILLING }o--|| DIM_DATE : date_key
+    FACT_HOSPITAL_BILLING }o--|| DIM_HOSPITAL : hospital_key
+    FACT_HOSPITAL_BILLING }o--|| DIM_SERVICE : service_key
+    FACT_HOSPITAL_BILLING }o--|| DIM_PATIENT : patient_key
+    FACT_HOSPITAL_BILLING }o--|| DIM_INSURER : insurer_key
+```
+
+Conformed dimensions eliminate redundant modeling effort: without them, separate teams build conflicting "patient" or "service" tables with different surrogate keys, preventing cross-process queries (e.g., "how many cancelled appointments still generated partial billing?"). Conformed dimensions make facts directly comparable.
+
+## Design Patterns for Managing Redundancy
+
+Beyond Star, Snowflake, and Constellation schemas, specific design patterns help determine *where* data should reside—balancing uncontrolled redundancy against join overhead.
+
+```{=html}
+<div id="patrones-redundancia" role="figure" aria-labelledby="pr-titulo" aria-describedby="pr-descripcion">
+<style>
+#patrones-redundancia {
+  --texto:#172033;
+  --secundario:#53627a;
+  --linea:#9aa8bc;
+  --fondo:#eef3f8;
+  --azul:#dceafe;
+  --azul-borde:#4478bd;
+  --verde:#dff3e7;
+  --verde-borde:#3f855c;
+  --ambar:#fff0cc;
+  --ambar-borde:#a56c10;
+  --violeta:#eee5fb;
+  --violeta-borde:#7655aa;
+  --rojo:#fae4e2;
+  --rojo-borde:#a4544c;
+  --cian:#dcf2f3;
+  --cian-borde:#327d82;
+
+  box-sizing:border-box;
+  max-width:1120px;
+  margin:1.5rem auto;
+  padding:.25rem;
+  color:var(--texto);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,
+    BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+
+#patrones-redundancia * {
+  box-sizing:border-box;
+}
+
+#patrones-redundancia .titulo {
+  margin:0 0 .35rem;
+  text-align:center;
+  font-size:clamp(1.15rem,2.4vw,1.65rem);
+  font-weight:700;
+}
+
+#patrones-redundancia .subtitulo {
+  max-width:760px;
+  margin:0 auto 1.4rem;
+  color:var(--secundario);
+  text-align:center;
+  line-height:1.45;
+}
+
+#patrones-redundancia .flujo {
+  display:grid;
+  grid-template-columns:minmax(180px,.8fr) 42px minmax(0,2.2fr);
+  align-items:center;
+  gap:.55rem;
+}
+
+#patrones-redundancia .pregunta {
+  padding:1rem;
+  border:2px solid var(--texto);
+  border-radius:14px;
+  background:var(--fondo);
+  text-align:center;
+  font-weight:700;
+  line-height:1.35;
+}
+
+#patrones-redundancia .flecha {
+  color:var(--secundario);
+  font-size:1.65rem;
+  font-weight:700;
+  text-align:center;
+}
+
+#patrones-redundancia .rejilla {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:.8rem;
+}
+
+#patrones-redundancia .patron {
+  min-width:0;
+  padding:.9rem 1rem;
+  border:1px solid var(--linea);
+  border-left:6px solid var(--acento);
+  border-radius:10px;
+  background:var(--superficie);
+}
+
+#patrones-redundancia .patron h3 {
+  margin:0 0 .35rem;
+  font-size:1rem;
+  font-weight:700;
+}
+
+#patrones-redundancia .patron p {
+  margin:0;
+  color:var(--secundario);
+  font-size:.9rem;
+  line-height:1.4;
+}
+
+#patrones-redundancia code {
+  color:var(--texto);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.86em;
+}
+
+#patrones-redundancia .objetivo {
+  display:inline-block;
+  margin-top:.55rem;
+  padding:.15rem .5rem;
+  border:1px solid var(--acento);
+  border-radius:999px;
+  background:rgba(255,255,255,.5);
+  color:var(--texto);
+  font-size:.76rem;
+  font-weight:700;
+}
+
+#patrones-redundancia .p1 {
+  --superficie:var(--azul);
+  --acento:var(--azul-borde);
+}
+
+#patrones-redundancia .p2 {
+  --superficie:var(--verde);
+  --acento:var(--verde-borde);
+}
+
+#patrones-redundancia .p3 {
+  --superficie:var(--ambar);
+  --acento:var(--ambar-borde);
+}
+
+#patrones-redundancia .p4 {
+  --superficie:var(--violeta);
+  --acento:var(--violeta-borde);
+}
+
+#patrones-redundancia .p5 {
+  --superficie:var(--rojo);
+  --acento:var(--rojo-borde);
+}
+
+#patrones-redundancia .p6 {
+  --superficie:var(--cian);
+  --acento:var(--cian-borde);
+}
+
+#patrones-redundancia .balance {
+  display:grid;
+  grid-template-columns:1fr auto 1fr;
+  align-items:center;
+  gap:.8rem;
+  margin-top:1.25rem;
+  padding-top:1rem;
+  border-top:1px solid var(--linea);
+  color:var(--secundario);
+  text-align:center;
+  font-size:.88rem;
+  font-weight:700;
+}
+
+#patrones-redundancia .escala {
+  width:min(210px,28vw);
+  height:8px;
+  border-radius:999px;
+  background:linear-gradient(
+    90deg,
+    var(--azul-borde),
+    var(--verde-borde)
+  );
+}
+
+#patrones-redundancia .solo-lector {
+  position:absolute;
+  width:1px;
+  height:1px;
+  margin:-1px;
+  padding:0;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0;
+}
+
+@media (max-width:760px) {
+  #patrones-redundancia .flujo {
+    grid-template-columns:1fr;
+  }
+
+  #patrones-redundancia .flecha {
+    transform:rotate(90deg);
+  }
+}
+
+@media (max-width:520px) {
+  #patrones-redundancia .rejilla {
+    grid-template-columns:1fr;
+  }
+
+  #patrones-redundancia .balance {
+    grid-template-columns:1fr;
+  }
+
+  #patrones-redundancia .escala {
+    width:75%;
+    margin:0 auto;
+  }
+}
+</style>
+
+<h2 id="pr-titulo" class="titulo">
+  Design Patterns for Deciding Data Placement
+</h2>
+
+<p id="pr-descripcion" class="subtitulo">
+  Choice depends on shared context, fact granularity, rate of change, and cardinality.
+</p>
+
+<div class="flujo">
+  <div class="pregunta">
+    Which modeling problem needs to be solved?
+  </div>
+
+  <div class="flecha" aria-hidden="true">&#8594;</div>
+
+  <div class="rejilla">
+    <section class="patron p1">
+      <h3>Conformed Dimension</h3>
+      <p>
+        A shared dimension serves multiple fact tables using identical keys, grain, and rules.
+      </p>
+      <span class="objetivo">Reuse without duplication</span>
+    </section>
+
+    <section class="patron p2">
+      <h3>Degenerate Dimension</h3>
+      <p>
+        The identifier resides directly in the fact table without descriptive attributes.
+      </p>
+      <span class="objetivo">Avoid empty dimension tables</span>
+    </section>
+
+    <section class="patron p3">
+      <h3>Junk Dimension</h3>
+      <p>
+        Combines low-cardinality flags and indicators into a single dimension table.
+      </p>
+      <span class="objetivo">Consolidate scattered flags</span>
+    </section>
+
+    <section class="patron p4">
+      <h3>Role-Playing Dimension</h3>
+      <p>
+        A single physical dimension plays multiple logical roles (e.g., order, ship, delivery dates on <code>DIM_DATE</code>).
+      </p>
+      <span class="objetivo">Reuse via aliases</span>
+    </section>
+
+    <section class="patron p5">
+      <h3>Mini-Dimension</h3>
+      <p>
+        Separates volatile attributes to prevent versioning an entire large dimension.
+      </p>
+      <span class="objetivo">Isolate frequent changes</span>
+    </section>
+
+    <section class="patron p6">
+      <h3>Bridge Table</h3>
+      <p>
+        Models many-to-many relationships without duplicating fact rows.
+      </p>
+      <span class="objetivo">Preserve cardinality</span>
+    </section>
+  </div>
+</div>
+
+<div class="balance" aria-label="Target Balance">
+  <span>Less Uncontrolled Redundancy</span>
+  <span class="escala" aria-hidden="true"></span>
+  <span>Fewer Unnecessary Joins</span>
+</div>
+
+<p class="solo-lector">
+  The diagram presents six design patterns balancing query complexity and data redundancy.
+</p>
+</div>
+```
+
+**Conformed Dimensions.** A single physical dimension (same grain, keys, and definitions) shared across multiple fact tables, such as `DIM_DATE` above. It forms the backbone of galaxy schemas, preventing separate data marts from redefining "customer" or "product" independently.
+
+**Degenerate Dimensions.** Transactional keys (e.g., invoice number, order ticket ID) stored directly in the fact table without separate dimension tables when no additional descriptive attributes exist.
+
+**Junk Dimensions.** Combining multiple low-cardinality flags or status indicators (`is_promo`, `payment_method`, `channel`) into a single composite dimension table, preventing fact table column bloat.
+
+**Role-Playing Dimensions.** A single physical dimension table referenced multiple times under different context roles in a fact table—for example, `DIM_DATE` referenced via `order_date_key`, `ship_date_key`, and `payment_date_key`.
+
+**Mini-Dimensions.** Separating rapidly changing or volatile attributes (e.g., customer risk score or credit limit) into a standalone mini-dimension to prevent high-frequency Type 2 SCD updates across a large customer dimension table.
+
+**Bridge Tables.** Resolving many-to-many relationships (e.g., a student with multiple active scholarships or a patient episode with multiple attending physicians) without duplicating fact rows or introducing artificial cardinality.
+
+## Conclusion
+
+Star, Snowflake, and Constellation schemas represent distinct architectural choices shifting costs across storage, join execution, and maintenance complexity. In modern columnar storage engines, dimension denormalization is typically the most cost-effective approach. The remaining design challenge is handling attribute updates when dimensions change over time—the focus of the next chapter on Slowly Changing Dimensions (SCD).

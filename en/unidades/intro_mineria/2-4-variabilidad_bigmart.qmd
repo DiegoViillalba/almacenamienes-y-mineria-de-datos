@@ -1,0 +1,309 @@
+---
+title: "Measures of Variability in BigMart Sales"
+number-sections: false
+format:
+  html:
+    toc: true
+    page-layout: full
+  pdf:
+    toc: true
+jupyter: python3
+---
+
+Once the central location of the primary variables in the dataset has been identified, the natural next step is to examine their **variability**. While measures of location answer the question "where are typical values located?", measures of dispersion answer "how spread out or concentrated is the data around that center?". This distinction is crucial because two distributions can share identical means or medians yet exhibit vastly different behavior regarding stability, risk, or internal heterogeneity.
+
+In the context of **BigMart Sales**, variability carries an immediate operational interpretation. A variable with low dispersion suggests relatively stable behavior across products or outlets, whereas high dispersion may indicate segment mixing, extreme values, or uneven commercial dynamics. For variables like `Item_Outlet_Sales`, this is especially relevant because knowing the average sales level is not enough: we also need to know whether sales remain relatively homogeneous or if substantial disparities exist across observations.
+
+## Environment Setup
+
+We will work with the following [BigMart dataset](../../data/bigmart_sales.csv). For this section, we will use Python alongside pandas, numpy, plotly, and matplotlib.
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.rcParams["figure.figsize"] = (8, 4.5)
+plt.rcParams["axes.grid"] = True
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+
+df = pd.read_csv(DATA_PATH)
+
+vars_variabilidad = [
+    "Item_Weight",
+    "Item_Visibility",
+    "Item_MRP",
+    "Item_Outlet_Sales",
+]
+```
+
+## From Location to Dispersion
+
+While the previous chapter focused on summarizing the center using mean and median, we now measure how far data points depart from those representative values. The most common dispersion measures include:
+
+- **Range**:
+  $$
+  R = x_{\max} - x_{\min}
+  $$
+- **Sample Variance**:
+  $$
+  s^2 = \frac{1}{n-1}\sum_{i=1}^{n}(x_i-\bar{x})^2
+  $$
+- **Sample Standard Deviation**:
+  $$
+  s = \sqrt{s^2}
+  $$
+- **Interquartile Range**:
+  $$
+  IQR = Q_3 - Q_1
+  $$
+- **Coefficient of Variation**:
+  $$
+  CV = \frac{s}{\bar{x}}
+  $$
+  provided the mean is strictly positive and scale-interpretable.
+
+These measures are not interchangeable. Range depends entirely on extreme boundary values, standard deviation summarizes average distance from the mean, and IQR focuses on the middle 50% of the distribution, making it robust against atypical observations.
+
+## Computing Measures of Variability
+
+To calculate our metrics of interest, we can utilize pandas methods `.mean()`, `.var()`, `.std()`, `.min()`, `.quantile()`, `.median()`, and `.max()`.
+
+```{python}
+summary_var = pd.DataFrame({
+    "mean": df[vars_variabilidad].mean(),
+    "variance": df[vars_variabilidad].var(),
+    "std_dev": df[vars_variabilidad].std(),
+    "min": df[vars_variabilidad].min(),
+    "q1": df[vars_variabilidad].quantile(0.25),
+    "median": df[vars_variabilidad].median(),
+    "q3": df[vars_variabilidad].quantile(0.75),
+    "max": df[vars_variabilidad].max(),
+})
+
+summary_var["range"] = summary_var["max"] - summary_var["min"]
+summary_var["iqr"] = summary_var["q3"] - summary_var["q1"]
+summary_var["cv"] = summary_var["std_dev"] / summary_var["mean"]
+summary_var
+```
+
+Interpreting these measures requires care. Both variance and standard deviation depend on the measurement scale of each variable. For this reason, directly comparing the standard deviation of `Item_MRP` with that of `Item_Visibility` is misleading, as they represent entirely different units. For a fair comparison across features, the **coefficient of variation (CV)** is far more appropriate because it relates dispersion directly to the magnitude of the mean.
+
+Based on the coefficient of variation, `Item_Outlet_Sales` (`cv = 0.782`) and `Item_Visibility` (`cv = 0.780`) display the highest relative dispersion. This indicates that for both attributes, values depart significantly from their mean, reflecting substantial heterogeneity. Operationally, sales and visibility do not behave uniformly across the dataset, but instead vary widely across observations.
+
+Conversely, `Item_MRP` exhibits a moderate coefficient of variation (`cv = 0.442`). Although its values span a wide range, its relative variability is lower than that of sales and visibility. Finally, `Item_Weight` proves to be the least dispersed variable in relative terms (`cv = 0.361`), suggesting its values concentrate more tightly around its mean.
+
+This reading is supported by the **interquartile range (IQR)**, which reflects the spread of the central 50% of data. For `Item_Outlet_Sales`, `iqr = 2267.049` indicates that even the central core of the distribution displays considerable dispersion. For `Item_MRP`, `iqr = 91.817` also reflects noticeable variability, albeit less extreme. For `Item_Weight` and `Item_Visibility`, these figures should be evaluated relative to their respective scales rather than absolute cross-variable comparisons.
+
+Overall, these measures confirm that `Item_Outlet_Sales` and `Item_Visibility` are the most variable attributes in the dataset, whereas `Item_Weight` exhibits comparatively stable behavior. For EDA, this highlights features requiring closer inspection regarding dispersion, potential extreme values, and subgroup differences.
+
+## Visualizing Dispersion with Boxplots
+
+**Boxplots** (box-and-whisker diagrams) serve as invaluable tools in EDA because they summarize multiple structural aspects of a variable within a single figure: center, dispersion, and potential outliers.
+
+In every boxplot:
+
+- the **line inside the box** marks the **median**;
+- the **lower boundary** of the box represents the **first quartile** ($Q_1$);
+- the **upper boundary** represents the **third quartile** ($Q_3$);
+- the **box height** represents the **interquartile range** ($IQR = Q_3 - Q_1$), reflecting the spread of the middle 50% of observations;
+- the **whiskers** extend to the furthest points within standard non-outlier limits;
+- points falling beyond the whiskers are flagged as **potential outliers**.
+
+This makes the boxplot particularly effective, as it highlights not only where the distribution center lies, but also how tightly or loosely data clusters around that center.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_variabilidad
+)
+
+for i, col in enumerate(vars_variabilidad):
+    row = i // 2 + 1
+    col_pos = i % 2 + 1
+
+    fig.add_trace(
+        go.Box(
+            y=df[col].dropna(),
+            name=col,
+            boxpoints="outliers",
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+
+    fig.update_yaxes(title_text=col, row=row, col=col_pos)
+
+fig.update_layout(
+    title="Boxplots of Selected Variables",
+    height=700,
+    width=950
+)
+
+fig.show()
+```
+
+This visualization quickly reveals which variables possess wide central spreads, how far extremes reach, and whether isolated observations deviate from the main pattern. In EDA contexts, boxplots bridge the gap between location studies and shape analysis.
+
+## Range vs. IQR: Sensitive and Robust Measures
+
+While range is intuitive, it is highly sensitive to extreme values. If a single observation takes an exceptionally large or small value, range expands dramatically. The IQR, by contrast, focuses strictly on the central span of observations, rendering it a superior measure when summarizing dispersion without distortion from isolated outliers.
+
+We can compare range against IQR in a compact summary table to highlight this behavior.
+
+```{python}
+robustness = summary_var[["range", "iqr", "std_dev", "cv"]].sort_values("cv", ascending=False)
+robustness
+```
+
+Across all variables, the **range is considerably larger than the IQR**, showing that extreme values expand overall spread well beyond the dispersion exhibited by the central half of the data.
+
+For instance, in `Item_Outlet_Sales`, the range spans **13053.67**, whereas the IQR is **2267.05**. This implies that although total sales values cover a vast spectrum, the central half of observations concentrates within a much tighter interval. In other words, total sales dispersion is heavily driven by upper-tail outliers.
+
+A similar pattern occurs in `Item_Visibility`, where the range (**0.3284**) is nearly five times the IQR (**0.0676**). This indicates that while most products have visibility levels clustered within a narrow band, isolated cases exhibit significantly higher values that inflate the range.
+
+For `Item_MRP`, the range (**235.60**) also substantially exceeds the IQR (**91.82**), showing that list prices vary widely overall, even though central dispersion is more moderate. Finally, for `Item_Weight`, the range (**16.80**) is approximately double the IQR (**8.08**), reflecting a relatively compact and stable distribution compared to the other features.
+
+Together, these results show that `Item_Outlet_Sales` and `Item_Visibility` exhibit the largest gaps between total spread and central spread, whereas `Item_Weight` exhibits a more compact structure. Consequently, reporting IQR alongside robust metrics is strongly recommended in EDA to prevent extreme values from dominating interpretation.
+
+## Comparing Dispersion Across Groups
+
+Variability can also vary across sub-populations. In BigMart Sales, studying `Item_Outlet_Sales` dispersion across `Outlet_Type` provides valuable business insights.
+
+```{python}
+by_outlet = (
+    df.groupby("Outlet_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .rename(columns={"count": "n", "mean": "mean", "median": "median", "std": "std_dev"})
+      .sort_values("std_dev", ascending=False)
+)
+
+by_outlet
+```
+
+```{python}
+import plotly.express as px
+
+fig = px.box(
+    df,
+    x="Outlet_Type",
+    y="Item_Outlet_Sales",
+    points="outliers",
+    title="Dispersion of Item_Outlet_Sales by Outlet_Type",
+    labels={
+        "Outlet_Type": "Outlet Type",
+        "Item_Outlet_Sales": "Sales per Product"
+    }
+)
+
+fig.update_layout(
+    xaxis_tickangle=45,
+    height=500,
+    width=900
+)
+
+fig.show()
+```
+
+This figure demonstrates that outlet type influences not only sales center location, but also sales dispersion. Certain store formats generate consistent sales, whereas others display much wider spreads.
+
+## Coefficient of Variation and Relative Comparison
+
+Comparing dispersion across features with different units requires dimensionless metrics. The coefficient of variation expresses standard deviation as a percentage of the mean.
+
+```{python}
+cv_table = summary_var[["mean", "std_dev", "cv"]].sort_values("cv", ascending=False)
+cv_table
+```
+
+A high coefficient of variation indicates large dispersion relative to the mean level. For sales or visibility, this relative metric is often more informative than absolute standard deviation when comparing variables of different scales.
+
+## Histogram with Dispersion Bands
+
+Another helpful visualization plots the mean alongside bands marking one standard deviation above and below. While not a formal confidence interval, it provides a visual guide to typical spread around the mean.
+
+```{python}
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=vars_variabilidad
+)
+
+for i, col in enumerate(vars_variabilidad):
+    s = df[col].dropna()
+    mu = s.mean()
+    sigma = s.std()
+
+    row = i // 2 + 1
+    col_pos = i % 2 + 1
+
+    # Histogram
+    fig.add_trace(
+        go.Histogram(
+            x=s,
+            nbinsx=30,
+            name=col,
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+
+    # Mean line
+    fig.add_vline(
+        x=mu,
+        line_dash="dash",
+        line_width=2,
+        annotation_text=f"Mean = {mu:.2f}",
+        annotation_position="top right",
+        row=row, col=col_pos
+    )
+
+    # Mean - s line
+    fig.add_vline(
+        x=mu - sigma,
+        line_dash="dot",
+        line_width=2,
+        annotation_text="Mean - s",
+        annotation_position="top left",
+        row=row, col=col_pos
+    )
+
+    # Mean + s line
+    fig.add_vline(
+        x=mu + sigma,
+        line_dash="dot",
+        line_width=2,
+        annotation_text="Mean + s",
+        annotation_position="top right",
+        row=row, col=col_pos
+    )
+
+    fig.update_xaxes(title_text=col, row=row, col=col_pos)
+    fig.update_yaxes(title_text="Frequency", row=row, col=col_pos)
+
+fig.update_layout(
+    title="Histograms with Mean and Standard Deviation Bands",
+    height=700,
+    width=1000,
+    bargap=0.05
+)
+
+fig.show()
+```
+
+This visualization reinforces an intuitive concept: distributions sharing similar means can differ significantly in how far observations spread around that center.
+
+## Suggested Exercise
+
+Build a second Quarto dashboard including:
+
+- a summary table with range, standard deviation, IQR, and coefficient of variation;
+- boxplots for `Item_Weight`, `Item_Visibility`, `Item_MRP`, and `Item_Outlet_Sales`;
+- a comparison of `Item_Outlet_Sales` dispersion across `Outlet_Type`;
+- a brief commentary explaining why IQR is more robust than range against extreme values.

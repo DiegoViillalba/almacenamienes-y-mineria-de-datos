@@ -1,0 +1,683 @@
+---
+title: "Evaluating a Classification Model"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clasificacion.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+# Evaluating a Classification Model
+
+## Introduction
+
+Model evaluation is a central phase of supervised classification. In classification tasks, a dataset is available where both predictor variables and ground-truth target labels are known for every instance. From these observations, the goal is to learn a decision rule capable of assigning correct class labels to unseen future data [@hastie2009elements; @james2021introduction].
+
+In practical terms, evaluating a classifier goes far beyond counting correct predictions. Model quality depends on how errors are distributed, class balance, relative costs of false positives and false negatives, and operational context. For example, in a spam filter, allowing a few unsolicited emails into the primary inbox may be tolerable, but incorrectly sending an urgent email to the spam folder is a severe error. In medical diagnostics, conversely, generating false positives is far preferable to missing true cases of disease [@fawcett2006introduction; @saito2015precision].
+
+This chapter establishes the core concepts required to evaluate classification models. First, we examine data partitioning methods such as holdout and $K$-fold cross-validation. Next, we introduce the confusion matrix and key metrics derived from it: accuracy, error rate, precision, recall, sensitivity, specificity, and F1-score. Finally, we explore the ROC curve, Area Under the Curve (AUC), and metric selection strategies suited to specific problem constraints.
+
+## Supervised Learning and Evaluation
+
+Supervised learning operates on labeled datasets. Each observation contains a feature vector $\mathbf{x}_i$ and an associated target class $y_i$. In binary classification, $y_i \in \{0, 1\}$, where $1$ denotes the positive class and $0$ denotes the negative class.
+
+::: {.callout-note appearance="minimal"}
+Definition. A supervised dataset is a collection of input-output pairs:
+$$
+\mathcal{D} = \{(\mathbf{x}_i, y_i)\}_{i=1}^{n},
+\qquad
+\mathbf{x}_i \in \mathbb{R}^p,\quad y_i \in \mathcal{Y}
+$$
+:::
+
+A classification model can be conceptualized as a trainable function:
+$$
+f_\theta:\mathbb{R}^p \to \mathcal{Y},
+$$
+where $\theta$ represents parameters learned from data. In probabilistic models, the classifier outputs estimated probabilities or confidence scores:
+$$
+\hat{p}_i = P_\theta(y_i = 1 \mid \mathbf{x}_i).
+$$
+Converting continuous scores into discrete class assignments requires a decision threshold $\tau$:
+$$
+\hat{y}_i =
+\begin{cases}
+1, & \hat{p}_i \geq \tau,\\
+0, & \hat{p}_i < \tau.
+\end{cases}
+$$
+
+Evaluation must be performed on data withheld during training to reliably estimate generalization performance on unseen instances. Evaluating a model solely on its training set yields overly optimistic estimates due to overfitting [@hastie2009elements; @bishop2006pattern].
+
+## Data Partitioning
+
+Standard methodology splits datasets into disjoint subsets with distinct operational roles: training, validation, and testing.
+
+::: {.callout-note appearance="minimal"}
+Definition. A train-validation-test split partitions dataset $\mathcal{D}$ into three pairwise disjoint subsets:
+$$
+\mathcal{D} =
+\mathcal{D}_{\text{train}}
+\cup
+\mathcal{D}_{\text{val}}
+\cup
+\mathcal{D}_{\text{test}},
+\qquad
+\mathcal{D}_{a} \cap \mathcal{D}_{b} = \varnothing
+\quad (a \neq b)
+$$
+:::
+
+The training set fits model parameters. The validation set compares hyperparameter configurations and selects candidate models. The test set remains strictly untouched until final evaluation to provide an unbiased estimate of generalization capability.
+
+A typical split distribution:
+
+| Subset | Typical Ratio | Primary Function |
+|---|---:|---|
+| Training | 70 % | Fit model parameters |
+| Validation | 15 % | Tune hyperparameters & select model |
+| Testing | 15 % | Estimate final generalization performance |
+
+Alternatively, a 50 % train / 25 % validation / 25 % test split is used when higher validation and testing stability is required. Choice of split ratio depends on overall dataset size, computational cost, and expected evaluation variance.
+
+### Holdout Method
+
+The holdout method partitions a dataset a single time into static subsets (e.g., 80 % training and 20 % testing).
+
+::: {.callout-note appearance="minimal"}
+Definition. The holdout method constructs a single partition:
+$$
+\mathcal{D} = \mathcal{D}_{\text{train}} \cup \mathcal{D}_{\text{test}},
+\qquad
+\mathcal{D}_{\text{train}} \cap \mathcal{D}_{\text{test}} = \varnothing
+$$
+:::
+
+Its primary advantage is computational simplicity and speed, making it scalable to massive datasets. Its primary limitation is high variance: evaluation results depend heavily on the specific random split. If the test set happens to contain disproportionately easy cases, reported performance will be artificially high; if it contains unusually hard cases, performance will appear artificially poor.
+
+Under class imbalance, unstratified holdout risks creating test sets with insufficient representation of the minority class. For example, in a dataset with 950 healthy and 50 diseased records, random splitting might place almost no positive cases in test sets, rendering metrics like recall highly unstable.
+
+### Stratified Random Sampling
+
+Stratified sampling mitigates unrepresentative split risks by preserving overall class proportions within each subset. If class A makes up 80 % of the dataset and class B makes up 20 %, training, validation, and test subsets maintain matching 80/20 proportions.
+
+::: {.callout-note appearance="minimal"}
+Definition. A stratified partition preserves marginal class distributions across subsets:
+$$
+P_{\mathcal{D}_{\text{train}}}(Y=y)
+\approx
+P_{\mathcal{D}_{\text{val}}}(Y=y)
+\approx
+P_{\mathcal{D}_{\text{test}}}(Y=y)
+\approx
+P_{\mathcal{D}}(Y=y)
+$$
+:::
+
+Stratification is essential under class imbalance. However, while preserving proportions, single stratified splits can still suffer from sample variance on small datasets.
+
+### Repeated Holdout
+
+Repeated holdout performs multiple independent random splits and averages evaluated metrics across runs, smoothing out single-split variance.
+
+::: {.callout-note appearance="minimal"}
+Definition. In repeated holdout, $R$ independent partitions are generated and metric $M$ is reported as the mean across runs:
+$$
+\bar{M}
+=
+\frac{1}{R}
+\sum_{r=1}^{R}
+M^{(r)}
+$$
+:::
+
+For example, if 5 repetitions yield accuracy scores of 85 %, 82 %, 88 %, 84 %, and 86 %, the mean holdout accuracy is:
+$$
+\bar{M}
+=
+\frac{85 + 82 + 88 + 84 + 86}{5}
+=
+85\%.
+$$
+
+While more reliable than single holdout, repeated holdout can overlap test instances across runs. For small datasets, $K$-fold cross-validation provides a more systematic approach.
+
+### K-fold Cross-Validation
+
+$K$-fold cross-validation partitions data into $K$ equal-sized folds. The model is trained $K$ times: in each iteration $k$, fold $k$ serves as the test set while the remaining $K-1$ folds serve as training data [@stone1974cross; @kohavi1995study].
+
+::: {.callout-note appearance="minimal"}
+Definition. In $K$-fold cross-validation, overall metric $M$ is estimated as the mean score across all $K$ test folds:
+$$
+\widehat{M}_{\text{CV}}
+=
+\frac{1}{K}
+\sum_{k=1}^{K}
+M_k
+$$
+:::
+
+For instance, with $K=5$, each fold contains 20 % of data. Iteration 1 evaluates on fold 1 while training on folds 2–5; iteration 2 evaluates on fold 2 while training on folds 1, 3, 4, 5; and so forth.
+
+If test fold accuracy scores are 82 %, 80 %, 84 %, 81 %, and 83 %, the 5-fold cross-validation accuracy is:
+$$
+\widehat{M}_{\text{CV}}
+=
+\frac{82 + 80 + 84 + 81 + 83}{5}
+=
+82\%.
+$$
+
+Cross-validation maximizes data utilization because every observation is evaluated in a test fold exactly once and used for training in $K-1$ folds. Its primary cost is computational ($K$ training passes). In practice, $K=5$ or $K=10$ are standard choices [@kohavi1995study].
+
+## Python Example: Holdout and Cross-Validation
+
+The following Python example uses `scikit-learn` to fit a Logistic Regression classifier on a synthetic binary problem, comparing stratified holdout and 5-fold cross-validation.
+
+```{python}
+#| label: ejemplo-holdout-cv
+#| echo: true
+#| warning: false
+#| message: false
+
+import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+X, y = make_classification(
+    n_samples=1000,
+    n_features=10,
+    n_informative=5,
+    n_redundant=2,
+    weights=[0.85, 0.15],
+    random_state=42
+)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    stratify=y,
+    random_state=42
+)
+
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+metricas_holdout = {
+    "accuracy": accuracy_score(y_test, y_pred),
+    "precision": precision_score(y_test, y_pred),
+    "recall": recall_score(y_test, y_pred),
+    "f1": f1_score(y_test, y_pred),
+}
+
+metricas_holdout
+```
+
+```{python}
+#| label: ejemplo-kfold
+#| echo: true
+#| warning: false
+#| message: false
+
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+scores = cross_validate(
+    model,
+    X,
+    y,
+    cv=cv,
+    scoring=["accuracy", "precision", "recall", "f1"],
+    return_train_score=False
+)
+
+{metrica: scores[f"test_{metrica}"].mean()
+ for metrica in ["accuracy", "precision", "recall", "f1"]}
+```
+
+This example highlights why accuracy alone is insufficient: on imbalanced data, high accuracy can be achieved simply by favoring the majority class while missing positive cases (low recall).
+
+## Confusion Matrix
+
+The confusion matrix cross-tabulates actual ground-truth labels against model predictions. In binary classification, it tracks four counts: true positives, true negatives, false positives, and false negatives.
+
+::: {.callout-note appearance="minimal"}
+Definition. For positive class $1$ and negative class $0$, the confusion matrix is structured as:
+$$
+\begin{array}{c|cc}
+ & \hat{y}=0 & \hat{y}=1\\
+\hline
+y=0 & TN & FP\\
+y=1 & FN & TP
+\end{array}
+$$
+:::
+
+Count interpretations:
+
+| Symbol | Name | Description |
+|---|---|---|
+| $TP$ | True Positive | Actual positive correctly predicted as positive |
+| $TN$ | True Negative | Actual negative correctly predicted as negative |
+| $FP$ | False Positive | Actual negative incorrectly predicted as positive |
+| $FN$ | False Negative | Actual positive incorrectly predicted as negative |
+
+In spam filtering, a false positive occurs when legitimate email is misclassified as spam. A false negative occurs when spam bypasses the filter into the main inbox.
+
+## Basic Classification Metrics
+
+From the confusion matrix, several complementary performance metrics are derived:
+
+### Accuracy and Error Rate
+
+::: {.callout-note appearance="minimal"}
+Definition. Accuracy is the overall proportion of correct predictions:
+$$
+\text{Accuracy}
+=
+\frac{TP + TN}{TP + TN + FP + FN}
+$$
+:::
+
+Accuracy measures overall correctness. It is informative when classes are balanced and error costs are equal.
+
+::: {.callout-note appearance="minimal"}
+Definition. Error rate is the overall proportion of incorrect predictions:
+$$
+\text{Error Rate}
+=
+\frac{FP + FN}{TP + TN + FP + FN}
+=
+1 - \text{Accuracy}
+$$
+:::
+
+### Precision
+
+::: {.callout-note appearance="minimal"}
+Definition. Precision measures the proportion of positive predictions that are correct:
+$$
+\text{Precision}
+=
+\frac{TP}{TP + FP}
+$$
+:::
+
+Precision evaluates positive prediction reliability. High precision is crucial when false positives carry significant costs (e.g., fraudulent transaction blocking).
+
+### Recall, Sensitivity, and True Positive Rate
+
+::: {.callout-note appearance="minimal"}
+Definition. Recall (Sensitivity or True Positive Rate) measures the proportion of actual positive cases successfully detected:
+$$
+\text{Recall}
+=
+\text{Sensitivity}
+=
+\text{TPR}
+=
+\frac{TP}{TP + FN}
+$$
+:::
+
+Recall measures positive case coverage. It is paramount when false negatives carry severe consequences (e.g., medical diagnostics).
+
+### Specificity and False Positive Rate
+
+::: {.callout-note appearance="minimal"}
+Definition. Specificity (True Negative Rate) measures the proportion of actual negative cases correctly identified:
+$$
+\text{Specificity}
+=
+\frac{TN}{TN + FP}
+$$
+:::
+
+::: {.callout-note appearance="minimal"}
+Definition. False Positive Rate (FPR) measures the proportion of actual negative cases incorrectly flagged as positive:
+$$
+\text{FPR}
+=
+\frac{FP}{FP + TN}
+=
+1 - \text{Specificity}
+$$
+:::
+
+### F1-Score
+
+::: {.callout-note appearance="minimal"}
+Definition. The F1-score is the harmonic mean of precision and recall:
+$$
+F_1
+=
+2
+\cdot
+\frac{\text{Precision}\cdot \text{Recall}}
+{\text{Precision} + \text{Recall}}
+$$
+:::
+
+F1-score provides a single metric balancing precision and recall, heavily penalizing extreme trade-offs. It is particularly effective for evaluating imbalanced classification tasks [@sokolova2009systematic].
+
+### Balanced Accuracy
+
+::: {.callout-note appearance="minimal"}
+Definition. Balanced Accuracy is the arithmetic mean of sensitivity and specificity:
+$$
+\text{Balanced Accuracy}
+=
+\frac{\text{Sensitivity} + \text{Specificity}}{2}
+$$
+:::
+
+Balanced accuracy prevents majority-class dominance from masking poor minority-class performance under class imbalance.
+
+## Python Example: Confusion Matrix and Metrics
+
+```{python}
+#| label: ejemplo-matriz-confusion
+#| echo: true
+#| warning: false
+#| message: false
+
+from sklearn.metrics import confusion_matrix, classification_report
+
+cm = confusion_matrix(y_test, y_pred)
+cm
+```
+
+```{python}
+#| label: ejemplo-reporte-clasificacion
+#| echo: true
+#| warning: false
+#| message: false
+
+print(classification_report(y_test, y_pred, target_names=["Class 0", "Class 1"]))
+```
+
+Computing metrics manually from confusion matrix components:
+
+```{python}
+#| label: ejemplo-metricas-manuales
+#| echo: true
+
+tn, fp, fn, tp = cm.ravel()
+
+accuracy = (tp + tn) / (tp + tn + fp + fn)
+error_rate = (fp + fn) / (tp + tn + fp + fn)
+precision = tp / (tp + fp)
+recall = tp / (tp + fn)
+specificity = tn / (tn + fp)
+f1 = 2 * precision * recall / (precision + recall)
+balanced_accuracy = (recall + specificity) / 2
+
+{
+    "accuracy": accuracy,
+    "error_rate": error_rate,
+    "precision": precision,
+    "recall": recall,
+    "specificity": specificity,
+    "f1": f1,
+    "balanced_accuracy": balanced_accuracy,
+}
+```
+
+## Metric Selection Guidelines
+
+Metric selection depends on domain goals and relative error costs:
+
+| Metric | Primary Use Case | Key Decision Question |
+|---|---|---|
+| Accuracy | Balanced classes, equal error costs | Are all classification errors equally costly? |
+| Error rate | Overall error percentage tracking | What overall failure rate is acceptable? |
+| Precision | Minimizing False Positives | When the model predicts positive, how reliable is it? |
+| Recall / Sensitivity | Minimizing False Negatives | How many true positive cases can we afford to miss? |
+| Specificity | Minimizing False Alarms on Negatives | How effectively are true negative cases preserved? |
+| F1-score | Imbalanced classes, balancing P & R | Is there a direct trade-off between FP and FN costs? |
+
+Consider medical cancer screening models:
+
+| Model | TPR | FPR |
+|---|---:|---:|
+| Model A | 0.92 | 0.35 |
+| Model B | 0.81 | 0.08 |
+
+Model A captures more true cancers (high sensitivity) at the expense of higher false alarms. In initial screening, Model A may be preferred to avoid missed diagnoses. However, if follow-up biopsies carry high physical or financial costs, Model B offers a cleaner balance. Metric selection must align with operational domain realities [@fawcett2006introduction].
+
+## Decision Thresholds
+
+Probabilistic models output continuous confidence scores $\hat{p}(\mathbf{x}) \in [0, 1]$. Converting scores into class predictions depends on decision threshold $\tau$.
+
+::: {.callout-note appearance="minimal"}
+Definition. Given probability score $\hat{p}(\mathbf{x})$, a binary decision rule with threshold $\tau$ is:
+$$
+\hat{y}(\mathbf{x};\tau)
+=
+\mathbb{I}\{\hat{p}(\mathbf{x}) \geq \tau\}
+$$
+:::
+
+Lowering $\tau$ from 0.70 to 0.30 classifies more instances as positive. This raises TPR (catching more positive cases) while simultaneously raising FPR (generating more false alarms).
+
+```{python}
+#| label: ejemplo-umbrales
+#| echo: true
+#| warning: false
+#| message: false
+
+from sklearn.metrics import confusion_matrix
+
+probs = model.predict_proba(X_test)[:, 1]
+
+for tau in [0.70, 0.50, 0.30]:
+    y_pred_tau = (probs >= tau).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred_tau).ravel()
+    tpr = tp / (tp + fn)
+    fpr = fp / (fp + tn)
+    print(f"threshold={tau:.2f} | TPR={tpr:.3f} | FPR={fpr:.3f}")
+```
+
+## ROC Curve and AUC
+
+The ROC curve evaluates classifier trade-offs across all decision thresholds by plotting True Positive Rate vs. False Positive Rate [@fawcett2006introduction].
+
+::: {.callout-note appearance="minimal"}
+Definition. The ROC curve is the parametric set of points:
+$$
+\text{ROC}
+=
+\left\{
+\left(
+\text{FPR}(\tau),
+\text{TPR}(\tau)
+\right)
+:
+\tau \in \mathbb{R}
+\right\}
+$$
+:::
+
+An ideal classifier hugs the top-left corner ($\text{TPR}=1, \text{FPR}=0$). The diagonal line represents random guessing.
+
+AUC summarizes the area under the ROC curve into a single scalar, representing the probability that a randomly chosen positive instance receives a higher prediction score than a randomly chosen negative instance [@fawcett2006introduction].
+
+::: {.callout-note appearance="minimal"}
+Definition. Area Under the ROC Curve (AUC) is:
+$$
+\text{AUC}
+=
+\int_{0}^{1}
+\text{TPR}(\text{FPR})\,d(\text{FPR})
+$$
+:::
+
+General AUC guidelines:
+
+| AUC Range | General Interpretation |
+|---:|---|
+| 0.90--1.00 | Outstanding |
+| 0.80--0.90 | Good / Excellent |
+| 0.70--0.80 | Acceptable |
+| 0.60--0.70 | Poor |
+| 0.50--0.60 | No discriminative value |
+
+High AUC does not guarantee optimal performance at a specific operational threshold. Furthermore, under severe class imbalance, Precision–Recall curves offer superior analytical insight [@saito2015precision].
+
+## Python Example: ROC Curve and AUC
+
+```{python}
+#| label: ejemplo-roc-auc
+#| echo: true
+#| warning: false
+#| message: false
+
+import matplotlib.pyplot as plt
+from sklearn.metrics import RocCurveDisplay, roc_auc_score
+
+auc = roc_auc_score(y_test, probs)
+
+RocCurveDisplay.from_predictions(y_test, probs)
+plt.title(f"ROC Curve (AUC = {auc:.3f})")
+plt.show()
+```
+
+## Precision–Recall Curves
+
+When the positive class is rare, ROC curves can present overly optimistic performance views. Precision–Recall curves evaluate positive class recovery without True Negative domination [@saito2015precision].
+
+::: {.callout-note appearance="minimal"}
+Definition. The Precision–Recall curve plots:
+$$
+\text{PR}
+=
+\left\{
+\left(
+\text{Recall}(\tau),
+\text{Precision}(\tau)
+\right)
+:
+\tau \in \mathbb{R}
+\right\}
+$$
+:::
+
+```{python}
+#| label: ejemplo-pr-curve
+#| echo: true
+#| warning: false
+#| message: false
+
+from sklearn.metrics import PrecisionRecallDisplay, average_precision_score
+
+ap = average_precision_score(y_test, probs)
+
+PrecisionRecallDisplay.from_predictions(y_test, probs)
+plt.title(f"Precision-Recall Curve (AP = {ap:.3f})")
+plt.show()
+```
+
+Average Precision (AP) computes weighted precision across recall increments. Unlike ROC-AUC, its baseline equals positive class prevalence.
+
+## Recommended Classifier Evaluation Workflow
+
+A reproducible evaluation pipeline follows these steps:
+
+1. Formally define the target positive class and operational goal.
+2. Reserve a test set before hyperparameter tuning.
+3. Apply stratified partitioning under class imbalance.
+4. Fit candidate models on training data.
+5. Tune hyperparameters using cross-validation.
+6. Evaluate the selected model once on the held-out test set.
+7. Report confusion matrices and domain-aligned metrics.
+8. Tune decision thresholds for continuous probability outputs.
+9. Fully document random seeds, split protocols, and library versions.
+
+## Full Python Evaluation Example
+
+```{python}
+#| label: ejemplo-evaluacion-completa
+#| echo: true
+#| warning: false
+#| message: false
+
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+)
+
+def evaluar_clasificador(y_true, y_score, threshold=0.5):
+    y_pred = (y_score >= threshold).astype(int)
+
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+
+    return {
+        "threshold": threshold,
+        "TP": tp,
+        "TN": tn,
+        "FP": fp,
+        "FN": fn,
+        "accuracy": accuracy_score(y_true, y_pred),
+        "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
+        "precision": precision_score(y_true, y_pred, zero_division=0),
+        "recall": recall_score(y_true, y_pred),
+        "specificity": tn / (tn + fp),
+        "f1": f1_score(y_true, y_pred),
+        "auc": roc_auc_score(y_true, y_score),
+    }
+
+for tau in [0.3, 0.5, 0.7]:
+    print(evaluar_clasificador(y_test, probs, threshold=tau))
+```
+
+## Conclusions
+
+Evaluating classification models requires moving beyond simple accuracy calculations. Proper data partitioning ensures reliable generalization estimates. Holdout splits are fast but can suffer from split variance. $K$-fold cross-validation provides robust, low-variance estimates at higher computational cost.
+
+The confusion matrix provides the foundation for derived performance metrics: precision, recall, specificity, F1-score, and balanced accuracy. Each metric evaluates distinct performance aspects and must be aligned with domain error costs. High sensitivity minimizes missed positive cases in screening; high precision minimizes false alarms in fraud detection.
+
+Finally, ROC and Precision–Recall curves analyze model performance across all thresholds, enabling threshold selection tailored to specific operational requirements.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::
