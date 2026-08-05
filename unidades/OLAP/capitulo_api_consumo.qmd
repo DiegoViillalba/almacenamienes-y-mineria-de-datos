@@ -1,0 +1,460 @@
+---
+title: "Consumo Moderno de Data Marts: APIs y Capas Semánticas"
+subtitle: "De la consulta directa al contrato de servicio"
+author: "Diego Villalba"
+date: today
+format: html
+bibliography: referencias_api_consumo.bib
+---
+
+```{=html}
+<style>
+.api-visual {
+  --api-blue: #2563eb; --api-blue-soft: #eff6ff;
+  --api-green: #15803d; --api-green-soft: #f0fdf4;
+  --api-amber: #b45309; --api-amber-soft: #fffbeb;
+  --api-purple: #7e22ce; --api-purple-soft: #faf5ff;
+  margin: 1.75rem 0; color: #1e293b;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.api-visual * { box-sizing: border-box; }
+.api-visual .api-caption { margin-top: .75rem; color: #64748b; font-size: .88rem; line-height: 1.45; text-align: center; }
+.api-visual .api-grid { display: grid; gap: 1rem; }
+.api-visual .api-card { padding: 1rem; background: #fff; border: 1px solid #cbd5e1; border-radius: .8rem; box-shadow: 0 2px 8px rgba(15, 23, 42, .06); }
+.api-visual .api-title { font-weight: 750; margin-bottom: .35rem; }
+.api-visual .api-small { color: #475569; font-size: .9rem; line-height: 1.45; }
+.api-visual .api-arrow { color: #64748b; font-size: 1.45rem; font-weight: 700; text-align: center; }
+@media (max-width: 760px) {
+  .api-visual .api-flow { grid-template-columns: 1fr !important; }
+  .api-visual .api-arrow { transform: rotate(90deg); }
+}
+
+/* Toggle demo: mismo dato, tres contratos */
+.api-demo-root { font-family: inherit; background:#f8f9fb; border:1px solid #d8dee6; border-radius:8px; padding:18px 22px; margin:2em 0; }
+.api-demo-tabs { display:flex; gap:8px; justify-content:center; margin-bottom:12px; flex-wrap:wrap; }
+.api-demo-btn { padding:6px 16px; border:1px solid #aab; background:#fff; border-radius:5px; cursor:pointer; font-size:0.85em; font-family:inherit; transition:background .15s,color .15s; }
+.api-demo-btn:hover  { background:#eef2f7; }
+.api-demo-btn.active { background:#1a3a5c; color:#fff; border-color:#1a3a5c; }
+.api-demo-panel { display:none; }
+.api-demo-panel.active { display:block; }
+.api-demo-desc { text-align:center; font-size:0.85em; color:#444; margin-bottom:10px; }
+.api-demo-panel pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:6px; font-size:0.8em; overflow-x:auto; margin: 0.4rem 0; }
+.api-demo-label { font-weight:700; font-size:0.8em; color:#1a3a5c; text-transform:uppercase; letter-spacing:.03em; margin-top:.6rem; }
+</style>
+```
+
+El capítulo anterior terminó con el data mart de Ventas ya construido: cuatro tablas —`dim_tiempo`, `dim_ubicacion`, `dim_departamento`, `fact_ventas`— listas para responder preguntas de negocio mediante `JOIN` y `GROUP BY`, o mediante las operaciones de un cubo OLAP. Esa forma de consumo —un analista con acceso directo al motor de base de datos o a una herramienta de BI conectada por ODBC/JDBC— sigue siendo válida, pero no es la única, ni siempre la más adecuada. Una aplicación móvil de ventas, un panel embebido en el sitio de un cliente, otro microservicio de la organización o un agente automatizado no deberían necesitar credenciales de base de datos ni conocer el esquema interno del data mart para obtener una cifra de ventas. Este capítulo formaliza esa idea: exponer el data mart mediante un **contrato de servicio** —una API— en lugar de acceso directo a las tablas.
+
+## Del acceso directo al contrato de servicio
+
+En el modelo de consumo tradicional, cada cliente (una hoja de cálculo, un dashboard, un script) se conecta directamente al data mart y ejecuta su propia consulta SQL. Este modelo es simple, pero acopla a cada cliente con los detalles internos del esquema: si `dim_ubicacion` cambia una columna de nombre, todos los clientes que la referencian se rompen. Además, es difícil aplicar de forma centralizada control de acceso, límites de uso o versionado.
+
+::: {.callout-note appearance="minimal"}
+Definición. Un **contrato de servicio de datos** desacopla la representación interna de almacenamiento $DM_j$ de la interfaz que ven los clientes, mediante una función de acceso $A$ que expone solo las operaciones y campos autorizados:
+$$
+A: \text{Petición} \longrightarrow \text{Respuesta}, \qquad A \text{ no revela el esquema interno de } DM_j
+$$
+:::
+
+```{=html}
+<div class="api-visual" role="img" aria-label="De un data mart a múltiples clientes mediante una capa de API">
+  <div class="api-grid api-flow" style="grid-template-columns: minmax(150px,1fr) auto minmax(190px,1fr) auto minmax(150px,1fr); align-items:center;">
+    <div class="api-card" style="border-top:4px solid var(--api-purple);">
+      <div class="api-title">Data Mart de Ventas</div>
+      <div class="api-small">fact_ventas + dimensiones conformadas (capítulo anterior).</div>
+    </div>
+    <div class="api-arrow" aria-hidden="true">&rarr;</div>
+    <div class="api-card" style="border-top:4px solid var(--api-green);">
+      <div class="api-title">Capa semántica + API</div>
+      <div class="api-small">Define métricas una sola vez y las expone vía REST / GraphQL.</div>
+    </div>
+    <div class="api-arrow" aria-hidden="true">&rarr;</div>
+    <div class="api-card" style="border-top:4px solid var(--api-blue);">
+      <div class="api-title">Clientes</div>
+      <div class="api-small">App móvil &middot; Dashboard &middot; Otro microservicio &middot; Notebook de análisis</div>
+    </div>
+  </div>
+  <div class="api-caption">Diagrama conceptual. Ningún cliente necesita conocer el esquema interno del data mart: todos consumen el mismo contrato.</div>
+</div>
+```
+
+Esta separación entre almacenamiento y consumo es la misma idea de independencia de datos que ya aparece en el diseño de un DW [@kimball2013data], llevada un nivel más arriba: así como el modelo dimensional independiza el análisis de los sistemas operacionales, la capa de API independiza a los clientes del modelo dimensional.
+
+## REST sobre un data mart
+
+REST (*Representational State Transfer*) es el estilo arquitectónico definido por Roy Fielding para sistemas distribuidos basados en recursos, representaciones y operaciones sin estado sobre HTTP [@fielding2000rest]. En el contexto de un data mart, un recurso natural es una consulta agregada: por ejemplo, "ventas por región y trimestre".
+
+::: {.callout-note appearance="minimal"}
+Definición. Un endpoint REST sobre un data mart mapea una combinación de filtros y agrupaciones a una representación (usualmente JSON):
+$$
+\text{GET } /\text{ventas}?\text{region}=r\,\&\,\text{trimestre}=t \;\longmapsto\; \big\{\text{departamento}: v \;\big|\; v = C(r,t,\cdot)\big\}
+$$
+:::
+
+Nótese el paralelismo con la función de cubo $C$ del primer capítulo: el endpoint REST es, en esencia, una forma de invocar esa misma función agregada a través de HTTP, con los filtros codificados como parámetros de consulta.
+
+Martin Fowler resume la madurez de una API REST en el **Richardson Maturity Model**: nivel 0 (un solo endpoint tipo RPC), nivel 1 (recursos individuales), nivel 2 (verbos HTTP y códigos de estado correctos) y nivel 3 (HATEOAS, enlaces de navegación embebidos en la respuesta) [@fowler2010richardson]. La mayoría de las APIs analíticas en producción se detienen en el nivel 2, que ya resuelve el problema práctico de exponer datos de forma predecible.
+
+### Diseño del endpoint
+
+Un endpoint de nivel 2 razonable para el data mart de Ventas podría verse así (código ilustrativo, no ejecutado en este documento, para evitar añadir dependencias nuevas al entorno del curso):
+
+```python
+# app.py — ilustrativo, requiere fastapi (no incluido en requirements.txt del curso)
+from fastapi import FastAPI, Query
+
+app = FastAPI(title="API de Ventas")
+
+@app.get("/v1/ventas")
+def obtener_ventas(
+    region: str | None = Query(None),
+    trimestre: str | None = Query(None),
+    departamento: str | None = Query(None),
+):
+    """Devuelve ventas agregadas filtradas por región, trimestre y/o departamento."""
+    resultado = consultar_metrica(
+        "total_ventas",
+        group_by=["region", "trimestre", "departamento"],
+        filtros={"region": region, "trimestre": trimestre, "departamento": departamento},
+    )
+    return {"data": resultado}
+```
+
+El detalle importante aquí no es la sintaxis de FastAPI [@fastapi2024docs], sino la separación de responsabilidades: el endpoint solo traduce parámetros HTTP en una llamada a `consultar_metrica`, una función de capa semántica que se define y prueba una sola vez (se implementa más adelante en este capítulo) y que oculta por completo los `JOIN` y `GROUP BY` del data mart.
+
+### Simulación reproducible de la petición y respuesta
+
+Sin necesidad de levantar un servidor, se puede reproducir exactamente lo que ese endpoint haría: recibir un diccionario de parámetros y devolver un diccionario JSON. Primero se reconstruyen las tablas del data mart del capítulo anterior.
+
+```{python}
+import pandas as pd
+
+dim_tiempo = pd.DataFrame({
+    "id_tiempo": [1, 2], "trimestre": ["T1", "T2"], "anio": [2025, 2025],
+})
+dim_ubicacion = pd.DataFrame({
+    "id_ubicacion": [1, 2, 3, 4],
+    "ciudad": ["CDMX", "Guadalajara", "Monterrey", "Mérida"],
+    "region": ["Centro", "Occidente", "Norte", "Sureste"],
+})
+dim_departamento = pd.DataFrame({
+    "id_departamento": [1, 2, 3, 4],
+    "departamento": ["Madera", "Plomería", "Decoración", "Eléctrico"],
+})
+fact_ventas = pd.DataFrame([
+    (1, 1, 1, 70), (1, 1, 2, 40), (1, 1, 3, 20), (1, 1, 4, 30),
+    (2, 1, 1, 50), (2, 1, 2, 60), (2, 1, 3, 22), (2, 1, 4, 28),
+    (1, 2, 1, 60), (1, 2, 2, 35), (1, 2, 3, 25), (1, 2, 4, 40),
+    (2, 2, 1, 45), (2, 2, 2, 50), (2, 2, 3, 30), (2, 2, 4, 35),
+    (1, 3, 1, 48), (1, 3, 2, 38), (1, 3, 3, 18), (1, 3, 4, 26),
+    (2, 3, 1, 36), (2, 3, 2, 55), (2, 3, 3, 25), (2, 3, 4, 30),
+    (1, 4, 1, 52), (1, 4, 2, 42), (1, 4, 3, 15), (1, 4, 4, 37),
+    (2, 4, 1, 44), (2, 4, 2, 33), (2, 4, 3, 20), (2, 4, 4, 28),
+], columns=["id_tiempo", "id_ubicacion", "id_departamento", "monto_venta"])
+
+data_mart = (
+    fact_ventas
+    .merge(dim_tiempo, on="id_tiempo")
+    .merge(dim_ubicacion, on="id_ubicacion")
+    .merge(dim_departamento, on="id_departamento")
+)
+data_mart.head()
+```
+
+Ahora se define, en Python puro, la función que un endpoint REST invocaría internamente, y se simula una petición `GET /v1/ventas?region=Centro&trimestre=T2`:
+
+```{python}
+def obtener_ventas(region=None, trimestre=None, departamento=None):
+    df = data_mart
+    if region:
+        df = df[df["region"] == region]
+    if trimestre:
+        df = df[df["trimestre"] == trimestre]
+    if departamento:
+        df = df[df["departamento"] == departamento]
+
+    agregado = (
+        df.groupby(["region", "trimestre", "departamento"], as_index=False)["monto_venta"]
+        .sum()
+        .rename(columns={"monto_venta": "total_ventas"})
+    )
+    return {"data": agregado.to_dict(orient="records")}
+
+peticion = {"region": "Centro", "trimestre": "T2"}
+respuesta = obtener_ventas(**peticion)
+respuesta
+```
+
+La respuesta trae **todos** los campos del recurso "ventas", independientemente de si el cliente necesita solo `total_ventas` o también `departamento` y `trimestre`. Esto es exactamente la limitación que motiva GraphQL.
+
+## GraphQL sobre un data mart
+
+GraphQL es un lenguaje de consulta en el que el cliente, no el servidor, decide la forma exacta de la respuesta: qué campos quiere y con qué nivel de anidamiento, en una sola petición a un único endpoint [@graphql2021spec]. Esto evita dos problemas comunes en REST: el *over-fetching* (recibir campos que no se necesitan) y el *under-fetching* (necesitar varias peticiones encadenadas para reunir toda la información).
+
+::: {.callout-note appearance="minimal"}
+Definición. Una consulta GraphQL especifica un subconjunto de campos $F \subseteq \text{campos}(R)$ de un recurso $R$; el resolutor devuelve únicamente $F$, sin importar cuántos campos adicionales exponga el esquema.
+:::
+
+Un esquema típico sobre el data mart de Ventas (código ilustrativo; requeriría una librería como `strawberry-graphql` o `graphene`, no incluida en el entorno del curso):
+
+```python
+# schema.py — ilustrativo, requiere strawberry-graphql
+import strawberry
+
+@strawberry.type
+class VentaAgregada:
+    region: str
+    trimestre: str
+    departamento: str
+    total_ventas: float
+
+@strawberry.type
+class Query:
+    @strawberry.field
+    def ventas(self, region: str | None = None, trimestre: str | None = None) -> list[VentaAgregada]:
+        resultado = consultar_metrica(
+            "total_ventas",
+            group_by=["region", "trimestre", "departamento"],
+            filtros={"region": region, "trimestre": trimestre},
+        )
+        return [VentaAgregada(**fila) for fila in resultado]
+
+schema = strawberry.Schema(query=Query)
+```
+
+Un cliente que solo necesita el total por departamento, sin región ni trimestre, escribiría:
+
+```graphql
+query {
+  ventas(region: "Centro", trimestre: "T2") {
+    departamento
+    totalVentas
+  }
+}
+```
+
+### Simulación reproducible: el cliente decide la forma de la respuesta
+
+El siguiente código, ejecutado con `pandas` puro, reproduce el comportamiento esencial de un resolutor GraphQL: recibe la misma consulta y los mismos filtros que en el ejemplo REST, pero un parámetro adicional —los campos solicitados por el cliente— determina qué columnas trae la respuesta.
+
+```{python}
+def resolver_ventas(campos_solicitados, region=None, trimestre=None, departamento=None):
+    df = data_mart
+    if region:
+        df = df[df["region"] == region]
+    if trimestre:
+        df = df[df["trimestre"] == trimestre]
+    if departamento:
+        df = df[df["departamento"] == departamento]
+
+    agregado = (
+        df.groupby(["region", "trimestre", "departamento"], as_index=False)["monto_venta"]
+        .sum()
+        .rename(columns={"monto_venta": "total_ventas"})
+    )
+    return agregado[campos_solicitados].to_dict(orient="records")
+
+# El cliente REST recibía region, trimestre, departamento y total_ventas.
+# El cliente GraphQL pide solo lo que necesita:
+resolver_ventas(["departamento", "total_ventas"], region="Centro", trimestre="T2")
+```
+
+La misma pregunta de negocio —ventas del Centro en T2— produce una respuesta más pequeña porque el cliente, no el servidor, definió la forma de la salida. Esta flexibilidad es la principal ventaja de GraphQL; su costo es una capa de resolución más compleja y, en resolutores mal diseñados, el riesgo del problema *N+1* (una consulta adicional por cada elemento anidado) [@kleppmann2017designing].
+
+### REST y GraphQL en comparación
+
+| Criterio | REST | GraphQL |
+|---|---|---|
+| Forma de la respuesta | Fija, la define el servidor | Flexible, la define el cliente |
+| Número de endpoints | Uno por recurso (o pocos genéricos) | Uno único para todo el esquema |
+| Riesgo típico | Over-/under-fetching | Consultas anidadas costosas (N+1) |
+| Caché HTTP estándar | Sencilla (por URL) | Requiere estrategia propia |
+| Curva de aprendizaje para el cliente | Baja | Media (requiere conocer el esquema) |
+| Adecuado para | Integraciones simples, servicios públicos | Apps con necesidades de datos muy variables |
+
+## Capa semántica: métricas como código
+
+Tanto el ejemplo REST como el de GraphQL delegaron el cálculo real a una función llamada `consultar_metrica`. Esa función es la pieza más importante de una arquitectura de consumo moderna: la **capa semántica**. Su función es definir cada métrica de negocio (qué se suma, con qué filtros válidos, con qué nombre) **una sola vez**, para que REST, GraphQL, un notebook y una herramienta de BI calculen exactamente el mismo número [@dbtlabs2024semanticlayer; @cubejs2024docs].
+
+::: {.callout-note appearance="minimal"}
+Definición. Una **métrica semántica** es una función registrada $M: (\text{agrupación}, \text{filtros}) \to \mathbb{R}$ sobre el data mart, independiente de cualquier consumidor específico.
+$$
+M_{\text{total\_ventas}}(G, F) = \sum_{i \,:\, i \models F} \text{monto\_venta}_i \quad \text{agrupado por } G
+$$
+:::
+
+Esta idea es el equivalente, a nivel de métricas, de lo que las **dimensiones conformadas** son a nivel de atributos (capítulo anterior): en lugar de que cada equipo reimplemente su propio cálculo de "ventas totales" dentro de cada API o cada dashboard, existe una sola definición autorizada. A esta arquitectura —métricas versionadas como código, consumidas por múltiples herramientas de presentación— se le conoce como **headless BI**.
+
+### Implementación reproducible de un registro de métricas
+
+```{python}
+METRICAS = {
+    "total_ventas": {
+        "columna": "monto_venta",
+        "agregacion": "sum",
+    },
+    "ticket_promedio": {
+        "columna": "monto_venta",
+        "agregacion": "mean",
+    },
+}
+
+def consultar_metrica(nombre_metrica, group_by, filtros=None):
+    if nombre_metrica not in METRICAS:
+        raise ValueError(f"Métrica no registrada: {nombre_metrica}")
+
+    definicion = METRICAS[nombre_metrica]
+    df = data_mart
+
+    for campo, valor in (filtros or {}).items():
+        if valor is not None:
+            df = df[df[campo] == valor]
+
+    agregado = (
+        df.groupby(group_by, as_index=False)[definicion["columna"]]
+        .agg(definicion["agregacion"])
+        .rename(columns={definicion["columna"]: nombre_metrica})
+    )
+    return agregado.to_dict(orient="records")
+
+consultar_metrica(
+    "total_ventas",
+    group_by=["region", "trimestre"],
+    filtros={"trimestre": "T2"},
+)
+```
+
+```{python}
+consultar_metrica(
+    "ticket_promedio",
+    group_by=["departamento"],
+    filtros={"region": "Centro"},
+)
+```
+
+Con este registro, tanto `obtener_ventas` (REST) como `resolver_ventas` (GraphQL) podrían reescribirse para llamar únicamente a `consultar_metrica`, garantizando que ambos protocolos devuelvan cifras consistentes entre sí y con cualquier otra herramienta —incluido el cubo OLAP del primer capítulo— que también consulte el mismo registro.
+
+## Un mismo dato, tres contratos
+
+El siguiente panel resume, para la misma pregunta de negocio (ventas del Centro en T2, por departamento), cómo se ve la petición y la respuesta bajo cada uno de los tres contratos discutidos: REST, GraphQL y una llamada directa a la capa semántica.
+
+```{=html}
+<div class="api-demo-root">
+  <div style="text-align:center;margin-bottom:6px;">
+    <span style="font-size:1.02em;font-weight:bold;color:#1a2e45;">Ventas del Centro en T2, por departamento &mdash; tres contratos</span>
+  </div>
+  <div class="api-demo-tabs">
+    <button class="api-demo-btn active" onclick="apiDemoShow('rest')" id="api-btn-rest">REST</button>
+    <button class="api-demo-btn" onclick="apiDemoShow('graphql')" id="api-btn-graphql">GraphQL</button>
+    <button class="api-demo-btn" onclick="apiDemoShow('metrica')" id="api-btn-metrica">Capa semántica (Python)</button>
+  </div>
+
+  <div class="api-demo-panel active" id="api-panel-rest">
+    <div class="api-demo-desc">El servidor decide la forma de la respuesta: siempre incluye todos los campos del recurso.</div>
+    <div class="api-demo-label">Petición</div>
+    <pre>GET /v1/ventas?region=Centro&amp;trimestre=T2</pre>
+    <div class="api-demo-label">Respuesta</div>
+    <pre>{
+  "data": [
+    {"region": "Centro", "trimestre": "T2", "departamento": "Televisores",  "total_ventas": 45},
+    {"region": "Centro", "trimestre": "T2", "departamento": "Computadoras", "total_ventas": 50},
+    {"region": "Centro", "trimestre": "T2", "departamento": "Decoración",   "total_ventas": 30},
+    {"region": "Centro", "trimestre": "T2", "departamento": "Eléctrico",    "total_ventas": 35}
+  ]
+}</pre>
+  </div>
+
+  <div class="api-demo-panel" id="api-panel-graphql">
+    <div class="api-demo-desc">El cliente decide la forma de la respuesta: aquí solo pide departamento y total_ventas.</div>
+    <div class="api-demo-label">Petición</div>
+    <pre>query {
+  ventas(region: "Centro", trimestre: "T2") {
+    departamento
+    totalVentas
+  }
+}</pre>
+    <div class="api-demo-label">Respuesta</div>
+    <pre>{
+  "data": {
+    "ventas": [
+      {"departamento": "Televisores",  "totalVentas": 45},
+      {"departamento": "Computadoras", "totalVentas": 50},
+      {"departamento": "Decoración",   "totalVentas": 30},
+      {"departamento": "Eléctrico",    "totalVentas": 35}
+    ]
+  }
+}</pre>
+  </div>
+
+  <div class="api-demo-panel" id="api-panel-metrica">
+    <div class="api-demo-desc">Ni REST ni GraphQL calculan nada por sí mismos: ambos delegan en la misma función de la capa semántica.</div>
+    <div class="api-demo-label">Llamada</div>
+    <pre>consultar_metrica(
+    "total_ventas",
+    group_by=["departamento"],
+    filtros={"region": "Centro", "trimestre": "T2"},
+)</pre>
+    <div class="api-demo-label">Resultado</div>
+    <pre>[
+  {"departamento": "Televisores",  "total_ventas": 45},
+  {"departamento": "Computadoras", "total_ventas": 50},
+  {"departamento": "Decoración",   "total_ventas": 30},
+  {"departamento": "Eléctrico",    "total_ventas": 35}
+]</pre>
+  </div>
+  <div class="api-caption">Los tres contratos exponen exactamente el mismo número (45, 50, 30, 35); solo cambia el formato de la petición y de la respuesta.</div>
+</div>
+
+<script>
+function apiDemoShow(mode){
+  document.querySelectorAll('.api-demo-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.api-demo-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('api-panel-'+mode).classList.add('active');
+  document.getElementById('api-btn-'+mode).classList.add('active');
+}
+</script>
+```
+
+## Seguridad y gobierno en la capa de API
+
+Exponer un data mart mediante una API centraliza también el lugar natural para aplicar controles que serían difíciles de garantizar si cada cliente consultara la base de datos directamente:
+
+- **Autenticación y autorización.** Cada petición debe identificar quién la hace (token, llave de API) y qué puede ver.
+- **Seguridad a nivel de fila (*row-level security*).** Por ejemplo, un gerente regional solo debería poder consultar `region = "su región"`, sin importar qué parámetros envíe.
+- **Límites de uso (*rate limiting*).** Evita que una consulta costosa mal escrita degrade el servicio para el resto de los clientes.
+- **Versionado explícito del contrato.** El prefijo `/v1/` en los ejemplos anteriores permite evolucionar el esquema sin romper clientes existentes.
+- **Documentación ejecutable.** Un esquema OpenAPI (para REST) o el esquema introspectable de GraphQL permiten generar documentación siempre sincronizada con el código.
+
+## Ventajas, limitaciones y buenas prácticas
+
+Exponer un data mart mediante APIs y una capa semántica tiene ventajas claras frente al acceso directo:
+
+- **Desacoplamiento:** cambios en el esquema físico del data mart no rompen a los clientes si el contrato se mantiene.
+- **Reutilización:** un mismo conjunto de métricas alimenta apps, dashboards y otros servicios sin duplicar lógica de agregación.
+- **Consistencia:** una sola definición de cada métrica evita que dos equipos reporten cifras distintas para la misma pregunta.
+- **Gobierno centralizado:** autenticación, autorización y límites de uso se aplican en un solo lugar.
+
+También introduce costos que conviene anticipar:
+
+- Una capa adicional de infraestructura que hay que operar y monitorear.
+- Riesgo de latencia si cada petición recalcula agregaciones costosas en lugar de usar resultados pre-agregados o cacheados.
+- En GraphQL, riesgo de consultas anidadas ineficientes si los resolutores no se diseñan con cuidado.
+
+Buenas prácticas recomendadas:
+
+1. Definir las métricas en la capa semántica antes de escribir cualquier endpoint, nunca al revés.
+2. Versionar el contrato de la API igual que se versiona el esquema del data mart.
+3. Pre-agregar o cachear las consultas más frecuentes en lugar de recalcularlas en cada petición.
+4. Aplicar seguridad a nivel de fila en la capa semántica, no confiar en que cada cliente filtre correctamente.
+5. Tratar cada data mart expuesto como un **producto de datos**, con dueño, documentación y garantías de calidad [@dehghani2022datamesh].
+
+## Conclusiones
+
+Este capítulo cerró el recorrido de la sección de modelado para consumo: partiendo de un data mart bien diseñado, existen (al menos) dos formas complementarias de consumirlo. La primera, cubierta en el primer capítulo, es la navegación interactiva mediante un cubo OLAP: *slice*, *dice*, *roll-up*, *drill-down* y *pivot* sobre una vista multidimensional, pensada para un analista humano explorando datos. La segunda, cubierta aquí, es la integración programática mediante un contrato de servicio —REST o GraphQL— respaldado por una capa semántica que garantiza que la definición de cada métrica sea única, sin importar cuántas aplicaciones distintas la consulten.
+
+Ambas formas de consumo parten exactamente del mismo data mart. La elección entre exponer un cubo, una API o ambos no es una decisión tecnológica aislada: depende de quién necesita los datos y cómo los va a usar. Un director que explora tendencias trimestre a trimestre se beneficia de un cubo interactivo; una aplicación móvil que muestra el total de ventas del día se beneficia de un endpoint REST ligero; un ecosistema de aplicaciones internas con necesidades de datos heterogéneas se beneficia de una capa semántica expuesta vía GraphQL. Diseñar bien el data mart y sus dimensiones conformadas es lo que hace posible que las tres alternativas coexistan sin contradecirse entre sí.
+
+## Referencias
+
+::: {#refs}
+:::
