@@ -1,0 +1,270 @@
+---
+title: "Introduction to Clustering and Evaluation Metrics"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clustering.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Supervised learning derives mappings from labeled instances to generalize predictions onto unseen data. Unsupervised learning operates on unlabeled data to discover underlying structure: grouping similar instances, uncovering latent factors, or constructing low-dimensional representations [@hastie2009elements; @bishop2006pattern].
+
+Clustering is the primary unsupervised learning task. Given observations $\mathbf{x}_1,\dots,\mathbf{x}_n\in\mathbb{R}^p$, the objective is partitioning them into clusters $C_1,\dots,C_k$ such that within-cluster similarity is maximized relative to between-cluster separation [@aggarwal2013].
+
+## The Clustering Problem
+
+Let $\mathcal{D}=\{\mathbf{x}_1,\dots,\mathbf{x}_n\}$ denote $n$ instances in $\mathbb{R}^p$. A $k$-cluster assignment is defined by mapping:
+
+$$
+\ell:\{1,\dots,n\}\to\{1,\dots,k\},
+$$
+
+where cluster $C_j$ contains instances assigned to label $j$:
+
+$$
+C_j=\{\mathbf{x}_i\mid \ell(i)=j\}.
+$$
+
+## Distance and Similarity Measures
+
+::: {.callout-note appearance="minimal"}
+Definition. Metric Function Properties:
+1. $d(\mathbf{x},\mathbf{y})\geq 0$ and $d(\mathbf{x},\mathbf{y})=0\Leftrightarrow\mathbf{x}=\mathbf{y}$ (positive definiteness),
+2. $d(\mathbf{x},\mathbf{y})=d(\mathbf{y},\mathbf{x})$ (symmetry),
+3. $d(\mathbf{x},\mathbf{z})\leq d(\mathbf{x},\mathbf{y})+d(\mathbf{y},\mathbf{z})$ (triangle inequality).
+:::
+
+### Minkowski Distance Family
+
+::: {.callout-note appearance="minimal"}
+Definition. Minkowski Distance of order $p\ge 1$:
+$$
+d_p(\mathbf{x},\mathbf{y}) = \left(\sum_{j=1}^{d}|x_j-y_j|^p\right)^{1/p}.
+$$ {#eq-minkowski}
+:::
+
+- $p=1$: Manhattan ($L^1$) distance.
+- $p=2$: Euclidean ($L^2$) distance.
+- $p\to\infty$: Chebyshev ($L^\infty$) distance.
+
+```{python}
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import euclidean_distances
+
+rng = np.random.default_rng(42)
+X = rng.normal(loc=[0, 0], scale=[1, 100], size=(50, 2))
+
+X_std = StandardScaler().fit_transform(X)
+
+print("Unscaled mean Euclidean distance:", euclidean_distances(X).mean().round(2))
+print("Scaled mean Euclidean distance:", euclidean_distances(X_std).mean().round(2))
+```
+
+```{=html}
+<div id="dist-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Distance Metrics Explorer</span><br>
+    <span style="font-size:0.81em;color:#666;">Adjust sliders A, B, and Minkowski parameter p</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+    <div><label style="font-size:0.79em;color:#2563eb;">A = (<strong id="dax-v">1</strong>, <strong id="day-v">1</strong>)</label><br>
+      <input id="dax" type="range" min="-4" max="4" step="0.25" value="1" style="width:100%;accent-color:#2563eb;">
+      <input id="day" type="range" min="-4" max="4" step="0.25" value="1" style="width:100%;accent-color:#2563eb;margin-top:4px;"></div>
+    <div><label style="font-size:0.79em;color:#dc2626;">B = (<strong id="dbx-v">3</strong>, <strong id="dby-v">-1</strong>)</label><br>
+      <input id="dbx" type="range" min="-4" max="4" step="0.25" value="3" style="width:100%;accent-color:#dc2626;">
+      <input id="dby" type="range" min="-4" max="4" step="0.25" value="-1" style="width:100%;accent-color:#dc2626;margin-top:4px;"></div>
+    <div><label style="font-size:0.79em;color:#444;">p = <strong id="dp-v">2</strong> <span id="dp-name" style="font-style:italic;"></span></label><br>
+      <input id="dp" type="range" min="1" max="20" step="1" value="2" style="width:100%;accent-color:#1a3a5c;margin-top:18px;"></div>
+  </div>
+  <canvas id="dist-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div id="dist-info" style="text-align:center;font-size:0.82em;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:8px;"></div>
+</div>
+<script>
+(function(){
+  const cv=document.getElementById('dist-cv');
+  const W=680,H=320,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const PAD={l:50,r:20,t:20,b:36};
+  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+  const xMn=-5,xMx=5,yMn=-5,yMx=5;
+  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+
+  function mink(a,b,p){
+    const ac=Math.abs(a[0]-b[0]),bc=Math.abs(a[1]-b[1]);
+    if(p>=18)return Math.max(ac,bc);
+    return Math.pow(Math.pow(ac,p)+Math.pow(bc,p),1/p);
+  }
+
+  function draw(){
+    const ax=parseFloat(document.getElementById('dax').value);
+    const ay=parseFloat(document.getElementById('day').value);
+    const bx=parseFloat(document.getElementById('dbx').value);
+    const by=parseFloat(document.getElementById('dby').value);
+    const p=parseInt(document.getElementById('dp').value);
+    const A=[ax,ay],B=[bx,by];
+
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
+    [-4,-2,0,2,4].forEach(v=>{
+      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();
+    });
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(sx(0),PAD.t);ctx.lineTo(sx(0),PAD.t+CH);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(PAD.l,sy(0));ctx.lineTo(PAD.l+CW,sy(0));ctx.stroke();
+
+    ctx.strokeStyle='rgba(245,158,11,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
+    ctx.beginPath();ctx.moveTo(sx(ax),sy(ay));ctx.lineTo(sx(bx),sy(ay));ctx.lineTo(sx(bx),sy(by));ctx.stroke();
+    ctx.setLineDash([]);
+
+    const ch=Math.max(Math.abs(bx-ax),Math.abs(by-ay));
+    const cx2=(ax+bx)/2,cy2=(ay+by)/2;
+    ctx.strokeStyle='rgba(124,58,237,0.4)';ctx.lineWidth=1.5;
+    ctx.strokeRect(sx(cx2-ch),sy(cy2+ch),sx(cx2+ch)-sx(cx2-ch),sy(cy2-ch)-sy(cy2+ch));
+
+    ctx.strokeStyle='rgba(22,163,74,0.7)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(sx(ax),sy(ay));ctx.lineTo(sx(bx),sy(by));ctx.stroke();
+
+    const r=mink(A,B,p);
+    ctx.strokeStyle='#1a3a5c';ctx.lineWidth=2;ctx.globalAlpha=0.5;
+    ctx.beginPath();
+    const N=360;
+    for(let i=0;i<=N;i++){
+      const th=i/N*2*Math.PI;
+      const ac=Math.abs(Math.cos(th)),as=Math.abs(Math.sin(th));
+      const rr=p>=18?r/Math.max(ac,as):r/Math.pow(Math.pow(ac,p)+Math.pow(as,p),1/p);
+      const px2=ax+rr*Math.cos(th),py2=ay+rr*Math.sin(th);
+      i===0?ctx.moveTo(sx(px2),sy(py2)):ctx.lineTo(sx(px2),sy(py2));
+    }
+    ctx.closePath();ctx.stroke();ctx.globalAlpha=1;
+
+    [[ax,ay,'#2563eb','A'],[bx,by,'#dc2626','B']].forEach(([x,y,col,lbl])=>{
+      ctx.beginPath();ctx.arc(sx(x),sy(y),7,0,2*Math.PI);
+      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle=col;ctx.font='bold 12px Georgia,serif';ctx.textAlign='center';
+      ctx.fillText(lbl,sx(x),sy(y)-12);
+    });
+
+    const dE=mink(A,B,2),dM=mink(A,B,1),dC=mink(A,B,Infinity),dP=mink(A,B,p);
+    const pname=p>=18?'∞ (Chebyshev)':p===1?'1 (Manhattan)':p===2?'2 (Euclidean)':p;
+    document.getElementById('dist-info').innerHTML=
+      `<span style="color:#16a34a">Euclidean (p=2)</span>: <strong>${dE.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#f59e0b">Manhattan (p=1)</span>: <strong>${dM.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#7c3aed">Chebyshev (p→∞)</span>: <strong>${dC.toFixed(3)}</strong>&ensp;·&ensp;`+
+      `<span style="color:#1a3a5c">Minkowski (p=${pname})</span>: <strong>${dP.toFixed(3)}</strong>`;
+  }
+
+  ['dax','day','dbx','dby','dp'].forEach(id=>{
+    document.getElementById(id).addEventListener('input',draw);
+  });
+  draw();
+})();
+</script>
+```
+
+## Internal Evaluation Metrics
+
+### Silhouette Coefficient
+
+::: {.callout-note appearance="minimal"}
+Definition. Silhouette Coefficient $s(i)$:
+$$
+s(i) = \frac{b(i)-a(i)}{\max\{a(i),b(i)\}}.
+$$ {#eq-silhouette}
+:::
+
+where $a(i)$ is mean intra-cluster distance, and $b(i)$ is mean nearest-cluster distance [@rousseeuw1987].
+
+### Davies-Bouldin Index
+
+::: {.callout-note appearance="minimal"}
+Definition. Davies-Bouldin Index:
+$$
+\text{DB} = \frac{1}{K}\sum_{k=1}^{K}\max_{l\neq k}\frac{\bar{d}_k+\bar{d}_l}{d(k,l)}.
+$$ {#eq-davies-bouldin}
+:::
+
+Lower DB values indicate superior cluster compactness and separation [@davies1979].
+
+### Calinski-Harabasz Index
+
+::: {.callout-note appearance="minimal"}
+Definition. Calinski-Harabasz Index:
+$$
+\text{CH} = \frac{\text{SS}_B/(K-1)}{\text{SS}_W/(n-K)}.
+$$ {#eq-calinski-harabasz}
+:::
+
+Higher CH values denote distinct, dense cluster separations [@calinski1974].
+
+```{python}
+from sklearn.datasets import make_blobs
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+
+X, y_true = make_blobs(n_samples=300, centers=4, cluster_std=0.8, random_state=42)
+
+for k in range(2, 6):
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    labels = km.fit_predict(X)
+    s = silhouette_score(X, labels)
+    db = davies_bouldin_score(X, labels)
+    ch = calinski_harabasz_score(X, labels)
+    print(f"k={k} | Silhouette: {s:.3f} | Davies-Bouldin: {db:.3f} | Calinski-Harabasz: {ch:.1f}")
+```
+
+## External Evaluation Metrics
+
+### Adjusted Rand Index (ARI)
+
+::: {.callout-note appearance="minimal"}
+Definition. Adjusted Rand Index:
+$$
+\text{ARI} = \frac{\text{RI} - \mathbb{E}[\text{RI}]}{\max(\text{RI}) - \mathbb{E}[\text{RI}]}.
+$$ {#eq-ari}
+:::
+
+ARI measures pair agreement against ground-truth partition, adjusted for chance [@hubert1985].
+
+## Summary
+
+Unsupervised clustering organizes unlabeled data using geometric or probabilistic distance metrics. Internal evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz) validate cluster quality without ground-truth labels, while external metrics (ARI, NMI) measure agreement against reference partitions.
+
+## References
+
+::: {#refs}
+:::

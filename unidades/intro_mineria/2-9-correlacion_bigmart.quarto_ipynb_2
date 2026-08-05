@@ -1,0 +1,651 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "title: \"Medidas de correlación en Big Mart Sales\"\n",
+        "number-sections: false\n",
+        "format:\n",
+        "  html:\n",
+        "    toc: true\n",
+        "    page-layout: full\n",
+        "  pdf:\n",
+        "    toc: true\n",
+        "jupyter: python3\n",
+        "---\n",
+        "\n",
+        "# Introducción\n",
+        "\n",
+        "Después de estudiar la localización, la variabilidad, la forma, la heterogeneidad y la concentración, resulta natural incorporar una dimensión adicional del análisis exploratorio: la **correlación**. Mientras los capítulos anteriores se enfocaron principalmente en la descripción univariada o en comparaciones entre grupos, el análisis de correlación permite explorar **relaciones entre variables numéricas**.\n",
+        "\n",
+        "En términos generales, la correlación busca responder preguntas como las siguientes:\n",
+        "\n",
+        "- ¿Las ventas aumentan cuando aumenta el precio de lista del producto?\n",
+        "- ¿Existe asociación entre la visibilidad del producto y sus ventas?\n",
+        "- ¿El peso del producto se relaciona con otras variables cuantitativas?\n",
+        "- ¿Las asociaciones observadas son lineales, monotónicas o prácticamente inexistentes?\n",
+        "\n",
+        "Este capítulo se centra en el estudio de las relaciones entre variables numéricas del conjunto de datos **Big Mart Sales**, con énfasis en la variable objetivo de interés:\n",
+        "\n",
+        "$$\n",
+        "\\texttt{Item\\_Outlet\\_Sales}.\n",
+        "$$\n",
+        "\n",
+        "Además de calcular coeficientes de correlación, construiremos representaciones gráficas que ayuden a interpretar dichas asociaciones dentro de un contexto de EDA. La meta no es inferir causalidad, sino **detectar patrones de dependencia, redundancia o independencia aproximada** que puedan enriquecer la comprensión del conjunto de datos.\n",
+        "\n",
+        "# Objetivos del capítulo\n",
+        "\n",
+        "Al finalizar este capítulo, el lector debería ser capaz de:\n",
+        "\n",
+        "1. distinguir entre correlación positiva, negativa y cercana a cero;\n",
+        "2. interpretar la magnitud y el signo de un coeficiente de correlación;\n",
+        "3. comparar correlaciones de Pearson y Spearman;\n",
+        "4. construir una matriz de correlación para variables numéricas;\n",
+        "5. integrar los hallazgos de correlación al dashboard global del libro.\n",
+        "\n",
+        "# Carga y preparación de datos"
+      ],
+      "id": "f2573243"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import plotly.express as px\n",
+        "import plotly.graph_objects as go\n",
+        "\n",
+        "\n",
+        "DATA_PATH = \"../../data/bigmart_sales.csv\" # Ajustar según tu proyecto\n",
+        "df = pd.read_csv(DATA_PATH)\n",
+        "\n",
+        "if \"Item_Fat_Content\" in df.columns:\n",
+        "    df[\"Item_Fat_Content\"] = (\n",
+        "        df[\"Item_Fat_Content\"]\n",
+        "        .replace({\n",
+        "            \"LF\": \"Low Fat\",\n",
+        "            \"low fat\": \"Low Fat\",\n",
+        "            \"reg\": \"Regular\"\n",
+        "        })\n",
+        "    )\n",
+        "\n",
+        "df.head()"
+      ],
+      "id": "2fcdc744",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Para estudiar correlación nos concentraremos primero en las variables numéricas."
+      ],
+      "id": "9bd0ffd0"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "num_df = df.select_dtypes(include=[np.number]).copy()\n",
+        "num_df.columns.tolist()"
+      ],
+      "id": "e72efc39",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "En muchos conjuntos de datos de tipo comercial, la cantidad de variables numéricas es moderada. En **Big Mart Sales**, típicamente aparecen variables como:\n",
+        "\n",
+        "- `Item_Weight`\n",
+        "- `Item_Visibility`\n",
+        "- `Item_MRP`\n",
+        "- `Outlet_Establishment_Year`\n",
+        "- `Item_Outlet_Sales`\n",
+        "\n",
+        "Dependiendo de la versión del dataset, puede haber más o menos variables numéricas. El análisis se adaptará automáticamente a las columnas detectadas.\n",
+        "\n",
+        "# Fundamento conceptual\n",
+        "\n",
+        "## Correlación de Pearson\n",
+        "\n",
+        "La correlación de Pearson entre dos variables aleatorias $X$ e $Y$ se define como\n",
+        "\n",
+        "$$\n",
+        "\\rho_{X,Y} = \\frac{\\operatorname{Cov}(X,Y)}{\\sigma_X \\sigma_Y}.\n",
+        "$$\n",
+        "\n",
+        "En la práctica, con datos muestrales, se utiliza su estimador muestral. Este coeficiente mide la intensidad y dirección de una **asociación lineal**.\n",
+        "\n",
+        "Sus valores están acotados por\n",
+        "\n",
+        "$$\n",
+        "-1 \\leq r \\leq 1.\n",
+        "$$\n",
+        "\n",
+        "- Si $r \\approx 1$, la asociación lineal es positiva fuerte.\n",
+        "- Si $r \\approx -1$, la asociación lineal es negativa fuerte.\n",
+        "- Si $r \\approx 0$, no hay evidencia de asociación lineal fuerte.\n",
+        "\n",
+        "## Correlación de Spearman\n",
+        "\n",
+        "La correlación de Spearman se basa en los rangos de los datos. Es especialmente útil cuando la relación entre dos variables no es estrictamente lineal, pero sí **monotónica**.\n",
+        "\n",
+        "En el EDA, Pearson y Spearman son complementarias:\n",
+        "\n",
+        "- **Pearson**: sensible a relaciones lineales y a valores extremos.\n",
+        "- **Spearman**: más robusta frente a no linealidad monotónica y menos sensible a outliers severos.\n",
+        "\n",
+        "## Advertencia importante\n",
+        "\n",
+        "La correlación **no implica causalidad**. Dos variables pueden estar correlacionadas por múltiples razones: dependencia directa, mediación por otra variable, estructura del proceso de muestreo o simple coincidencia en muestras pequeñas.\n",
+        "\n",
+        "# Revisión de valores faltantes en variables numéricas\n",
+        "\n",
+        "Antes de calcular correlaciones, conviene revisar valores faltantes."
+      ],
+      "id": "90ed23f7"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "missing_num = num_df.isna().sum().sort_values(ascending=False).reset_index()\n",
+        "missing_num.columns = [\"Variable\", \"Faltantes\"]\n",
+        "missing_num"
+      ],
+      "id": "ab2d4db8",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Si existen valores faltantes, `pandas` calculará correlaciones utilizando observaciones disponibles por pares. Para EDA esto suele ser suficiente, aunque conviene documentarlo.\n",
+        "\n",
+        "# Matriz de correlación de Pearson\n",
+        "\n",
+        "Comenzamos con la matriz de correlación de Pearson para todas las variables numéricas."
+      ],
+      "id": "dd0bb1d0"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "corr_pearson = num_df.corr(method=\"pearson\")\n",
+        "corr_pearson"
+      ],
+      "id": "97f61c02",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Mapa de calor"
+      ],
+      "id": "4e2f3b2e"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = px.imshow(\n",
+        "    corr_pearson,\n",
+        "    text_auto=True,\n",
+        "    aspect=\"auto\",\n",
+        "    title=\"Matriz de correlación de Pearson\",\n",
+        "    color_continuous_scale=\"RdBu\",\n",
+        "    zmin=-1,\n",
+        "    zmax=1\n",
+        ")\n",
+        "fig.update_layout(coloraxis_colorbar_title=\"r\")\n",
+        "fig.show()"
+      ],
+      "id": "f0fd2c76",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Interpretación inicial\n",
+        "\n",
+        "Esta matriz permite una lectura rápida de las asociaciones lineales entre variables numéricas. En particular, interesa observar:\n",
+        "\n",
+        "- qué variables están más asociadas con `Item_Outlet_Sales`;\n",
+        "- si existen pares de variables numéricas altamente correlacionados entre sí;\n",
+        "- si la mayoría de relaciones son débiles, moderadas o fuertes.\n",
+        "\n",
+        "En datasets como **Big Mart Sales**, suele ser común encontrar que `Item_MRP` tiene una asociación positiva visible con las ventas, mientras que otras variables presentan correlaciones más débiles.\n",
+        "\n",
+        "# Correlación de Spearman\n",
+        "\n",
+        "Para contrastar con Pearson, calculamos ahora la matriz de Spearman."
+      ],
+      "id": "1e2774ff"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "corr_spearman = num_df.corr(method=\"spearman\")\n",
+        "corr_spearman"
+      ],
+      "id": "35c8d891",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "fig = px.imshow(\n",
+        "    corr_spearman,\n",
+        "    text_auto=True,\n",
+        "    aspect=\"auto\",\n",
+        "    title=\"Matriz de correlación de Spearman\",\n",
+        "    color_continuous_scale=\"RdBu\",\n",
+        "    zmin=-1,\n",
+        "    zmax=1\n",
+        ")\n",
+        "fig.update_layout(coloraxis_colorbar_title=\"ρ\")\n",
+        "fig.show()"
+      ],
+      "id": "30c92753",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Comparación entre Pearson y Spearman\n",
+        "\n",
+        "Cuando Pearson y Spearman tienen valores similares, suele haber evidencia de una asociación aproximadamente lineal o, al menos, de una estructura monotónica estable. Cuando Spearman es claramente mayor que Pearson, puede ser una señal de relación monotónica no lineal o de sensibilidad de Pearson a valores extremos.\n",
+        "\n",
+        "Una forma compacta de comparar ambas matrices es centrarse en la variable de interés."
+      ],
+      "id": "4bb1aedc"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "target = \"Item_Outlet_Sales\"\n",
+        "\n",
+        "if target in num_df.columns:\n",
+        "    corr_compare = pd.DataFrame({\n",
+        "        \"Pearson\": corr_pearson[target],\n",
+        "        \"Spearman\": corr_spearman[target]\n",
+        "    }).sort_values(by=\"Pearson\", ascending=False)\n",
+        "\n",
+        "    corr_compare\n",
+        "else:\n",
+        "    print(f\"La variable {target} no está presente en las columnas numéricas.\")"
+      ],
+      "id": "31e0d33c",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# Correlación con la variable objetivo\n",
+        "\n",
+        "Dado que el fenómeno central del conjunto de datos son las ventas, es útil ordenar las correlaciones con `Item_Outlet_Sales`."
+      ],
+      "id": "2f12fa13"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if target in num_df.columns:\n",
+        "    sales_corr = (\n",
+        "        corr_pearson[target]\n",
+        "        .drop(labels=[target], errors=\"ignore\")\n",
+        "        .sort_values(ascending=False)\n",
+        "        .reset_index()\n",
+        "    )\n",
+        "    sales_corr.columns = [\"Variable\", \"Correlacion_Pearson\"]\n",
+        "    sales_corr"
+      ],
+      "id": "65260534",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if target in num_df.columns:\n",
+        "    fig = px.bar(\n",
+        "        sales_corr,\n",
+        "        x=\"Variable\",\n",
+        "        y=\"Correlacion_Pearson\",\n",
+        "        title=\"Correlación de Pearson con Item_Outlet_Sales\",\n",
+        "        labels={\"Correlacion_Pearson\": \"Correlación\", \"Variable\": \"Variable\"}\n",
+        "    )\n",
+        "    fig.update_layout(xaxis_tickangle=-30)\n",
+        "    fig.show()"
+      ],
+      "id": "c1c05366",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Comentario analítico\n",
+        "\n",
+        "Esta visualización resume qué variables numéricas muestran una asociación lineal más fuerte con las ventas. Una correlación positiva moderada entre `Item_MRP` y `Item_Outlet_Sales`, por ejemplo, puede interpretarse como evidencia de que los productos con mayor precio de lista tienden también a registrar mayores ventas monetarias, aunque esto no implica necesariamente que “vender más caro” cause mayores ventas en sentido causal.\n",
+        "\n",
+        "# Diagramas de dispersión\n",
+        "\n",
+        "Las matrices de correlación son útiles, pero pueden ocultar detalles estructurales. Por ello, es indispensable acompañarlas con gráficos de dispersión.\n",
+        "\n",
+        "## Ventas vs precio de lista"
+      ],
+      "id": "daf6c5d3"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if {\"Item_MRP\", \"Item_Outlet_Sales\"}.issubset(df.columns):\n",
+        "    fig = px.scatter(\n",
+        "        df,\n",
+        "        x=\"Item_MRP\",\n",
+        "        y=\"Item_Outlet_Sales\",\n",
+        "        opacity=0.5,\n",
+        "        title=\"Relación entre Item_MRP e Item_Outlet_Sales\",\n",
+        "        trendline=\"ols\"\n",
+        "    )\n",
+        "    fig.show()"
+      ],
+      "id": "09b40734",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Ventas vs visibilidad"
+      ],
+      "id": "6a208819"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if {\"Item_Visibility\", \"Item_Outlet_Sales\"}.issubset(df.columns):\n",
+        "    fig = px.scatter(\n",
+        "        df,\n",
+        "        x=\"Item_Visibility\",\n",
+        "        y=\"Item_Outlet_Sales\",\n",
+        "        opacity=0.5,\n",
+        "        title=\"Relación entre Item_Visibility e Item_Outlet_Sales\",\n",
+        "        trendline=\"ols\"\n",
+        "    )\n",
+        "    fig.show()"
+      ],
+      "id": "9cea05bd",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Ventas vs peso"
+      ],
+      "id": "61b28538"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if {\"Item_Weight\", \"Item_Outlet_Sales\"}.issubset(df.columns):\n",
+        "    fig = px.scatter(\n",
+        "        df,\n",
+        "        x=\"Item_Weight\",\n",
+        "        y=\"Item_Outlet_Sales\",\n",
+        "        opacity=0.5,\n",
+        "        title=\"Relación entre Item_Weight e Item_Outlet_Sales\",\n",
+        "        trendline=\"ols\"\n",
+        "    )\n",
+        "    fig.show()"
+      ],
+      "id": "23f0bccc",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Qué observar en los diagramas\n",
+        "\n",
+        "Los scatter plots permiten responder preguntas que una matriz de correlación no resuelve por sí sola:\n",
+        "\n",
+        "- ¿La relación parece lineal?\n",
+        "- ¿Hay subgrupos o clústeres?\n",
+        "- ¿Existen outliers que afecten la correlación?\n",
+        "- ¿La nube de puntos sugiere heterocedasticidad?\n",
+        "- ¿Hay curvatura o estructura por segmentos?\n",
+        "\n",
+        "En EDA, esta lectura visual es esencial, porque una correlación numérica puede ser engañosa si la relación no es homogénea.\n",
+        "\n",
+        "# Correlación por subgrupos\n",
+        "\n",
+        "Una extensión particularmente rica consiste en estudiar si la correlación cambia según el tipo de outlet o el tipo de producto. Esto conecta el análisis de correlación con la heterogeneidad.\n",
+        "\n",
+        "## Ejemplo: correlación entre Item_MRP y ventas por tipo de outlet"
+      ],
+      "id": "a2e5f3d2"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if {\"Outlet_Type\", \"Item_MRP\", \"Item_Outlet_Sales\"}.issubset(df.columns):\n",
+        "    corr_by_outlet = (\n",
+        "        df.groupby(\"Outlet_Type\")[[\"Item_MRP\", \"Item_Outlet_Sales\"]]\n",
+        "          .corr(method=\"pearson\")\n",
+        "          .reset_index()\n",
+        "    )\n",
+        "\n",
+        "    corr_by_outlet = corr_by_outlet[\n",
+        "        (corr_by_outlet[\"level_1\"] == \"Item_MRP\")\n",
+        "    ][[\"Outlet_Type\", \"Item_Outlet_Sales\"]]\n",
+        "\n",
+        "    corr_by_outlet.columns = [\"Outlet_Type\", \"Corr_Pearson_MRP_Sales\"]\n",
+        "    corr_by_outlet"
+      ],
+      "id": "c6f4f275",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if {\"Outlet_Type\", \"Item_MRP\", \"Item_Outlet_Sales\"}.issubset(df.columns):\n",
+        "    fig = px.bar(\n",
+        "        corr_by_outlet,\n",
+        "        x=\"Outlet_Type\",\n",
+        "        y=\"Corr_Pearson_MRP_Sales\",\n",
+        "        title=\"Correlación MRP vs ventas por tipo de outlet\",\n",
+        "        labels={\n",
+        "            \"Outlet_Type\": \"Tipo de outlet\",\n",
+        "            \"Corr_Pearson_MRP_Sales\": \"Correlación de Pearson\"\n",
+        "        }\n",
+        "    )\n",
+        "    fig.update_layout(xaxis_tickangle=-20)\n",
+        "    fig.show()"
+      ],
+      "id": "762148b2",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Lectura\n",
+        "\n",
+        "Si la intensidad de la correlación cambia notablemente entre subgrupos, eso sugiere que la relación entre variables no es uniforme en todo el dataset. Este hallazgo es importante porque un coeficiente global puede ocultar comportamientos diferenciados por segmento.\n",
+        "\n",
+        "# Tabla resumen de asociaciones\n",
+        "\n",
+        "Para cerrar el análisis, conviene construir una tabla corta con las correlaciones más relevantes respecto de la variable objetivo."
+      ],
+      "id": "3c8b05b2"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if target in num_df.columns:\n",
+        "    corr_summary = pd.DataFrame({\n",
+        "        \"Variable\": [c for c in num_df.columns if c != target],\n",
+        "        \"Pearson\": [corr_pearson.loc[c, target] for c in num_df.columns if c != target],\n",
+        "        \"Spearman\": [corr_spearman.loc[c, target] for c in num_df.columns if c != target]\n",
+        "    }).sort_values(by=\"Pearson\", ascending=False)\n",
+        "\n",
+        "    corr_summary"
+      ],
+      "id": "bd7a9b8f",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Podemos incluso añadir una etiqueta cualitativa de intensidad para facilitar la lectura didáctica."
+      ],
+      "id": "c538ed8f"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "def strength_label(r):\n",
+        "    a = abs(r)\n",
+        "    if a < 0.10:\n",
+        "        return \"Muy débil\"\n",
+        "    elif a < 0.30:\n",
+        "        return \"Débil\"\n",
+        "    elif a < 0.50:\n",
+        "        return \"Moderada\"\n",
+        "    elif a < 0.70:\n",
+        "        return \"Fuerte\"\n",
+        "    else:\n",
+        "        return \"Muy fuerte\"\n",
+        "\n",
+        "if target in num_df.columns:\n",
+        "    corr_summary_labeled = corr_summary.copy()\n",
+        "    corr_summary_labeled[\"Intensidad_Pearson\"] = corr_summary_labeled[\"Pearson\"].apply(strength_label)\n",
+        "    corr_summary_labeled[\"Intensidad_Spearman\"] = corr_summary_labeled[\"Spearman\"].apply(strength_label)\n",
+        "    corr_summary_labeled"
+      ],
+      "id": "87b9c123",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# Mini-dashboard de correlación\n",
+        "\n",
+        "Para integrarlo al libro, este capítulo puede cerrarse con un panel compacto compuesto por:\n",
+        "\n",
+        "1. tabla de correlaciones con la variable objetivo;\n",
+        "2. mapa de calor de Pearson;\n",
+        "3. scatter plot de la relación más relevante;\n",
+        "4. comparación por subgrupos si procede.\n",
+        "\n",
+        "## KPIs de correlación"
+      ],
+      "id": "b7720cb6"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "if target in num_df.columns:\n",
+        "    strongest_var = corr_summary.iloc[0][\"Variable\"] if len(corr_summary) > 0 else np.nan\n",
+        "    strongest_corr = corr_summary.iloc[0][\"Pearson\"] if len(corr_summary) > 0 else np.nan\n",
+        "\n",
+        "    corr_kpis = pd.DataFrame({\n",
+        "        \"Indicador\": [\n",
+        "            \"Número de variables numéricas\",\n",
+        "            \"Variable más correlacionada con ventas\",\n",
+        "            \"Correlación de Pearson asociada\",\n",
+        "            \"Correlación de Spearman asociada\"\n",
+        "        ],\n",
+        "        \"Valor\": [\n",
+        "            num_df.shape[1],\n",
+        "            strongest_var,\n",
+        "            round(strongest_corr, 4) if pd.notnull(strongest_corr) else np.nan,\n",
+        "            round(\n",
+        "                corr_summary.loc[corr_summary[\"Variable\"] == strongest_var, \"Spearman\"].iloc[0], 4\n",
+        "            ) if pd.notnull(strongest_var) and len(corr_summary) > 0 else np.nan\n",
+        "        ]\n",
+        "    })\n",
+        "\n",
+        "    corr_kpis"
+      ],
+      "id": "219c9fd1",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# Discusión final\n",
+        "\n",
+        "El análisis de correlación amplía la mirada del EDA al introducir relaciones entre variables. En **Big Mart Sales**, esta dimensión permite identificar qué atributos numéricos están más asociados con las ventas y si dicha asociación es débil, moderada o fuerte.\n",
+        "\n",
+        "Sin embargo, el uso de correlaciones debe acompañarse siempre de lectura visual y criterio analítico. Una matriz numérica puede sugerir asociación, pero solo los diagramas de dispersión permiten ver si la relación es lineal, si hay segmentos diferenciados o si algunos valores extremos dominan el comportamiento.\n",
+        "\n",
+        "Además, comparar correlaciones globales con correlaciones por subgrupos conecta este capítulo con la idea de heterogeneidad: no todas las relaciones son homogéneas en toda la población.\n",
+        "\n",
+        "# Ejercicios sugeridos\n",
+        "\n",
+        "1. Repite el análisis usando solo outlets de un tipo específico y compara los resultados con la correlación global.\n",
+        "2. Calcula la matriz de correlación para un subconjunto de categorías de producto y comenta las diferencias.\n",
+        "3. Investiga si la transformación logarítmica de `Item_Outlet_Sales` cambia de forma importante las correlaciones.\n",
+        "4. Identifica un par de variables con baja correlación lineal pero cuya nube de puntos sugiera alguna estructura no trivial."
+      ],
+      "id": "72f39d2a"
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "name": "python3",
+      "language": "python",
+      "display_name": "Python 3 (ipykernel)",
+      "path": "/Users/diegovillalba/.pyenv/versions/data_minning/share/jupyter/kernels/python3"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}

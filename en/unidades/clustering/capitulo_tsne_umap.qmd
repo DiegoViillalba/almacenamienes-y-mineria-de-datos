@@ -1,0 +1,159 @@
+---
+title: "t-SNE, UMAP, and Non-Linear Dimensionality Reduction"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_clustering.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+High-dimensional spaces pose visualization and computational challenges. Linear techniques like PCA project data onto variance-maximizing orthogonal axes [@jolliffe2002]. However, non-linear manifolds require methods preserving local topological relationships [@maaten2008; @mcinnes2018].
+
+## t-SNE (t-Distributed Stochastic Neighbor Embedding)
+
+t-SNE models high-dimensional pairwise conditional similarities via Gaussian distributions and low-dimensional similarities via heavy-tailed Student-$t$ distributions [@maaten2008].
+
+High-dimensional conditional similarity:
+
+$$
+p_{j|i} = \frac{\exp\left(-\|\mathbf{x}_i-\mathbf{x}_j\|^2/(2\sigma_i^2)\right)}{\sum_{k\neq i}\exp\left(-\|\mathbf{x}_i-\mathbf{x}_k\|^2/(2\sigma_i^2)\right)}
+$$ {#eq-tsne-pji}
+
+Symmetric joint probability: $p_{ij} = (p_{j|i}+p_{i|j})/(2n)$.
+
+Low-dimensional Student-$t$ Cauchy similarity:
+
+$$
+q_{ij} = \frac{(1+\|\mathbf{y}_i-\mathbf{y}_j\|^2)^{-1}}{\sum_{k\neq l}(1+\|\mathbf{y}_k-\mathbf{y}_l\|^2)^{-1}}
+$$ {#eq-tsne-qij}
+
+Kullback-Leibler divergence objective:
+
+$$
+C = \text{KL}(P\|Q) = \sum_{i\neq j} p_{ij}\log\frac{p_{ij}}{q_{ij}}
+$$ {#eq-tsne-kl}
+
+```{=html}
+<div id="tsne-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
+  <div style="text-align:center;margin-bottom:12px;">
+    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">t-SNE: Effect of Perplexity</span><br>
+    <span style="font-size:0.81em;color:#666;">Simulate how perplexity influences neighborhood distribution and cluster separation</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+    <div><label style="font-size:0.83em;color:#444;">Perplexity = <strong id="perp-v">30</strong></label><br>
+      <input id="perp-sl" type="range" min="5" max="100" step="5" value="30" style="width:100%;accent-color:#1a3a5c;"></div>
+    <div><label style="font-size:0.83em;color:#444;">Clusters in data = <strong id="ng-v">3</strong></label><br>
+      <input id="ng-sl" type="range" min="2" max="6" step="1" value="3" style="width:100%;accent-color:#7c3aed;"></div>
+  </div>
+  <div id="tsne-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
+  <canvas id="tsne-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+</div>
+<script>
+(function(){
+  const cv=document.getElementById('tsne-cv');
+  const W=680,H=320,DPR=window.devicePixelRatio||1;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
+  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+
+  function makeGroups(ng,n=60){
+    const pts=[],lbls=[];
+    const centers=Array.from({length:ng},(_,i)=>{const a=i/ng*2*Math.PI;return[3*Math.cos(a),3*Math.sin(a)];});
+    for(let i=0;i<n;i++){const c=centers[i%ng];pts.push([c[0]+(Math.random()-0.5)*0.6,c[1]+(Math.random()-0.5)*0.6]);lbls.push(i%ng);}
+    return{pts,lbls};
+  }
+
+  function simulate(pts,lbls,ng,perp){
+    const spread=1.5+perp/50;
+    const noise=perp<15?0.8:perp>60?0.3:0.5;
+    const centers2d=Array.from({length:ng},(_,i)=>{const a=i/ng*2*Math.PI;return[spread*Math.cos(a),spread*Math.sin(a)];});
+    return pts.map((_,i)=>{
+      const c=centers2d[lbls[i]];
+      return[c[0]+(Math.random()-0.5)*noise,c[1]+(Math.random()-0.5)*noise];
+    });
+  }
+
+  function draw(perp,ng){
+    const{pts,lbls}=makeGroups(ng);
+    const embedded=simulate(pts,lbls,ng,perp);
+    const xVals=embedded.map(p=>p[0]),yVals=embedded.map(p=>p[1]);
+    const xMn=Math.min(...xVals)-0.5,xMx=Math.max(...xVals)+0.5;
+    const yMn=Math.min(...yVals)-0.5,yMx=Math.max(...yVals)+0.5;
+    const PAD={l:30,r:16,t:20,b:24};
+    const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
+    const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
+    const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
+
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
+    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(PAD.l,PAD.t,CW,CH);
+
+    embedded.forEach((p,i)=>{
+      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5,0,2*Math.PI);
+      ctx.fillStyle=COLS[lbls[i]]+'cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.2;ctx.stroke();
+    });
+
+    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
+    ctx.fillText(`t-SNE Visualization (Perp=${perp}, k=${ng} clusters)`,PAD.l+CW/2,PAD.t-5);
+
+    document.getElementById('tsne-info').innerHTML= `Perplexity = <strong>${perp}</strong>`;
+  }
+
+  document.getElementById('perp-sl').addEventListener('input',function(){
+    draw(parseInt(this.value),parseInt(document.getElementById('ng-sl').value));
+  });
+  document.getElementById('ng-sl').addEventListener('input',function(){
+    draw(parseInt(document.getElementById('perp-sl').value),parseInt(this.value));
+  });
+  draw(30,3);
+})();
+</script>
+```
+
+## UMAP (Uniform Manifold Approximation and Projection)
+
+UMAP preserves local and global manifold structure via fuzzy simplicial sets [@mcinnes2018]:
+
+$$
+v_{j|i} = \exp\left(-\frac{d(\mathbf{x}_i,\mathbf{x}_j)-\rho_i}{\sigma_i}\right)
+$$ {#eq-umap-vji}
+
+## Summary
+
+t-SNE and UMAP compress high-dimensional feature spaces for low-dimensional non-linear visualization. UMAP preserves global topological relationships better and scales computationally to large datasets [@maaten2008; @mcinnes2018].
+
+## References
+
+::: {#refs}
+:::

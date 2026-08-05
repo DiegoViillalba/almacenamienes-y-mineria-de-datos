@@ -1,0 +1,860 @@
+---
+title: "Missing Data Processing"
+number-sections: false
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    code-fold: true
+    code-tools: true
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+jupyter: python3
+---
+
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+#| output: false
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.impute import SimpleImputer, KNNImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+import plotly.io as pio
+
+pio.templates.default = "plotly_white"
+
+pio.templates["plotly_white"].layout.autosize = True
+pio.templates["plotly_white"].layout.xaxis.autorange = True
+pio.templates["plotly_white"].layout.yaxis.autorange = True
+np.random.seed(42)
+```
+
+## Lesson Objectives
+
+- Understand why missing data matters.
+- Differentiate **MCAR**, **MAR**, and **MNAR**.
+- Observe shifts in bias, variance, and distribution shapes.
+- Compare strategies:
+  - `dropna`
+  - mean imputation
+  - KNN / model-based imputation
+- Review applications in BigMart.
+
+
+# Introduction {.title-section}
+
+## Core Premise
+
+> It is not enough to count **how many** data points are missing.  
+> We must understand **why** they are missing.
+
+The missingness mechanism determines:
+
+- whether our **estimates suffer from bias**
+- whether **imputation is statistically valid**
+- whether our model learns from a **representative sample**
+
+---
+
+## Motivation
+
+Missing data can lead to:
+
+- loss of statistical power
+- biased parameter estimators
+- corrupted standard errors
+- misleading confidence intervals
+- degraded predictive performance
+
+## Visual Example: 
+
+Missingness Concentrated in High Values 
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+n = 4000
+
+x_true = np.random.normal(loc=12, scale=2.2, size=n)
+
+# Higher missingness probability for larger values -> MNAR pattern
+p_missing = 1 / (1 + np.exp(-(x_true - 13.5) * 1.4))
+mask_missing = np.random.rand(n) < p_missing
+
+x_obs = x_true.copy()
+x_obs[mask_missing] = np.nan
+
+plot_df = pd.concat([
+    pd.DataFrame({"Item_Weight": x_true, "Group": "Complete Distribution"}),
+    pd.DataFrame({"Item_Weight": x_obs[~np.isnan(x_obs)], "Group": "Observed Data"})
+], ignore_index=True)
+
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Group",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="Missing Values Distort the Observed Distribution"
+)
+
+fig.update_layout(
+    height=450,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frequency",
+    legend_title=""
+)
+
+fig.show()
+
+print(f"True Mean: {x_true.mean():.3f}, True Average: {np.nanmean(x_true):.3f}")
+print(f"Observed Mean: {np.nanmean(x_obs):.3f}, Observed Average: {np.nanmean(x_obs):.3f}")
+print(f"Missing Proportion: {mask_missing.mean():.3%}")
+```
+
+## Guiding Questions
+
+Before applying any missing data technique, ask:
+
+1. What is the **percentage** of missing data?
+2. What is the **pattern** of missingness?
+3. What is the underlying **mechanism** of missingness?
+4. Are we modeling a **target variable** or a **predictor**?[^modelo]
+
+[^modelo]: A model can learn from imperfect predictors, but cannot learn without observing true target labels.
+
+---
+
+## Structural Types of Missing Data
+
+:::: {.columns}
+
+::: {.column width="50%"}
+#### Unit Nonresponse
+
+**Entire observation is missing**
+
+| X1 | X2 | Y |
+|---|---|---|
+| ? | ? | ? |
+
+**Example:**  
+A respondent declines an entire survey questionnaire.
+:::
+
+::: {.column width="50%"}
+#### Item Nonresponse
+
+**Only specific features are missing**
+
+| X1 | X2 | Y |
+|---|---|---|
+| ✓ | ? | ✓ |
+
+**Example:**  
+A customer profile exists, but one specific field was left unrecorded.
+:::
+
+::::
+
+---
+
+# Missingness Mechanisms {.title-section}
+
+## MCAR — Missing Completely At Random
+
+The probability of missingness **does not depend on any variable**.
+
+$$
+f(R \mid Y, X, \theta) = f(R \mid \theta)
+$$
+
+Intuitively: "Rows were dropped completely at random."
+
+> Example: Random sensor connection dropouts.
+
+---
+
+## Synthetic Example: MCAR in Action
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+np.random.seed(42)
+
+n = 4000
+x_true = np.random.normal(loc=12, scale=2.2, size=n)
+
+p_missing = 0.20
+mcar_mask = np.random.rand(n) < p_missing
+
+x_mcar = x_true.copy()
+x_mcar[mcar_mask] = np.nan
+
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": x_true,
+        "Group": "Complete Distribution"
+    }),
+    pd.DataFrame({
+        "Item_Weight": x_mcar[~np.isnan(x_mcar)],
+        "Group": "Observed Data (MCAR)"
+    })
+], ignore_index=True)
+
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Group",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="MCAR: Observed Sample Mirrors Original Distribution Shape"
+)
+
+fig.update_layout(
+    height=450,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frequency",
+    legend_title=""
+)
+
+fig.show()
+
+print(f"Missing Proportion: {mcar_mask.mean():.2%}")
+print(f"True Mean:        {x_true.mean():.4f}")
+print(f"Observed Mean:    {np.nanmean(x_mcar):.4f}")
+print(f"True Std Dev:     {x_true.std():.4f}")
+print(f"Observed Std Dev: {np.nanstd(x_mcar):.4f}")
+```
+
+---
+
+### Interpretation
+
+- Missingness is independent of observed features.
+- Missingness is independent of unobserved values.
+- Mathematically the most straightforward scenario.
+
+### Practical Consequence
+
+Ignoring missing values under MCAR:
+
+- Does not introduce estimation bias.
+- Reduces sample size and statistical power.
+
+---
+
+## MAR — Missing At Random
+
+> Missingness probability depends **strictly on observed variables**.
+
+$$
+f(R \mid Y, X, \theta) = f(R \mid Y_{obs}, X, \theta)
+$$
+
+Intuitively: "Missingness varies systematically across observable subgroups."
+
+> Example: `Item_Weight` missingness occurs more frequently in specific known `Outlet_Type` categories.
+
+---
+
+## Synthetic Example: MAR in Action
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+np.random.seed(42)
+
+n = 5000
+outlet_type = np.random.choice(
+    ["Supermarket", "Grocery Store", "Mini Market"],
+    size=n,
+    p=[0.50, 0.40, 0.10]
+)
+
+weight = np.select(
+    [outlet_type == "Supermarket",
+     outlet_type == "Grocery Store",
+     outlet_type == "Mini Market"],
+    [
+        np.random.normal(15.0, 1.8, n),
+        np.random.normal(8.8, 1.2, n),
+        np.random.normal(11.8, 1.0, n)
+    ]
+)
+
+df_true = pd.DataFrame({
+    "Outlet_Type": outlet_type,
+    "Item_Weight": weight
+})
+
+p_missing = np.select(
+    [df_true["Outlet_Type"] == "Supermarket",
+     df_true["Outlet_Type"] == "Grocery Store",
+     df_true["Outlet_Type"] == "Mini Market"],
+    [0.03, 0.75, 0.20]
+)
+
+mar_mask = np.random.rand(n) < p_missing
+
+df_mar = df_true.copy()
+df_mar.loc[mar_mask, "Item_Weight"] = np.nan
+
+miss_by_group = (
+    df_mar.assign(missing=df_mar["Item_Weight"].isna())
+          .groupby("Outlet_Type", as_index=False)["missing"]
+          .mean()
+)
+
+fig1 = px.bar(
+    miss_by_group,
+    x="Outlet_Type",
+    y="missing",
+    title="MAR: Missing Probability Depends on Observed Outlet_Type",
+    labels={"missing": "Missing Proportion", "Outlet_Type": "Outlet Type"}
+)
+
+fig1.update_layout(height=420, yaxis_tickformat=".0%")
+fig1.show()
+
+print("Missing Proportion by Group:")
+print(miss_by_group.round(3))
+print("\nTrue Mean:", round(df_true["Item_Weight"].mean(), 3), "Observed Mean:", round(df_mar["Item_Weight"].mean(), 3))
+```
+
+---
+
+## Effect of MAR on the Observed Sample
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": df_true["Item_Weight"],
+        "Group": "Complete Distribution"
+    }),
+    pd.DataFrame({
+        "Item_Weight": df_mar["Item_Weight"].dropna(),
+        "Group": "Observed Data"
+    })
+], ignore_index=True)
+
+mean_true = df_true["Item_Weight"].mean()
+mean_obs  = df_mar["Item_Weight"].mean()
+
+fig2 = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Group",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="Under MAR, the Observed Sample Distorts the True Distribution"
+)
+
+fig2.add_vline(
+    x=mean_true,
+    line_width=3,
+    line_dash="dash",
+    line_color="#1f77b4",
+    annotation_text=f"True Mean = {mean_true:.2f}",
+    annotation_position="top left"
+)
+
+fig2.add_vline(
+    x=mean_obs,
+    line_width=3,
+    line_dash="dot",
+    line_color="#d62728",
+    annotation_text=f"Observed Mean = {mean_obs:.2f}",
+    annotation_position="top right"
+)
+
+fig2.update_layout(
+    height=430,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frequency",
+    legend_title=""
+)
+
+fig2.show()
+```
+
+---
+
+### Interpretation
+
+- Missingness is fully explained by observed variables.
+- Conditional on observed features, missingness does not depend on unobserved values.
+- Represents the standard assumption in applied data science.
+
+### Practical Consequence
+
+Ignoring missing values under MAR:
+
+- Introduces sample selection bias.
+- Model-based or feature-conditioned imputation mitigates bias.
+
+---
+
+## MNAR — Missing Not At Random
+
+> Missingness probability depends **directly on the unobserved value itself**.
+
+$$
+f(R \mid Y, X, \theta) = f(R \mid Y_{obs}, Y_{mis}, X, \theta)
+$$
+
+Intuitively: "Data is missing precisely because of its value."
+
+> Example: Extremely heavy items fail to be weighed due to scale limits.
+
+---
+
+## Synthetic Example: MNAR in Action
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+np.random.seed(42)
+
+n = 5000
+weight_true = np.random.normal(12, 2.2, n)
+
+df_true = pd.DataFrame({
+    "Item_Weight": weight_true
+})
+
+logit = -6 + 0.55 * weight_true
+p_missing = 1 / (1 + np.exp(-logit))
+
+mnar_mask = np.random.rand(n) < p_missing
+
+df_mnar = df_true.copy()
+df_mnar.loc[mnar_mask, "Item_Weight"] = np.nan
+
+plot_df = pd.concat([
+    pd.DataFrame({
+        "Item_Weight": df_true["Item_Weight"],
+        "Group": "Complete Distribution"
+    }),
+    pd.DataFrame({
+        "Item_Weight": df_mnar["Item_Weight"].dropna(),
+        "Group": "Observed Data"
+    })
+], ignore_index=True)
+
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Group",
+    barmode="overlay",
+    opacity=0.65,
+    nbins=40,
+    title="MNAR: High Values Are Preferentially Missing"
+)
+
+fig.update_layout(
+    height=430,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frequency"
+)
+
+fig.show()
+
+print(f"True Mean: {df_true['Item_Weight'].mean():.3f}")
+print(f"Observed Mean: {df_mnar['Item_Weight'].mean():.3f}")
+print(f"Missing Proportion: {mnar_mask.mean():.2%}")
+```
+
+---
+
+### Interpretation
+
+- Missingness mechanism depends on unobserved values.
+- The unobserved value causes its own missingness.
+- Most challenging scenario to handle.
+
+### Practical Consequence
+
+Ignoring missing values under MNAR:
+
+- Introduces structural bias.
+- Standard imputation methods fail to correct bias.
+
+---
+
+## Global Classification of Missing Data Mechanisms
+
+In real datasets, different variables can exhibit different missingness mechanisms (MCAR, MAR, or MNAR). However, global dataset classification is determined by the joint missingness indicator vector:
+
+$$
+P(R \mid X_{\text{obs}}, X_{\text{mis}})
+$$
+
+If even one variable exhibits an MNAR mechanism, the overall joint missingness probability depends on unobserved values:
+
+$$
+P(R \mid X_{\text{obs}}, X_{\text{mis}}) \neq P(R \mid X_{\text{obs}})
+$$
+
+Consequently, the entire dataset must be classified as **MNAR**.
+
+**Conclusion:** A single MNAR feature dictates the global missingness classification.
+
+# Strategies for Handling Missing Data
+
+## Practical Strategies
+
+- **Listwise Deletion (Complete Cases)**: Drops incomplete records; simple, but loses sample volume and power.
+- **Single Imputation**: Replaces missing entries with mean, median, or mode; fast, but artificially depresses variance.
+- **Multiple Imputation**: Generates multiple plausible imputed datasets and pools results; captures uncertainty.
+- **KNN / Model-Based Imputation**: Uses observed feature correlations to estimate missing values; effective under **MAR**.
+
+## Listwise Deletion
+
+Listwise deletion discards any observation containing at least one missing feature value.
+
+Effective sample size decreases to:
+
+$$
+n_{\text{effective}} = n \cdot P(\text{complete})
+$$
+
+Valid primarily under **MCAR**.
+
+## Single Imputation
+
+Replaces missing values with a representative statistic computed from observed data:
+
+$$
+Y_{mis} \leftarrow \bar{Y}_{obs}
+$$
+
+### Synthetic Example: Single Imputation Comparison
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.express as px
+from sklearn.impute import SimpleImputer
+
+np.random.seed(42)
+
+n = 4000
+true_weight = np.random.normal(12, 2.0, n)
+
+df_true = pd.DataFrame({"Item_Weight": true_weight})
+
+mask = np.random.rand(n) < 0.25
+df_missing = df_true.copy()
+df_missing.loc[mask, "Item_Weight"] = np.nan
+
+df_missing["Item_Weight_rounded"] = df_missing["Item_Weight"].round(1)
+df_true["Item_Weight_rounded"] = df_true["Item_Weight"].round(1)
+
+mean_imp = SimpleImputer(strategy="mean")
+median_imp = SimpleImputer(strategy="median")
+mostfreq_imp = SimpleImputer(strategy="most_frequent")
+const_imp = SimpleImputer(strategy="constant", fill_value=10.0)
+
+weight_mean = mean_imp.fit_transform(df_missing[["Item_Weight"]]).flatten()
+weight_median = median_imp.fit_transform(df_missing[["Item_Weight"]]).flatten()
+weight_const = const_imp.fit_transform(df_missing[["Item_Weight"]]).flatten()
+weight_mode = mostfreq_imp.fit_transform(df_missing[["Item_Weight_rounded"]]).flatten()
+
+plot_df = pd.concat([
+    pd.DataFrame({"Item_Weight": df_true["Item_Weight"], "Method": "Original"}),
+    pd.DataFrame({"Item_Weight": weight_mean, "Method": "Mean"}),
+    pd.DataFrame({"Item_Weight": weight_median, "Method": "Median"}),
+    pd.DataFrame({"Item_Weight": weight_mode, "Method": "Mode"}),
+    pd.DataFrame({"Item_Weight": weight_const, "Method": "Constant = 10"}),
+], ignore_index=True)
+
+fig = px.histogram(
+    plot_df,
+    x="Item_Weight",
+    color="Method",
+    barmode="overlay",
+    opacity=0.55,
+    nbins=40,
+    title="Single Imputation Strategy Comparison"
+)
+
+fig.add_vline(
+    x=df_true["Item_Weight"].mean(),
+    line_dash="dash",
+    line_color="black",
+    annotation_text="Original Mean"
+)
+
+fig.update_layout(
+    height=500,
+    xaxis_title="Item_Weight",
+    yaxis_title="Frequency",
+    legend_title="Method"
+)
+
+fig.show()
+```
+
+Single imputation artificially reduces sample variance by placing a spike of identical values at the central estimator.
+
+## Multiple Imputation
+
+Multiple imputation generates $m$ plausible imputed datasets, fits the model on each, and pools estimates across datasets using Rubin's rules:
+
+$$
+\bar{q} = \frac{1}{m} \sum_{i=1}^{m} q_i \qquad T = \bar{U} + \left(1 + \frac{1}{m}\right) B
+$$
+
+where $\bar{U}$ is within-imputation variance and $B$ is between-imputation variance.
+
+### Synthetic Example: Multiple Imputation
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+
+np.random.seed(42)
+
+n = 400
+price = np.random.normal(50, 10, n)
+size  = np.random.normal(100, 20, n)
+weight = 0.08 * price + 0.02 * size + np.random.normal(0, 1, n)
+
+df = pd.DataFrame({"Price": price, "Size": size, "Item_Weight": weight})
+
+mask = np.random.rand(n) < 0.25
+df_missing = df.copy()
+df_missing.loc[mask, "Item_Weight"] = np.nan
+
+imputations = []
+for seed in range(5):
+    imp = IterativeImputer(sample_posterior=True, random_state=seed)
+    imputed = pd.DataFrame(imp.fit_transform(df_missing), columns=df.columns)
+    imputed["Dataset"] = f"Imputation {seed+1}"
+    imputations.append(imputed)
+
+observed = df.loc[~mask].copy()
+removed_true = df.loc[mask].copy()
+
+imputed_only = []
+for i, imp_df in enumerate(imputations, start=1):
+    tmp = imp_df.loc[mask, ["Price", "Item_Weight"]].copy()
+    tmp["Dataset"] = f"Imputation {i}"
+    imputed_only.append(tmp)
+
+imputed_only = pd.concat(imputed_only, ignore_index=True)
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "Before: Observed & Removed True Values",
+        "After: Multiple Plausible Imputations"
+    ]
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=observed["Price"], y=observed["Item_Weight"],
+        mode="markers", name="Observed", opacity=0.55,
+        marker=dict(size=7, color="steelblue")
+    ),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=removed_true["Price"], y=removed_true["Item_Weight"],
+        mode="markers", name="Removed True Values",
+        marker=dict(size=8, symbol="x", color="crimson")
+    ),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=observed["Price"], y=observed["Item_Weight"],
+        mode="markers", name="Observed Reference", opacity=0.20,
+        marker=dict(size=6, color="gray")
+    ),
+    row=1, col=2
+)
+
+colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+for i, dataset in enumerate(imputed_only["Dataset"].unique()):
+    sub = imputed_only[imputed_only["Dataset"] == dataset]
+    fig.add_trace(
+        go.Scatter(
+            x=sub["Price"], y=sub["Item_Weight"],
+            mode="markers", name=dataset, opacity=0.7,
+            marker=dict(size=7, color=colors[i])
+        ),
+        row=1, col=2
+    )
+
+fig.update_xaxes(title_text="Price", row=1, col=1)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=1)
+fig.update_xaxes(title_text="Price", row=1, col=2)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=2)
+fig.show()
+```
+
+## KNN and Model-Based Imputation
+
+KNN estimates missing values using $k$ nearest neighbors across observed feature dimensions:
+
+$$
+\hat{x}_i = \frac{1}{k}\sum_{j \in N_k(i)} x_j
+$$
+
+```{python}
+#| echo: false
+#| fig-width: 14
+#| fig-height: 5.5
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.impute import KNNImputer
+from sklearn.neighbors import NearestNeighbors
+
+np.random.seed(42)
+
+n = 400
+price = np.random.normal(50, 10, n)
+size  = np.random.normal(100, 20, n)
+weight = 0.08 * price + 0.02 * size + np.random.normal(0, 1, n)
+
+df = pd.DataFrame({"Price": price, "Size": size, "Item_Weight": weight})
+
+mask = np.random.rand(n) < 0.25
+df_missing = df.copy()
+df_missing.loc[mask, "Item_Weight"] = np.nan
+
+k = 5
+imputer = KNNImputer(n_neighbors=k)
+df_knn = pd.DataFrame(imputer.fit_transform(df_missing), columns=df.columns)
+
+missing_idx = df_missing[df_missing["Item_Weight"].isna()].index[0]
+observed_df = df_missing[df_missing["Item_Weight"].notna()].copy()
+
+nn = NearestNeighbors(n_neighbors=k)
+nn.fit(observed_df[["Price", "Size"]])
+
+target_point = df_missing.loc[[missing_idx], ["Price", "Size"]]
+distances, neighbor_pos = nn.kneighbors(target_point)
+neighbor_idx = observed_df.iloc[neighbor_pos[0]].index
+true_hidden_value = df.loc[missing_idx, "Item_Weight"]
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["Before Imputation", "After KNN Imputation"]
+)
+
+fig.add_trace(
+    go.Scatter(x=observed_df["Price"], y=observed_df["Item_Weight"],
+               mode="markers", name="Observed", opacity=0.55, marker=dict(size=7)),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Scatter(x=df.loc[mask, "Price"], y=df.loc[mask, "Item_Weight"],
+               mode="markers", name="Removed True Values", marker=dict(size=8, symbol="x", color="crimson")),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Scatter(x=[df.loc[missing_idx, "Price"]], y=[df.loc[missing_idx, "Item_Weight"]],
+               mode="markers", name="Example Case (Hidden True)", marker=dict(size=14, symbol="star", color="black")),
+    row=1, col=1
+)
+
+fig.add_trace(
+    go.Scatter(x=df["Price"], y=df["Item_Weight"],
+               mode="markers", name="Real Data", opacity=0.20, marker=dict(size=6)),
+    row=1, col=2
+)
+
+fig.add_trace(
+    go.Scatter(x=observed_df.loc[neighbor_idx, "Price"], y=observed_df.loc[neighbor_idx, "Item_Weight"],
+               mode="markers", name=f"{k} Nearest Neighbors", marker=dict(size=11, symbol="diamond")),
+    row=1, col=2
+)
+
+fig.add_trace(
+    go.Scatter(x=[df.loc[missing_idx, "Price"]], y=[true_hidden_value],
+               mode="markers", name="Hidden True Value", marker=dict(size=14, symbol="x", color="crimson")),
+    row=1, col=2
+)
+
+fig.add_trace(
+    go.Scatter(x=[df_knn.loc[missing_idx, "Price"]], y=[df_knn.loc[missing_idx, "Item_Weight"]],
+               mode="markers", name="Imputed Value", marker=dict(size=15, symbol="star", color="black")),
+    row=1, col=2
+)
+
+fig.add_hline(y=df_knn.loc[missing_idx, "Item_Weight"], line_dash="dot",
+              annotation_text=f"Imputed = {df_knn.loc[missing_idx, 'Item_Weight']:.2f}", row=1, col=2)
+
+fig.add_hline(y=true_hidden_value, line_dash="dash",
+              annotation_text=f"True = {true_hidden_value:.2f}", row=1, col=2)
+
+fig.update_xaxes(title_text="Price", row=1, col=1)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=1)
+fig.update_xaxes(title_text="Price", row=1, col=2)
+fig.update_yaxes(title_text="Item_Weight", row=1, col=2)
+fig.update_layout(height=520, legend_title="")
+fig.show()
+```
+
+## Conclusions
+
+1. **The mechanism matters more than the missing percentage.** A 5% MNAR pattern introduces more structural bias than a 25% MCAR pattern.
+2. **Diagnose missingness patterns before choosing imputation algorithms.**
+3. **Mean imputation suppresses variance and introduces bias under non-MCAR conditions.**
+4. **KNN and model-based imputations preserve correlation structures under MAR.**
+5. **Use Scikit-learn Pipelines (`sklearn.pipeline.Pipeline`) to prevent data leakage during imputation.**

@@ -1,0 +1,480 @@
+# Transformation, Loading, and ETL Pipelines {#sec-etl-transform-cap}
+
+::: {.callout-note}
+Continuation of the previous chapter. Assumes you have the DataFrame `df` loaded from DBFS.
+:::
+
+## 1. Transformation (Transform) {#sec-etl-transform}
+
+### 1.1 Column Functions (`pyspark.sql.functions`)
+
+```python
+from pyspark.sql.functions import (
+    col, lit, when, coalesce,
+    to_timestamp, date_format, hour, dayofweek, month,
+    regexp_replace, trim, upper, lower,
+    round as spark_round, abs as spark_abs,
+    log1p, sqrt,
+    sum as spark_sum, avg, count, countDistinct,
+    lag, lead, rank, dense_rank,
+    window
+)
+```
+
+### 1.2 Data Cleaning at Scale
+
+```python
+# Filter out invalid trip records (negative distances, negative fares, etc.)
+df_clean = (df
+    .filter(col("trip_distance") > 0)
+    .filter(col("fare_amount")   > 0)
+    .filter(col("total_amount")  > 0)
+    .filter(col("passenger_count").between(1, 6))
+    # Remove extreme outliers (99.9th percentile ≈ $120 USD total fare)
+    .filter(col("total_amount") < 500)
+)
+
+# Impute missing values with default defaults
+df_clean = df_clean.fillna({
+    "passenger_count": 1,
+    "trip_distance":   0.0,
+})
+
+# Feature engineering and derived columns
+df_feat = (df_clean
+    .withColumn("pickup_hour",    hour("tpep_pickup_datetime"))
+    .withColumn("day_of_week",    dayofweek("tpep_pickup_datetime"))
+    .withColumn("month",          month("tpep_pickup_datetime"))
+    .withColumn("duration_min",
+        (col("tpep_dropoff_datetime").cast("long") -
+         col("tpep_pickup_datetime").cast("long")) / 60)
+    .withColumn("fare_per_km",
+        when(col("trip_distance") > 0,
+             spark_round(col("fare_amount") / col("trip_distance"), 2))
+        .otherwise(None))
+    .withColumn("tip_percentage",
+        spark_round(col("tip_amount") / col("fare_amount") * 100, 1))
+)
+```
+
+### 1.3 Aggregations and Window Functions
+
+```python
+from pyspark.sql import Window
+
+# Simple aggregation: hourly revenue totals
+hourly_revenue = (df_feat
+    .groupBy("pickup_hour")
+    .agg(
+        count("*").alias("trip_count"),
+        avg("total_amount").alias("avg_ticket"),
+        spark_sum("total_amount").alias("total_revenue")
+    )
+    .orderBy("pickup_hour")
+)
+hourly_revenue.show(24)
+
+# Window function: rank pickup zones by daily revenue
+wspec = Window.partitionBy("month","day_of_week").orderBy(col("total_revenue").desc())
+
+ranking = (df_feat
+    .groupBy("month","day_of_week","PULocationID")
+    .agg(spark_sum("total_amount").alias("total_revenue"))
+    .withColumn("rank", dense_rank().over(wspec))
+    .filter(col("rank") <= 5)
+    .orderBy("month","day_of_week","rank")
+)
+ranking.show(20)
+```
+
+### 1.4 Joins at Scale
+
+```python
+# Read small lookup table (fits entirely in memory → broadcast join)
+from pyspark.sql.functions import broadcast
+
+zones = spark.read.csv("data/taxi_zone_lookup.csv",
+                       header=True, inferSchema=True)
+
+# Broadcast join: Spark distributes small table to all executor nodes
+df_with_zone = df_feat.join(
+    broadcast(zones),
+    df_feat.PULocationID == zones.LocationID,
+    "left"
+)
+
+# For large tables: sort-merge join (Spark's default strategy)
+df_large_join = df_feat.join(other_large_table, on="join_key", how="inner")
+```
+
+::: {.callout-warning}
+**Avoid Cartesian Products.** Unconditioned joins on large DataFrames create `N×M` rows and exhaust cluster memory. Spark will raise an error unless `.crossJoin()` is explicitly invoked.
+:::
+
+### 1.5 Exercise E-2 — Complete Cleaning Pipeline {#sec-ej-e2}
+
+::: {.callout-important icon="false"}
+**Exercise E-2: Transformation and Quality Assurance**
+
+Using the Parquet file from Exercise E-1:
+
+```python
+from pyspark.sql.functions import *
+
+# TODO: Complete each step
+# 1. Remove rows with nulls in pickup_datetime or dropoff_datetime
+df_no_nulls = df.dropna(subset=["tpep_pickup_datetime","tpep_dropoff_datetime"])
+
+# 2. Derive column `duration_min` (elapsed time in minutes)
+#    and filter trips with durations between 1 and 180 minutes
+df_duration = ...  # ← complete
+
+# 3. Append derived columns: pickup_hour, day_of_week, is_weekend (boolean)
+df_enriched = ...  # ← complete
+
+# 4. Compute median total_amount per pickup hour
+#    (use approxQuantile across groupings — exact percentiles are computationally expensive)
+hourly_median = ...  # ← complete
+
+# 5. What percentage of trips recorded zero tip?
+#    Does this percentage vary by day of week?
+zero_tip_pct = ...  # ← complete
+
+# 6. Write clean outputs as Parquet partitioned by month and day_of_week
+df_enriched.write.mode("overwrite")\
+    .partitionBy("month","day_of_week")\
+    .parquet("output/clean_taxi/")
+```
+
+**Analysis Questions:**
+a) How many rows were filtered out during each cleaning step?
+b) Which hour of the day exhibits the highest average order value (ticket)?
+c) Do Friday trips generate higher average tip rates than Monday trips?
+:::
+
+---
+
+## 2. SQL Transformations with Spark {#sec-spark-sql}
+
+Spark SQL allows running standard ANSI SQL queries over DataFrames:
+
+```python
+# Register DataFrame as a temporary view
+df_feat.createOrReplaceTempView("trips")
+
+# SQL query execution — identical to queries written in BigQuery or Snowflake
+result = spark.sql("""
+    SELECT
+        pickup_hour,
+        day_of_week,
+        COUNT(*)                           AS trip_count,
+        ROUND(AVG(total_amount), 2)        AS avg_ticket,
+        ROUND(AVG(tip_percentage), 1)      AS avg_tip_pct,
+        ROUND(SUM(total_amount), 0)        AS total_revenue
+    FROM trips
+    WHERE total_amount BETWEEN 2.5 AND 200
+    GROUP BY pickup_hour, day_of_week
+    ORDER BY pickup_hour, day_of_week
+""")
+result.show(48)
+```
+
+::: {.callout-tip}
+If you already know ANSI SQL, you can begin querying with Spark SQL right away. DataFrame methods and SQL queries compile down to identical Catalyst physical plans.
+:::
+
+---
+
+## 3. Loading (Load) {#sec-etl-load}
+
+### 3.1 Writing to Parquet (Standard Lakehouse Format)
+
+```python
+# Basic overwrite write
+df_feat.write.mode("overwrite").parquet("output/clean_trips/")
+
+# Partitioned write — essential for query partition pruning
+df_feat.write\
+    .mode("overwrite")\
+    .partitionBy("month", "day_of_week")\
+    .parquet("output/trips_by_date/")
+
+# Control number of output files on disk
+df_feat.coalesce(8).write.mode("overwrite").parquet("output/trips_8files/")
+```
+
+### 3.2 Delta Lake — The Lakehouse Format with ACID
+
+```python
+from delta import configure_spark_with_delta_pip, DeltaTable
+
+spark = configure_spark_with_delta_pip(
+    SparkSession.builder.appName("ETL-Delta")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+).getOrCreate()
+
+# Initial table write
+df_feat.write.format("delta").mode("overwrite").save("output/delta/trips/")
+
+# Upsert (MERGE) — core pattern for incremental data loading
+delta_table = DeltaTable.forPath(spark, "output/delta/trips/")
+
+new_data = spark.read.parquet("data/yellow_tripdata_2023-02.parquet")
+
+(delta_table.alias("target")
+    .merge(new_data.alias("source"),
+           "target.VendorID = source.VendorID AND "
+           "target.tpep_pickup_datetime = source.tpep_pickup_datetime")
+    .whenMatchedUpdateAll()
+    .whenNotMatchedInsertAll()
+    .execute())
+
+# Time Travel — Query past versions of the table
+df_v0 = spark.read.format("delta").option("versionAsOf", 0)\
+             .load("output/delta/trips/")
+```
+
+### 3.3 Writing to a Relational Database (JDBC)
+
+```python
+(df_feat.write
+    .format("jdbc")
+    .option("url",      "jdbc:postgresql://dw-host:5432/datawarehouse")
+    .option("dbtable",  "facts.taxi_trips")
+    .option("user",     "etl_user")
+    .option("password", "secret")
+    .option("batchsize", 10000)     # rows per batch INSERT
+    .option("numPartitions", 8)     # parallel connections
+    .mode("append")
+    .save())
+```
+
+---
+
+## 4. End-to-End ETL Pipeline {#sec-etl-pipeline}
+
+Connecting Extract, Transform, and Load into a reusable pipeline function:
+
+```python
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import (
+    col, hour, dayofweek, month, when,
+    spark_round as _round
+)
+import logging
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("ETL-Taxi")
+
+
+def extract(spark: SparkSession, path: str) -> DataFrame:
+    log.info(f"Extracting raw data from {path}")
+    return spark.read.parquet(path)
+
+
+def transform(df: DataFrame) -> DataFrame:
+    log.info("Transforming datasets...")
+    return (df
+        .filter(col("trip_distance") > 0)
+        .filter(col("fare_amount").between(2.5, 500))
+        .filter(col("passenger_count").between(1, 6))
+        .fillna({"passenger_count": 1})
+        .withColumn("pickup_hour", hour("tpep_pickup_datetime"))
+        .withColumn("day_of_week", dayofweek("tpep_pickup_datetime"))
+        .withColumn("month",       month("tpep_pickup_datetime"))
+        .withColumn("duration_min",
+            (col("tpep_dropoff_datetime").cast("long") -
+             col("tpep_pickup_datetime").cast("long")) / 60)
+        .filter(col("duration_min").between(1, 180))
+        .withColumn("tip_percentage",
+            when(col("fare_amount") > 0,
+                 _round(col("tip_amount")/col("fare_amount")*100, 1))
+            .otherwise(0.0))
+    )
+
+
+def load(df: DataFrame, output_path: str) -> None:
+    log.info(f"Loading cleaned output into {output_path}")
+    (df.write
+        .mode("overwrite")
+        .partitionBy("month", "day_of_week")
+        .parquet(output_path))
+    log.info("ETL pipeline execution complete!")
+
+
+if __name__ == "__main__":
+    spark = (SparkSession.builder
+        .appName("ETL-NYC-Taxi")
+        .master("local[*]")
+        .config("spark.sql.shuffle.partitions", "16")
+        .getOrCreate())
+
+    raw   = extract(spark, "data/yellow_tripdata_2023-01.parquet")
+    clean = transform(raw)
+    load(clean, "output/taxi_etl/")
+
+    spark.stop()
+```
+
+```{=html}
+<!-- ═══════════════════════════════════════════════════════
+     Interactive ETL Pipeline Simulation
+     ═══════════════════════════════════════════════════════ -->
+<div id="etl-pipeline-wrap" style="margin:2rem 0">
+  <div style="display:flex;gap:.8rem;flex-wrap:wrap;justify-content:center;margin-bottom:.8rem">
+    <button onclick="etlPipe.run()" id="etl-btn-run"
+      style="padding:.45rem 1.4rem;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-weight:600">
+      ▶ Run Pipeline
+    </button>
+    <button onclick="etlPipe.reset()"
+      style="padding:.45rem 1.4rem;border-radius:6px;border:none;background:#475569;color:#fff;cursor:pointer">
+      ↺ Reset
+    </button>
+  </div>
+  <canvas id="etl-cv" width="700" height="200"
+    style="width:100%;border-radius:10px;background:#0f172a;display:block"></canvas>
+  <div id="etl-log"
+    style="margin-top:.6rem;background:#1e293b;border-radius:8px;padding:.8rem 1rem;
+           font-family:monospace;font-size:.82rem;color:#94a3b8;min-height:4rem;
+           max-height:8rem;overflow-y:auto"></div>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('etl-cv');
+  const ctx = cv.getContext('2d');
+  const DPR = window.devicePixelRatio||1;
+  const W=700, H=200;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+
+  const stages = [
+    { label:'EXTRACT', sub:'Parquet / CSV / JDBC', color:'#0ea5e9',
+      rows:3200000, detail:'3,200,000 rows read · 16 partitions' },
+    { label:'FILTER', sub:'dist>0, fare∈[2.5,500]', color:'#f59e0b',
+      rows:3050000, detail:'150,000 rows filtered (outliers, nulls)' },
+    { label:'FEATURE ENG.', sub:'hour, day, duration, tip%', color:'#a855f7',
+      rows:3050000, detail:'6 derived columns appended' },
+    { label:'LOAD', sub:'Partitioned Parquet (month×day)', color:'#10b981',
+      rows:3050000, detail:'Written to output/taxi_etl/ · 56 files' },
+  ];
+
+  const logEl = document.getElementById('etl-log');
+  let running = false;
+
+  function drawStage(i, progress, done){
+    const x = 30 + i*(160+10);
+    const y = 30, bw=155, bh=120;
+
+    if(done){
+      ctx.shadowColor = stages[i].color;
+      ctx.shadowBlur  = 12;
+    }
+    ctx.fillStyle = done ? stages[i].color : '#1e293b';
+    ctx.beginPath();
+    ctx.roundRect(x, y, bw, bh, 10);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    if(progress > 0 && progress < 1){
+      ctx.fillStyle = stages[i].color + '55';
+      ctx.beginPath();
+      ctx.roundRect(x, y+bh*(1-progress), bw, bh*progress, 10);
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = stages[i].color;
+    ctx.lineWidth = done ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(x, y, bw, bh, 10);
+    ctx.stroke();
+
+    ctx.fillStyle = done ? '#fff' : '#64748b';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(stages[i].label, x+bw/2, y+38);
+    ctx.font = '10px sans-serif';
+    ctx.fillStyle = done ? '#e2e8f0' : '#475569';
+    const words = stages[i].sub.split(' ');
+    let line='', lineY=y+58;
+    words.forEach(w=>{
+      if((line+w).length > 18){ ctx.fillText(line,x+bw/2,lineY); line=w+' '; lineY+=14; }
+      else line+=w+' ';
+    });
+    ctx.fillText(line,x+bw/2,lineY);
+
+    if(done){
+      ctx.font = 'bold 11px monospace';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(stages[i].rows.toLocaleString(), x+bw/2, y+108);
+    }
+
+    if(i < stages.length-1){
+      const ax = x+bw+2, ay=y+bh/2;
+      ctx.strokeStyle = done ? stages[i].color : '#334155';
+      ctx.lineWidth = 2;
+      ctx.setLineDash(done?[]:[4,4]);
+      ctx.beginPath();
+      ctx.moveTo(ax,ay); ctx.lineTo(ax+7,ay);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if(done){
+        ctx.fillStyle=stages[i].color;
+        ctx.beginPath();
+        ctx.moveTo(ax+7,ay);
+        ctx.lineTo(ax+2,ay-5);
+        ctx.lineTo(ax+2,ay+5);
+        ctx.fill();
+      }
+    }
+  }
+
+  function render(completed, activeIdx, progress){
+    ctx.clearRect(0,0,W,H);
+    stages.forEach((_,i)=>{
+      const done = i < completed || (i===activeIdx&&progress>=1);
+      const prog = i===activeIdx ? progress : (done?1:0);
+      drawStage(i, prog, done);
+    });
+  }
+
+  function log(msg){ logEl.innerHTML += `<div>→ ${msg}</div>`; logEl.scrollTop=9999; }
+
+  function run(){
+    if(running) return;
+    running=true;
+    document.getElementById('etl-btn-run').disabled=true;
+    let stageIdx=0;
+    function nextStage(){
+      if(stageIdx>=stages.length){ running=false; log('✅ ETL Completed.'); return; }
+      log(`[${stages[stageIdx].label}] ${stages[stageIdx].detail}`);
+      let p=0;
+      const iv = setInterval(()=>{
+        p+=0.04;
+        render(stageIdx, stageIdx, Math.min(p,1));
+        if(p>=1){ clearInterval(iv); stageIdx++; setTimeout(nextStage,300); }
+      },30);
+    }
+    nextStage();
+  }
+
+  function reset(){
+    running=false;
+    logEl.innerHTML='';
+    document.getElementById('etl-btn-run').disabled=false;
+    render(0,-1,0);
+  }
+
+  window.etlPipe = {run,reset};
+  reset();
+})();
+</script>
+```
+
+---
+
+## References for this Chapter {#sec-etl-refs-transform}
+
+- [Delta Lake Documentation](https://docs.delta.io/)
+- [PySpark SQL Functions](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/functions.html)

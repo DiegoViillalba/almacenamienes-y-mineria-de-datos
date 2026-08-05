@@ -1,0 +1,418 @@
+---
+title: "Measures of Correlation in BigMart Sales"
+number-sections: false
+format:
+  html:
+    toc: true
+    page-layout: full
+  pdf:
+    toc: true
+jupyter: python3
+---
+
+# Introduction
+
+Following our study of location, variability, shape, heterogeneity, and concentration, we now explore an additional dimension of exploratory data analysis: **correlation**. While previous chapters focused primarily on univariate descriptions or subgroup comparisons, correlation analysis enables the exploration of **relationships among numerical variables**.
+
+In general terms, correlation addresses key analytical questions:
+
+- Do sales increase when product list price increases?
+- Is there an association between product visibility and sales?
+- Is product weight associated with other quantitative variables?
+- Are observed associations linear, monotonic, or practically non-existent?
+
+This chapter focuses on evaluating relationships among numerical variables in the **BigMart Sales** dataset, with particular emphasis on our target variable:
+
+$$
+\texttt{Item\_Outlet\_Sales}.
+$$
+
+Beyond calculating correlation coefficients, we construct visual representations to aid in interpreting associations within an EDA framework. The objective is not to establish causality, but to **detect dependence patterns, redundancy, or approximate independence** that enhance our understanding of the dataset.
+
+# Chapter Objectives
+
+Upon completing this chapter, the reader should be able to:
+
+1. distinguish between positive, negative, and near-zero correlation;
+2. interpret the magnitude and sign of a correlation coefficient;
+3. compare Pearson and Spearman correlation metrics;
+4. build a correlation matrix for numerical variables;
+5. integrate correlation findings into a comprehensive analytics dashboard.
+
+# Data Loading and Preparation
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+df = pd.read_csv(DATA_PATH)
+
+if "Item_Fat_Content" in df.columns:
+    df["Item_Fat_Content"] = (
+        df["Item_Fat_Content"]
+        .replace({
+            "LF": "Low Fat",
+            "low fat": "Low Fat",
+            "reg": "Regular"
+        })
+    )
+
+df.head()
+```
+
+To examine correlation, we first isolate numerical features.
+
+```{python}
+num_df = df.select_dtypes(include=[np.number]).copy()
+num_df.columns.tolist()
+```
+
+In commercial datasets, numerical features typically include:
+
+- `Item_Weight`
+- `Item_Visibility`
+- `Item_MRP`
+- `Outlet_Establishment_Year`
+- `Item_Outlet_Sales`
+
+# Conceptual Foundations
+
+## Pearson Correlation
+
+The Pearson correlation coefficient between two random variables $X$ and $Y$ is defined as:
+
+$$
+\rho_{X,Y} = \frac{\operatorname{Cov}(X,Y)}{\sigma_X \sigma_Y}.
+$$
+
+Using sample data, its estimator measures the strength and direction of a **linear association**.
+
+Values are bounded by:
+
+$$
+-1 \leq r \leq 1.
+$$
+
+- If $r \approx 1$, a strong positive linear association exists.
+- If $r \approx -1$, a strong negative linear association exists.
+- If $r \approx 0$, there is no evidence of a strong linear association.
+
+## Spearman Rank Correlation
+
+Spearman correlation evaluates ranks rather than raw values, making it ideal for detecting **monotonic relationships** that are not strictly linear.
+
+In EDA, Pearson and Spearman are complementary:
+
+- **Pearson**: sensitive to linear trends and vulnerable to extreme outliers.
+- **Spearman**: robust against monotonic non-linearity and severe outliers.
+
+## Critical Caveat
+
+Correlation **does not imply causation**. Two variables may correlate due to direct dependency, confounding factors, sampling structure, or chance.
+
+# Reviewing Missing Values in Numerical Variables
+
+Before computing correlations, missing value prevalence should be verified.
+
+```{python}
+missing_num = num_df.isna().sum().sort_values(ascending=False).reset_index()
+missing_num.columns = ["Variable", "Missing"]
+missing_num
+```
+
+Pandas handles missing values pairwise during correlation estimation.
+
+# Pearson Correlation Matrix
+
+We compute the Pearson correlation matrix for all numerical variables.
+
+```{python}
+corr_pearson = num_df.corr(method="pearson")
+corr_pearson
+```
+
+## Heatmap Visualization
+
+```{python}
+fig = px.imshow(
+    corr_pearson,
+    text_auto=True,
+    aspect="auto",
+    title="Pearson Correlation Matrix",
+    color_continuous_scale="RdBu",
+    zmin=-1,
+    zmax=1
+)
+fig.update_layout(coloraxis_colorbar_title="r")
+fig.show()
+```
+
+## Initial Interpretation
+
+This matrix provides a quick overview of linear associations. Key observations include:
+
+- features showing strong associations with `Item_Outlet_Sales`;
+- pairs of predictor features exhibiting high collinearity;
+- overall prevalence of weak, moderate, or strong relationships.
+
+In **BigMart Sales**, `Item_MRP` consistently exhibits a clear positive linear association with sales, whereas other numerical features display weak correlation.
+
+# Spearman Correlation
+
+To contrast with Pearson metrics, we compute the Spearman rank correlation matrix.
+
+```{python}
+corr_spearman = num_df.corr(method="spearman")
+corr_spearman
+```
+
+```{python}
+fig = px.imshow(
+    corr_spearman,
+    text_auto=True,
+    aspect="auto",
+    title="Spearman Rank Correlation Matrix",
+    color_continuous_scale="RdBu",
+    zmin=-1,
+    zmax=1
+)
+fig.update_layout(coloraxis_colorbar_title="ρ")
+fig.show()
+```
+
+## Comparing Pearson and Spearman
+
+Similar Pearson and Spearman coefficients reflect an approximately linear or stable monotonic relationship. When Spearman significantly exceeds Pearson, non-linear monotonicity or outlier sensitivity is indicated.
+
+We can compare both metrics focused on our target variable.
+
+```{python}
+target = "Item_Outlet_Sales"
+
+if target in num_df.columns:
+    corr_compare = pd.DataFrame({
+        "Pearson": corr_pearson[target],
+        "Spearman": corr_spearman[target]
+    }).sort_values(by="Pearson", ascending=False)
+
+    corr_compare
+else:
+    print(f"Variable {target} is not present in numerical columns.")
+```
+
+# Target Variable Correlations
+
+We rank numerical features by their correlation with `Item_Outlet_Sales`.
+
+```{python}
+if target in num_df.columns:
+    sales_corr = (
+        corr_pearson[target]
+        .drop(labels=[target], errors="ignore")
+        .sort_values(ascending=False)
+        .reset_index()
+    )
+    sales_corr.columns = ["Variable", "Pearson_Correlation"]
+    sales_corr
+```
+
+```{python}
+if target in num_df.columns:
+    fig = px.bar(
+        sales_corr,
+        x="Variable",
+        y="Pearson_Correlation",
+        title="Pearson Correlation with Item_Outlet_Sales",
+        labels={"Pearson_Correlation": "Correlation", "Variable": "Variable"}
+    )
+    fig.update_layout(xaxis_tickangle=-30)
+    fig.show()
+```
+
+## Analytical Commentary
+
+A moderate positive correlation between `Item_MRP` and `Item_Outlet_Sales` indicates that higher list price items tend to generate higher monetary revenue, though this does not imply that raising prices directly causes sales volume growth.
+
+# Scatter Plots
+
+Scatter plots reveal structural nuances hidden within correlation matrices.
+
+## Sales vs. Maximum Retail Price (MRP)
+
+```{python}
+if {"Item_MRP", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.scatter(
+        df,
+        x="Item_MRP",
+        y="Item_Outlet_Sales",
+        opacity=0.5,
+        title="Relationship Between Item_MRP and Item_Outlet_Sales",
+        trendline="ols"
+    )
+    fig.show()
+```
+
+## Sales vs. Visibility
+
+```{python}
+if {"Item_Visibility", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.scatter(
+        df,
+        x="Item_Visibility",
+        y="Item_Outlet_Sales",
+        opacity=0.5,
+        title="Relationship Between Item_Visibility and Item_Outlet_Sales",
+        trendline="ols"
+    )
+    fig.show()
+```
+
+## Sales vs. Weight
+
+```{python}
+if {"Item_Weight", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.scatter(
+        df,
+        x="Item_Weight",
+        y="Item_Outlet_Sales",
+        opacity=0.5,
+        title="Relationship Between Item_Weight and Item_Outlet_Sales",
+        trendline="ols"
+    )
+    fig.show()
+```
+
+## What to Inspect in Scatter Plots
+
+Scatter plots address structural questions:
+
+- Does the relationship appear linear?
+- Are clusters or sub-groups present?
+- Do outliers distort the correlation slope?
+- Does variance increase with magnitude (heteroscedasticity)?
+- Are non-linear boundaries visible?
+
+# Subgroup Correlation Analysis
+
+Evaluating whether correlation metrics vary across store formats (`Outlet_Type`) connects correlation to heterogeneity analysis.
+
+## Example: Item_MRP vs. Sales Correlation by Outlet Type
+
+```{python}
+if {"Outlet_Type", "Item_MRP", "Item_Outlet_Sales"}.issubset(df.columns):
+    corr_by_outlet = (
+        df.groupby("Outlet_Type")[["Item_MRP", "Item_Outlet_Sales"]]
+          .corr(method="pearson")
+          .reset_index()
+    )
+
+    corr_by_outlet = corr_by_outlet[
+        (corr_by_outlet["level_1"] == "Item_MRP")
+    ][["Outlet_Type", "Item_Outlet_Sales"]]
+
+    corr_by_outlet.columns = ["Outlet_Type", "MRP_Sales_Pearson_Corr"]
+    corr_by_outlet
+```
+
+```{python}
+if {"Outlet_Type", "Item_MRP", "Item_Outlet_Sales"}.issubset(df.columns):
+    fig = px.bar(
+        corr_by_outlet,
+        x="Outlet_Type",
+        y="MRP_Sales_Pearson_Corr",
+        title="MRP vs. Sales Correlation by Outlet Type",
+        labels={
+            "Outlet_Type": "Outlet Type",
+            "MRP_Sales_Pearson_Corr": "Pearson Correlation"
+        }
+    )
+    fig.update_layout(xaxis_tickangle=-20)
+    fig.show()
+```
+
+## Reading
+
+When correlation strength shifts significantly across sub-populations, global correlation coefficients obscure segment-specific dynamics.
+
+# Summary Association Table
+
+We compile a summary table of key feature correlations relative to `Item_Outlet_Sales`.
+
+```{python}
+if target in num_df.columns:
+    corr_summary = pd.DataFrame({
+        "Variable": [c for c in num_df.columns if c != target],
+        "Pearson": [corr_pearson.loc[c, target] for c in num_df.columns if c != target],
+        "Spearman": [corr_spearman.loc[c, target] for c in num_df.columns if c != target]
+    }).sort_values(by="Pearson", ascending=False)
+
+    corr_summary
+```
+
+We can append qualitative strength labels for clear reporting:
+
+```{python}
+def strength_label(r):
+    a = abs(r)
+    if a < 0.10:
+        return "Very Weak"
+    elif a < 0.30:
+        return "Weak"
+    elif a < 0.50:
+        return "Moderate"
+    elif a < 0.70:
+        return "Strong"
+    else:
+        return "Very Strong"
+
+if target in num_df.columns:
+    corr_summary_labeled = corr_summary.copy()
+    corr_summary_labeled["Pearson_Strength"] = corr_summary_labeled["Pearson"].apply(strength_label)
+    corr_summary_labeled["Spearman_Strength"] = corr_summary_labeled["Spearman"].apply(strength_label)
+    corr_summary_labeled
+```
+
+# Correlation Mini-Dashboard
+
+## Correlation KPIs
+
+```{python}
+if target in num_df.columns:
+    strongest_var = corr_summary.iloc[0]["Variable"] if len(corr_summary) > 0 else np.nan
+    strongest_corr = corr_summary.iloc[0]["Pearson"] if len(corr_summary) > 0 else np.nan
+
+    corr_kpis = pd.DataFrame({
+        "Indicator": [
+            "Number of numerical variables",
+            "Most correlated variable with sales",
+            "Associated Pearson correlation",
+            "Associated Spearman correlation"
+        ],
+        "Value": [
+            num_df.shape[1],
+            strongest_var,
+            round(strongest_corr, 4) if pd.notnull(strongest_corr) else np.nan,
+            round(
+                corr_summary.loc[corr_summary["Variable"] == strongest_var, "Spearman"].iloc[0], 4
+            ) if pd.notnull(strongest_var) and len(corr_summary) > 0 else np.nan
+        ]
+    })
+
+    corr_kpis
+```
+
+# Final Discussion
+
+Correlation analysis expands univariate EDA into bivariate feature interaction. In **BigMart Sales**, this dimension identifies numerical features displaying meaningful associations with sales volume.
+
+Always combine numerical correlation matrices with scatter plots to verify linearity, segment clusters, and outlier influence.
+
+# Suggested Exercises
+
+1. Compute correlation matrices separately for each store format (`Outlet_Type`) and compare against global metrics.
+2. Calculate correlation matrices across product categories and document key differences.
+3. Determine whether a log transformation of `Item_Outlet_Sales` alters linear correlation metrics.
+4. Identify a variable pair exhibiting near-zero linear correlation whose scatter plot reveals non-linear structure.

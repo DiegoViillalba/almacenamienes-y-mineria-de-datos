@@ -1,0 +1,858 @@
+---
+title: "Beyond Lift: Advanced Metrics, Sensitivity, and Rule Structure"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_asociacion.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+```{python}
+#| label: setup-cap2
+#| echo: false
+
+import math
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, association_rules
+from sklearn.preprocessing import MinMaxScaler
+
+np.random.seed(42)
+
+# Reference dataset — identical to the previous chapter for continuity
+transacciones_raw = [
+    ["whole milk", "yogurt", "bread"],
+    ["whole milk", "butter", "eggs"],
+    ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"],
+    ["whole milk", "soda", "chips"],
+    ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"],
+    ["eggs", "butter", "cheese"],
+    ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"],
+    ["whole milk", "bread", "eggs"],
+    ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"],
+    ["bread", "eggs", "cheese"],
+    ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"],
+    ["chips", "soda", "beer"],
+    ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"],
+    ["whole milk", "bread", "sugar"],
+    ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"],
+    ["coffee", "sugar", "bread"],
+    ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"],
+    ["bread", "chips", "soda"],
+    ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"],
+    ["whole milk", "butter", "cheese"],
+    ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"],
+    ["chips", "candy", "soda"],
+    ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"],
+    ["yogurt", "cheese", "eggs"],
+    ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"],
+    ["whole milk", "vegetables", "eggs"],
+    ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"],
+    ["whole milk", "fruit", "cheese"],
+    ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"],
+    ["coffee", "bread", "butter"],
+    ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"],
+    ["whole milk", "sugar", "butter"],
+    ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"],
+    ["granola", "yogurt", "fruit"],
+]
+
+te = TransactionEncoder()
+te_array = te.fit_transform(transacciones_raw)
+df = pd.DataFrame(te_array, columns=te.columns_)
+
+itemsets = apriori(df, min_support=0.10, use_colnames=True)
+
+reglas_base = association_rules(itemsets, metric="lift", min_threshold=0.5)
+reglas_base["antecedents_str"] = reglas_base["antecedents"].apply(
+    lambda x: ", ".join(sorted(x))
+)
+reglas_base["consequents_str"] = reglas_base["consequents"].apply(
+    lambda x: ", ".join(sorted(x))
+)
+reglas_base["regla"] = reglas_base["antecedents_str"] + " → " + reglas_base["consequents_str"]
+
+# Zhang's metric — manual implementation
+def zhang(row):
+    pab = row["support"]
+    pa  = row["antecedent support"]
+    pb  = row["consequent support"]
+    num = pab - pa * pb
+    den = max(pab * (1 - pa), pa * (pb - pab))
+    return num / den if den != 0 else 0.0
+
+reglas_base["zhang"] = reglas_base.apply(zhang, axis=1)
+```
+
+## Introduction {#sec-intro-cap2}
+
+The previous chapter established the foundations of association rule analysis: definitions of support, confidence, and lift, the rule generation process via the Apriori algorithm, and basic criteria for distinguishing genuine rules from trivial ones. The central argument was that generating rules is algorithmically simple, but critical evaluation of their validity demands moving beyond confidence as the sole criterion.
+
+This chapter continues that line of reasoning and explores four directions that introductory treatments leave open. First, we rigorously analyze the *structural limitations of lift* as an evaluation metric: although lift corrects the bias of confidence, it possesses its own deficiencies that specialized literature has documented in detail, which are often ignored in introductory presentations. Second, we introduce a set of *complementary metrics* —leverage, conviction, and Zhang's metric— whose mathematical properties allow evaluating aspects of rules that lift fails to capture, and whose combination yields more robust evaluations. Third, we address the issue of *parameter sensitivity*: we empirically demonstrate that the number, nature, and quality of rules obtained depend non-trivially on thresholds set by the analyst when invoking the algorithm, carrying direct methodological consequences. Finally, we propose representing the rule set as a *relationship graph* between items, enabling identification of the global structure of rule space and distinguishing core patterns from peripheral ones.
+
+The common thread running through all these sections is identical to the one that motivated the previous chapter: the objective is not to maximize the number of reported rules, but to identify the small subset of rules representing nontrivial patterns, backed by consistent evidence from multiple perspectives.
+
+## Structural Limitations of Lift {#sec-limites-lift}
+
+### The Symmetry of Lift and the Asymmetry of Decisions
+
+An algebraic property of lift that few introductory presentations discuss in depth is its *symmetry*: for any pair of itemsets $A$ and $B$,
+
+$$\text{lift}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A) \cdot P(B)} = \frac{P(A \cup B)}{P(B) \cdot P(A)} = \text{lift}(B \Rightarrow A)$$ {#eq-lift-simetria}
+
+Symmetry follows directly from the commutativity of multiplication in the denominator. Lift measures the deviation of joint probability $P(A \cup B)$ from expected value under independence $P(A) \cdot P(B)$, and this deviation is identical regardless of which set is designated as antecedent or consequent.
+
+This symmetry has a major practical consequence that frequently goes unnoticed. When the algorithm generates the two rules $A \Rightarrow B$ and $B \Rightarrow A$ from the same frequent itemset $\{A, B\}$, both rules will have the exact same lift. However, their confidences will, in general, differ:
+
+$$\text{conf}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A)}, \qquad \text{conf}(B \Rightarrow A) = \frac{P(A \cup B)}{P(B)}$$
+
+The rule with higher confidence is the one whose antecedent has *lower* individual support. If $P(A) < P(B)$, then $\text{conf}(A \Rightarrow B) > \text{conf}(B \Rightarrow A)$: predicting the more frequent item from the less frequent item is "easier" in terms of confidence, precisely because the consequent occurs with higher baseline frequency.
+
+@tbl-asimetria-confianza illustrates this phenomenon with empirical data for the yogurt — whole milk pair:
+
+```{python}
+#| label: tbl-asimetria-confianza
+#| tbl-cap: "The two directions of the yogurt — whole milk relationship share the same lift but different confidences. The direction {yogurt} → {whole milk} exhibits higher confidence because whole milk is the more frequent item of the pair."
+
+par = reglas_base[
+    (reglas_base["antecedents_str"].isin(["whole milk", "yogurt"])) &
+    (reglas_base["consequents_str"].isin(["whole milk", "yogurt"])) &
+    (reglas_base["antecedents"].apply(len) == 1)
+][["regla", "antecedent support", "consequent support", "support",
+   "confidence", "lift"]].round(3)
+par
+```
+
+The practical implication is direct: when the objective is taking an action conditioned on observing an item —"what should I recommend to someone buying $X$?"— rule direction matters, and lift alone cannot guide that choice. Confidence, despite its documented limitations, remains the relevant metric for directing that choice. A recommendation engine sorting rules purely by lift and picking the first direction encountered may be recommending the suboptimal direction.
+
+### Theoretical Ceiling of Lift and Cross-Rule Comparability
+
+A second limitation of lift, equally critical and less widely known, is that its scale is not universal: the maximum achievable lift for a given pair depends on individual item frequencies. This property makes comparing lifts across rules with different individual support levels methodologically flawed in a strict sense.
+
+To derive the theoretical ceiling, observe that co-occurrence support $P(A \cup B)$ is bounded above by the support of the rarer item: if $P(A) \leq P(B)$, then $P(A \cup B) \leq P(A)$ (no more transactions can co-occur than those containing the rarer item). Therefore:
+
+$$\text{lift}(A \Rightarrow B) = \frac{P(A \cup B)}{P(A) \cdot P(B)} \leq \frac{P(A)}{P(A) \cdot P(B)} = \frac{1}{P(B)} = \frac{1}{\max(P(A), P(B))}$$ {#eq-lift-max}
+
+The maximum theoretical lift for the pair $(A, B)$ is:
+
+$$\text{lift}_{\max}(A, B) = \frac{1}{\max(P(A), P(B))}$$ {#eq-lift-max-formula}
+
+This result has an immediate consequence: two frequent items —say, with support 0.50 each— have a maximum theoretical lift of just 2.0. Two rare items —with support 0.05 each— have a maximum theoretical lift of 20. An observed lift of 1.8 for the first pair represents 90% of its achievable maximum; the same lift of 1.8 for the second pair represents only 9%. The exact same figure signals a near-optimal rule in one case and a weak rule in the other.
+
+To correct for this scale asymmetry, one can compute *relative lift*, defined as the fraction of theoretical maximum achieved by the observed lift:
+
+$$\text{lift}_{\text{rel}}(A \Rightarrow B) = \frac{\text{lift}(A \Rightarrow B)}{\text{lift}_{\max}(A, B)} = \text{lift}(A \Rightarrow B) \cdot \max(P(A), P(B))$$ {#eq-lift-relativo}
+
+Relative lift spans the range $(0, 1]$ and is directly comparable across rules with different frequency levels. A relative lift near 1 indicates that items co-occur with maximum possible frequency given their individual supports.
+
+```{python}
+#| label: tbl-lift-relativo
+#| tbl-cap: "Observed lift, theoretical maximum lift, and relative lift for rules with single-item antecedents. The lift and lift_max_teorico columns are not directly comparable across rows, whereas lift_relativo is."
+
+freq_rel = df.mean()
+
+def lift_max_teorico(row):
+    pa = freq_rel.get(row["antecedents_str"], np.nan)
+    pb = freq_rel.get(row["consequents_str"], np.nan)
+    if pd.isna(pa) or pd.isna(pb):
+        return np.nan
+    return 1.0 / max(pa, pb)
+
+reglas_simples = reglas_base[
+    reglas_base["antecedents"].apply(len) == 1
+].copy()
+reglas_simples["lift_max_teorico"] = reglas_simples.apply(lift_max_teorico, axis=1)
+reglas_simples["lift_relativo"] = (
+    reglas_simples["lift"] / reglas_simples["lift_max_teorico"]
+).round(3)
+
+reglas_simples[["regla", "lift", "lift_max_teorico", "lift_relativo"]].round(3).sort_values(
+    "lift_relativo", ascending=False
+).head(10)
+```
+
+```{python}
+#| label: fig-scatter-lift-relativo
+#| fig-cap: "Observed lift (horizontal axis) versus relative lift —fraction of theoretical maximum— (vertical axis). Marker size indicates support; color indicates confidence. The orange dotted line marks 50% of maximum theoretical lift. Points in the bottom-right corner show high absolute lift but remain far from their maximum potential, indicating frequent items whose relationship is actually moderate."
+
+fig = px.scatter(
+    reglas_simples.dropna(subset=["lift_relativo"]),
+    x="lift",
+    y="lift_relativo",
+    size="support",
+    color="confidence",
+    hover_data={
+        "regla": True,
+        "lift": ":.3f",
+        "lift_max_teorico": ":.3f",
+        "lift_relativo": ":.3f",
+    },
+    color_continuous_scale="Viridis",
+    labels={
+        "lift": "Observed Lift",
+        "lift_relativo": "Relative Lift (fraction of theoretical max)",
+        "confidence": "Confidence",
+    },
+    size_max=25,
+)
+fig.add_hline(
+    y=0.5,
+    line_dash="dot",
+    line_color="darkorange",
+    annotation_text="50% of theoretical max",
+    annotation_position="bottom right",
+)
+fig.update_layout(height=460)
+fig.show()
+```
+
+@fig-scatter-lift-relativo reveals structure hidden by simply sorting by absolute lift. Rules in the upper-left quadrant —modest observed lift, but high relative lift— represent associations between infrequent items co-occurring at a significant fraction of their maximum possible theoretical ceiling: these are *specific* and solid rules, even if infrequent. Rules in the lower-right quadrant —higher absolute lift, but low relative lift— involve frequent items whose co-occurrence, while above chance, is far from as tight as absolute lift suggests.
+
+## Complementary Metrics to Lift {#sec-metricas-complementarias}
+
+The catalog of proposed metrics for evaluating association rule interest is extensive: @tan2006introduction systematically enumerate and compare over twenty distinct measures. None is universally superior; each captures a distinct facet of what we intuitively call "interest." This section details three metrics whose mathematical properties and complementarity with lift make them especially valuable in practice.
+
+### Leverage: Absolute Difference Above Chance
+
+Leverage for a rule $A \Rightarrow B$ measures the *absolute* difference between observed co-occurrence frequency and expected frequency under statistical independence:
+
+$$\text{lev}(A \Rightarrow B) = P(A \cup B) - P(A) \cdot P(B)$$ {#eq-leverage}
+
+This definition shares the exact structure of lift's numerator, minus the normalization by $P(A) \cdot P(B)$. Consequently, leverage preserves probability units, giving it an operationally direct interpretation: a leverage of 0.05 in a 1,000-transaction dataset means roughly 50 transactions contain both $A$ and $B$ beyond expectation under independence. This is the additional transaction count attributable to the association.
+
+The theoretical range of leverage is $[-\min(P(A), P(B)) \cdot (1 - \max(P(A), P(B))),\; \min(P(A), P(B)) \cdot (1 - \max(P(A), P(B)))]$, centered at zero. Positive leverage indicates positive association; negative indicates inhibition; zero indicates independence —just like lift, but on an absolute rather than relative scale.
+
+The key distinction between leverage and lift lies in scale. Lift normalizes deviation from independence into a dimensionless number comparable across rules with different consequents. Leverage gives the absolute magnitude of that deviation, which is more interpretable when quantifying rule *impact*: in recommendation engines, leverage is proportional to additional transactions generated by acting on the rule. However, this reliance on absolute frequencies makes leverage systematically low for rare items, even when their relative relationship is very strong —the exact inverse problem of absolute lift.
+
+### Conviction: Asymmetry and Quasi-Determinism
+
+Conviction for a rule $A \Rightarrow B$ was introduced to create a directional, asymmetric metric like confidence that simultaneously reflects departure from statistical independence [@tan2006introduction]:
+
+$$\text{conv}(A \Rightarrow B) = \frac{1 - P(B)}{1 - \text{conf}(A \Rightarrow B)} = \frac{P(A) \cdot (1 - P(B))}{P(A) - P(A \cup B)}$$ {#eq-conviction}
+
+Conviction's interpretation is less intuitive than lift or leverage, but warrants careful examination. The numerator $1 - P(B)$ is the expected frequency of rule "errors" —transactions where $B$ does not occur— under independence: if $A$ and $B$ were independent, a fraction $1 - P(B)$ of transactions containing $A$ would lack $B$. The denominator $1 - \text{conf}(A \Rightarrow B)$ is the observed frequency of those errors. The ratio measures how many times *fewer* errors the rule makes compared to expectation under independence.
+
+Several notable properties follow:
+
+- When $A$ and $B$ are independent, $\text{conf}(A \Rightarrow B) = P(B)$, and conviction $= (1 - P(B)) / (1 - P(B)) = 1$. Conviction equals 1 if and only if there is independence —just as lift equals 1 under independence.
+- As confidence approaches 1, the denominator approaches 0, and conviction approaches infinity. A rule with very high conviction is quasi-deterministic: observing $A$ predicts $B$ with near certainty.
+- When confidence is lower than $P(B)$ (negative association), conviction is less than 1.
+- Unlike lift, conviction is asymmetric: $\text{conv}(A \Rightarrow B) \neq \text{conv}(B \Rightarrow A)$ in general, making it well-suited for evaluating rule strength in its specific direction.
+
+This asymmetry is particularly valuable when rule direction carries operational meaning: in recommendation systems, medical diagnostics, or any domain where acting on an antecedent predicts a consequent.
+
+### Zhang's Metric: Bounded Range and Robustness
+
+Proposed to address limitations of lift, Zhang's metric is defined as [@tan2006introduction]:
+
+$$Z(A, B) = \frac{P(A \cup B) - P(A) \cdot P(B)}{\max\left\{P(A \cup B)\cdot[1 - P(A)],\; P(A)\cdot[P(B) - P(A \cup B)]\right\}}$$ {#eq-zhang}
+
+The numerator matches leverage: observed co-occurrence minus independence. The denominator normalizes the metric to ensure $Z \in [-1, 1]$ for any item pair, regardless of individual frequencies. This property —lacking in lift— makes Zhang's metric directly comparable across rules with varying frequency levels.
+
+The denominator selects the maximum of two terms: $P(A \cup B) \cdot [1 - P(A)]$, which dominates under high co-occurrence (strong positive association), and $P(A) \cdot [P(B) - P(A \cup B)]$, which dominates under low co-occurrence (negative association or inhibition). This design guarantees a symmetric scale: $Z = 1$ corresponds to maximum co-occurrence ($A$ and $B$ co-occur whenever the rarer item occurs), while $Z = -1$ corresponds to minimum co-occurrence (mutual exclusion).
+
+Zhang's metric is symmetric —like lift— and exceptionally robust against highly frequent items, which cause the most severe bias in confidence and leverage. For these reasons, @tan2006introduction recommend Zhang's metric as one of the most reliable measures for ranking rules by general interest when no prior domain knowledge is available.
+
+### Computation and Comparison of the Four Metrics
+
+```{python}
+#| label: tbl-metricas-completas
+#| tbl-cap: "The six evaluation metrics for the eight rules with highest Zhang value. Note how ranking by Zhang differs from ranking by lift: rules deemed most interesting by Zhang are not always those with highest absolute lift."
+
+cols = ["regla", "support", "confidence", "lift",
+        "leverage", "conviction", "zhang"]
+reglas_base[cols].sort_values("zhang", ascending=False).head(8).round(3)
+```
+
+### Correlation Between Metrics: Agreement and Discrepancy
+
+Given multiple metrics, a natural question is whether they are redundant: if lift, leverage, and Zhang always rank rules identically, choice of metric is irrelevant. Correlation analysis provides an empirical answer.
+
+```{python}
+#| label: fig-correlacion-metricas
+#| fig-cap: "Pearson correlation matrix among the six evaluation metrics across the full rule set. Values are displayed inside each cell. Red-white-blue scale: deep red = high positive correlation, deep blue = high negative correlation, white = no correlation."
+
+metricas_cols = ["support", "confidence", "lift", "leverage", "conviction", "zhang"]
+corr_matrix = reglas_base[metricas_cols].corr().round(2)
+
+fig = px.imshow(
+    corr_matrix,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    zmin=-1,
+    zmax=1,
+    aspect="auto",
+    labels={"color": "Correlation"},
+)
+fig.update_layout(height=430)
+fig.show()
+```
+
+@fig-correlacion-metricas reveals several structural relationships. First, lift and Zhang show high positive correlation: both measure essential deviation from independence, differing in scale and extreme-value behavior. Second, leverage and support show moderate positive correlation: frequent items produce higher absolute leverage, reflecting leverage's dependence on base frequencies. Third, conviction can exhibit low correlation with other metrics in certain datasets, precisely because it is sensitive to confidence values near 1 —where minor confidence shifts produce large conviction changes— while other metrics change smoothly.
+
+Regions of low or negative correlation in this matrix are analytically most informative: where two metrics disagree, the analyst must decide which to weight higher based on context. A rule with high lift but low leverage involves infrequent items whose relative association is strong but whose absolute impact is limited. A rule with high Zhang but moderate conviction may be robust in overall association while not quasi-deterministic in direction.
+
+### The Multimetric Profile of a Rule
+
+A method for visually summarizing a rule's behavior across all metrics simultaneously is the normalized radar plot. For each rule, metrics are min-max scaled to $[0, 1]$ —for visualization purposes only, without assuming equal metric importance— and the resulting polygon is plotted.
+
+```{python}
+#| label: fig-radar-top5
+#| fig-cap: "Normalized profile of top 5 rules by lift. Each axis corresponds to a metric min-max scaled to [0,1]. A larger, more regular polygon indicates a rule that is robust across multiple criteria simultaneously. Normalization is for display only and does not imply equal weighting."
+
+metricas_viz = ["support", "confidence", "lift", "leverage", "zhang"]
+scaler = MinMaxScaler()
+reglas_norm = reglas_base.copy()
+reglas_norm[metricas_viz] = scaler.fit_transform(reglas_base[metricas_viz])
+
+top5_idx = reglas_base["lift"].nlargest(5).index
+top5 = reglas_norm.loc[top5_idx]
+
+fig = go.Figure()
+for _, row in top5.iterrows():
+    fig.add_trace(go.Scatterpolar(
+        r=[row[m] for m in metricas_viz] + [row[metricas_viz[0]]],
+        theta=metricas_viz + [metricas_viz[0]],
+        fill="toself",
+        name=row["regla"][:38],
+        opacity=0.55,
+    ))
+
+fig.update_layout(
+    polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+    height=500,
+    showlegend=True,
+    legend=dict(x=1.05, y=1.0),
+)
+fig.show()
+```
+
+@fig-radar-top5 compares five rules across five dimensions simultaneously. A rule with a large, regular polygon is robust: all metrics agree it is interesting. A rule with an asymmetric polygon —large on one axis, small on others— is strong under one criterion but weak under others, calling for cautious interpretation.
+
+@tbl-perfiles summarizes qualitative interpretations of common profile patterns:
+
+| Profile Pattern | Interpretation |
+|---|---|
+| Large, regular polygon | Robust rule: consensus across multiple metrics |
+| High lift, small leverage | Strong relative association among rare items; limited absolute impact |
+| Very high conviction, moderate rest | Quasi-deterministic directional rule; confidence near 1 |
+| Small Zhang, moderate lift | Lift may be inflated by base frequencies; Zhang corrects this |
+| Small support, small everything | Rare pattern, likely spurious; insufficient empirical evidence |
+
+: Interpretation of multimetric profiles. {#tbl-perfiles}
+
+## Sensitivity to Algorithm Parameters {#sec-sensibilidad}
+
+### Thresholds as Decisions Lacking Intrinsic Statistical Basis
+
+When invoking Apriori with specific parameters —e.g., `min_support = 0.10` and minimum lift of 1.0— decisions are made that, unlike parameters in formal statistical models, carry no intrinsic statistical justification. No theory establishes that the "correct" minimum support is 0.10 rather than 0.08 or 0.12. Analysts select these thresholds based on practical considerations —compute time, manageable result set size, domain knowledge— but the algorithm accepts them blindly.
+
+This circumstance carries serious methodological consequences: the resulting rule set is not an objective property of the dataset, but a joint function of the dataset and chosen parameters. Two analysts working on the same dataset with slightly different thresholds can arrive at substantially different rule sets, potentially reaching conflicting conclusions if unaware of this dependence. Sound methodology requires exploring result stability across reasonable parameter shifts —termed *sensitivity analysis*— and reporting those parameters alongside findings.
+
+### Sensitivity to Minimum Support
+
+The first sensitivity experiment systematically varies $\sigma_{\min}$ while fixing minimum lift at 1.0, tracking changes in rule counts and median rule quality.
+
+```{python}
+#| label: tbl-sens-support
+#| tbl-cap: "Frequent itemset count, generated rule count, and rule set quality statistics as a function of minimum support. Minimum lift threshold fixed at 1.0."
+
+soportes_grid = [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18, 0.20]
+resultados_sens = []
+
+for s in soportes_grid:
+    its = apriori(df, min_support=s, use_colnames=True)
+    if len(its) == 0:
+        resultados_sens.append({
+            "σ_min": s, "Frequent itemsets": 0,
+            "Rules": 0, "Median lift": np.nan, "Max lift": np.nan
+        })
+        continue
+    r = association_rules(its, metric="lift", min_threshold=1.0)
+    resultados_sens.append({
+        "σ_min": round(s, 2),
+        "Frequent itemsets": len(its),
+        "Rules": len(r),
+        "Median lift": round(r["lift"].median(), 3) if len(r) > 0 else np.nan,
+        "Max lift": round(r["lift"].max(), 3) if len(r) > 0 else np.nan,
+    })
+
+pd.DataFrame(resultados_sens)
+```
+
+```{python}
+#| label: fig-sensibilidad-support
+#| fig-cap: "Behavior of rule count (left axis, red) and median set lift (right axis, dashed blue) vs. minimum support. The two curves move in opposite directions: higher support yields fewer rules but higher median quality."
+
+df_sens = pd.DataFrame(resultados_sens)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=df_sens["σ_min"], y=df_sens["Rules"],
+    mode="lines+markers", name="No. of rules",
+    line=dict(color="#e63946", width=2.5), marker=dict(size=9),
+    yaxis="y1",
+))
+fig.add_trace(go.Scatter(
+    x=df_sens["σ_min"], y=df_sens["Median lift"],
+    mode="lines+markers", name="Median lift",
+    line=dict(color="#457b9d", width=2.5, dash="dash"), marker=dict(size=9),
+    yaxis="y2",
+))
+fig.update_layout(
+    xaxis=dict(title="Minimum support (σ_min)"),
+    yaxis=dict(title="No. of generated rules", side="left", showgrid=True),
+    yaxis2=dict(title="Median lift of rule set", overlaying="y", side="right", showgrid=False),
+    legend=dict(x=0.60, y=0.92),
+    height=430,
+)
+fig.show()
+```
+
+The behavior in @fig-sensibilidad-support is neither accidental nor dataset-specific: it is a structural property of rule mining. Raising $\sigma_{\min}$ excludes less frequent itemsets. Many of these involve rare items co-occurring by chance in the sample —precisely the patterns most vulnerable to statistical instability. Filtering them leaves a remaining rule set with higher average support and higher median lift. Informally: patterns surviving stricter filters are, on average, more robust.
+
+The tension between these curves reflects the *fundamental trade-off in association rule mining*: one cannot simultaneously maximize rule quantity and average quality. Every support threshold represents a choice within this trade-off space, governed by the relative cost of two error types: including spurious rules (false positives) versus omitting genuine but rare patterns (false negatives).
+
+### Sensitivity to Lift Threshold
+
+The second experiment fixes support at 0.10 and varies minimum lift across a wide range. The result yields a rule set survival curve: for each threshold, how many rules survive.
+
+```{python}
+#| label: fig-curva-supervivencia-lift
+#| fig-cap: "Rule set survival curve vs. minimum lift threshold. Each point answers: if lift ≥ x is required, how many rules remain? A steep drop at value x indicates many rules cluster just above that threshold."
+
+its_fijo = apriori(df, min_support=0.10, use_colnames=True)
+lifts_umbral = np.round(np.arange(0.5, 2.6, 0.1), 1)
+curva_supervivencia = []
+
+for lt in lifts_umbral:
+    r = association_rules(its_fijo, metric="lift", min_threshold=float(lt))
+    curva_supervivencia.append({
+        "Minimum lift threshold": lt,
+        "Surviving rules": len(r),
+    })
+
+df_surv = pd.DataFrame(curva_supervivencia)
+
+fig = px.line(
+    df_surv,
+    x="Minimum lift threshold",
+    y="Surviving rules",
+    markers=True,
+    color_discrete_sequence=["#2a9d8f"],
+)
+fig.add_vline(
+    x=1.0, line_dash="dash", line_color="crimson",
+    annotation_text="lift = 1 (independence)",
+    annotation_position="top right",
+    annotation_font_color="crimson",
+)
+fig.update_layout(height=390)
+fig.show()
+```
+
+Curve shape in @fig-curva-supervivencia-lift reveals lift distribution characteristics. A steep drop in $[1.0, 1.3]$ indicates many rules exhibit lift barely above independence —formally nontrivial but marginally interesting. A gradual drop suggests lifts are more evenly distributed over a wide range. In both cases, the curve identifies the lift threshold where the rule set stabilizes at a manageable size without discarding top patterns.
+
+### Full Map of Parameter Space
+
+The comprehensive sensitivity analysis explores both key parameters simultaneously: minimum support and minimum confidence. The result is a 2D surface depicting rule counts generated for each parameter combination.
+
+```{python}
+#| label: fig-heatmap-parametros
+#| fig-cap: "Heatmap of rule counts vs. minimum support (horizontal axis) and minimum confidence (vertical axis). Bottom-left region —loose thresholds— yields maximum rules with lowest average quality. Top-right region —strict thresholds— yields few or no rules, but high reliability. Analysts must deliberately navigate this trade-off."
+
+grid_support = np.round(np.arange(0.06, 0.22, 0.02), 2)
+grid_conf    = np.round(np.arange(0.20, 1.00, 0.10), 2)
+heatmap_data = []
+
+for s in grid_support:
+    for c in grid_conf:
+        its = apriori(df, min_support=float(s), use_colnames=True)
+        if len(its) == 0:
+            heatmap_data.append({"min_support": s, "min_confidence": c, "n_reglas": 0})
+            continue
+        r = association_rules(its, metric="confidence", min_threshold=float(c))
+        heatmap_data.append({
+            "min_support": s,
+            "min_confidence": c,
+            "n_reglas": len(r),
+        })
+
+df_hm = pd.DataFrame(heatmap_data)
+pivot = df_hm.pivot(index="min_confidence", columns="min_support", values="n_reglas")
+
+fig = px.imshow(
+    pivot,
+    color_continuous_scale="YlOrRd",
+    labels={"x": "Minimum support", "y": "Minimum confidence", "color": "No. of rules"},
+    aspect="auto",
+    text_auto=True,
+)
+fig.update_layout(height=450)
+fig.show()
+```
+
+@fig-heatmap-parametros summarizes the analyst's decision space. Each cell answers: *selecting these thresholds yields how many rules?* High-density regions (bottom-left, deep red) represent loose thresholds yielding high rule counts —along with high numbers of spurious rules. Low-density regions (top-right, pale yellow/white) represent strict thresholds yielding few rules, each backed by high frequency and strong predictive power.
+
+The critical methodological lesson is: no single point on this map is correct in the abstract. Threshold choices are always relative to problem context. In retail with millions of daily transactions, `min_support = 0.01` is justified because 1% represents thousands of observations. In a medical dataset with 200 patients, that same threshold equals just 2 cases —statistically inadequate for any claim. Correct selection requires translating support percentages into absolute observation counts and judging whether that sample size supports the intended claim.
+
+## Global Structure of Rule Space: Graph Representation {#sec-grafo}
+
+### Motivation for a Network Representation
+
+Previous sections represented rules as tables and metric scatter plots. Both forms help evaluate individual rules or small subsets, but obscure the *relational structure* connecting items globally. An item can participate in many rules as antecedent or consequent; two items may connect directly via a rule or indirectly through an intermediate item. This topological structure is invisible in tabular form.
+
+Graph representations make this structure explicit. Formally, we construct a graph $G = (V, E)$ where vertex set $V$ comprises unique items participating in at least one filtered rule, and edge set $E$ contains directed edge $(A, B)$ for every rule $A \Rightarrow B$ exceeding minimum lift and support thresholds. To maintain readability, we restrict focus to single-item antecedents and consequents (1-itemsets).
+
+### Centrality, Hubs, and Bridge Nodes
+
+In graph theory, node *centrality* measures relative importance in the network. Among multiple definitions, a natural metric in association rules is the sum of lifts for all rules involving the item as antecedent or consequent. This weights items participating in many *strong* associations, rather than merely many associations.
+
+```{python}
+#| label: fig-grafo-reglas
+#| fig-cap: "Association rule graph for single items with lift > 1.1 and support ≥ 0.10. Each node is an item; each edge is a rule meeting thresholds. Node size and color depict centrality (sum of lifts for connected rules). Large, bright nodes represent items involved in multiple strong associations; small, dark nodes are peripheral."
+
+reglas_grafo = reglas_base[
+    (reglas_base["lift"] > 1.1) &
+    (reglas_base["support"] >= 0.10) &
+    (reglas_base["antecedents"].apply(len) == 1) &
+    (reglas_base["consequents"].apply(len) == 1)
+].copy()
+
+nodos = list(set(
+    reglas_grafo["antecedents_str"].tolist() +
+    reglas_grafo["consequents_str"].tolist()
+))
+n_nodos = len(nodos)
+nodo_idx = {nd: i for i, nd in enumerate(nodos)}
+
+angulos = [2 * math.pi * i / n_nodos for i in range(n_nodos)]
+xs = [math.cos(a) for a in angulos]
+ys = [math.sin(a) for a in angulos]
+
+# Centrality by sum of lifts
+centralidad = {}
+for nd in nodos:
+    r_sub = reglas_grafo[
+        (reglas_grafo["antecedents_str"] == nd) |
+        (reglas_grafo["consequents_str"] == nd)
+    ]
+    centralidad[nd] = r_sub["lift"].sum()
+
+edge_x, edge_y = [], []
+for _, row in reglas_grafo.iterrows():
+    x0 = xs[nodo_idx[row["antecedents_str"]]]
+    y0 = ys[nodo_idx[row["antecedents_str"]]]
+    x1 = xs[nodo_idx[row["consequents_str"]]]
+    y1 = ys[nodo_idx[row["consequents_str"]]]
+    edge_x += [x0, x1, None]
+    edge_y += [y0, y1, None]
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=edge_x, y=edge_y,
+    mode="lines",
+    line=dict(width=1.2, color="#cccccc"),
+    hoverinfo="none",
+    showlegend=False,
+))
+
+fig.add_trace(go.Scatter(
+    x=xs, y=ys,
+    mode="markers+text",
+    text=nodos,
+    textposition="top center",
+    textfont=dict(size=10),
+    marker=dict(
+        size=[max(12, centralidad.get(nd, 1) * 5) for nd in nodos],
+        color=[centralidad.get(nd, 0) for nd in nodos],
+        colorscale="Plasma",
+        showscale=True,
+        colorbar=dict(title="Centrality<br>(Σ lifts)"),
+        line=dict(color="white", width=1),
+    ),
+    hovertext=[
+        f"<b>{nd}</b><br>Centrality: {centralidad.get(nd, 0):.2f}<br>"
+        f"Connected rules: {len(reglas_grafo[(reglas_grafo['antecedents_str']==nd)|(reglas_grafo['consequents_str']==nd)])}"
+        for nd in nodos
+    ],
+    hoverinfo="text",
+    showlegend=False,
+))
+
+fig.update_layout(
+    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    height=540,
+    plot_bgcolor="white",
+    margin=dict(t=30, b=30, l=30, r=30),
+)
+fig.show()
+```
+
+@fig-grafo-reglas visualizes rule space topology. Highly central nodes participate in multiple strong associations, not simply high edge counts. An item can become a *hub* for two distinct reasons: being genuinely central to market basket co-purchases —its co-occurrences far exceed expectations from individual frequencies— or being so ubiquitous that it co-occurs with nearly everything, albeit with low lift.
+
+Distinguishing genuine centrality from frequency-driven spurious centrality parallels the confidence issue: just as high confidence can artifactually arise from consequent base frequency, high network centrality can stem from sheer item ubiquity. Weighting centrality by lift —rather than raw co-occurrence counts— serves to correct this bias.
+
+Equally important is the *bridge node* or *broker*: an item with few network neighbors connecting item clusters that would otherwise remain disconnected. In basket analysis, a bridge node might represent a niche item acting as a trigger for a specific purchasing chain. Such nodes are invisible in frequency-only analyses but offer high marketing actionability.
+
+### The "Whole Milk Problem": A Case Study
+
+Analyzing *whole milk* in Groceries concretely illustrates these challenges. Present in ~58% of sample transactions, *whole milk* is a dominant item whose high frequency systematically distorts metrics for every rule targeting it as consequent.
+
+```{python}
+#| label: analisis-whole-milk
+
+p_wm = df["whole milk"].mean()
+print(f"Whole milk support: {p_wm:.3f}")
+print(f"Appears in {int(p_wm * len(df))} of {len(df)} transactions\n")
+
+wm_consecuente = reglas_base[
+    reglas_base["consequents_str"] == "whole milk"
+][["regla", "support", "confidence", "lift", "zhang"]].sort_values("lift", ascending=False)
+
+print("All rules with whole milk as consequent:")
+print(wm_consecuente.round(3).to_string(index=False))
+```
+
+```{python}
+#| label: umbral-whole-milk
+
+print(f"P(whole milk) = {p_wm:.3f}\n")
+print(f"For lift > 1.0:  conf > {p_wm:.3f}")
+print(f"For lift > 1.2:  conf > {1.2 * p_wm:.3f}")
+print(f"For lift > 1.5:  conf > {1.5 * p_wm:.3f}")
+print(f"For lift > 2.0:  conf > {2.0 * p_wm:.3f}\n")
+
+candidatas = reglas_base[
+    (reglas_base["consequents_str"] == "whole milk") &
+    (reglas_base["lift"] > 1.2)
+]
+if len(candidatas) > 0:
+    print("Rules with whole milk as consequent and lift > 1.2:")
+    print(candidatas[["regla", "confidence", "lift"]].round(3).to_string(index=False))
+else:
+    print("No rules targeting whole milk exceed lift > 1.2.")
+    print("Conclusion: whole milk is not a useful consequent in this dataset.")
+```
+
+The analysis confirms theoretical predictions: when $P(B)$ is very high, the headroom for a rule $A \Rightarrow B$ to be genuinely nontrivial shrinks dramatically. Achieving lift > 1.5 requires $\text{conf}(A \Rightarrow B) > 1.5 \times 0.58 \approx 0.87$: nearly 9 out of 10 transactions containing $A$ must also include whole milk. This condition is nearly impossible in general retail where milk is ubiquitous. The takeaway is not dataset defectiveness, but that *whole milk* makes a poor consequent in association rule mining: its ubiquity prevents rules predicting it from yielding actionable insight.
+
+Generalizing, for any item $B$, the confidence threshold required for a rule to be nontrivial by factor $k$ is:
+
+$$\text{conf}(A \Rightarrow B) > k \cdot P(B) \qquad \text{equivalently,} \qquad \text{lift}(A \Rightarrow B) > k$$ {#eq-umbral-conf}
+
+This relationship enables systematically building consequent-specific threshold tables for analysts to consult prior to interpreting rules.
+
+```{python}
+#| label: tbl-umbrales-por-item
+#| tbl-cap: "Minimum confidence thresholds required for a rule to be nontrivial (lift > 1.0) or moderately interesting (lift > 1.5), computed for each item as a potential consequent. Items with high P(item) require very high confidence to yield genuinely informative rules."
+
+umbrales = []
+for item in sorted(df.columns):
+    p = df[item].mean()
+    umbrales.append({
+        "Item (consequent)": item,
+        "P(item)": round(p, 3),
+        "min conf (lift > 1.0)": round(p, 3),
+        "min conf (lift > 1.5)": round(min(1.0, 1.5 * p), 3),
+    })
+
+pd.DataFrame(umbrales).sort_values("P(item)", ascending=False)
+```
+
+## An Integrated Evaluation Framework {#sec-marco-integrado}
+
+### From Fragmentation to Coherence
+
+The concepts developed across this chapter —lift limitations, complementary metrics, parameter sensitivity, graph structure— are not isolated components. They form a unified framework answering a core question: *how much confidence does a specific rule warrant?*
+
+Answering this question involves multiple dimensions:
+
+1. **Relative Dimension**: How far does observed lift deviate from independence relative to theoretical maximum given item supports? Relative lift addresses this.
+
+2. **Absolute Dimension**: How many additional transactions beyond baseline independence exhibit co-occurrence? Leverage answers this.
+
+3. **Directional Predictive Dimension**: How deterministic is the rule in its specific direction? Conviction addresses this.
+
+4. **Normalized Robustness Dimension**: Is the association strong on a scale comparable across varying item frequencies? Zhang's metric resolves this.
+
+5. **Parametric Stability Dimension**: Does the rule persist across reasonable threshold choices, or vanish under slight $\sigma_{\min}$ tightening? Sensitivity analysis addresses this.
+
+A rule showing strength across all dimensions earns high confidence. A rule succeeding in only one or two calls for caution. The following function systematically executes this multidimensional evaluation:
+
+```{python}
+#| label: pipeline-evaluacion-integrada
+
+def evaluar_regla_completa(row, n_transacciones=50, verbose=True):
+    """
+    Multidimensional evaluation of an association rule.
+    Returns qualitative classification: ROBUST / CANDIDATE / DISCARD
+    """
+    criterios = []
+    puntos = 0
+
+    # Dimension 1: Lift
+    if row["lift"] > 1.5:
+        criterios.append("Strong lift (> 1.5)")
+        puntos += 3
+    elif row["lift"] > 1.1:
+        criterios.append("Moderate lift (1.1 – 1.5)")
+        puntos += 1
+    else:
+        criterios.append("Weak lift (≤ 1.1) — indistinguishable from chance")
+
+    # Dimension 2: Absolute support
+    n_obs = int(row["support"] * n_transacciones)
+    if n_obs >= 10:
+        criterios.append(f"Solid support ({n_obs} of {n_transacciones} transactions)")
+        puntos += 2
+    elif n_obs >= 5:
+        criterios.append(f"Minimum support ({n_obs} of {n_transacciones} transactions)")
+        puntos += 1
+    else:
+        criterios.append(f"Insufficient support ({n_obs} of {n_transacciones} transactions)")
+
+    # Dimension 3: Zhang (normalized robustness)
+    if row["zhang"] > 0.3:
+        criterios.append("Robust Zhang (> 0.3)")
+        puntos += 2
+    elif row["zhang"] > 0.1:
+        criterios.append("Moderate Zhang (0.1 – 0.3)")
+        puntos += 1
+    else:
+        criterios.append("Weak Zhang (≤ 0.1) — likely base frequency artifact")
+
+    # Dimension 4: Conviction (directional determinism)
+    if row["conviction"] > 1.5:
+        criterios.append("High conviction (> 1.5) — quasi-deterministic rule")
+        puntos += 1
+
+    clasificacion = (
+        "ROBUST"    if puntos >= 6 else
+        "CANDIDATE"  if puntos >= 3 else
+        "DISCARD"
+    )
+
+    if verbose:
+        print(f"{'─'*55}")
+        print(f"Rule:  {row['regla']}")
+        print(f"{'─'*55}")
+        for c in criterios:
+            print(f"  • {c}")
+        print(f"\n  → Classification: {clasificacion}  ({puntos}/8 points)\n")
+
+    return clasificacion
+
+# Evaluate top 6 rules by lift
+print("Evaluation of top 6 rules by lift:\n")
+for _, row in reglas_base.sort_values("lift", ascending=False).head(6).iterrows():
+    evaluar_regla_completa(row)
+```
+
+### What Changes with This Framework
+
+The difference between basic association rule analysis in introductory texts and the critical framework developed here lies not in code: `mlxtend` functions remain identical. The difference lies in the questions asked before interpreting results and the conceptual tools applied.
+
+@tbl-comparacion summarizes this distinction:
+
+| Dimension | Basic Approach | Critical Approach |
+|---|---|---|
+| Metrics considered | Support, confidence | Lift, relative lift, leverage, conviction, Zhang |
+| Rule direction | Ignored | Evaluated via confidence asymmetry |
+| Lift comparability | Assumed universal | Corrected with relative lift |
+| Parameter thresholds | Fixed by convention | Explored via sensitivity analysis |
+| Visualization | Sorted tables | Metric scatter + radar + graph |
+| Final selection criterion | Single confidence or lift | Convergence across multiple metrics |
+
+: Comparison between basic and critical approaches to association rule mining. {#tbl-comparacion}
+
+This comparison highlights that critical analysis is not merely extra labor —it is structurally distinct in its epistemic framework. Analysts employing the critical framework typically report smaller rule sets than those relying on basic approaches. However, those smaller sets are backed by far more robust evidence, resist parameter fluctuations, and yield superior practical actionability.
+
+## Conceptual Summary {#sec-resumen-cap2}
+
+This chapter explored association rule mining beyond fundamental metrics. Key takeaways:
+
+**On Structural Limitations of Lift:**
+
+- Lift is symmetric: $\text{lift}(A \Rightarrow B) = \text{lift}(B \Rightarrow A)$. Selecting rule direction for practical applications relies on confidence —an asymmetric metric.
+- Lift has a theoretical ceiling dependent on individual supports: $\text{lift}_{\max} = 1 / \max(P(A), P(B))$. Comparing raw lifts across rules with differing supports can be misleading. Relative lift —ratio of observed to maximum lift— provides a fairer basis for comparison.
+
+**On Complementary Metrics:**
+
+- Leverage measures absolute difference between observed co-occurrence and independence. It reflects additional transactions attributable to association, but is systematically low for rare items.
+- Conviction is asymmetric and measures rule quasi-determinism in direction: very high values signal confidence near 1.
+- Zhang's metric spans $[-1, 1]$, is symmetric, and resists frequent-item bias. It is recommended for comparing rules across varying frequency regimes.
+- Metrics are non-redundant: imperfect correlations mean metric discrepancies offer key analytical signals.
+
+**On Parameter Sensitivity:**
+
+- Apriori thresholds carry no intrinsic statistical justification. Resulting rule sets are a joint function of dataset and chosen parameters.
+- Sensitivity analysis —systematic exploration of parameter space— is a mandatory methodological practice.
+- The support-confidence map visualizes full decision space, letting analysts deliberately position choices along the quantity vs. quality curve.
+
+**On Graph Representations:**
+
+- Rule graphs reveal network topology: hubs, bridge nodes, and item clusters.
+- Lift-weighted centrality —rather than raw edge counts— distinguishes genuinely central items from frequency-driven artifacts.
+- The "Whole Milk Problem" demonstrates how high consequent frequency makes discovering informative rules nearly impossible regardless of thresholds.
+
+**On the Integrated Framework:**
+
+- Robust rule evaluation requires examining at least four dimensions simultaneously: relative lift, leverage, Zhang, and conviction.
+- Robust rules show convergence across multiple metrics; candidate rules show partial convergence; discarded rules fail under stricter metrics.
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

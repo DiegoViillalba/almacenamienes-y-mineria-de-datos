@@ -1,0 +1,520 @@
+---
+title: "Measures of Heterogeneity in BigMart Sales"
+number-sections: false
+format:
+  html:
+    toc: true
+    page-layout: full
+  pdf:
+    toc: true
+jupyter: python3
+---
+
+## Introduction
+
+After studying location, variability, and distribution shape, exploratory data analysis moves toward a more structural question: **is the observed behavior homogeneous across the entire population, or does it vary significantly across groups?**. This introduces **heterogeneity**, a core dimension of EDA when datasets feature natural segmentations such as product categories, store formats, outlet sizes, or geographic locations.
+
+Statistically, heterogeneity refers to systematic differences between sub-populations. Such differences can manifest in central location, dispersion, distribution shape, or differential outlier prevalence. In a business context like BigMart, identifying heterogeneity is crucial: it reveals whether certain store types consistently sell more, whether specific product lines show higher sales volatility, or if commercial performance shifts across geographic tiers.
+
+This chapter approaches heterogeneity as a natural extension of univariate analysis. The key principle is that a numerical variable should not be analyzed in isolation, but in relation to relevant categorical variables.
+
+## Environment Setup
+
+We will work with the following [BigMart dataset](../../data/bigmart_sales.csv). For this section, we will use Python alongside pandas, numpy, plotly, and matplotlib.
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+
+plt.rcParams["figure.figsize"] = (8, 5)
+plt.rcParams["axes.grid"] = True
+
+DATA_PATH = "../../data/bigmart_sales.csv"
+df = pd.read_csv(DATA_PATH)
+df.head()
+```
+
+Let us verify the categorical and numerical variables in the dataset.
+
+```{python}
+df.info()
+```
+
+```{python}
+num_cols = df.select_dtypes(include=np.number).columns.tolist()
+cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
+
+num_cols, cat_cols
+```
+
+## Theoretical Foundations
+
+Heterogeneity can be examined from several perspectives. If $Y$ is a numerical variable of interest and $G$ is a categorical variable defining groups, we can analyze differences in:
+
+### Group Center
+
+Comparing location metrics such as group means:
+
+$$
+\bar{y}_g = \frac{1}{n_g}\sum_{i \in g} y_i,
+$$
+
+as well as median and quantile values within each group $g$.
+
+### Group Dispersion
+
+Internal subgroup variability can be summarized using standard deviation, interquartile range, or coefficient of variation. Two groups may share identical means yet differ substantially in stability or consistency.
+
+### Group Shape
+
+Heterogeneity also manifests in skewness or heavy-tailed distributions. Some groups may cluster tightly within narrow bands while others display broadly extended sales distributions.
+
+### Relative Group Share
+
+Finally, evaluating how much each group contributes to total observations or overall revenue connects heterogeneity with concentration analysis.
+
+## Target Variable and Groups of Interest
+
+In this chapter, we focus on $\texttt{Item\_Outlet\_Sales}$ as the primary target variable. Key categorical segmentation axes include:
+
+- $\texttt{Outlet\_Type}$,
+- $\texttt{Outlet\_Size}$,
+- $\texttt{Outlet\_Location\_Type}$,
+- $\texttt{Item\_Type}$.
+
+Before comparing groups, reviewing sample sizes per category is essential.
+
+```{python}
+for col in ["Outlet_Type", "Outlet_Size", "Outlet_Location_Type", "Item_Type"]:
+    print(f"\n{col}")
+    print(df[col].value_counts(dropna=False))
+```
+
+This step is critical because interpreting group differences requires considering sample size. Small groups may yield unstable statistics or apparent outliers driven by few records.
+
+## Heterogeneity by Outlet Type
+
+We begin with a key business segmentation variable: $\texttt{Outlet\_Type}$.
+
+```{python}
+outlet_type_summary = (
+    df.groupby("Outlet_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std", "min", "max"])
+      .sort_values("mean", ascending=False)
+)
+outlet_type_summary
+```
+
+```{python}
+fig = px.box(
+    df,
+    x="Outlet_Type",
+    y="Item_Outlet_Sales",
+    color="Outlet_Type",
+    title="Sales Distribution by Outlet Type"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+```{python}
+fig = px.bar(
+    outlet_type_summary.reset_index(),
+    x="Outlet_Type",
+    y="mean",
+    error_y="std",
+    title="Mean and Standard Deviation of Sales by Outlet Type",
+    text_auto=True
+)
+fig.show()
+```
+
+This analysis demonstrates **pronounced heterogeneity across outlet types**, confirming that `Outlet_Type` is strongly associated with sales performance.
+
+First, `Supermarket Type3` stands out as the **highest performing segment**, leading in both **mean** (**3694.039**) and **median** (**3364.953**) sales. Its boxplot sits distinctly above other formats, reflecting consistently superior revenue generation.
+
+Second, `Supermarket Type1` and `Supermarket Type2` display **intermediate sales levels**, with `Supermarket Type1` showing higher central values (**mean = 2316.181**, **median = 1990.742**) than `Supermarket Type2` (**mean = 1995.499**, **median = 1655.179**). This indicates that while both are supermarket formats, their commercial dynamics differ.
+
+Conversely, `Grocery Store` emerges as the **lowest sales segment**, registering a **mean of 339.829** and **median of 256.999**, far below supermarket formats. This highlights a structural baseline shift between convenience retail and larger store formats.
+
+In terms of **variability**, `Supermarket Type3` exhibits the largest dispersion (**std = 2127.760**), showing that higher volume is accompanied by wider volatility. `Supermarket Type1` and `Supermarket Type2` also show considerable spread, whereas `Grocery Store` displays low absolute variance (**std = 260.852**), consistent with its small overall sales scale.
+
+Boxplots also confirm the presence of **outliers** across all groups, particularly in supermarkets, indicating that specific high-performing items achieve exceptional revenue regardless of general store averages.
+
+Summary implications for EDA:
+
+- `Outlet_Type` is a **critical primary segmentation feature**;
+- `Item_Outlet_Sales` should not be treated as a single homogeneous population;
+- deeper exploration should combine group comparison, segmented distributions, and robust metrics;
+- `Outlet_Type` will serve as an essential explanatory feature in predictive or inferential modeling.
+
+## Heterogeneity by Outlet Size
+
+Outlet size can influence both typical sales volume and observed dispersion.
+
+```{python}
+outlet_size_summary = (
+    df.groupby("Outlet_Size")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .sort_values("mean", ascending=False)
+)
+outlet_size_summary
+```
+
+```{python}
+fig = px.violin(
+    df,
+    x="Outlet_Size",
+    y="Item_Outlet_Sales",
+    color="Outlet_Size",
+    box=True,
+    points=False,
+    title="Sales Distribution by Outlet Size"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+Violin plots are particularly effective here because they combine dispersion and internal density shape per group.
+
+The analysis confirms **heterogeneity by outlet size**, though differences are less extreme than those observed across `Outlet_Type`. Nonetheless, `Outlet_Size` provides valuable segmentation insight.
+
+Outlets categorized as `Medium` generate the highest sales level (**mean = 2681.604**, **median = 2251.070**), followed by `High` size outlets (**mean = 2298.995**, **median = 2050.664**), while `Small` outlets yield the lowest sales (**mean = 1912.149**, **median = 1544.656**).
+
+Regarding dispersion, `Medium` size stores also display the highest variability (**std = 1855.211**), followed by `Small` (**std = 1582.370**) and `High` (**std = 1533.532**). Violin plots highlight that density shape and tail spread vary across store size categories.
+
+## Heterogeneity by Outlet Location
+
+Another natural analytical dimension is $\texttt{Outlet\_Location\_Type}$, reflecting market environment and demographic differences.
+
+```{python}
+location_summary = (
+    df.groupby("Outlet_Location_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .sort_values("mean", ascending=False)
+)
+location_summary
+```
+
+```{python}
+fig = px.box(
+    df,
+    x="Outlet_Location_Type",
+    y="Item_Outlet_Sales",
+    color="Outlet_Location_Type",
+    title="Sales by Outlet Location Type"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+Location analysis reveals **geographic heterogeneity in sales**. `Tier 2` locations show the highest average sales (**mean = 2323.991**, **median = 2004.058**), closely followed by `Tier 3` (**mean = 2279.628**, **median = 1812.308**), whereas `Tier 1` locations exhibit lower central values (**mean = 1876.909**, **median = 1487.397**).
+
+`Tier 3` exhibits the widest dispersion (**std = 1912.451**) alongside noticeable upper-tail outliers.
+
+## Heterogeneity by Product Type
+
+The variable $\texttt{Item\_Type}$ contains more categories, requiring structured summary and visualization.
+
+```{python}
+item_type_summary = (
+    df.groupby("Item_Type")["Item_Outlet_Sales"]
+      .agg(["count", "mean", "median", "std"])
+      .sort_values("mean", ascending=False)
+)
+item_type_summary.head(10)
+```
+
+```{python}
+fig = px.bar(
+    item_type_summary.reset_index(),
+    x="mean",
+    y=item_type_summary.reset_index()["Item_Type"],
+    orientation="h",
+    title="Mean Sales by Product Type",
+    labels={"mean": "Mean Sales", "y": "Product Type"}
+)
+fig.show()
+```
+
+```{python}
+top_item_types = item_type_summary.head(8).index.tolist()
+fig = px.box(
+    df[df["Item_Type"].isin(top_item_types)],
+    x="Item_Type",
+    y="Item_Outlet_Sales",
+    color="Item_Type",
+    title="Sales Distribution for Top 8 Product Types by Mean Sales"
+)
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+Product category analysis shows **heterogeneity across item types**. Categories with high average sales include `Starchy Foods` (**mean = 2374.333**) and `Seafood` (**mean = 2326.066**), though these have smaller sample sizes (**148** and **64** records, respectively).
+
+Among high-frequency categories, `Fruits and Vegetables` (**1232** cases), `Snack Foods` (**1200**), and `Household` (**910**) combine strong revenue averages with substantial sample volume, making them central to business analysis.
+
+## Multi-Indicator Comparative Profiles
+
+A structured profile function consolidates multiple group metrics into clean comparative tables.
+
+```{python}
+def group_profile(df, group_col, target="Item_Outlet_Sales"):
+    out = (
+        df.groupby(group_col)[target]
+          .agg(
+              n="count",
+              mean="mean",
+              median="median",
+              std_dev="std",
+              q1=lambda x: x.quantile(0.25),
+              q3=lambda x: x.quantile(0.75)
+          )
+          .reset_index()
+    )
+    out["iqr"] = out["q3"] - out["q1"]
+    out["cv"] = out["std_dev"] / out["mean"]
+    return out.sort_values("mean", ascending=False)
+
+profile_outlet_type = group_profile(df, "Outlet_Type")
+profile_outlet_type
+```
+
+```{python}
+profile_location = group_profile(df, "Outlet_Location_Type")
+profile_location
+```
+
+## Cross-Group Heterogeneity
+
+In real-world applications, segmentation depends on interactions between multiple categorical features. Pivoting sales across `Outlet_Type` and `Outlet_Location_Type` reveals joint patterns.
+
+```{python}
+pivot_mean = pd.pivot_table(
+    df,
+    values="Item_Outlet_Sales",
+    index="Outlet_Type",
+    columns="Outlet_Location_Type",
+    aggfunc="mean"
+)
+pivot_mean
+```
+
+```{python}
+fig = px.imshow(
+    pivot_mean,
+    text_auto=True,
+    aspect="auto",
+    title="Mean Sales: Outlet Type vs Location Type"
+)
+fig.show()
+```
+
+This matrix highlights that `Supermarket Type3` in `Tier 3` generates the highest mean sales (**3694.039**), while `Grocery Store` maintains low sales across `Tier 1` (**340.330**) and `Tier 3` (**339.352**). `Supermarket Type1` exhibits consistent performance across all location tiers.
+
+## Shannon Entropy as a Global Heterogeneity Metric
+
+To summarize how evenly or unevenly sales mass is spread across categories, we can compute **Shannon Entropy**. High entropy indicates sales are widely distributed across groups, whereas low entropy indicates sales concentrate in a few dominant categories.
+
+For a categorical variable with sales proportions $p_1, p_2, \dots, p_k$:
+
+$$
+H = - \sum_{i=1}^{k} p_i \log(p_i).
+$$
+
+Normalized entropy scales values between 0 and 1:
+
+$$
+H_{\text{norm}} = \frac{H}{\log(k)}.
+$$
+
+### Computing Sales Entropy by Categorical Variable
+
+```{python}
+vars_cat_heterogeneidad = [
+    "Outlet_Type",
+    "Outlet_Size",
+    "Outlet_Location_Type",
+    "Item_Type"
+]
+
+def shannon_entropy_from_sales(df, cat_var, sales_var="Item_Outlet_Sales"):
+    sales_by_group = df.groupby(cat_var)[sales_var].sum().dropna()
+    p = sales_by_group / sales_by_group.sum()
+    h = -(p * np.log(p)).sum()
+    h_norm = h / np.log(len(p)) if len(p) > 1 else np.nan
+    
+    return pd.Series({
+        "n_categories": len(p),
+        "entropy": h,
+        "normalized_entropy": h_norm
+    })
+
+entropy_table = pd.DataFrame({
+    var: shannon_entropy_from_sales(df, var)
+    for var in vars_cat_heterogeneidad
+}).T.reset_index(names="variable")
+
+entropy_table.sort_values("normalized_entropy", ascending=False).round(4)
+```
+
+```{python}
+entropy_plot = entropy_table.sort_values("normalized_entropy", ascending=True)
+
+fig = px.bar(
+    entropy_plot,
+    x="normalized_entropy",
+    y="variable",
+    orientation="h",
+    text="normalized_entropy",
+    title="Normalized Shannon Entropy by Categorical Variable",
+    labels={
+        "normalized_entropy": "Normalized Entropy",
+        "variable": "Categorical Variable"
+    },
+    range_x=[0, 1]
+)
+
+fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
+fig.update_layout(height=450, width=900)
+
+fig.show()
+```
+
+```{python}
+sales_item_type = (
+    df.groupby("Item_Type")["Item_Outlet_Sales"]
+      .sum()
+      .sort_values(ascending=False)
+      .reset_index()
+)
+
+sales_item_type["proportion"] = (
+    sales_item_type["Item_Outlet_Sales"] /
+    sales_item_type["Item_Outlet_Sales"].sum()
+)
+
+fig = px.bar(
+    sales_item_type,
+    x="Item_Type",
+    y="proportion",
+    text="proportion",
+    title="Sales Proportion by Product Type",
+    labels={
+        "Item_Type": "Product Type",
+        "proportion": "Sales Proportion"
+    }
+)
+
+fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
+fig.update_layout(xaxis_tickangle=45, height=500, width=950)
+
+fig.show()
+```
+
+`Outlet_Location_Type` registers the **highest normalized entropy** (**0.9792**), followed by `Item_Type` (**0.9078**) and `Outlet_Size` (**0.8990**), showing that sales are broadly distributed across these features. By contrast, `Outlet_Type` yields a lower normalized entropy (**0.6298**), reflecting higher sales concentration within specific store formats.
+
+## Gini Index as a Concentration Metric
+
+The **Gini Index** measures distribution inequality between 0 (perfect equality) and 1 (extreme concentration).
+
+```{python}
+def gini_from_sales(df, cat_var, sales_var="Item_Outlet_Sales"):
+    sales = df.groupby(cat_var)[sales_var].sum().dropna().values
+    p = sales / sales.sum()
+    
+    p_sorted = np.sort(p)
+    n = len(p_sorted)
+    
+    gini = 1 - 2 * np.sum((np.arange(1, n+1) * p_sorted)) / n
+    
+    return pd.Series({
+        "n_categories": n,
+        "gini": gini
+    })
+
+gini_table = pd.DataFrame({
+    var: gini_from_sales(df, var)
+    for var in vars_cat_heterogeneidad
+}).T.reset_index(names="variable")
+
+gini_table.sort_values("gini", ascending=False).round(4)
+```
+
+```{python}
+gini_plot = gini_table.sort_values("gini", ascending=True)
+
+fig = px.bar(
+    gini_plot,
+    x="gini",
+    y="variable",
+    orientation="h",
+    text="gini",
+    title="Sales Gini Index by Categorical Variable",
+    labels={
+        "gini": "Gini Index",
+        "variable": "Categorical Variable"
+    },
+    range_x=[0,1]
+)
+
+fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
+fig.update_layout(height=450, width=900)
+
+fig.show()
+```
+
+## Heterogeneity Mini-Dashboard
+
+We synthesize key heterogeneity findings into a compact multi-panel dashboard.
+
+```{python}
+from plotly.subplots import make_subplots
+
+fig = make_subplots(
+    rows=2,
+    cols=2,
+    subplot_titles=(
+        "Mean Sales by Outlet Type",
+        "Mean Sales by Outlet Size",
+        "Mean Sales by Location Tier",
+        "Top 8 Product Types by Mean Sales"
+    )
+)
+
+summary1 = group_profile(df, "Outlet_Type")
+summary2 = group_profile(df.dropna(subset=["Outlet_Size"]), "Outlet_Size")
+summary3 = group_profile(df, "Outlet_Location_Type")
+summary4 = group_profile(df, "Item_Type").head(8)
+
+fig.add_trace(
+    go.Bar(x=summary1["Outlet_Type"], y=summary1["mean"], name="Outlet Type"),
+    row=1, col=1
+)
+fig.add_trace(
+    go.Bar(x=summary2["Outlet_Size"], y=summary2["mean"], name="Outlet Size"),
+    row=1, col=2
+)
+fig.add_trace(
+    go.Bar(x=summary3["Outlet_Location_Type"], y=summary3["mean"], name="Location"),
+    row=2, col=1
+)
+fig.add_trace(
+    go.Bar(x=summary4["Item_Type"], y=summary4["mean"], name="Item Type"),
+    row=2, col=2
+)
+
+fig.update_layout(
+    title="Basic Heterogeneity Dashboard in BigMart",
+    height=750,
+    showlegend=False
+)
+fig.show()
+```
+
+## Chapter Conclusions
+
+Heterogeneity represents an essential dimension of exploratory data analysis. Comparing groups expands statistical descriptions beyond global averages into segmented, context-aware insights. In BigMart Sales, heterogeneity manifests across outlet types, store sizes, locations, and product categories, laying the groundwork for subsequent concentration and predictive modeling analyses.

@@ -1,0 +1,291 @@
+---
+title: "Neural Networks for Classification"
+author: "Diego Villalba"
+date: today
+lang: en
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    fig-align: center
+    theme: cosmo
+    highlight-style: github
+    smooth-scroll: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    geometry: margin=2.5cm
+    keep-tex: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+bibliography: referencias_redes_neuronales.bib
+crossref:
+  fig-title: "Figure"
+  tbl-title: "Table"
+  eq-prefix: "Eq."
+---
+
+Artificial neural networks are computational models inspired by biological neural structures. From Rosenblatt's 1958 Perceptron [@rosenblatt1958perceptron] to state-of-the-art deep architectures [@lecun2015deep], the foundational mathematical skeleton remains invariant: compositions of linear transformations followed by non-linearities, applied hierarchically to input data. The universal approximation theorem [@hornik1989multilayer] establishes that a single-hidden-layer feedforward network with sufficient hidden units can approximate any continuous function on compact subsets of $\mathbb{R}^d$ to arbitrary accuracy.
+
+## The Perceptron
+
+### Mathematical Model
+
+The Perceptron accepts inputs $x_1, \ldots, x_d$, computing a linear combination followed by a step activation:
+
+$$z = \mathbf{w}^\top \mathbf{x} + b = \sum_{i=1}^d w_i x_i + b$$ {#eq-perceptron-z}
+
+$$\hat{y} = \text{sign}(z) \in \{-1, +1\}$$ {#eq-perceptron-yhat}
+
+The decision boundary $\{\mathbf{x} : \mathbf{w}^\top \mathbf{x} + b = 0\}$ forms a separating hyperplane in $\mathbb{R}^d$.
+
+### Learning Rule
+
+For a misclassified instance $(\mathbf{x}^{(i)}, y^{(i)})$, weights and bias update via:
+
+$$\mathbf{w} \leftarrow \mathbf{w} + \eta \, y^{(i)} \mathbf{x}^{(i)}, \quad b \leftarrow b + \eta \, y^{(i)}$$ {#eq-perceptron-update}
+
+The Perceptron Convergence Theorem guarantees convergence in finite steps $R^2/\gamma^2$ if the data is linearly separable with geometric margin $\gamma > 0$ [@rosenblatt1958perceptron].
+
+```{python}
+#| label: fig-nn-perceptron-aprendizaje
+#| fig-cap: "Perceptron learning convergence on linearly separable data."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+
+rng = np.random.default_rng(7)
+
+n_per_class = 20
+X_neg = rng.multivariate_normal([-2.0, -1.5], [[0.6, 0.1], [0.1, 0.6]], n_per_class)
+X_pos = rng.multivariate_normal([2.0, 1.5], [[0.6, 0.1], [0.1, 0.6]], n_per_class)
+X = np.vstack([X_neg, X_pos])
+y = np.array([-1] * n_per_class + [1] * n_per_class)
+
+w = np.zeros(2)
+b = 0.0
+eta = 0.3
+max_iters = 200
+history = [(w.copy(), b, 0)]
+
+converged = False
+iteration = 0
+while not converged and iteration < max_iters:
+    errors = 0
+    for i in range(len(y)):
+        z = np.dot(w, X[i]) + b
+        y_hat = 1 if z >= 0 else -1
+        if y_hat != y[i]:
+            w = w + eta * y[i] * X[i]
+            b = b + eta * y[i]
+            errors += 1
+    iteration += 1
+    history.append((w.copy(), b, errors))
+    if errors == 0:
+        converged = True
+
+x_range = np.array([-5.0, 5.0])
+
+frames = []
+for t, (wt, bt, errs) in enumerate(history):
+    scatter_neg = go.Scatter(
+        x=X_neg[:, 0], y=X_neg[:, 1],
+        mode="markers",
+        marker=dict(color="#1f77b4", size=8, symbol="circle"),
+        name="Class -1",
+        showlegend=(t == 0)
+    )
+    scatter_pos = go.Scatter(
+        x=X_pos[:, 0], y=X_pos[:, 1],
+        mode="markers",
+        marker=dict(color="#ff7f0e", size=8, symbol="diamond"),
+        name="Class +1",
+        showlegend=(t == 0)
+    )
+    if abs(wt[1]) > 1e-10:
+        y_line = -(wt[0] * x_range + bt) / wt[1]
+        line_trace = go.Scatter(
+            x=x_range, y=y_line,
+            mode="lines",
+            line=dict(color="#2ca02c", width=2.5),
+            name="Boundary",
+            showlegend=(t == 0)
+        )
+    else:
+        line_trace = go.Scatter(x=[], y=[], mode="lines", showlegend=False)
+
+    frames.append(go.Frame(
+        data=[scatter_neg, scatter_pos, line_trace],
+        name=str(t),
+        layout=go.Layout(title_text=f"Iteration {t} | Errors: {errs}")
+    ))
+
+init_neg = go.Scatter(x=X_neg[:, 0], y=X_neg[:, 1], mode="markers",
+                      marker=dict(color="#1f77b4", size=8, symbol="circle"), name="Class -1")
+init_pos = go.Scatter(x=X_pos[:, 0], y=X_pos[:, 1], mode="markers",
+                      marker=dict(color="#ff7f0e", size=8, symbol="diamond"), name="Class +1")
+init_line = go.Scatter(x=[], y=[], mode="lines",
+                       line=dict(color="#2ca02c", width=2.5), name="Boundary")
+
+steps = []
+for t in range(len(history)):
+    steps.append(dict(
+        method="animate",
+        args=[[str(t)], dict(mode="immediate", frame=dict(duration=300, redraw=True),
+                             transition=dict(duration=0))],
+        label=str(t)
+    ))
+
+sliders = [dict(
+    active=0, steps=steps, x=0.0, y=0.0, len=1.0,
+    currentvalue=dict(prefix="Iteration: ", font=dict(size=13)), pad=dict(t=50)
+)]
+
+fig = go.Figure(
+    data=[init_neg, init_pos, init_line],
+    frames=frames,
+    layout=go.Layout(
+        title="Perceptron Learning Rule Convergence",
+        xaxis=dict(range=[-5, 5], title="x1"),
+        yaxis=dict(range=[-5, 5], title="x2"),
+        sliders=sliders,
+        width=680, height=520,
+        legend=dict(x=0.01, y=0.99)
+    )
+)
+fig.show()
+```
+
+## Activation Functions
+
+Activation functions introduce non-linear expressiveness into multilayer networks.
+
+- **Sigmoid:** $\sigma(z) = \frac{1}{1+e^{-z}}$, derivative $\sigma'(z) = \sigma(z)(1-\sigma(z)) \le 0.25$.
+- **Tanh:** $\tanh(z) = \frac{e^z - e^{-z}}{e^z + e^{-z}}$, output in $(-1, 1)$.
+- **ReLU:** $\text{ReLU}(z) = \max(0,z)$, derivative 1 for $z>0$.
+- **Leaky ReLU:** $\text{LReLU}(z) = \max(\alpha z, z)$ ($\alpha = 0.1$).
+
+```{python}
+#| label: fig-nn-activaciones
+#| fig-cap: "Activation functions and their derivatives."
+#| code-fold: true
+
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+z = np.linspace(-4, 4, 300)
+
+def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -500, 500)))
+
+def tanh_fn(z):
+    return np.tanh(z)
+
+def relu(z):
+    return np.maximum(0, z)
+
+def leaky_relu(z, alpha=0.1):
+    return np.where(z >= 0, z, alpha * z)
+
+def softplus(z):
+    return np.log1p(np.exp(np.clip(z, -500, 20)))
+
+def sigmoid_grad(z):
+    s = sigmoid(z)
+    return s * (1 - s)
+
+def tanh_grad(z):
+    return 1 - np.tanh(z)**2
+
+def relu_grad(z):
+    return (z > 0).astype(float)
+
+def leaky_relu_grad(z, alpha=0.1):
+    return np.where(z >= 0, 1.0, alpha)
+
+def softplus_grad(z):
+    return sigmoid(z)
+
+names = ["Sigmoid", "Tanh", "ReLU", "Leaky ReLU", "Softplus"]
+funcs = [sigmoid, tanh_fn, relu, leaky_relu, softplus]
+grads = [sigmoid_grad, tanh_grad, relu_grad, leaky_relu_grad, softplus_grad]
+colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+
+fig = make_subplots(rows=2, cols=5,
+                    subplot_titles=[n for n in names] + [f"d/dz {n}" for n in names],
+                    vertical_spacing=0.18, horizontal_spacing=0.08)
+
+for col, (name, fn, gn, color) in enumerate(zip(names, funcs, grads, colors), start=1):
+    fig.add_trace(go.Scatter(x=z, y=fn(z), mode="lines", line=dict(color=color, width=2.5), name=name, showlegend=False), row=1, col=col)
+    fig.add_trace(go.Scatter(x=z, y=gn(z), mode="lines", line=dict(color=color, width=2.5, dash="dash"), name=f"d {name}", showlegend=False), row=2, col=col)
+
+fig.update_layout(height=480, width=950, title_text="Activation Functions and Derivatives")
+fig.show()
+```
+
+## Multilayer Perceptrons (MLP) and Backpropagation
+
+Forward propagation at layer $\ell$:
+
+$$\mathbf{z}^{(\ell)} = \mathbf{A}^{(\ell-1)} \mathbf{W}^{(\ell)} + \mathbf{b}^{(\ell)}$$ {#eq-forward-z}
+
+$$\mathbf{A}^{(\ell)} = g^{(\ell)}(\mathbf{z}^{(\ell)})$$ {#eq-forward-a}
+
+Binary Cross-Entropy Loss:
+
+$$\mathcal{L} = -\frac{1}{m} \sum_{i=1}^m \left[ y^{(i)} \log \hat{y}^{(i)} + (1-y^{(i)}) \log(1-\hat{y}^{(i)}) \right]$$ {#eq-bce}
+
+Output error delta:
+
+$$\boldsymbol{\delta}^{(L)} = \hat{\mathbf{Y}} - \mathbf{Y}$$ {#eq-delta-L}
+
+Hidden layer error recursion:
+
+$$\boldsymbol{\delta}^{(\ell)} = \left(\boldsymbol{\delta}^{(\ell+1)} \mathbf{W}^{(\ell+1)\top}\right) \odot g'^{(\ell)}(\mathbf{z}^{(\ell)})$$ {#eq-delta-hidden}
+
+Gradients:
+
+$$\nabla_{\mathbf{W}^{(\ell)}} \mathcal{L} = \frac{1}{m} \mathbf{A}^{(\ell-1)\top} \boldsymbol{\delta}^{(\ell)}, \quad \nabla_{\mathbf{b}^{(\ell)}} \mathcal{L} = \frac{1}{m} \sum_{i=1}^m \boldsymbol{\delta}^{(\ell)}_i$$ {#eq-grads}
+
+## Optimization Algorithms
+
+- **SGD:** $\mathbf{W} \leftarrow \mathbf{W} - \eta \nabla_\mathbf{W} \mathcal{L}$ {#eq-sgd}
+- **Momentum:** $\mathbf{v} \leftarrow \beta \mathbf{v} + (1-\beta) \nabla \mathcal{L}, \quad \mathbf{W} \leftarrow \mathbf{W} - \eta \mathbf{v}$ {#eq-momentum-v}
+- **Adam:** Combines momentum and adaptive second-moment scaling [@kingma2015adam].
+
+## Convolutional Neural Networks (CNN)
+
+2D Convolution / Cross-correlation:
+
+$$(I \star K)[i,j] = \sum_{u=0}^{k-1} \sum_{v=0}^{k-1} I[i+u, j+v] \cdot K[u,v]$$ {#eq-conv2d}
+
+CNN architectures leverage local receptive fields, weight sharing, and translation equivariance [@lecun1998gradient].
+
+## Regularization Techniques
+
+- **L2 Regularization (Weight Decay):** $\mathcal{L}_{\text{reg}} = \mathcal{L}_{\text{data}} + \frac{\lambda}{2} \|\mathbf{W}\|_F^2$ {#eq-l2-reg}
+- **Dropout:** Randomly zeroes activations with probability $1-p$ during training [@srivastava2014dropout].
+- **Batch Normalization:** Normalizes activations per mini-batch [@eq-batchnorm].
+
+## Summary
+
+Multilayer neural networks combined with non-linear activations and backpropagation provide universal function approximation capabilities. Convolutional layers extend neural models to spatial image grids, while regularization and adaptive optimizers like Adam ensure robust optimization [@goodfellow2016deep].
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

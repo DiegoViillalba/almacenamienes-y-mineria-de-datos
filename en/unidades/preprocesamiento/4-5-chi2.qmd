@@ -1,0 +1,611 @@
+---
+title: "Categorical Variable Reduction with χ²"
+format:
+  html:
+    code-fold: true
+    theme: cosmo
+execute:
+  echo: true
+  warning: false
+---
+
+```{python}
+#| include: false
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+import plotly.io as pio
+
+pio.templates["mi_template"] = pio.templates["plotly_white"]
+
+pio.templates["mi_template"].layout.update(
+    legend=dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.2,
+        xanchor="center",
+        x=0.5
+    )
+)
+
+pio.templates.default = "mi_template"
+```
+
+Previous chapters introduced correlation for numerical feature relationships, quantifying dependence using metrics like Pearson's coefficient:
+
+$$
+r = \frac{\sum_{i=1}^n (x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum(x_i-\bar{x})^2 \sum(y_i-\bar{y})^2}}
+$$
+
+However, real-world analytical problems frequently involve categorical variables, where numerical correlation metrics do not apply. In this context, assessing **statistical association** determines whether two categorical features are independent or related.
+
+Examples include:
+
+- Is **biological sex** associated with **brand preference**?
+- Does **educational attainment** influence **political party choice**?
+- Does **medical treatment type** impact **clinical outcome**?
+
+Contingency tables and the $\chi^2$ test of independence identify statistical dependencies, complemented by Cramér's V to quantify association strength.
+
+Beyond exploratory diagnosis, these tools serve as core mechanisms for **categorical data reduction**, identifying redundant features and streamlining feature spaces without sacrificing informative signal.
+
+This chapter presents these principles, illustrating how $\chi^2$ tests evaluate association and guide feature selection and reduction decisions.
+
+## Statistical Foundations
+
+::: {.callout-tip}
+Core Concept: Statistical Independence
+:::
+
+Two categorical variables $X$ and $Y$ are **statistically independent** if:
+
+$$
+P(X = x_i, Y = y_j) = P(X = x_i)\, P(Y = y_j) \quad \forall\, i,j
+$$
+
+Knowing the value of one feature provides **no information** about the probability distribution of the other.
+
+To illustrate, consider rolling two fair six-sided dice. Let $X$ denote the outcome of the first die and $Y$ the second:
+
+$$
+P(X=2) = \frac{1}{6}, \quad P(Y=3) = \frac{1}{6}
+$$
+
+Because individual rolls are independent, the joint probability equals the product of marginal probabilities:
+
+$$
+P(X=2, Y=3) = \frac{1}{6} \times \frac{1}{6} = \frac{1}{36}
+$$
+
+If this factorization fails to hold, the variables exhibit statistical dependence.
+
+To visualize independence dynamically, we simulate repeated dice rolls and trace the empirical joint frequency convergence toward $1/36 \approx 0.0278$.
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+np.random.seed(42)
+n = 5000
+
+# Fair dice (independent)
+X_justo = np.random.choice([1,2,3,4,5,6], size=n)
+Y_justo = np.random.choice([1,2,3,4,5,6], size=n)
+
+# Biased dice
+probs = [0.1, 0.1, 0.1, 0.1, 0.1, 0.5]
+X_sesgado = np.random.choice([1,2,3,4,5,6], size=n, p=probs)
+Y_sesgado = np.random.choice([1,2,3,4,5,6], size=n, p=probs)
+
+# Target event: X=2, Y=3
+evento_justo = (X_justo == 2) & (Y_justo == 3)
+evento_sesgado = (X_sesgado == 2) & (Y_sesgado == 3)
+
+# Cumulative empirical probability
+prob_justo = np.cumsum(evento_justo) / np.arange(1, n+1)
+prob_sesgado = np.cumsum(evento_sesgado) / np.arange(1, n+1)
+
+df_plot = pd.DataFrame({
+    "Rolls": np.arange(1, n+1),
+    "Fair": prob_justo,
+    "Biased": prob_sesgado
+}).melt(id_vars="Rolls", var_name="Type", value_name="Probability")
+
+fig = px.line(
+    df_plot,
+    x="Rolls",
+    y="Probability",
+    color="Type",
+    title="Convergence of Joint Probability P(X=2, Y=3)"
+)
+
+fig.add_hline(
+    y=1/36,
+    line_dash="dash",
+    annotation_text="1/36 (Theoretical Value)",
+    annotation_position="bottom right"
+)
+
+fig.update_layout(
+    template="plotly_white",
+    legend=dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.2,
+        xanchor="center",
+        x=0.5
+    )
+)
+fig.show()
+```
+
+In practice, datasets contain **observed frequencies** ($o_{ij}$) structured in contingency tables. Under the null hypothesis of independence ($H_0$), expected frequencies ($e_{ij}$) are calculated as:
+
+$$
+e_{ij} = \frac{(\text{row } i \text{ total})(\text{column } j \text{ total})}{n}
+$$
+
+where expected frequencies reflect the frequency counts anticipated if no relationship existed between attributes. The discrepancy between observed ($o_{ij}$) and expected ($e_{ij}$) counts serves as the foundation for testing independence.
+
+### From Independence to Expected Frequencies
+
+Consider a survey of $n = 100$ respondents measuring Gender ($X \in \{\text{Male}, \text{Female}\}$) and Beverage Preference ($Y \in \{\text{Coffee}, \text{Tea}\}$).
+
+Marginal totals:
+
+- Male: **50** | Female: **50**  
+- Coffee: **60** | Tea: **40**
+
+```{python}
+fig = go.Figure()
+
+fig.add_trace(go.Bar(
+    name="P(Gender)",
+    x=["Male", "Female"],
+    y=[0.5, 0.5],
+    marker_color=["#457b9d", "#e63946"],
+    text=["50%", "50%"], textposition="outside",
+    width=0.4
+))
+
+fig.add_trace(go.Bar(
+    name="P(Beverage)",
+    x=["Coffee", "Tea"],
+    y=[0.6, 0.4],
+    marker_color=["#2a9d8f", "#e9c46a"],
+    text=["60%", "40%"], textposition="outside",
+    width=0.4
+))
+
+fig.update_layout(
+    title="Marginal Probabilities — Baseline Under Independence",
+    yaxis_title="Probability",
+    yaxis_range=[0, 0.85]
+)
+fig.show()
+```
+
+Under independence:
+
+$$
+P(\text{Male}, \text{Coffee}) = P(\text{Male}) \times P(\text{Coffee}) = 0.5 \times 0.6 = 0.30
+$$
+
+Expected count $e_{11}$:
+
+$$
+e_{11} = 0.30 \times 100 = 30
+$$
+
+Full expected frequency table:
+
+```{python}
+labels_x = ["Coffee", "Tea"]
+labels_y = ["Male", "Female"]
+esp = np.array([[30, 20], [30, 20]])
+
+fig = go.Figure(go.Heatmap(
+    z=esp, x=labels_x, y=labels_y,
+    colorscale="Blues", showscale=False,
+    text=esp, texttemplate="%{text}",
+    zmin=0, zmax=40
+))
+
+for i, (row, rtot) in enumerate(zip(esp, [50, 50])):
+    fig.add_annotation(x=1.6, y=labels_y[i], text=f"<b>{rtot}</b>",
+                       showarrow=False, font=dict(size=13, color="#457b9d"),
+                       xref="x", yref="y")
+for j, (col, ctot) in enumerate(zip(labels_x, [60, 40])):
+    fig.add_annotation(x=labels_x[j], y=-0.65, text=f"<b>{ctot}</b>",
+                       showarrow=False, font=dict(size=13, color="#457b9d"),
+                       xref="x", yref="y")
+
+fig.update_layout(
+    title="Expected Frequency Table Under Independence",
+)
+fig.show()
+```
+
+The $\chi^2$ test statistic quantifies overall deviation between observed ($o_{ij}$) and expected ($e_{ij}$) frequencies:
+
+$$
+\chi^2 = \sum_{i,j} \frac{(o_{ij} - e_{ij})^2}{e_{ij}}
+$$
+
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from scipy.stats import chi2_contingency
+
+k_vals = np.arange(30, 56, 1)
+chi2_vals = []
+
+for k in k_vals:
+    tabla = np.array([[k, 50 - k], [60 - k, 50 - (60 - k)]])
+    if tabla.min() >= 0:
+        chi2_v, *_ = chi2_contingency(tabla)
+        chi2_vals.append(chi2_v)
+    else:
+        chi2_vals.append(np.nan)
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=k_vals, y=chi2_vals,
+    mode="lines+markers",
+    line=dict(color="#457b9d", width=2.5),
+    marker=dict(size=5),
+    name="χ²"
+))
+
+fig.add_vline(x=30, line_dash="dash", line_color="#2a9d8f",
+              annotation_text="k=30: Exact Independence (χ²=0)",
+              annotation_position="top right",
+              annotation_font_color="#2a9d8f")
+
+fig.add_hline(y=3.841, line_dash="dot", line_color="#e63946",
+              annotation_text="Critical Value α=0.05 (df=1)",
+              annotation_position="bottom right",
+              annotation_font_color="#e63946")
+
+fig.update_layout(
+    title="χ² Statistic Increases with Deviation from Independence",
+    xaxis_title="Coffee-drinking males (k) — Fixed Marginals (50/50 & 60/40)",
+    yaxis_title="χ² Statistic",
+)
+fig.show()
+```
+
+Degrees of freedom for an $r \times c$ contingency table:
+
+$$
+\text{df} = (r - 1)(c - 1)
+$$
+
+### The $\chi^2$ Distribution
+
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from scipy.stats import chi2
+
+x = np.linspace(0, 30, 500)
+
+fig = go.Figure()
+for df_, color in zip([1, 2, 4, 6, 9],
+                      ["#e63946","#457b9d","#2a9d8f","#e9c46a","#f4a261"]):
+    fig.add_trace(go.Scatter(
+        x=x, y=chi2.pdf(x, df_),
+        mode="lines", name=f"df = {df_}",
+        line=dict(color=color, width=2.5)
+    ))
+
+fig.update_layout(
+    title="χ² Distribution for Varying Degrees of Freedom",
+    xaxis_title="χ²", yaxis_title="Density",
+    legend_title="df",
+    height=400
+)
+fig.show()
+```
+
+### Statistical Decision: p-value
+
+The p-value represents the upper-tail probability under $H_0$:
+
+$$
+p = P(\chi^2 \ge \chi^2_{\text{obs}} \mid H_0)
+$$
+
+```{python}
+from scipy.stats import chi2
+import numpy as np
+import plotly.graph_objects as go
+
+gl = 4
+chi2_obs = 11.5
+x = np.linspace(0, 25, 500)
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=x, y=chi2.pdf(x, gl),
+    fill="tozeroy", fillcolor="rgba(69,123,157,0.2)",
+    line=dict(color="#457b9d", width=2),
+    name="χ²(4) Distribution"
+))
+
+x_tail = x[x >= chi2_obs]
+fig.add_trace(go.Scatter(
+    x=np.concatenate([[chi2_obs], x_tail, [x_tail[-1]]]),
+    y=np.concatenate([[0], chi2.pdf(x_tail, gl), [0]]),
+    fill="toself", fillcolor="rgba(230,57,70,0.5)",
+    line=dict(color="#e63946", width=2),
+    name=f"p-value = {chi2.sf(chi2_obs, gl):.4f}"
+))
+
+fig.add_vline(x=chi2_obs, line_dash="dash", line_color="#e63946",
+              annotation_text=f"χ²={chi2_obs}",
+              annotation_position="top right")
+
+fig.update_layout(
+    title="Rejection Region (α = 0.05, df = 4)",
+    xaxis_title="χ²", yaxis_title="Density",
+)
+fig.show()
+```
+
+::: {.callout-important}
+### Assumptions for $\chi^2$ Test Validity
+1. **Independent Observations**: Each subject appears in exactly one table cell.
+2. **Sample Size**: $n \ge 20$.
+3. **Expected Frequencies**: $e_{ij} \ge 5$ in at least 80% of cells.
+4. **No Zero Expected Frequencies**: $e_{ij} > 0$ for all cells.
+:::
+
+### Strength of Association: Cramér's V
+
+To isolate association strength from sample size inflation, **Cramér's V** scales $\chi^2$ between 0 and 1:
+
+$$
+V = \sqrt{\frac{\chi^2 / n}{\min(r-1,\, c-1)}} \in [0, 1]
+$$
+
+| V Value | Interpretation |
+|---|---|
+| 0.00 – 0.10 | Negligible association |
+| 0.10 – 0.20 | Weak association |
+| 0.20 – 0.40 | Moderate association |
+| > 0.40 | Strong association |
+
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+tables = {
+    "Negligible  (V ≈ 0.05)": np.array([[26, 24], [24, 26]]),
+    "Weak        (V ≈ 0.15)": np.array([[35, 15], [25, 25]]),
+    "Moderate    (V ≈ 0.30)": np.array([[40, 10], [20, 30]]),
+    "Strong      (V ≈ 0.55)": np.array([[45,  5], [10, 40]]),
+}
+
+colors = {
+    "Negligible  (V ≈ 0.05)": ["#d9f0f7", "#a8d8ea"],
+    "Weak        (V ≈ 0.15)": ["#c8e6c9", "#66bb6a"],
+    "Moderate    (V ≈ 0.30)": ["#fff3cd", "#ffc107"],
+    "Strong      (V ≈ 0.55)": ["#ffd6d6", "#e63946"],
+}
+
+fig = make_subplots(
+    rows=1, cols=4,
+    subplot_titles=list(tables.keys()),
+    horizontal_spacing=0.08
+)
+
+for col_idx, (label, table) in enumerate(tables.items(), start=1):
+    n = table.sum()
+    total = table / n * 100
+
+    cats_col = ["A", "B"]
+    cats_row = ["X", "Y"]
+
+    for r_idx, row_label in enumerate(cats_row):
+        fig.add_trace(go.Bar(
+            name=row_label,
+            x=cats_col,
+            y=total[r_idx],
+            marker_color=colors[label][r_idx],
+            text=[f"{v:.0f}%" for v in total[r_idx]],
+            textposition="inside",
+            showlegend=(col_idx == 1),
+        ), row=1, col=col_idx)
+
+fig.update_layout(
+    barmode="stack",
+    legend_title="Category",
+)
+
+fig.update_yaxes(range=[0, 100], ticksuffix="%")
+fig.show()
+```
+
+## Practical Application: Airline Customer Satisfaction Case Study
+
+An airline seeks to optimize customer satisfaction drivers across 6 candidate features: `Class`, `Travel_Type`, `Flight_Frequency`, `Delay_Status`, `Seat_Selection`, and `Purchase_Time`.
+
+```{python}
+import numpy as np
+import pandas as pd
+from scipy.stats import chi2_contingency
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+
+np.random.seed(42)
+n = 1000
+
+clase = np.random.choice(["Economy","Business","First"],
+                          size=n, p=[0.65, 0.25, 0.10])
+
+tipo_map = {
+    "Economy": [0.30, 0.70],
+    "Business":  [0.85, 0.15],
+    "First":   [0.70, 0.30]
+}
+tipo = np.array([np.random.choice(["Business_Travel","Vacation"],
+                 p=tipo_map[c]) for c in clase])
+
+freq_map = {
+    "Economy": [0.15, 0.45, 0.40],
+    "Business":  [0.65, 0.30, 0.05],
+    "First":   [0.75, 0.20, 0.05]
+}
+frecuencia = np.array([np.random.choice(["Frequent","Occasional","First_Time"],
+                       p=freq_map[c]) for c in clase])
+
+retraso_map = {
+    "Business_Travel": [0.50, 0.30, 0.20],
+    "Vacation":        [0.45, 0.35, 0.20]
+}
+retraso = np.array([np.random.choice(["No_Delay","Minor","Severe"],
+                    p=retraso_map[t]) for t in tipo])
+
+satisf = []
+for c, r in zip(clase, retraso):
+    if c == "First" and r == "No_Delay":
+        satisf.append(np.random.choice(["Low","Medium","High"], p=[0.05,0.15,0.80]))
+    elif c == "Business" and r != "Severe":
+        satisf.append(np.random.choice(["Low","Medium","High"], p=[0.10,0.35,0.55]))
+    elif c == "Economy" and r == "Severe":
+        satisf.append(np.random.choice(["Low","Medium","High"], p=[0.60,0.30,0.10]))
+    elif c == "Economy" and r == "No_Delay":
+        satisf.append(np.random.choice(["Low","Medium","High"], p=[0.20,0.45,0.35]))
+    else:
+        satisf.append(np.random.choice(["Low","Medium","High"], p=[0.30,0.40,0.30]))
+satisf = np.array(satisf)
+
+asiento = np.random.choice(["Window","Aisle","Middle"],
+                            size=n, p=[0.45, 0.40, 0.15])
+
+def p_norm():
+    p = np.array([0.50, 0.50]) + np.random.uniform(-0.03, 0.03, 2)
+    return p / p.sum()
+
+momento = np.array([np.random.choice(["Early","Last_Minute"],
+                    p=p_norm()) for _ in range(n)])
+
+df = pd.DataFrame({
+    "Class": clase, "Travel_Type": tipo, "Frequency": frecuencia,
+    "Delay": retraso, "Satisfaction": satisf,
+    "Seat": asiento, "Purchase_Time": momento
+})
+
+predictoras = ["Class","Travel_Type","Frequency","Delay","Seat","Purchase_Time"]
+resultados = []
+
+for var in predictoras:
+    tabla = pd.crosstab(df[var], df["Satisfaction"])
+    chi2_v, p_v, dof_v, exp_v = chi2_contingency(tabla)
+    n_tot = tabla.values.sum()
+    min_dim = min(tabla.shape[0]-1, tabla.shape[1]-1)
+    cramer = np.sqrt(chi2_v / (n_tot * min_dim))
+
+    if cramer > 0.3:
+        fuerza = "Strong"
+    elif cramer > 0.1:
+        fuerza = "Moderate"
+    else:
+        fuerza = "Weak"
+
+    resultados.append({
+        "Variable": var, "χ²": round(chi2_v,2),
+        "p-value": round(p_v, 4), "Cramér's V": round(cramer, 3),
+        "Strength": fuerza
+    })
+
+res_df = pd.DataFrame(resultados).sort_values("Cramér's V", ascending=False)
+res_df
+```
+
+```{python}
+colores = {"Strong": "#e63946", "Moderate": "#e9c46a", "Weak": "#2a9d8f"}
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=res_df["Variable"],
+    y=res_df["Cramér's V"],
+    marker_color=[colores[f] for f in res_df["Strength"]],
+    text=res_df["Cramér's V"].astype(str),
+    textposition="outside"
+))
+
+fig.add_hline(y=0.1, line_dash="dot", line_color="#e9c46a",
+              annotation_text="Weak/Moderate Threshold (0.1)",
+              annotation_position="top left")
+fig.add_hline(y=0.3, line_dash="dot", line_color="#e63946",
+              annotation_text="Moderate/Strong Threshold (0.3)",
+              annotation_position="top left")
+
+fig.update_layout(
+    title="Cramér's V Feature Association Strength vs Satisfaction",
+    yaxis_title="Cramér's V", yaxis_range=[0, 1.0],
+    template="plotly_white", height=430, showlegend=False
+)
+fig.show()
+```
+
+### Random Forest Model Evaluation Across Feature Subsets
+
+```{python}
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import LabelEncoder
+
+df_enc = df.copy()
+for col in df_enc.columns:
+    df_enc[col] = LabelEncoder().fit_transform(df_enc[col])
+
+y = df_enc["Satisfaction"]
+
+configs = {
+    "All (6 features)":        ["Class","Travel_Type","Frequency","Delay","Seat","Purchase_Time"],
+    "Filtered (4 features)":   ["Class","Travel_Type","Frequency","Delay"],
+    "Top 2 (2 features)":      ["Class","Delay"],
+}
+
+scores, stds, nombres = [], [], []
+for nombre, cols in configs.items():
+    cv = cross_val_score(
+        RandomForestClassifier(n_estimators=200, random_state=42),
+        df_enc[cols], y, cv=5, scoring="accuracy"
+    )
+    scores.append(cv.mean())
+    stds.append(cv.std())
+    nombres.append(nombre)
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=nombres, y=[round(s,4) for s in scores],
+    error_y=dict(type="data", array=[round(s,4) for s in stds], visible=True),
+    marker_color=["#457b9d","#2a9d8f","#e9c46a"],
+    text=[f"{s:.1%}" for s in scores],
+    textposition="outside", width=0.4
+))
+
+fig.update_layout(
+    title="5-Fold Cross-Validation Accuracy across χ²-Selected Subsets",
+    yaxis_title="Mean Accuracy ± std",
+    yaxis_range=[0, 1.1],
+    template="plotly_white", height=420
+)
+fig.show()
+```
+
+## Summary
+
+1. **Formal Independence Hypothesis Testing**: $\chi^2$ quantifies independence deviations with Type I error control.
+2. **Cell-Level Residual Analysis**: Standardized residuals identify specific cell-level deviations driving significant $\chi^2$ results.
+3. **Effect Size Measurement**: Cramér's V measures practical association magnitude independent of sample size $n$.
+4. **Categorical Feature Selection**: Screening categorical features via $\chi^2$ and Cramér's V prunes non-informative noise and reduces model complexity before training.
