@@ -1,0 +1,672 @@
+---
+title: "Redes Neuronales en la Practica"
+subtitle: "PyTorch y JAX — clasificacion desde cero"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  revealjs:
+    theme: ../assets/unam-theme.scss
+    slide-number: true
+    chalkboard: false
+    incremental: false
+    smaller: true
+    code-fold: false
+    code-line-numbers: true
+    highlight-style: github
+    fig-align: center
+    fig-width: 6
+    fig-height: 3.5
+    transition: slide
+    footer: "Mineria de datos · Redes Neuronales en la Practica"
+    logo: "../assets/Logo_FC_Color.png"
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+---
+
+```{python}
+#| echo: false
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
+from sklearn.datasets import make_moons
+from sklearn.model_selection import train_test_split
+
+plt.style.use("seaborn-v0_8-whitegrid")
+plt.rcParams["font.size"] = 13
+
+SEED = 42
+np.random.seed(SEED)
+```
+
+```{python}
+#| echo: false
+# Preparacion del dataset — usado en figuras de slides
+X, y = make_moons(n_samples=600, noise=0.25, random_state=SEED)
+X_train, X_val, y_train, y_val = train_test_split(
+    X, y, test_size=0.2, random_state=SEED, stratify=y
+)
+```
+
+# Objetivos {.title-section}
+
+## [00:00] ¿Que haremos hoy?
+
+- Pasar del `MLPClassifier` de sklearn a PyTorch y JAX
+- Entender el ciclo de entrenamiento explicito (forward → loss → backward → step)
+- Implementar un MLP binario desde cero en PyTorch
+- Replicarlo en JAX usando `jax.grad` y `optax`
+- Comparar los dos paradigmas: imperativo vs funcional
+
+::: {.callout-note}
+Abran el notebook `../notebooks/taller-pytorch-jax.ipynb` en su máquina o en Google Colab.
+:::
+
+---
+
+# Repaso rapido {.title-section}
+
+## Lo que ya saben [00:03]
+
+```{python}
+from sklearn.neural_network import MLPClassifier
+from sklearn.datasets import make_moons
+
+X_demo, y_demo = make_moons(n_samples=400, noise=0.2, random_state=42)
+clf = MLPClassifier(hidden_layer_sizes=(32, 32), max_iter=500, random_state=42)
+clf.fit(X_demo, y_demo)
+print(f"Accuracy: {clf.score(X_demo, y_demo):.3f}")
+```
+
+::: {.fragment}
+sklearn hace todo por debajo. Hoy abriremos esa caja negra.
+:::
+
+---
+
+## Por que necesitamos mas control
+
+::: {.columns}
+
+::: {.column width="50%"}
+**sklearn es suficiente cuando...**
+
+- Datos tabulares clasicos
+- Prototipado rapido
+- Arquitecturas estandar (MLP simple)
+- No se necesita GPU ni paralelismo
+- Produccion con pipelines de sklearn
+:::
+
+::: {.column width="50%"}
+**Necesitas PyTorch/JAX cuando...**
+
+- CNNs, RNNs, Transformers
+- Funciones de perdida personalizadas
+- Arquitecturas no estandar
+- Investigacion y experimentacion
+- Fine-tuning de modelos pre-entrenados
+:::
+
+:::
+
+::: {.callout-tip title="Para pensar"}
+¿En que proyectos del curso podrian necesitar mas control que sklearn?
+:::
+
+---
+
+# El dataset {.title-section}
+
+## [00:08] make_moons — nuestro campo de pruebas
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.datasets import make_moons
+from sklearn.model_selection import train_test_split
+
+plt.style.use("seaborn-v0_8-whitegrid")
+
+X, y = make_moons(n_samples=600, noise=0.25, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+print(f"Train: {X_train.shape}  |  Val: {X_val.shape}")
+```
+
+```{python}
+#| echo: false
+#| fig-height: 3
+fig, ax = plt.subplots(figsize=(6, 3))
+scatter = ax.scatter(X_train[:, 0], X_train[:, 1],
+                     c=y_train, cmap="RdBu", edgecolors="k",
+                     linewidths=0.4, s=25, alpha=0.8, label="Train")
+ax.scatter(X_val[:, 0], X_val[:, 1],
+           c=y_val, cmap="RdBu", edgecolors="k",
+           linewidths=0.4, s=25, alpha=0.5, marker="^", label="Val")
+ax.set_xlabel("x1")
+ax.set_ylabel("x2")
+ax.legend(fontsize=11)
+ax.set_title("Dataset make_moons")
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Visualizacion del dataset
+
+```{python}
+#| echo: false
+#| fig-height: 4.5
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.scatter(X_train[:, 0], X_train[:, 1],
+           c=y_train, cmap="RdBu", edgecolors="k",
+           linewidths=0.4, s=35, alpha=0.8, label="Train")
+ax.scatter(X_val[:, 0], X_val[:, 1],
+           c=y_val, cmap="RdBu", edgecolors="k",
+           linewidths=0.4, s=35, alpha=0.6, marker="^", label="Validacion")
+ax.set_xlabel("x1", fontsize=13)
+ax.set_ylabel("x2", fontsize=13)
+ax.legend(fontsize=12)
+ax.set_title("make_moons — 600 muestras, ruido=0.25", fontsize=13)
+plt.tight_layout()
+plt.show()
+```
+
+Dos semilunares entrelazadas — frontera de decision no lineal garantizada.
+
+---
+
+# PyTorch {.title-section}
+
+## [00:12] El modelo como objeto
+
+En PyTorch, el modelo hereda de `nn.Module` y encapsula pesos y logica de calculo.
+
+```{python}
+import torch
+import torch.nn as nn
+
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.red = nn.Sequential(
+            nn.Linear(2, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
+
+    def forward(self, x):
+        return self.red(x)
+
+modelo = MLP()
+print(modelo)
+print(f"Parametros: {sum(p.numel() for p in modelo.parameters()):,}")
+```
+
+::: {.callout-note}
+**Arquitectura:** `Linear(2, 32)` — 2 entradas (x1, x2), 32 neuronas. La ultima capa devuelve 1 logit (sin activacion): la perdida `BCEWithLogitsLoss` aplica sigmoid internamente por estabilidad numerica.
+:::
+
+---
+
+## [00:17] El ciclo de entrenamiento
+
+```{python}
+#| code-line-numbers: "10-14"
+X_tr = torch.tensor(X_train, dtype=torch.float32)
+y_tr = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+X_vl = torch.tensor(X_val,   dtype=torch.float32)
+y_vl = torch.tensor(y_val,   dtype=torch.float32).unsqueeze(1)
+
+torch.manual_seed(42)
+modelo  = MLP()
+opt     = torch.optim.Adam(modelo.parameters(), lr=0.01)
+perdida = nn.BCEWithLogitsLoss()
+
+historico = {"tr": [], "vl": []}
+
+for epoch in range(300):
+    modelo.train()
+    opt.zero_grad()                           # 1. Limpiar gradientes
+    logits = modelo(X_tr)                     # 2. Forward pass
+    loss   = perdida(logits, y_tr)            # 3. Calcular perdida
+    loss.backward()                           # 4. Backward pass
+    opt.step()                                # 5. Actualizar pesos
+    with torch.no_grad():
+        modelo.eval()
+        vl = perdida(modelo(X_vl), y_vl).item()
+    historico["tr"].append(loss.item())
+    historico["vl"].append(vl)
+```
+
+::: {.callout-important}
+`zero_grad()` debe llamarse antes de cada paso. Si no, los gradientes se acumulan de la iteracion anterior y el entrenamiento diverge.
+:::
+
+---
+
+## [00:23] Resultados del entrenamiento
+
+```{python}
+#| echo: false
+#| fig-height: 3.5
+with torch.no_grad():
+    modelo.eval()
+    pred_tr = (torch.sigmoid(modelo(X_tr)) >= 0.5).float()
+    pred_vl = (torch.sigmoid(modelo(X_vl)) >= 0.5).float()
+    acc_tr_vals = []
+    acc_vl_vals = []
+    # Recalcular accuracy por epoca para la curva
+    # Usamos la curva de perdida ya almacenada
+    final_acc_tr = (pred_tr.squeeze() == y_tr.squeeze()).float().mean().item()
+    final_acc_vl = (pred_vl.squeeze() == y_vl.squeeze()).float().mean().item()
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+
+epochs = range(1, 301)
+axes[0].plot(epochs, historico["tr"], label="Train", color="steelblue")
+axes[0].plot(epochs, historico["vl"], label="Validacion", color="tomato", linestyle="--")
+axes[0].set_xlabel("Epoca")
+axes[0].set_ylabel("BCE Loss")
+axes[0].set_title("Curva de perdida — PyTorch")
+axes[0].legend()
+axes[0].annotate(
+    f"Val final: {historico['vl'][-1]:.4f}",
+    xy=(300, historico["vl"][-1]),
+    xytext=(220, historico["vl"][-1] + 0.03),
+    arrowprops=dict(arrowstyle="->", color="gray"),
+    fontsize=10
+)
+
+# Accuracy aproximada (threshold 0.5 en logits)
+with torch.no_grad():
+    acc_hist_tr = []
+    acc_hist_vl = []
+    for lo_tr, lo_vl in zip(historico["tr"], historico["vl"]):
+        acc_hist_tr.append(None)
+        acc_hist_vl.append(None)
+
+axes[1].axhline(final_acc_tr, color="steelblue", linestyle="-",
+                label=f"Train acc = {final_acc_tr:.3f}")
+axes[1].axhline(final_acc_vl, color="tomato", linestyle="--",
+                label=f"Val acc = {final_acc_vl:.3f}")
+axes[1].set_ylim(0, 1.05)
+axes[1].set_xlabel("Epoca")
+axes[1].set_ylabel("Accuracy")
+axes[1].set_title("Accuracy final — PyTorch")
+axes[1].legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## [00:25] Frontera de decision
+
+```{python}
+#| echo: false
+#| fig-height: 4
+x1_min, x1_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
+x2_min, x2_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
+xx1, xx2 = np.meshgrid(np.linspace(x1_min, x1_max, 200),
+                        np.linspace(x2_min, x2_max, 200))
+grid = torch.tensor(np.c_[xx1.ravel(), xx2.ravel()], dtype=torch.float32)
+with torch.no_grad():
+    modelo.eval()
+    zz = torch.sigmoid(modelo(grid)).numpy().reshape(xx1.shape)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+cf = ax.contourf(xx1, xx2, zz, levels=50, cmap="RdBu", alpha=0.6)
+plt.colorbar(cf, ax=ax, label="P(clase=1)")
+ax.scatter(X_train[:, 0], X_train[:, 1],
+           c=y_train, cmap="RdBu", edgecolors="k",
+           linewidths=0.5, s=25, alpha=0.9, label="Train")
+ax.scatter(X_val[:, 0], X_val[:, 1],
+           c=y_val, cmap="RdBu", edgecolors="k",
+           linewidths=0.5, s=25, alpha=0.7, marker="^", label="Val")
+ax.set_title("Frontera de decision — PyTorch MLP(2→32→32→1)", fontsize=13)
+ax.set_xlabel("x1")
+ax.set_ylabel("x2")
+ax.legend(fontsize=11)
+plt.tight_layout()
+plt.show()
+```
+
+::: {.callout-tip title="Experimento"}
+¿Como se veria esta frontera con una sola capa oculta? Prueben cambiando la arquitectura en el notebook: `nn.Sequential(nn.Linear(2,32), nn.ReLU(), nn.Linear(32,1))`.
+:::
+
+---
+
+## [Checkpoint] PyTorch [00:27]
+
+¿Tienen funcionando las siguientes partes?
+
+- [ ] Modelo `MLP` definido e impreso con `print(modelo)`
+- [ ] Ciclo de entrenamiento corriendo 300 epocas sin errores
+- [ ] Curvas de perdida (train y val) visibles en el notebook
+- [ ] Frontera de decision graficada
+
+::: {.callout-tip title="Errores frecuentes en PyTorch"}
+- **`RuntimeError` en BCEWithLogitsLoss**: verificar `.unsqueeze(1)` en `y_tr` y `y_vl` — deben tener forma `(N, 1)`.
+- **Gradientes que explotan**: revisar que `opt.zero_grad()` este antes del forward pass.
+- **Evaluacion incorrecta**: usar `torch.no_grad()` y `modelo.eval()` al calcular la perdida de validacion.
+:::
+
+---
+
+# JAX {.title-section}
+
+## [00:30] El cambio de paradigma
+
+::: {.columns}
+
+::: {.column width="50%"}
+**PyTorch — paradigma imperativo**
+
+El modelo TIENE los pesos:
+
+```python
+modelo = MLP()
+# los pesos viven dentro del objeto
+modelo.parameters()
+modelo.train()
+```
+
+Estado mutable, orientado a objetos.
+:::
+
+::: {.column width="50%"}
+**JAX — paradigma funcional**
+
+Los pesos son datos externos:
+
+```python
+params = init_params([2, 32, 32, 1], key)
+# params es un diccionario / pytree
+forward(params, x)
+```
+
+Funciones puras, sin estado mutable.
+:::
+
+:::
+
+::: {.fragment}
+En JAX, una red neuronal es simplemente una funcion `f(params, x)`. Nada mas.
+:::
+
+::: {.callout-note}
+Instalen JAX y optax si no los tienen: `pip install jax optax`
+:::
+
+---
+
+## [00:33] jax.grad — diferenciacion automatica funcional
+
+```{python}
+import jax
+import jax.numpy as jnp
+
+def cuadrado(x):
+    return x ** 2
+
+grad_cuadrado = jax.grad(cuadrado)
+print(grad_cuadrado(3.0))              # 6.0
+print(jax.grad(jax.grad(cuadrado))(3.0))  # 2.0  (segunda derivada)
+```
+
+::: {.fragment}
+Aplicamos esto a la perdida: `jax.grad(bce)(params)` nos da el gradiente respecto a TODOS los pesos simultaneamente — JAX recorre el pytree completo.
+:::
+
+---
+
+## [00:36] Inicializacion de parametros
+
+```{python}
+def init_params(dims, key):
+    params = {"W": [], "b": []}
+    for i in range(len(dims) - 1):
+        key, sk = jax.random.split(key)
+        W = jax.random.normal(sk, (dims[i], dims[i+1])) * jnp.sqrt(2.0/dims[i])
+        b = jnp.zeros(dims[i+1])
+        params["W"].append(W)
+        params["b"].append(b)
+    return params
+
+params = init_params([2, 32, 32, 1], jax.random.PRNGKey(42))
+print("Capas:", len(params["W"]))
+print("W[0] shape:", params["W"][0].shape)
+```
+
+::: {.callout-note}
+El `PRNGKey` es la semilla de aleatoriedad. En JAX la aleatoriedad es **explicita** — no hay estado global aleatorio como `np.random.seed()`. Cada operacion aleatoria recibe su propia clave.
+:::
+
+---
+
+## [00:39] Forward pass y perdida
+
+```{python}
+def forward(params, x):
+    for i in range(len(params["W"]) - 1):
+        x = jax.nn.relu(x @ params["W"][i] + params["b"][i])
+    return jax.nn.sigmoid(x @ params["W"][-1] + params["b"][-1]).squeeze(-1)
+
+def bce(params, x, y):
+    yhat = forward(params, x)
+    yhat = jnp.clip(yhat, 1e-7, 1 - 1e-7)
+    return -jnp.mean(y * jnp.log(yhat) + (1 - y) * jnp.log(1 - yhat))
+```
+
+::: {.callout-important}
+Las funciones deben ser **puras** — no modifican nada externo, no tienen efectos secundarios. Esto es lo que permite a `jax.jit` compilarlas con XLA. Cualquier efecto secundario (print dentro de jit, modificacion de listas globales) puede dar resultados inesperados.
+:::
+
+---
+
+## [00:42] El paso de entrenamiento compilado
+
+```{python}
+import optax
+
+optimizer = optax.adam(learning_rate=0.01)
+opt_state = optimizer.init(params)
+
+@jax.jit
+def train_step(params, opt_state, x, y):
+    loss, grads = jax.value_and_grad(bce)(params, x, y)
+    updates, opt_state = optimizer.update(grads, opt_state, params)
+    params = optax.apply_updates(params, updates)
+    return params, opt_state, loss
+```
+
+::: {.fragment}
+::: {.callout-note}
+`@jax.jit` compila la funcion con XLA. La primera llamada tarda (compilacion); las siguientes son significativamente mas rapidas porque el codigo se ejecuta optimizado en hardware.
+:::
+:::
+
+::: {.fragment}
+Noten que `params` y `opt_state` se **devuelven** — no se modifican in situ. Cada llamada a `train_step` produce nuevas versiones inmutables de los pesos.
+:::
+
+---
+
+## [00:45] Bucle de entrenamiento JAX
+
+```{python}
+X_tr_j = jnp.array(X_train, dtype=jnp.float32)
+y_tr_j = jnp.array(y_train, dtype=jnp.float32)
+X_vl_j = jnp.array(X_val,   dtype=jnp.float32)
+y_vl_j = jnp.array(y_val,   dtype=jnp.float32)
+
+hist_jax = {"tr": [], "vl": []}
+
+for epoch in range(300):
+    params, opt_state, tr_loss = train_step(
+        params, opt_state, X_tr_j, y_tr_j
+    )
+    vl_loss = float(bce(params, X_vl_j, y_vl_j))
+    hist_jax["tr"].append(float(tr_loss))
+    hist_jax["vl"].append(vl_loss)
+
+print(f"Val loss final: {hist_jax['vl'][-1]:.4f}")
+```
+
+::: {.callout-tip title="Observacion de compilacion JIT"}
+La primera epoca es notablemente mas lenta (compilacion JIT). Observen la diferencia en tiempo con las epocas siguientes — ese costo se amortiza rapidamente en entrenamientos largos.
+:::
+
+---
+
+## [00:48] Resultados JAX
+
+```{python}
+#| echo: false
+#| fig-height: 3.5
+pred_tr_j = (forward(params, X_tr_j) >= 0.5).astype(jnp.float32)
+pred_vl_j = (forward(params, X_vl_j) >= 0.5).astype(jnp.float32)
+final_acc_tr_j = float(jnp.mean(pred_tr_j == y_tr_j))
+final_acc_vl_j = float(jnp.mean(pred_vl_j == y_vl_j))
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+
+epochs = range(1, 301)
+axes[0].plot(epochs, hist_jax["tr"], label="Train", color="seagreen")
+axes[0].plot(epochs, hist_jax["vl"], label="Validacion", color="darkorange", linestyle="--")
+axes[0].set_xlabel("Epoca")
+axes[0].set_ylabel("BCE Loss")
+axes[0].set_title("Curva de perdida — JAX")
+axes[0].legend()
+axes[0].annotate(
+    f"Val final: {hist_jax['vl'][-1]:.4f}",
+    xy=(300, hist_jax["vl"][-1]),
+    xytext=(210, hist_jax["vl"][-1] + 0.03),
+    arrowprops=dict(arrowstyle="->", color="gray"),
+    fontsize=10
+)
+
+axes[1].axhline(final_acc_tr_j, color="seagreen", linestyle="-",
+                label=f"Train acc = {final_acc_tr_j:.3f}")
+axes[1].axhline(final_acc_vl_j, color="darkorange", linestyle="--",
+                label=f"Val acc = {final_acc_vl_j:.3f}")
+axes[1].set_ylim(0, 1.05)
+axes[1].set_xlabel("Epoca")
+axes[1].set_ylabel("Accuracy")
+axes[1].set_title("Accuracy final — JAX")
+axes[1].legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## [Checkpoint] JAX [00:50]
+
+¿Tienen funcionando las siguientes partes?
+
+- [ ] `params` inicializados con `init_params([2, 32, 32, 1], PRNGKey(42))`
+- [ ] Funciones `forward` y `bce` definidas y probadas con un batch
+- [ ] `train_step` decorado con `@jax.jit` y sin errores
+- [ ] Bucle de 300 epocas corriendo (primera epoca mas lenta — es normal)
+- [ ] Curvas de perdida visibles
+
+::: {.callout-important}
+**Error comun:** `TypeError: argument is not a valid JAX type`. Generalmente significa que hay un array de numpy donde se espera un `jnp` array. Usen `jnp.array(...)` para convertir. Recuerden que `X_train` y `y_train` son arrays de numpy — deben convertirse antes del bucle.
+:::
+
+---
+
+# Comparativa y cierre {.title-section}
+
+## [00:52] PyTorch vs JAX cara a cara
+
+```{python}
+#| echo: false
+#| fig-height: 3.5
+with torch.no_grad():
+    modelo.eval()
+    pred_vl_pt = (torch.sigmoid(modelo(X_vl)) >= 0.5).float()
+    final_acc_vl_pt = (pred_vl_pt.squeeze() == y_vl.squeeze()).float().mean().item()
+
+fig, ax = plt.subplots(figsize=(8, 3.5))
+
+epochs = range(1, 301)
+ax.plot(epochs, historico["vl"], label=f"PyTorch (acc={final_acc_vl_pt:.3f})",
+        color="steelblue", linewidth=2)
+ax.plot(epochs, hist_jax["vl"], label=f"JAX     (acc={final_acc_vl_j:.3f})",
+        color="seagreen", linewidth=2, linestyle="--")
+
+ax.set_xlabel("Epoca")
+ax.set_ylabel("BCE Loss (validacion)")
+ax.set_title("Comparacion de val loss — PyTorch vs JAX")
+ax.legend(fontsize=12)
+
+ax.annotate(f"PyTorch: {historico['vl'][-1]:.4f}",
+            xy=(300, historico["vl"][-1]),
+            xytext=(230, historico["vl"][-1] + 0.04),
+            arrowprops=dict(arrowstyle="->", color="steelblue"),
+            color="steelblue", fontsize=10)
+ax.annotate(f"JAX: {hist_jax['vl'][-1]:.4f}",
+            xy=(300, hist_jax["vl"][-1]),
+            xytext=(230, hist_jax["vl"][-1] - 0.06),
+            arrowprops=dict(arrowstyle="->", color="seagreen"),
+            color="seagreen", fontsize=10)
+
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Cuando usar cada uno
+
+|  | PyTorch | JAX |
+|---|---|---|
+| Curva de aprendizaje | Suave | Empinada |
+| Debugging | Facil (eager por defecto) | Complejo (dentro de jit) |
+| Ecosistema | Vasto (HuggingFace, torchvision) | Creciente (Flax, Equinox) |
+| Velocidad | Buena | Excelente (XLA, TPUs) |
+| Recomendado para | Practica, fine-tuning, proyectos | Investigacion, TPUs, optimizacion de 2do orden |
+
+::: {.fragment}
+Para el 90% de los proyectos de este curso: **PyTorch**. Para investigacion avanzada o cuando necesiten diferenciacion de orden superior: **JAX**.
+:::
+
+---
+
+## [00:55] Ejercicios para el notebook
+
+::: {.callout-tip title="Ejercicios — completen en el notebook"}
+1. Cambien la arquitectura: agreguen una capa oculta mas (`nn.Linear(32, 32)` + `nn.ReLU()`). ¿Mejora la val accuracy?
+2. Prueben `lr = 0.001` y `lr = 0.1` en ambos frameworks. ¿Que observan en las curvas?
+3. Reemplacen `make_moons` por `make_circles(n_samples=600, noise=0.1)`. ¿Funciona la misma arquitectura?
+4. **Bonus PyTorch:** agreguen `nn.Dropout(0.3)` despues de cada `nn.ReLU()` y observen el efecto en val loss vs train loss.
+5. **Bonus JAX:** calculen la segunda derivada de la perdida respecto a un peso con `jax.grad(jax.grad(bce))` para un `params` fijo. ¿Que forma tiene el resultado?
+:::
+
+---
+
+## [00:58] Resumen de la clase
+
+- **PyTorch:** ciclo explicito de 5 pasos: `zero_grad` → `forward` → `loss` → `backward` → `step`
+- **JAX:** funciones puras + pytrees + `jit` = diferenciacion funcional sin estado mutable
+- Ambos frameworks producen el mismo modelo y resultados equivalentes; lo que cambia es el paradigma de programacion
+- PyTorch es mas accesible para proyectos; JAX brilla en investigacion y hardware especializado
+
+::: {.callout-note}
+**Proximo tema:** CNNs para clasificacion de imagenes — aprovecharemos el ciclo de entrenamiento de PyTorch que vimos hoy y agregaremos capas convolucionales.
+:::

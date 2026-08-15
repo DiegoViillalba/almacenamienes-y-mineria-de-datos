@@ -1,0 +1,176 @@
+---
+title: "Medidas de forma"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+bibliography: referencias_eda.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+## Introducción
+
+La localización y la variabilidad no determinan la geometría de una distribución. Las medidas de forma describen asimetría, peso de las colas y multimodalidad, propiedades que influyen en la elección de resúmenes robustos y transformaciones [@nist2012handbook; @joanes1998skewness].
+
+## Momentos centrales
+
+$$
+m_r=\frac{1}{n}\sum_{i=1}^{n}(x_i-\bar{x})^r. \tag{1}
+$$
+
+El segundo momento se relaciona con la varianza; los momentos estandarizados tercero y cuarto originan medidas de asimetría y curtosis.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** La forma es la estructura global de una distribución una vez considerados su centro y escala: simetría, colas, picos y número de modos.
+:::
+
+## Asimetría
+
+La asimetría poblacional se expresa como
+
+$$
+\gamma_1=\frac{\mathbb{E}[(X-\mu)^3]}{\sigma^3}. \tag{2}
+$$
+
+- $\gamma_1>0$: cola derecha más larga.
+- $\gamma_1<0$: cola izquierda más larga.
+- $\gamma_1\approx0$: ausencia de asimetría marcada, pero no necesariamente normalidad.
+
+Las implementaciones muestrales aplican correcciones distintas; debe documentarse la convención usada [@joanes1998skewness].
+
+## Curtosis
+
+$$
+\beta_2=\frac{\mathbb{E}[(X-\mu)^4]}{\sigma^4},
+\qquad \gamma_2=\beta_2-3. \tag{3}
+$$
+
+$\gamma_2$ es el exceso de curtosis, que vale cero para una distribución normal. La curtosis se interpreta principalmente como sensibilidad a valores alejados y peso de colas, no solo como “altura del pico”.
+
+::: {.callout-warning appearance="minimal"}
+Reportar “curtosis = 3” o “curtosis = 0” puede describir la misma muestra bajo convenciones diferentes. Indique siempre si se usa curtosis de Pearson o exceso de Fisher.
+:::
+
+## Asimetría visible e interactiva
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from scipy import stats
+
+rng = np.random.default_rng(31)
+n = 4000
+sim = rng.normal(0, 1, n)
+derecha = rng.lognormal(0, 0.75, n)
+izquierda = -rng.lognormal(0, 0.75, n)
+forma = pd.DataFrame({
+    "valor": np.r_[izquierda, sim, derecha],
+    "distribución": ["Cola izquierda"]*n + ["Simétrica"]*n + ["Cola derecha"]*n
+})
+fig = px.histogram(forma, x="valor", color="distribución", facet_row="distribución",
+                   histnorm="probability density", nbins=80, opacity=.75,
+                   title="Tres direcciones de asimetría")
+fig.update_layout(height=720, showlegend=False)
+fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+fig.show()
+```
+
+## Misma media y varianza, colas diferentes
+
+```{python}
+x_n = rng.normal(size=n)
+x_l = rng.laplace(scale=1/np.sqrt(2), size=n)
+x_t = rng.standard_t(df=5, size=n) * np.sqrt(3/5)
+colas = pd.DataFrame({
+    "valor": np.r_[x_n, x_l, x_t],
+    "distribución": ["Normal"]*n + ["Laplace"]*n + ["t(5)"]*n
+})
+fig = px.histogram(colas, x="valor", color="distribución", nbins=100,
+                   histnorm="probability density", barmode="overlay", opacity=.45,
+                   range_x=[-6, 6], title="Escala comparable, comportamiento distinto en las colas")
+fig.show()
+```
+
+::: {.callout-important appearance="minimal"}
+**Interpretación.** Superponer distribuciones revela diferencias que media y varianza ocultan. Al pasar el cursor se pueden inspeccionar regiones centrales y colas sin perder la identidad de cada distribución.
+:::
+
+## Gráfico Q–Q
+
+Un gráfico Q–Q compara cuantiles observados con cuantiles de una distribución de referencia. Una línea aproximadamente recta indica compatibilidad visual; desviaciones sistemáticas en los extremos revelan asimetría o colas diferentes.
+
+```{python}
+muestra = rng.lognormal(0, .7, 700)
+osm, osr = stats.probplot(muestra, dist="norm", fit=False)
+pendiente, intercepto, _ = stats.probplot(muestra, dist="norm", fit=True)[1]
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=osm, y=osr, mode="markers", name="Cuantiles observados"))
+xline = np.array([min(osm), max(osm)])
+fig.add_trace(go.Scatter(x=xline, y=intercepto + pendiente*xline, mode="lines",
+                         name="Referencia normal", line=dict(dash="dash")))
+fig.update_layout(title="Q–Q normal: curvatura causada por asimetría",
+                  xaxis_title="Cuantiles teóricos", yaxis_title="Cuantiles observados")
+fig.show()
+```
+
+## Transformaciones y forma
+
+```{python}
+filas = []
+for lam in [1.0, 0.5, 0.25, 0.0]:
+    transformado = np.log1p(muestra) if lam == 0 else ((muestra + 1)**lam - 1)/lam
+    etiqueta = "log" if lam == 0 else f"λ={lam}"
+    filas.extend({"valor": v, "transformación": etiqueta} for v in transformado)
+anim = pd.DataFrame(filas)
+fig = px.histogram(anim, x="valor", animation_frame="transformación", nbins=55,
+                   histnorm="probability density", range_y=[0, 1.8],
+                   title="Animación: efecto de transformaciones de potencia")
+fig.show()
+```
+
+::: {.callout-warning appearance="minimal"}
+Transformar no “arregla” automáticamente los datos. La nueva escala debe conservar una interpretación útil y aplicarse dentro del pipeline para evitar inconsistencias.
+:::
+
+## Multimodalidad
+
+La asimetría y la curtosis no indican por sí solas cuántos subgrupos contiene una distribución. Histogramas, densidades, ECDF y comparaciones por grupo son indispensables. Una forma bimodal puede sugerir mezcla de poblaciones, estacionalidad o categorías omitidas.
+
+## Puente al caso BigMart
+
+El capítulo [Medidas de forma en Big Mart Sales](2-5-forma_bigmart.qmd) estudia ventas, asimetría, curtosis, transformaciones y Q–Q plots.
+
+## Ejercicios
+
+1. Construya una distribución simétrica y bimodal con asimetría cercana a cero.
+2. Compare exceso de curtosis antes y después de agregar dos extremos.
+3. Anime una transformación logarítmica gradual y describa qué cambia en la escala.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

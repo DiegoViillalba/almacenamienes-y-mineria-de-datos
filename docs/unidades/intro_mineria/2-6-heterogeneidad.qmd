@@ -1,0 +1,180 @@
+---
+title: "Medidas de heterogeneidad"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    fig-align: center
+    theme: cosmo
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+bibliography: referencias_eda.bib
+crossref:
+  fig-title: "Figura"
+  tbl-title: "Tabla"
+  eq-prefix: "Ec."
+---
+
+## Introducción
+
+La heterogeneidad pregunta si una población se comporta como una sola unidad o contiene subpoblaciones con composiciones o distribuciones distintas. Conviene separar dos problemas: la diversidad de una variable categórica y las diferencias de una variable numérica entre grupos.
+
+::: {.callout-note appearance="minimal"}
+**Definición.** Hay heterogeneidad cuando la masa se reparte entre diversas categorías o cuando la distribución de una respuesta cambia de forma sistemática entre subgrupos.
+:::
+
+## Diversidad categórica
+
+Sea $p=(p_1,\ldots,p_K)$ la distribución de proporciones de $K$ categorías.
+
+### Entropía de Shannon
+
+$$
+H(p)=-\sum_{k=1}^{K}p_k\log(p_k). \tag{1}
+$$
+
+La entropía es cero si una categoría contiene toda la masa y alcanza $\log K$ bajo uniformidad. Para comparar variables con distinto número de niveles puede usarse
+
+$$
+H_{\mathrm{norm}}=\frac{H(p)}{\log K}. \tag{2}
+$$
+
+La base del logaritmo cambia la unidad, no el orden de las distribuciones [@shannon1948mathematical].
+
+### Índice de Gini–Simpson
+
+$$
+D(p)=1-\sum_{k=1}^{K}p_k^2. \tag{3}
+$$
+
+$D$ es la probabilidad de que dos observaciones extraídas independientemente pertenezcan a categorías diferentes [@simpson1949measurement].
+
+::: {.callout-warning appearance="minimal"}
+El índice Gini–Simpson de diversidad no es el coeficiente de Gini de desigualdad. Aunque ambos usan el apellido Gini, responden preguntas diferentes y poseen fórmulas distintas.
+:::
+
+## Número efectivo de categorías
+
+La transformación $\exp(H)$ expresa la entropía como el número de categorías igualmente frecuentes que produciría la misma diversidad. Para Gini–Simpson, el equivalente es $1/\sum p_k^2$. Estas versiones facilitan comparaciones sustantivas.
+
+## Heterogeneidad de una respuesta entre grupos
+
+Para una respuesta numérica $Y$ y grupos $g=1,\ldots,G$, la variación total puede descomponerse en componentes dentro y entre grupos:
+
+$$
+SS_T=\sum_i(y_i-\bar y)^2=SS_B+SS_W. \tag{4}
+$$
+
+Una medida descriptiva del tamaño de las diferencias es
+
+$$
+\eta^2=\frac{SS_B}{SS_T}. \tag{5}
+$$
+
+Valores próximos a cero indican que las medias grupales explican poca variación; valores mayores señalan separación entre grupos.
+
+::: {.callout-important appearance="minimal"}
+$\eta^2$ describe separación de medias, pero no reemplaza la inspección de medianas, dispersión, tamaños de grupo y forma. Tampoco establece causalidad.
+:::
+
+## Diversidad con igual número de categorías
+
+```{python}
+import numpy as np
+import pandas as pd
+import plotly.express as px
+
+escenarios = {
+    "Dominante": [0.82, 0.08, 0.06, 0.04],
+    "Intermedio": [0.50, 0.25, 0.15, 0.10],
+    "Uniforme": [0.25, 0.25, 0.25, 0.25]
+}
+filas = []
+for nombre, probs in escenarios.items():
+    for categoria, p in zip(list("ABCD"), probs):
+        filas.append({"Escenario": nombre, "Categoría": categoria, "Proporción": p})
+div = pd.DataFrame(filas)
+fig = px.bar(div, x="Categoría", y="Proporción", color="Categoría",
+             animation_frame="Escenario", range_y=[0, 1],
+             title="Animación: de dominancia a diversidad categórica")
+fig.update_layout(showlegend=False)
+fig.show()
+```
+
+```{python}
+resumen = []
+for nombre, probs in escenarios.items():
+    p = np.asarray(probs)
+    h = -(p[p>0]*np.log(p[p>0])).sum()
+    resumen.append({"Escenario": nombre, "Entropía normalizada": h/np.log(len(p)),
+                    "Gini–Simpson": 1-(p**2).sum(), "Categorías efectivas": np.exp(h)})
+pd.DataFrame(resumen).round(3)
+```
+
+## Diferencias entre grupos
+
+```{python}
+rng = np.random.default_rng(17)
+n = 350
+grupos = pd.DataFrame({
+    "valor": np.r_[rng.normal(50, 8, n), rng.normal(62, 8, n), rng.normal(75, 14, n)],
+    "grupo": ["A"]*n + ["B"]*n + ["C"]*n
+})
+fig = px.violin(grupos, x="grupo", y="valor", color="grupo", box=True, points="outliers",
+                title="Centro, dispersión y forma pueden cambiar entre grupos")
+fig.update_layout(showlegend=False)
+fig.show()
+
+media_global = grupos["valor"].mean()
+ss_total = ((grupos["valor"]-media_global)**2).sum()
+medias = grupos.groupby("grupo")["valor"].transform("mean")
+ss_entre = ((medias-media_global)**2).sum()
+print(f"Eta cuadrada descriptiva: {ss_entre/ss_total:.3f}")
+```
+
+## Heterogeneidad cruzada
+
+Cuando dos variables categóricas interactúan, una tabla de una sola dimensión puede ocultar combinaciones relevantes. Un heatmap de medianas o medias, acompañado por el conteo de cada celda, ayuda a diferenciar patrones reales de celdas pequeñas.
+
+::: {.callout-warning appearance="minimal"}
+Comparar únicamente medias grupales puede confundir heterogeneidad con desbalance muestral. Reporte siempre $n_g$ y revise faltantes estructurales.
+:::
+
+## Guía de decisión
+
+| Pregunta | Medida o gráfica |
+|---|---|
+| ¿Qué tan diversa es una categoría? | Entropía, Gini–Simpson, barras |
+| ¿Cuántas categorías efectivas hay? | $\exp(H)$ o inverso de Simpson |
+| ¿Cambian las ventas entre grupos? | Resúmenes por grupo, violin/boxplot, $\eta^2$ |
+| ¿Hay interacción entre dos grupos? | Heatmap con tamaños de celda |
+
+## Puente al caso BigMart
+
+El capítulo [Medidas de heterogeneidad en Big Mart Sales](2-6-heterogeneidad_bigmart.qmd) compara ventas por tipo, tamaño y ubicación del outlet y por tipo de producto.
+
+## Ejercicios
+
+1. Construya dos distribuciones con igual número de categorías y distinta entropía.
+2. Explique por qué una entropía alta no significa automáticamente mejor desempeño comercial.
+3. Compare $\eta^2$ antes y después de fusionar dos grupos.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

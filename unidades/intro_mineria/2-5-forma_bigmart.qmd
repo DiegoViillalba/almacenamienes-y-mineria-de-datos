@@ -1,14 +1,26 @@
 ---
 title: "Medidas de forma en Big Mart Sales"
-number-sections: false
+author: "Diego Villalba"
+date: today
+lang: es
+number-sections: true
 format:
   html:
     toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
     page-layout: full
   pdf:
     toc: true
 jupyter: python3
+bibliography: referencias_eda.bib
 ---
+
+::: {.callout-tip appearance="minimal"}
+Este caso aplica los conceptos presentados en [Medidas de forma](2-5-forma.qmd). Allí se distinguen asimetría, curtosis, multimodalidad y gráficos Q–Q.
+:::
 ## Introducción
 
 En una etapa inicial del análisis exploratorio de datos se estudian las **medidas de localización** y las **medidas de variabilidad** con el fin de identificar, respectivamente, el comportamiento central de una variable y el grado en que sus observaciones se dispersan alrededor de un valor representativo. Sin embargo, una descripción estadística rigurosa no se agota en estas dos dimensiones. Dos distribuciones pueden compartir una media y una desviación estándar semejantes, y aun así diferir de manera importante en su estructura global. Por ello es necesario incorporar el estudio de la **forma** de la distribución.
@@ -17,21 +29,21 @@ Las medidas de forma permiten caracterizar aspectos tales como la **asimetría**
 
 En este capítulo se estudian las **medidas de forma** en el dataset de BigMart, utilizando como variable principal `Item_Outlet_Sales`. No obstante, varias de las herramientas presentadas pueden aplicarse también a otras variables numéricas del conjunto de datos, como `Item_MRP`, `Item_Visibility` y `Item_Weight`.
 
+::: {.callout-note appearance="minimal"}
+**Definición operativa.** La forma describe asimetría, colas y estructura modal después de considerar el centro y la escala de la distribución [@joanes1998skewness].
+:::
+
 ## Preparación del entorno
 
-Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), para esta sección usaremos Python y las bibliotecas pandas, numpy, plotly y matplotlib.
+Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), usando Python, pandas, NumPy, SciPy y Plotly.
 
 
 ```{python}
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 from scipy import stats
-
-plt.rcParams["figure.figsize"] = (8, 5)
-plt.rcParams["axes.grid"] = True
 
 DATA_PATH = "../../data/bigmart_sales.csv"
 
@@ -260,16 +272,23 @@ fig.show()
 ```
 
 ```{python}
-plt.figure()
-plt.hist(log_sales, bins=40, density=True, alpha=0.6)
 xs_log = np.linspace(log_sales.min(), log_sales.max(), 400)
 kde_log = stats.gaussian_kde(log_sales)
-plt.plot(xs_log, kde_log(xs_log), linewidth=2)
-plt.title("Histograma y densidad de log(1 + Item_Outlet_Sales)")
-plt.xlabel("log(1 + Item_Outlet_Sales)")
-plt.ylabel("Densidad")
-plt.tight_layout()
-plt.show()
+fig = go.Figure()
+fig.add_trace(go.Histogram(
+    x=log_sales, nbinsx=40, histnorm="probability density",
+    opacity=0.55, name="Histograma"
+))
+fig.add_trace(go.Scatter(
+    x=xs_log, y=kde_log(xs_log), mode="lines",
+    line=dict(width=3), name="Densidad KDE"
+))
+fig.update_layout(
+    title="Histograma y densidad de log(1 + Item_Outlet_Sales)",
+    xaxis_title="log(1 + Item_Outlet_Sales)", yaxis_title="Densidad",
+    barmode="overlay"
+)
+fig.show()
 ```
 
 La comparación entre la variable original y su versión transformada permite mostrar un punto importante del EDA: las medidas de forma no son meramente descriptivas, también orientan decisiones analíticas posteriores. Si la asimetría disminuye sustancialmente bajo la transformación, esto sugiere una representación más equilibrada del fenómeno.
@@ -291,19 +310,24 @@ En síntesis, el uso del logaritmo en el EDA no solo mejora la interpretación v
 Otra herramienta útil para estudiar la forma es el gráfico Q-Q frente a la distribución normal. No debe interpretarse como una prueba definitiva, pero sí como un recurso visual para detectar desviaciones sistemáticas respecto a simetría y colas gaussianas.
 
 ```{python}
-plt.figure()
-stats.probplot(sales, dist="norm", plot=plt)
-plt.title("Gráfico Q-Q de Item_Outlet_Sales")
-plt.tight_layout()
-plt.show()
+def qq_plotly(x, titulo):
+    (teoricos, observados), (pendiente, intercepto, _) = stats.probplot(x, dist="norm")
+    linea_x = np.array([teoricos.min(), teoricos.max()])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=teoricos, y=observados, mode="markers", name="Cuantiles"))
+    fig.add_trace(go.Scatter(
+        x=linea_x, y=intercepto + pendiente * linea_x,
+        mode="lines", name="Referencia normal", line=dict(dash="dash")
+    ))
+    fig.update_layout(title=titulo, xaxis_title="Cuantiles teóricos",
+                      yaxis_title="Cuantiles observados")
+    return fig
+
+qq_plotly(sales, "Gráfico Q-Q de Item_Outlet_Sales").show()
 ```
 
 ```{python}
-plt.figure()
-stats.probplot(log_sales, dist="norm", plot=plt)
-plt.title("Gráfico Q-Q de log(1 + Item_Outlet_Sales)")
-plt.tight_layout()
-plt.show()
+qq_plotly(log_sales, "Gráfico Q-Q de log(1 + Item_Outlet_Sales)").show()
 ```
 
 Si la versión transformada se alinea mejor con la recta de referencia que la variable original, ello aporta evidencia visual de una mejora en la regularidad de la forma, aunque no implica normalidad perfecta.
@@ -358,5 +382,3 @@ fig.update_layout(
 )
 fig.show()
 ```
-
-

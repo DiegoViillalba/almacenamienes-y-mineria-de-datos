@@ -1,0 +1,1013 @@
+---
+title: "Análisis de Componentes Principales"
+subtitle: "Análisis Exploratorio Multivariante · Almacenes y Minería de Datos"
+author: "Diego Villalba"
+format:
+  revealjs:
+    theme: ../assets/unam-theme.scss
+    slide-number: true
+    chalkboard: false
+    multiplex: false
+    transition: slide
+    background-transition: fade
+    highlight-style: github
+    code-fold: false
+    code-tools: false
+    html-math-method: katex
+    logo: "../assets/Logo_FC_Color.png"
+    fig-align: center
+    footer: "Facultad de Ciencias UNAM · Minería de Datos · 2026"
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{python}
+#| include: false
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.datasets import load_iris, make_blobs
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+# La Maldición de la Dimensionalidad {.title-section}
+
+## El problema geométrico 
+
+Cuando $p$ (variables) crece, la geometría del espacio se vuelve contraintuitiva **Bellman (1957)**. 
+
+$$
+\frac{V_{\text{esfera}}}{V_{\text{cubo}}} = \frac{\pi^{d/2}}{2^d \, \Gamma(d/2 + 1)} \xrightarrow{d \to \infty} 0
+$$
+
+Veamos como la proporción del volumen de una hiperesfera inscrita en un hipercubo en $\mathbb{R}^d$:
+
+> **Todo el volumen se concentra en las esquinas del hipercubo.**
+
+## Intuición geométrica: 2D y 3D
+
+```{python}
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# --- 2D: círculo inscrito en cuadrado ---
+theta = np.linspace(0, 2 * np.pi, 300)
+cx, cy = np.cos(theta), np.sin(theta)
+square_x = [-1, 1, 1, -1, -1]
+square_y = [-1, -1, 1, 1, -1]
+
+# --- 3D: esfera inscrita en cubo ---
+u = np.linspace(0, np.pi, 40)
+v = np.linspace(0, 2 * np.pi, 40)
+sx = np.outer(np.sin(u), np.cos(v))
+sy = np.outer(np.sin(u), np.sin(v))
+sz = np.outer(np.cos(u), np.ones_like(v))
+
+corners = np.array([[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+                    [-1,-1, 1],[1,-1, 1],[1,1, 1],[-1,1, 1]])
+edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),
+         (0,4),(1,5),(2,6),(3,7)]
+
+fig = make_subplots(
+    rows=1, cols=2,
+    column_widths=[0.45, 0.55],
+    specs=[[{"type": "xy"}, {"type": "scene"}]],
+    subplot_titles=[
+        "d = 2 · Círculo en cuadrado (~78%)",
+        "d = 3 · Esfera en cubo (~52%)"
+    ]
+)
+
+# 2D — cuadrado (fondo)
+fig.add_trace(go.Scatter(
+    x=square_x, y=square_y,
+    mode='lines', line=dict(color='royalblue', width=2.5),
+    fill='toself', fillcolor='rgba(65,105,225,0.10)',
+    name='Cuadrado', showlegend=False
+), row=1, col=1)
+
+# 2D — círculo (encima)
+fig.add_trace(go.Scatter(
+    x=cx, y=cy,
+    mode='lines', line=dict(color='crimson', width=2.5),
+    fill='toself', fillcolor='rgba(220,20,60,0.18)',
+    name='Círculo', showlegend=False
+), row=1, col=1)
+
+fig.add_annotation(
+    x=0, y=-1.38, xref='x', yref='y',
+    text="<b>V<sub>círculo</sub> / V<sub>cuadrado</sub> = π/4 ≈ 78%</b>",
+    showarrow=False, font=dict(size=13, color='crimson'), xanchor='center'
+)
+
+fig.update_xaxes(range=[-1.5, 1.5], scaleanchor='y',
+                 showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+fig.update_yaxes(range=[-1.6, 1.3],
+                 showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+
+# 3D — aristas del cubo
+for (i, j) in edges:
+    p0, p1 = corners[i], corners[j]
+    fig.add_trace(go.Scatter3d(
+        x=[p0[0], p1[0]], y=[p0[1], p1[1]], z=[p0[2], p1[2]],
+        mode='lines', line=dict(color='royalblue', width=4),
+        showlegend=False
+    ), row=1, col=2)
+
+# 3D — esfera
+fig.add_trace(go.Surface(
+    x=sx, y=sy, z=sz,
+    colorscale=[[0, 'rgba(220,20,60,0.50)'], [1, 'rgba(255,120,120,0.50)']],
+    showscale=False, name='Esfera'
+), row=1, col=2)
+
+fig.update_layout(
+    height=460,
+    margin=dict(t=50, b=10, l=10, r=10),
+    scene=dict(
+        xaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        yaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        zaxis=dict(showticklabels=False, title='', showgrid=False,
+                   zeroline=False, backgroundcolor='rgba(230,235,255,0.4)'),
+        aspectmode='cube',
+        annotations=[dict(
+            x=0, y=0, z=-1.5,
+            text="<b>V<sub>esfera</sub>/V<sub>cubo</sub> = π/6 ≈ 52%</b>",
+            showarrow=False, font=dict(size=12, color='crimson')
+        )]
+    )
+)
+fig.show()
+```
+
+
+
+## Volumen relativo por dimensión
+
+```{python}
+#| echo: false
+from scipy.special import gamma
+
+dims = np.arange(1,20)
+ratio = (np.pi**(dims/2)) / (2**dims * gamma(dims/2 + 1))
+
+r2 = (np.pi**(2/2)) / (2**2 * gamma(2/2 + 1))
+r3 = (np.pi**(3/2)) / (2**3 * gamma(3/2 + 1))
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=dims, y=ratio,
+    mode='lines+markers',
+    line=dict(width=2.5),
+    marker=dict(size=5),
+    name='V_esfera / V_cubo',
+    hovertemplate="d=%{x}<br>Ratio=%{y:.4f}<extra></extra>"
+))
+
+# Marcador d=2
+fig.add_vline(x=2, line_dash="dash", line_color="crimson", line_width=1.8)
+fig.add_trace(go.Scatter(
+    x=[2], y=[r2],
+    mode='markers+text',
+    marker=dict(size=13, color='crimson', symbol='circle'),
+    text=[f"  d=2 ({r2:.2f})"],
+    textposition='middle right',
+    textfont=dict(color='crimson', size=12),
+    name='d=2',
+    hovertemplate=f"d=2<br>Ratio={r2:.4f}<extra></extra>"
+))
+
+# Marcador d=3
+fig.add_vline(x=3, line_dash="dash", line_color="darkorange", line_width=1.8)
+fig.add_trace(go.Scatter(
+    x=[3], y=[r3],
+    mode='markers+text',
+    marker=dict(size=13, color='darkorange', symbol='circle'),
+    text=[f"  d=3 ({r3:.2f})"],
+    textposition='middle right',
+    textfont=dict(color='darkorange', size=12),
+    name='d=3',
+    hovertemplate=f"d=3<br>Ratio={r3:.4f}<extra></extra>"
+))
+
+fig.update_layout(
+    title="Fracción del volumen del hipercubo ocupada por la hiperesfera",
+    xaxis_title="Dimensión d",
+    yaxis_title="V_esfera / V_cubo",
+    height=600
+)
+fig.show()
+```
+
+## Implicaciones para el análisis de datos
+
+Para mantener una densidad fija $\rho$ en $\mathbb{R}^d$, las observaciones necesarias escalan como:
+
+$$n \sim \rho \cdot L^d$$
+
+**El problema de las correlaciones:**
+
+- Con $p = 20$ variables → $\binom{20}{2} = 190$ correlaciones posibles
+- Con $p = 100$ variables → **4,950 correlaciones**
+
+::: {.callout-important}
+Necesitamos métodos que **resuman la información** sin perder lo esencial.
+:::
+
+# Fundamentos Matemáticos del PCA
+
+---
+
+## PCA: formulación y herramientas clave
+
+::: {.incremental}
+
+Sea un conjunto de datos $X \in \mathbb{R}^{n \times p}$  conn $n$ observaciones, $p$ variables  
+
+- Centramos los datos
+$$
+\tilde{X} = X - \mathbf{1}\bar{x}^T
+$$
+
+- Quitamos la media de cada variable  
+- Los datos quedan alrededor del origen  
+:::
+
+---
+
+## PCA: formulación y herramientas clave
+
+Una vez centrados y organizados, calculamos la matriz de covarianza:
+$$
+\Sigma = \frac{1}{n} \tilde{X}^T \tilde{X}
+$$
+
+- Matriz de covarianza  
+- Captura relaciones entre variables  
+
+---
+
+## PCA: formulación y herramientas clave
+
+Finalmente, realizamos la eigendecomposición de $\Sigma$:
+
+$$
+\Sigma w = \lambda w
+$$
+
+- Autovectores $w$: direcciones principales  
+- Autovalores $\lambda$: varianza explicada  
+
+y proyectamos los datos en los primeros $k$ autovectores:
+
+$$
+Z = \tilde{X} W
+$$
+
+Así construimos un nuevo espacio de menor dimensión que captura la mayor parte de la varianza original.
+
+---
+
+# Implementación en dataset
+
+## Dataset: Iris
+
+4 variables numéricas · 150 observaciones · 3 especies
+
+```{python}
+#| echo: false
+iris = load_iris()
+X = iris.data
+y = iris.target
+nombres = iris.target_names
+feature_names = ['Sépalo largo', 'Sépalo ancho', 'Pétalo largo', 'Pétalo ancho']
+
+df_iris = pd.DataFrame(X, columns=feature_names)
+df_iris['Especie'] = [nombres[i] for i in y]
+df_iris.describe().round(3)
+```
+
+## Paso 1: Estandarización
+
+**Obligatoria** cuando las variables tienen escalas distintas:
+
+$$z_{ij} = \frac{x_{ij} - \bar{x}_j}{s_j}$$
+
+Después de estandarizar: $\bar{z}_j = 0$ y $s_{z_j} = 1$ para toda variable $j$.
+
+```{python}
+scaler = StandardScaler()
+X_std = scaler.fit_transform(X)
+
+df_check = pd.DataFrame({
+    'Variable': feature_names,
+    'Media original': X.mean(axis=0).round(3),
+    'Desv original': X.std(axis=0).round(3),
+    'Media estand.': X_std.mean(axis=0).round(10),
+    'Desv estand.': X_std.std(axis=0).round(3)
+})
+```
+---
+```{python}
+df_check
+```
+---
+
+## Paso 2: Matriz de covarianza
+
+```{python}
+S = np.cov(X_std.T)
+```
+
+```{python}
+#| echo: false
+fig = go.Figure(data=go.Heatmap(
+    z=S, x=feature_names, y=feature_names,
+    colorscale='RdBu_r', zmid=0, zmin=-1, zmax=1,
+    text=np.round(S, 3), texttemplate='%{text}',
+    textfont=dict(size=13),
+    colorbar=dict(title='Covarianza')
+))
+fig.update_layout(
+    title="Matriz de covarianza — datos estandarizados (= matriz de correlación)",
+    height=380
+)
+fig.show()
+```
+
+::: {.callout-note}
+Con datos estandarizados, la matriz de covarianza es idéntica a la **matriz de correlación de Pearson**.
+:::
+
+## Paso 3: Eigendescomposición
+
+```{python}
+pca = PCA()
+scores = pca.fit_transform(X_std)
+
+eigenvalues = pca.explained_variance_
+pve = pca.explained_variance_ratio_ * 100
+pve_acum = np.cumsum(pve)
+```
+
+```{python}
+#| echo: false
+pd.DataFrame({
+    'Componente': [f'PC{i+1}' for i in range(len(eigenvalues))],
+    'Eigenvalue (λ)': eigenvalues.round(4),
+    '% Varianza': pve.round(2),
+    '% Acumulado': pve_acum.round(2)
+})
+```
+## Paso 4: Scree Plot
+
+```{python}
+#| echo: false
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_trace(go.Bar(
+    x=[f'PC{i+1}' for i in range(len(pve))], y=pve,
+    name='% Varianza',
+    text=[f"{v:.1f}%" for v in pve],
+    textposition='outside'
+), secondary_y=False)
+
+fig.add_trace(go.Scatter(
+    x=[f'PC{i+1}' for i in range(len(pve))], y=pve_acum,
+    mode='lines+markers', line=dict(width=2.5),
+    marker=dict(size=9), name='% Acumulado'
+), secondary_y=True)
+
+fig.add_hline(y=80, line_dash="dash", line_color="gray",
+              annotation_text="80%", secondary_y=True)
+fig.update_layout(title="Scree Plot — Regla de Kaiser: retener λ > 1", height=360)
+fig.show()
+```
+
+::: {.callout-tip}
+**Criterios para elegir $k$:** Regla de Kaiser ($\lambda_k > 1$) · Varianza acumulada ≥ 80% · Codo del scree plot · Interpretabilidad de dominio
+:::
+
+## Paso 5: Biplot
+
+El **biplot** superpone scores de observaciones y vectores de loadings.
+
+```{python}
+#| echo: false
+loadings = pca.components_
+scores_df = pd.DataFrame(scores[:, :2], columns=['PC1', 'PC2'])
+scores_df['Especie'] = [nombres[i] for i in y]
+
+fig = go.Figure()
+for especie in nombres:
+    mask = scores_df['Especie'] == especie
+    fig.add_trace(go.Scatter(
+        x=scores_df.loc[mask, 'PC1'], y=scores_df.loc[mask, 'PC2'],
+        mode='markers', marker=dict(size=7, opacity=0.7),
+        name=especie
+    ))
+
+escala = 3.0
+for i, feat in enumerate(feature_names):
+    fig.add_annotation(
+        x=loadings[0, i]*escala, y=loadings[1, i]*escala,
+        ax=0, ay=0, arrowhead=3, arrowwidth=2,
+        xref='x', yref='y', axref='x', ayref='y', showarrow=True
+    )
+    fig.add_annotation(
+        x=loadings[0, i]*escala*1.15, y=loadings[1, i]*escala*1.15,
+        text=f"<b>{feat}</b>", showarrow=False, font=dict(size=11)
+    )
+
+fig.update_xaxes(title_text=f"PC1 ({pve[0]:.1f}%)", zeroline=True, zerolinecolor='lightgray')
+fig.update_yaxes(title_text=f"PC2 ({pve[1]:.1f}%)", zeroline=True, zerolinecolor='lightgray', scaleanchor='x')
+fig.update_layout(title="Biplot: scores + loadings — Iris", height=430)
+fig.show()
+```
+
+## Paso 5: Interpretación del biplot
+
+- **Flechas largas** → variable con alta contribución al componente
+- **Flechas en la misma dirección** → variables altamente correlacionadas
+- **Separación de grupos** → qué tan bien distingue PCA las clases
+
+## Paso 6: Loadings detallados
+PC1 ≈ tamaño general | PC2 ≈ contraste sépalo largo vs ancho
+```{python}
+#| echo: false
+fig = make_subplots(1, 2, subplot_titles=['PC1 — Loadings', 'PC2 — Loadings'])
+
+fig.add_trace(go.Bar(
+    x=feature_names, y=loadings[0],
+    text=[f"{v:.3f}" for v in loadings[0]],
+    textposition='outside'
+), row=1, col=1)
+
+fig.add_trace(go.Bar(
+    x=feature_names, y=loadings[1],
+    text=[f"{v:.3f}" for v in loadings[1]],
+    textposition='outside'
+), row=1, col=2)
+
+for c in [1, 2]:
+    fig.update_yaxes(range=[-1.1, 1.1], zeroline=True, zerolinecolor='lightgray', row=1, col=c)
+    fig.update_xaxes(tickangle=-25, row=1, col=c)
+
+fig.update_layout(height=500, showlegend=False)
+fig.show()
+```
+
+# PCA como compresión: Señal en Alta Dimensión
+
+## Señal 2D embebida en 10 dimensiones
+
+```{python}
+#| echo: false
+np.random.seed(42)
+n = 300
+t = np.linspace(0, 2*np.pi, n)
+signal = np.column_stack([np.cos(t), np.sin(t)])
+A = np.random.randn(2, 10)
+X_high = signal @ A + 0.3 * np.random.randn(n, 10)
+X_high_std = StandardScaler().fit_transform(X_high)
+
+pca_high = PCA()
+pca_high.fit(X_high_std)
+pve_high = pca_high.explained_variance_ratio_ * 100
+pve_high_acum = np.cumsum(pve_high)
+
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=[f"PC{i+1}" for i in range(10)], y=pve_high,
+    name='% Varianza', text=[f"{v:.1f}%" for v in pve_high],
+    textposition='outside'
+))
+fig.add_trace(go.Scatter(
+    x=[f"PC{i+1}" for i in range(10)], y=pve_high_acum,
+    mode='lines+markers', name='% Acumulado', yaxis='y2'
+))
+fig.update_layout(
+    title="PCA recupera las 2 dimensiones relevantes de 10",
+    yaxis=dict(title='% Varianza'),
+    yaxis2=dict(title='% Acumulado', overlaying='y', side='right', range=[0, 110]),
+    height=360
+)
+fig.show()
+```
+
+> PCA identifica correctamente que solo 2 dimensiones concentran la señal real.
+
+# Limitaciones del PCA
+
+## 1. Linealidad: el caso Swiss Roll
+
+PCA busca direcciones de máxima varianza **lineales** → no captura estructuras no lineales. PCA colapsa el Swiss Roll: puntos lejanos quedan superpuestos
+
+```{python}
+#| echo: false
+from sklearn.datasets import make_swiss_roll
+
+X_swiss, t_swiss = make_swiss_roll(n_samples=800, noise=0.1, random_state=42)
+X_swiss_std = StandardScaler().fit_transform(X_swiss)
+pca_swiss = PCA(n_components=2)
+scores_swiss = pca_swiss.fit_transform(X_swiss_std)
+
+fig = make_subplots(1, 2,
+    subplot_titles=['Swiss Roll (3D original)', 'Proyección PCA (2D) — estructura perdida'],
+    specs=[[{'type': 'scatter3d'}, {'type': 'scatter'}]])
+
+fig.add_trace(go.Scatter3d(
+    x=X_swiss[:,0], y=X_swiss[:,1], z=X_swiss[:,2],
+    mode='markers', marker=dict(size=3, color=t_swiss, colorscale='Viridis', opacity=0.7),
+    showlegend=False
+), row=1, col=1)
+
+fig.add_trace(go.Scatter(
+    x=scores_swiss[:,0], y=scores_swiss[:,1],
+    mode='markers', marker=dict(size=4, color=t_swiss, colorscale='Viridis', opacity=0.7),
+    showlegend=False
+), row=1, col=2)
+
+fig.update_layout(height=400)
+fig.show()
+```
+
+---
+
+**2. Sensibilidad a outliers**  
+PCA minimiza error cuadrático i.e. un solo punto alejado puede dominar el primer componente. Alternativa: **Robust PCA** (Candès et al., 2011): $X = L + S$
+
+```{python}
+#| echo: false
+#| #| echo: false
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(42)
+
+# ─────────────────────────────
+# 1. Datos base (estructura real)
+# ─────────────────────────────
+n = 150
+x = np.random.normal(0, 1, n)
+y = 0.5 * x + np.random.normal(0, 0.3, n)
+
+X = np.vstack([x, y])
+
+# ─────────────────────────────
+# 2. PCA sin outlier
+# ─────────────────────────────
+cov = np.cov(X)
+eigvals, eigvecs = np.linalg.eig(cov)
+pc1_clean = eigvecs[:, np.argmax(eigvals)]
+
+# ─────────────────────────────
+# 3. Agregar outlier
+# ─────────────────────────────
+x_out = np.append(x, [4])
+y_out = np.append(y, [9])
+
+X_out = np.vstack([x_out, y_out])
+
+cov_out = np.cov(X_out)
+eigvals_out, eigvecs_out = np.linalg.eig(cov_out)
+pc1_outlier = eigvecs_out[:, np.argmax(eigvals_out)]
+
+# ─────────────────────────────
+# 4. Plot
+# ─────────────────────────────
+fig = go.Figure()
+
+# Datos normales
+fig.add_trace(go.Scatter(
+    x=x,
+    y=y,
+    mode='markers',
+    name='Datos normales'
+))
+
+# Outlier
+fig.add_trace(go.Scatter(
+    x=[4],
+    y=[9],
+    mode='markers',
+    marker=dict(size=12),
+    name='Outlier'
+))
+
+# Línea PC1 sin outlier
+t = np.linspace(-3, 3, 100)
+fig.add_trace(go.Scatter(
+    x=t * pc1_clean[0],
+    y=t * pc1_clean[1],
+    mode='lines',
+    name='PC1 (sin outlier)'
+))
+
+# Línea PC1 con outlier
+fig.add_trace(go.Scatter(
+    x=t * pc1_outlier[0],
+    y=t * pc1_outlier[1],
+    mode='lines',
+    line=dict(dash='dash'),
+    name='PC1 (con outlier)'
+))
+
+fig.update_layout(
+    title="Sensibilidad de PCA a outliers",
+    xaxis_title="Variable 1",
+    yaxis_title="Variable 2"
+)
+
+fig.show()
+```
+
+---
+
+## 6. PCA no captura estructura de clases
+
+PCA es **no supervisado** → maximiza varianza global sin considerar etiquetas. La dirección de máxima varianza puede no ser la que mejor separa las clases.
+
+```{python}
+#| echo: false
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+X_iris_std = StandardScaler().fit_transform(load_iris().data)
+y_iris = load_iris().target
+nombres_iris = load_iris().target_names
+
+pca_comp = PCA(n_components=2)
+scores_pca = pca_comp.fit_transform(X_iris_std)
+
+lda = LinearDiscriminantAnalysis(n_components=2)
+scores_lda = lda.fit_transform(X_iris_std, y_iris)
+
+fig = make_subplots(1, 2, subplot_titles=['PCA (no supervisado)', 'LDA (supervisado)'])
+for i, esp in enumerate(nombres_iris):
+    mask = y_iris == i
+    fig.add_trace(go.Scatter(
+        x=scores_pca[mask, 0], y=scores_pca[mask, 1],
+        mode='markers', marker=dict(size=7, opacity=0.7),
+        name=esp, legendgroup=esp
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=scores_lda[mask, 0], y=scores_lda[mask, 1],
+        mode='markers', marker=dict(size=7, opacity=0.7),
+        name=esp, legendgroup=esp, showlegend=False
+    ), row=1, col=2)
+
+fig.update_layout(height=380)
+fig.show()
+```
+
+# Más Allá del PCA: Técnicas No Lineales
+
+## t-SNE
+
+**t-distributed Stochastic Neighbor Embedding** (van der Maaten & Hinton, 2008), Método no determinista que minimiza la divergencia KL entre distribuciones de pares en el espacio original y reducido:
+
+$$\text{KL}(P \| Q) = \sum_{i \neq j} p_{ij} \log \frac{p_{ij}}{q_{ij}}$$
+
+**Características:**
+
+- Preserva estructura **local** (vecinos cercanos)
+- **No preserva distancias globales** — los clusters no son comparables entre sí
+- Hiperparámetro clave: **perplexity** (típicamente 5–50)
+
+## t-SNE en Iris
+
+```{python}
+from sklearn.manifold import TSNE
+tsne = TSNE(n_components=2, perplexity=30, random_state=42, n_iter=1000)
+```
+
+```{python}
+#| echo: false
+scores_tsne = tsne.fit_transform(X_iris_std)
+
+fig = go.Figure()
+for i, esp in enumerate(nombres_iris):
+    mask = y_iris == i
+    fig.add_trace(go.Scatter(
+        x=scores_tsne[mask, 0], y=scores_tsne[mask, 1],
+        mode='markers', marker=dict(size=8, opacity=0.75),
+        name=esp
+    ))
+
+fig.update_layout(
+    title="t-SNE en Iris (perplexity=30) — preserva estructura local",
+    xaxis_title="t-SNE 1", yaxis_title="t-SNE 2",
+    height=450
+)
+fig.show()
+```
+
+## UMAP
+
+**Uniform Manifold Approximation and Projection** (McInnes et al., 2018)
+
+Basado en **geometría Riemanniana** y teoría de categorías. Construye un grafo difuso ponderado:
+
+$$w(x_i, x_j) = \exp\left(-\frac{d(x_i, x_j) - \rho_i}{\sigma_i}\right)$$
+
+y minimiza la divergencia de entropía cruzada fuzzy entre el grafo original y el proyectado.
+
+## t-SNE vs UMAP: comparación
+
+| Característica | t-SNE | UMAP |
+|---|---|---|
+| Velocidad | Lento ($O(n^2)$) | Rápido ($O(n^{1.14})$) |
+| Estructura global | No preserva | Preserva mejor |
+| Nuevos datos | ❌ | ✅ `transform()` |
+| Determinismo | ❌ | ✅ con `random_state` |
+| Escalabilidad | Hasta ~10k puntos | Hasta millones |
+
+## MNIST dataset
+- 70,000 imágenes de dígitos manuscritos (28x28 píxeles → 784 dimensiones)
+- 10 clases (dígitos 0–9)
+- Desafío clásico para reducción de dimensionalidad
+```{python}
+#| echo: false
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.datasets import fetch_openml
+
+np.random.seed(42)
+
+# Cargar MNIST
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+X = mnist.data
+y = mnist.target.astype(int)
+
+# Seleccionar 25 imágenes aleatorias
+idx = np.random.choice(len(X), 10, replace=False)
+images = X[idx]
+labels = y[idx]
+
+# Plot 5x5
+fig, axes = plt.subplots(2, 5, figsize=(8,2))
+
+for i, ax in enumerate(axes.flat):
+    ax.imshow(images[i].reshape(28,28), cmap='gray')
+    ax.set_title(str(labels[i]), fontsize=10)
+    ax.axis('off')
+
+plt.tight_layout()
+plt.show()
+```
+
+## PCA vs t-SNE en datos del MNIST
+
+```{python}
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from sklearn.datasets import fetch_openml
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+np.random.seed(42)
+
+# ─────────────────────────────
+# 1. Cargar MNIST (subset para velocidad)
+# ─────────────────────────────
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+
+X = mnist.data
+y = mnist.target.astype(int)
+
+# Tomamos subset
+idx = np.random.choice(len(X), 3000, replace=False)
+X = X[idx]
+y = y[idx]
+
+# ─────────────────────────────
+# 2. Estandarizar
+# ─────────────────────────────
+X_std = StandardScaler().fit_transform(X)
+
+# ─────────────────────────────
+# 3. PCA (más rápido)
+# ─────────────────────────────
+scores_pca = PCA(n_components=2).fit_transform(X_std)
+
+# ─────────────────────────────
+# 4. t-SNE (más costoso)
+# ─────────────────────────────
+scores_tsne = TSNE(
+    n_components=2,
+    perplexity=30,
+    random_state=42,
+    init='pca'
+).fit_transform(X_std)
+
+# ─────────────────────────────
+# 5. Plot
+# ─────────────────────────────
+fig = make_subplots(
+    rows=1,
+    cols=2,
+    subplot_titles=["PCA", "t-SNE"],
+    horizontal_spacing=0.08
+)
+
+colors = [
+    '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+    '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'
+]
+
+for col_idx, scores in enumerate([scores_pca, scores_tsne], 1):
+    for digit in range(10):
+        mask = y == digit
+
+        fig.add_trace(
+            go.Scatter(
+                x=scores[mask, 0],
+                y=scores[mask, 1],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    opacity=0.6,
+                    color=colors[digit]
+                ),
+                name=str(digit),
+                showlegend=(col_idx == 1)
+            ),
+            row=1, col=col_idx
+        )
+
+fig.update_layout(
+    title="MNIST: PCA vs t-SNE",
+    height=500,
+    legend_title="Dígito"
+)
+
+fig.update_xaxes(title_text="Componente 1")
+fig.update_yaxes(title_text="Componente 2")
+
+fig.show()
+```
+
+## UMAP vs t-SNE en MNIST
+```{python}
+#| echo: false
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from sklearn.datasets import fetch_openml
+from sklearn.preprocessing import StandardScaler
+from sklearn.manifold import TSNE
+
+import umap.umap_ as umap  # ← IMPORTANTE
+
+np.random.seed(42)
+
+# ─────────────────────────────
+# 1. Cargar MNIST (subset)
+# ─────────────────────────────
+mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+
+X = mnist.data
+y = mnist.target.astype(int)
+
+idx = np.random.choice(len(X), 3000, replace=False)
+X = X[idx]
+y = y[idx]
+
+# ─────────────────────────────
+# 2. Estandarizar
+# ─────────────────────────────
+X_std = StandardScaler().fit_transform(X)
+
+# ─────────────────────────────
+# 3. t-SNE
+# ─────────────────────────────
+scores_tsne = TSNE(
+    n_components=2,
+    perplexity=30,
+    random_state=42,
+    init='pca'
+).fit_transform(X_std)
+
+# ─────────────────────────────
+# 4. UMAP
+# ─────────────────────────────
+scores_umap = umap.UMAP(
+    n_components=2,
+    n_neighbors=15,
+    min_dist=0.1,
+    random_state=42
+).fit_transform(X_std)
+
+# ─────────────────────────────
+# 5. Plot
+# ─────────────────────────────
+fig = make_subplots(
+    rows=1,
+    cols=2,
+    subplot_titles=["t-SNE", "UMAP"],
+    horizontal_spacing=0.08
+)
+
+colors = [
+    '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+    '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'
+]
+
+for col_idx, scores in enumerate([scores_tsne, scores_umap], 1):
+    for digit in range(10):
+        mask = y == digit
+
+        fig.add_trace(
+            go.Scatter(
+                x=scores[mask, 0],
+                y=scores[mask, 1],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    opacity=0.6,
+                    color=colors[digit]
+                ),
+                name=str(digit),
+                showlegend=(col_idx == 1)
+            ),
+            row=1, col=col_idx
+        )
+
+fig.update_layout(
+    title="MNIST: t-SNE vs UMAP",
+    height=500,
+    legend_title="Dígito"
+)
+
+fig.update_xaxes(title_text="Componente 1")
+fig.update_yaxes(title_text="Componente 2")
+
+fig.show()
+```
+
+## ¿Cuándo usar cada método?
+
+| Situación | Método recomendado |
+|---|---|
+| Preprocesamiento antes de modelado | **PCA** |
+| Visualización exploratoria | **t-SNE** o **UMAP** |
+| Dataset grande (>50k puntos) | **UMAP** |
+| Transformar nuevos datos | **PCA** o **UMAP** |
+| Interpretabilidad de componentes | **PCA** (o Sparse PCA) |
+| Estructura no lineal compleja | **UMAP** |
+| Análisis supervisado + reducción | **LDA** |
+
+# Resumen y Conexiones
+
+## El espectro de métodos
+
+El PCA es el punto de partida del análisis multivariante moderno. Sus conexiones:
+
+- **Álgebra lineal**: eigendescomposición, SVD, espacios vectoriales
+- **Estadística**: modelo probabilístico gaussiano, máxima verosimilitud
+- **Optimización**: Rayleigh quotient, multiplicadores de Lagrange
+- **Aprendizaje automático**: preprocesamiento, regularización, autoencoders lineales
+- **Geometría diferencial**: UMAP extiende PCA a variedades Riemannianas
+
+
+---
+
+**El trade-off fundamental:**
+
+```
+PCA ─────────────────────────────────────► t-SNE / UMAP
+Lineal          Interpretable          No lineal
+Global          Eficiente              Local
+Reutilizable    Escalable              Exploratorio
+```
+
+# Ejercicios Propuestos
+
+## Ejercicios
+
+1. **PCA desde cero**: implementa PCA usando únicamente `numpy.linalg.svd`. Verifica que tus eigenvalores coincidan con los de `sklearn`.
+
+2. **Efecto de la estandarización**: aplica PCA a Iris con y sin estandarización. ¿Cambian los componentes? Justifica matemáticamente.
+
+3. **Reconstrucción**: dado $X$ y su proyección a $k$ componentes, reconstruye $\hat{X} = Z_k W_k^T + \mu$. Grafica el error $\|X - \hat{X}\|_F$ en función de $k$.
+
+4. **Comparación t-SNE vs UMAP**: aplica ambas técnicas al dataset MNIST (`sklearn.datasets.load_digits`). Compara separación de clases y tiempo de cómputo.
+
+5. **Regla de Kaiser**: ¿por qué la regla ($\lambda > 1$) solo aplica con datos estandarizados? Demuéstralo con un ejemplo que viola la regla sin estandarizar.
