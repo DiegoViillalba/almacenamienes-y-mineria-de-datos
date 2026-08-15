@@ -1,13 +1,21 @@
 ---
 title: "Medidas de heterogeneidad en Big Mart Sales"
-number-sections: false
+author: "Diego Villalba"
+date: today
+lang: es
+number-sections: true
 format:
   html:
     toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
     page-layout: full
   pdf:
     toc: true
 jupyter: python3
+bibliography: referencias_eda.bib
 ---
 
 <!-- TODO: MENCIONAR QUE PARA UNA MEJRO COMPARACIÓN EN MEDIDAS DE HETEOOGENEIDAD ES NECESARIO COLOCAR LOS VALORES MAXIMOS A UNA COSTADO. -->
@@ -15,26 +23,30 @@ jupyter: python3
 
 ## Introducción
 
+::: {.callout-tip appearance="minimal"}
+Este caso aplica la diversidad categórica y la comparación entre grupos desarrolladas en [Medidas de heterogeneidad](2-6-heterogeneidad.qmd).
+:::
+
 Después de estudiar la localización, la variabilidad y la forma de las distribuciones, el análisis exploratorio de datos debe avanzar hacia una pregunta más estructural: **¿el comportamiento observado es homogéneo en toda la población o cambia de manera importante entre grupos?**. Esta cuestión introduce el concepto de **heterogeneidad**, una dimensión central del EDA cuando el dataset contiene segmentaciones naturales, como categorías de producto, tipos de tienda, tamaños de outlet o ubicaciones geográficas.
 
 En términos estadísticos, la heterogeneidad alude a la existencia de diferencias sistemáticas entre subpoblaciones. Tales diferencias pueden expresarse en el centro de la distribución, en su dispersión, en su forma o incluso en la presencia diferencial de valores extremos. En un problema de negocio como BigMart, detectar heterogeneidad es indispensable, pues permite identificar si ciertos tipos de tiendas venden consistentemente más, si algunas categorías presentan patrones de ventas más variables, o si la estructura comercial cambia según el entorno del outlet.
 
 En este capítulo se trabaja la heterogeneidad como una extensión natural del análisis univariado. La idea principal es que una variable numérica no debe interpretarse de manera aislada, sino también en relación con variables categóricas relevantes.
 
+::: {.callout-note appearance="minimal"}
+**Definición operativa.** La heterogeneidad aparece cuando la distribución de ventas cambia entre subgrupos o cuando la composición categórica presenta diversidad relevante [@shannon1948mathematical; @simpson1949measurement].
+:::
+
 ## Preparación del entorno
 
-Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), para esta sección usaremos Python y las bibliotecas pandas, numpy, plotly y matplotlib.
+Trabajaremos con el siguiente [dataset BigMart](../../data/bigmart_sales.csv), usando Python, pandas, NumPy y Plotly.
 
 
 ```{python}
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
-
-plt.rcParams["figure.figsize"] = (8, 5)
-plt.rcParams["axes.grid"] = True
 
 DATA_PATH = "../../data/bigmart_sales.csv"
 df = pd.read_csv(DATA_PATH)
@@ -497,84 +509,10 @@ Para el EDA, esto tiene varias implicaciones:
 
 En síntesis, la entropía complementa el EDA porque ayuda a distinguir entre variables que describen un negocio **más concentrado** y variables que describen un negocio **más distribuido**. En este caso, `Outlet_Type` parece ser la variable más útil para estudiar concentración, mientras que `Item_Type`, `Outlet_Size` y `Outlet_Location_Type` son más útiles para explorar diversidad y segmentación interna.
 
-## Índice de Gini como medida de concentración
+::: {.callout-important appearance="minimal"}
+La entropía anterior describe diversidad de participaciones. El coeficiente de Gini basado en la curva de Lorenz responde específicamente a desigualdad y se desarrolla, con su fórmula corregida, en [Medidas de concentración en Big Mart Sales](2-7-concentracion_bigmart.qmd).
+:::
 
-Además de la entropía de Shannon, otra forma de cuantificar la heterogeneidad o concentración en una distribución es mediante el **índice de Gini**. Mientras la entropía mide cuán repartida está la masa de una distribución, el índice de Gini mide **qué tan desigual es esa distribución**.
-
-En términos generales, el índice de Gini toma valores entre **0 y 1**:
-
-- **0** indica **distribución perfectamente uniforme** (todas las categorías tienen el mismo peso).
-- **1** indica **concentración extrema** (una sola categoría concentra toda la masa).
-
-En el contexto de este dataset, el índice de Gini permite responder preguntas como:
-
-- ¿las ventas están relativamente equilibradas entre categorías?
-- ¿o unas pocas categorías concentran gran parte del volumen de ventas?
-
-Matemáticamente, el índice de Gini puede calcularse a partir de las proporciones ordenadas de la distribución.
-
-### Cálculo del índice de Gini por variable categórica
-
-En este caso se calcula el índice sobre la **distribución de ventas agregadas por categoría**.
-
-```{python}
-import numpy as np
-import pandas as pd
-
-vars_cat_heterogeneidad = [
-    "Outlet_Type",
-    "Outlet_Size",
-    "Outlet_Location_Type",
-    "Item_Type"
-]
-
-def gini_from_sales(df, cat_var, sales_var="Item_Outlet_Sales"):
-    sales = df.groupby(cat_var)[sales_var].sum().dropna().values
-    p = sales / sales.sum()
-    
-    p_sorted = np.sort(p)
-    n = len(p_sorted)
-    
-    gini = 1 - 2 * np.sum((np.arange(1, n+1) * p_sorted)) / n
-    
-    return pd.Series({
-        "n_categorias": n,
-        "gini": gini
-    })
-
-gini_table = pd.DataFrame({
-    var: gini_from_sales(df, var)
-    for var in vars_cat_heterogeneidad
-}).T.reset_index(names="variable")
-
-gini_table.sort_values("gini", ascending=False).round(4)
-```
-Visualización del índice de Gini
-
-```{python}
-import plotly.express as px
-
-gini_plot = gini_table.sort_values("gini", ascending=True)
-
-fig = px.bar(
-    gini_plot,
-    x="gini",
-    y="variable",
-    orientation="h",
-    text="gini",
-    title="Índice de Gini de ventas por variable categórica",
-    labels={
-        "gini": "Índice de Gini",
-        "variable": "Variable categórica"
-    },
-    range_x=[0,1]
-)
-
-fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
-fig.update_layout(height=450, width=900)
-
-fig.show()
-```
 ## Mini-dashboard de heterogeneidad
 
 A continuación se construye un dashboard compacto que integra varias vistas segmentadas.

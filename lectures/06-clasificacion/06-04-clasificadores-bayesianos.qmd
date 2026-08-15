@@ -1,0 +1,1425 @@
+---
+title: "Clasificadores Bayesianos"
+subtitle: "Almacenes  y Minería de datos 2026-2"
+author: "Diego Villalba"
+lang: es
+format:
+  revealjs:
+    theme: ../assets/unam-theme.scss
+    slide-number: true
+    chalkboard: false
+    incremental: false
+    smaller: true
+    code-fold: false
+    code-line-numbers: false
+    fig-align: center
+    transition: fade
+    footer: "Minería de datos · Clasificación probabilística"
+    logo: "../assets/Logo_FC_Color.png"
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+---
+
+
+## Ejercicio Inicial
+Supongamos que participamos en el programa en familia con chabelo:
+
+![](https://upload.wikimedia.org/wikipedia/commons/thumb/7/79/Monty_closed_doors.svg/1920px-Monty_closed_doors.svg.png){width="90%"}
+
+La probabilidad inicial de encontrar el auto detrás de cada puerta es de $\frac{1}{3}$. 
+
+## Ejercicio Inicial (continuación)
+Suponiendo que elegimos la puerta 1, el presentador nos muestra que detrás de la puerta 3 hay una cabra. La pregunta es ¿debemos cambiar a la puerta 2 o quedarnos con la puerta 1?
+
+![](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/Monty_open_door_chances.svg/1920px-Monty_open_door_chances.svg.png){width="90%"}
+
+## Respuesta al ejercicio inicial
+
+Definimos:
+
+- $C_i$: el coche está en la puerta $i$
+- $M_3$: Monty abre la puerta 3
+
+Probabilidades iniciales:
+
+$$
+P(C_1)=P(C_2)=P(C_3)=\frac{1}{3}
+$$
+
+La información clave es cómo actúa Chabelo:
+
+$$
+P(M_3 \mid C_1)=\frac{1}{2}, \qquad
+P(M_3 \mid C_2)=1, \qquad
+P(M_3 \mid C_3)=0
+$$
+
+Entonces:
+
+$$
+P(M_3)=\frac{1}{2}\cdot\frac{1}{3}
++1\cdot\frac{1}{3}
++0\cdot\frac{1}{3}
+=\frac{1}{2}
+$$
+
+---
+
+## Decisión bayesiana
+
+Probabilidad de ganar si te **quedas** con la puerta inicial ($C_1$):
+
+$$
+P(C_1 \mid M_3)
+=
+\frac{P(M_3 \mid C_1)P(C_1)}{P(M_3)}
+=
+\frac{\frac{1}{2}\cdot \frac{1}{3}}{\frac{1}{2}}
+=
+\frac{1}{3}
+$$
+
+Probabilidad de ganar si **cambias** a la otra puerta cerrada ($C_2$):
+
+$$
+P(C_2 \mid M_3)
+=
+\frac{P(M_3 \mid C_2)P(C_2)}{P(M_3)}
+=
+\frac{1\cdot \frac{1}{3}}{\frac{1}{2}}
+=
+\frac{2}{3}
+$$
+
+La conclusión es que debemos de cambiar de puerta, ya que la probabilidad de ganar el auto es mayor si cambiamos a la puerta 2.
+
+---
+
+## Aplicación a clasificadores
+
+Imagina dos clases:
+
+- $\omega_1$: persona sana.
+- $\omega_2$: persona enferma.
+
+Una prueba da un resultado raro, más compatible con enfermedad que con salud.
+
+::: {.callout-question}
+¿Debemos clasificar automáticamente como enfermedad?
+:::
+
+La respuesta depende de tres cosas: prevalencia, verosimilitud y costo del error.
+
+## De predicción determinista a predicción probabilística
+
+Un clasificador determinista aprende una función
+
+$$
+f(\mathbf{x}) \to \hat{y}.
+$$
+
+Un clasificador probabilístico estima
+
+$$
+P(\omega_i\mid \mathbf{x}).
+$$
+
+La etiqueta final puede ser:
+
+$$
+\hat{\omega}(\mathbf{x}) = \arg\max_i P(\omega_i\mid\mathbf{x}),
+$$
+
+pero ahora tenemos una cantidad adicional: **incertidumbre**.
+
+## Teorema de Bayes
+
+Para una observación $\mathbf{x}$ y una clase $\omega_i$:
+
+$$
+P(\omega_i\mid\mathbf{x})=
+\frac{p(\mathbf{x}\mid\omega_i)P(\omega_i)}{p(\mathbf{x})}.
+$$
+
+Donde:
+
+- $P(\omega_i)$: probabilidad previa o **prior**.
+- $p(\mathbf{x}\mid\omega_i)$: verosimilitud.
+- $P(\omega_i\mid\mathbf{x})$: posterior.
+- $p(\mathbf{x})$: evidencia o normalización.
+
+## La evidencia normaliza
+
+Para $c$ clases:
+
+$$
+p(\mathbf{x})=\sum_{j=1}^{c} p(\mathbf{x}\mid\omega_j)P(\omega_j).
+$$
+
+Como $p(\mathbf{x})$ es igual para todas las clases, para decidir basta comparar:
+
+$$
+p(\mathbf{x}\mid\omega_i)P(\omega_i).
+$$
+
+::: {.callout-tip}
+En cómputo real se trabaja casi siempre con logaritmos para evitar subdesbordamiento numérico.
+:::
+
+
+
+## Dilema en el cine
+
+::: columns
+::: {.column width="55%"}
+
+**Esta persona dejó caer su boleto en el pasillo.**
+
+¿Le dices?
+
+> “Disculpe, señora”
+
+o
+
+> “Disculpe, señor”
+
+**Tienes que hacer una conjetura.**
+
+:::
+
+::: {.column width="45%"}
+
+![](../assets/legacy-images/cinema_dilema.png)
+
+:::
+:::
+
+$$
+P(\text{sexo}\mid \text{cabello})
+=
+\frac{
+P(\text{cabello}\mid \text{sexo})P(\text{sexo})
+}{
+\sum_{\text{sexo}} P(\text{sexo})P(\text{cabello}\mid \text{sexo})
+}
+$$
+
+::: columns
+::: {.column width="50%"}
+
+**De cada 100 mujeres en el cine**
+
+- 50 tienen cabello corto
+- 50 tienen cabello largo
+
+:::
+
+::: {.column width="50%"}
+
+**De cada 100 hombres en el cine**
+
+- 96 tienen cabello corto
+- 4 tienen cabello largo
+
+:::
+:::
+
+---
+
+### Ejemplo de decisión bayesiana
+
+Hagamos los calculos paso a paso, si asumimos que la proporción de hombres y mujeres en el cine es la misma, entonces las probabilidades previas son:
+
+$$P(H)=P(M)=0.5$$
+
+Mientras que las verosimilitudes son:
+$$P(\text{cabello largo}\mid H)=0.04$$
+$$P(\text{cabello largo}\mid M)=0.50$$
+
+teniendo esto, Entonces los numeradores son:
+
+$$
+P(\text{largo}\mid H)P(H)=0.04(0.5)=0.02
+$$
+$$
+P(\text{largo}\mid M)P(M)=0.50(0.5)=0.25
+$$
+
+
+---
+
+### Ejemplo de decisión bayesiana
+
+Si las probabilidades previas son:
+
+$$
+P(H)=P(M)=0.5
+$$
+
+donde \(H\) representa “hombre” y \(M\) representa “mujer”, entonces:
+
+$$
+P(H\mid \text{cabello largo}) = 0.02A \approx 0.07
+$$
+
+$$
+P(M\mid \text{cabello largo}) = 0.25A \approx 0.93
+$$
+
+donde
+
+$$
+A=\frac{1}{0.02+0.25}
+$$
+
+$$
+\Rightarrow \textbf{Decisión: mujer}
+$$
+
+::: {.callout-note}
+La idea central es que no decidimos solo por la característica observada, sino por cómo esa característica modifica nuestras creencias previas sobre cada clase.
+:::
+
+## Dilema en el cine: el contexto importa
+
+::: columns
+
+::: {.column width="50%"}
+
+**Esta persona dejó caer su boleto en el pasillo.**
+
+¿Le dices?
+
+> “Disculpe, señora”
+
+o
+
+> “Disculpe, señor”
+
+**Tienes que hacer una conjetura.**
+
+:::
+
+::: {.column width="50%"}
+
+**¿Qué pasa si esto ocurre mientras estás formado en la fila del baño de hombres?**
+![](https://ichef.bbci.co.uk/ace/standard/976/cpsprodpb/D01D/production/_85377235_queueing-lords-getty.jpg)
+:::
+
+:::
+
+$$
+P(\text{sexo}\mid \text{cabello})
+=
+\frac{
+P(\text{cabello}\mid \text{sexo})P(\text{sexo})
+}{
+\sum_{\text{sexo}} P(\text{sexo})P(\text{cabello}\mid \text{sexo})
+}
+$$
+
+---
+
+### Nuevo contexto: fila del baño de hombres
+
+Ahora las probabilidades previas cambian:
+
+$$
+P(H)=0.98,
+\qquad
+P(M)=0.02
+$$
+
+donde \(H\) representa “hombre” y \(M\) representa “mujer”.
+
+::: columns
+
+::: {.column width="50%"}
+
+**De cada 2 mujeres en la fila**
+
+- 1 tiene cabello corto
+- 1 tiene cabello largo
+
+:::
+
+::: {.column width="50%"}
+
+**De cada 98 hombres en la fila**
+
+- 94 tienen cabello corto
+- 4 tienen cabello largo
+
+:::
+
+:::
+
+---
+
+### Actualización bayesiana
+
+De los datos anteriores:
+
+$$
+P(\text{cabello largo}\mid H)=\frac{4}{98}
+$$
+
+$$
+P(\text{cabello largo}\mid M)=\frac{1}{2}
+$$
+
+Calculamos los numeradores de Bayes:
+
+$$
+P(\text{cabello largo}\mid H)P(H)
+=
+\frac{4}{98}(0.98)
+=
+0.04
+$$
+
+$$
+P(\text{cabello largo}\mid M)P(M)
+=
+\frac{1}{2}(0.02)
+=
+0.01
+$$
+
+La constante de normalización es:
+
+$$
+B=
+\frac{1}{0.04+0.01}
+=
+20
+$$
+
+## Decisión bayesiana
+
+Entonces:
+
+$$
+P(H\mid \text{cabello largo})
+=
+0.04B
+=
+0.04(20)
+=
+0.80
+$$
+
+$$
+P(M\mid \text{cabello largo})
+=
+0.01B
+=
+0.01(20)
+=
+0.20
+$$
+
+Como:
+
+$$
+P(H\mid \text{cabello largo})
+>
+P(M\mid \text{cabello largo})
+$$
+
+la decisión bayesiana es:
+
+$$
+\Rightarrow \textbf{Decisión: hombre}
+$$
+
+::: {.callout-important}
+La misma evidencia observada —cabello largo— puede llevar a una decisión distinta cuando cambian las probabilidades previas.
+
+En clasificación bayesiana, el contexto modifica la inferencia.
+:::
+
+## Ejemplo prior vs verosimilitud
+
+```{python}
+#| label: fig-prior-posterior
+#| fig-cap: "Actualización bayesiana para dos clases al variar el prior."
+import numpy as np
+import plotly.graph_objects as go
+
+priors = np.linspace(0.01, 0.99, 99)
+px_w1 = 0.20
+px_w2 = 0.40
+
+post_w1 = (px_w1 * priors) / (px_w1 * priors + px_w2 * (1 - priors))
+post_w2 = 1 - post_w1
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=priors, y=post_w1, mode="lines", name="P(ω1|x)"))
+fig.add_trace(go.Scatter(x=priors, y=post_w2, mode="lines", name="P(ω2|x)"))
+fig.add_hline(y=0.5, line_dash="dash", annotation_text="frontera de decisión")
+fig.update_layout(
+    title="Aunque p(x|ω2) > p(x|ω1), el prior puede cambiar la decisión",
+    xaxis_title="Prior P(ω1)",
+    yaxis_title="Posterior",
+    yaxis_range=[0, 1],
+    height=460
+)
+fig.show()
+```
+
+## Lectura del gráfico
+
+Con $p(x\mid\omega_1)=0.20$ y $p(x\mid\omega_2)=0.40$:
+
+- La observación parece favorecer a $\omega_2$.
+- Pero si $P(\omega_1)$ es suficientemente grande, la posterior de $\omega_1$ puede dominar.
+- El clasificador bayesiano no mira la evidencia aislada: la combina con la frecuencia previa.
+
+
+
+## Regla MAP
+
+La regla de máxima posterior asigna:
+
+$$
+\hat{\omega}(\mathbf{x})
+=
+\arg\max_{\omega_i} P(\omega_i\mid\mathbf{x}).
+$$
+
+Usando Bayes:
+
+$$
+\hat{\omega}(\mathbf{x})
+=
+\arg\max_{\omega_i} p(\mathbf{x}\mid\omega_i)P(\omega_i).
+$$
+
+Si todos los errores cuestan lo mismo, MAP minimiza la probabilidad promedio de error.
+
+## Error condicional
+
+Para dos clases:
+
+$$
+P(e\mid\mathbf{x})=
+\begin{cases}
+P(\omega_2\mid\mathbf{x}), & \text{si decidimos }\omega_1,\\
+P(\omega_1\mid\mathbf{x}), & \text{si decidimos }\omega_2.
+\end{cases}
+$$
+
+Minimizar el error en cada $\mathbf{x}$ equivale a elegir la posterior mayor.
+
+$$
+P(e)=\int P(e\mid\mathbf{x})p(\mathbf{x})\,d\mathbf{x}.
+$$
+
+## Forma con cociente de verosimilitudes
+
+Para dos clases:
+
+$$
+\ell(\mathbf{x})=
+\frac{p(\mathbf{x}\mid\omega_1)}{p(\mathbf{x}\mid\omega_2)}.
+$$
+
+La regla es:
+
+$$
+\ell(\mathbf{x}) \gtrless_{\omega_2}^{\omega_1}
+\frac{P(\omega_2)}{P(\omega_1)}.
+$$
+
+En logaritmos:
+
+$$
+\log \ell(\mathbf{x})
+=
+\log p(\mathbf{x}\mid\omega_1)-\log p(\mathbf{x}\mid\omega_2).
+$$
+
+## Actividad rápida: decisión manual
+
+Supón:
+
+$$
+P(\omega_1)=0.8,\quad P(\omega_2)=0.2,
+$$
+
+$$
+p(x\mid\omega_1)=0.15,\quad p(x\mid\omega_2)=0.50.
+$$
+
+Calcula:
+
+$$
+p(x\mid\omega_1)P(\omega_1),\qquad p(x\mid\omega_2)P(\omega_2).
+$$
+
+::: {.fragment}
+Resultado: $0.12$ contra $0.10$. La regla MAP decide $\omega_1$.
+:::
+
+## Clasificadores bayesianos gaussianos
+
+Ahora suponemos que, dentro de cada clase, los datos siguen una distribución normal multivariada:
+
+$$
+p(\mathbf{x}\mid\omega_i)=
+\frac{1}{(2\pi)^{d/2}|\Sigma_i|^{1/2}}
+\exp\left[-\frac{1}{2}(\mathbf{x}-\boldsymbol{\mu}_i)^T
+\Sigma_i^{-1}(\mathbf{x}-\boldsymbol{\mu}_i)\right].
+$$
+
+Esto produce fronteras de decisión interpretables.
+
+## Función discriminante gaussiana
+
+La función discriminante logarítmica es:
+
+$$
+g_i(\mathbf{x})=
+-\frac{1}{2}(\mathbf{x}-\boldsymbol{\mu}_i)^T\Sigma_i^{-1}(\mathbf{x}-\boldsymbol{\mu}_i)
+-\frac{1}{2}\log|\Sigma_i|
++\log P(\omega_i).
+$$
+
+Decidimos:
+
+$$
+\hat{\omega}(\mathbf{x})=\arg\max_i g_i(\mathbf{x}).
+$$
+
+## Casos importantes
+
+| Supuesto | Frontera | Modelo clásico |
+|---|---|---|
+| $\Sigma_i=\sigma^2 I$ y priors iguales | Hiperplano por cercanía al centro | Distancia euclidiana |
+| $\Sigma_i=\Sigma$ común | Lineal | LDA generativo |
+| $\Sigma_i$ diferente por clase | Cuadrática | QDA generativo |
+
+::: {.callout-note}
+La forma de la covarianza determina la geometría de la frontera.
+:::
+
+## Ejemplo interactivo 2: dos gaussianas en 1D
+
+```{python}
+#| label: fig-gaussian-1d
+#| fig-cap: "Densidades, posterior y frontera de decisión para dos clases gaussianas."
+import numpy as np
+import plotly.graph_objects as go
+
+x = np.linspace(-5, 7, 600)
+mu1, s1 = 0.0, 1.0
+mu2, s2 = 2.2, 1.4
+
+def normal_pdf(x, mu, sigma):
+    return np.exp(-0.5*((x-mu)/sigma)**2)/(sigma*np.sqrt(2*np.pi))
+
+frames = []
+prior_grid = np.linspace(0.1, 0.9, 9)
+for p1 in prior_grid:
+    p2 = 1 - p1
+    f1 = normal_pdf(x, mu1, s1)
+    f2 = normal_pdf(x, mu2, s2)
+    un1 = f1 * p1
+    un2 = f2 * p2
+    post1 = un1 / (un1 + un2)
+    boundary_idx = np.argmin(np.abs(post1 - 0.5))
+    frames.append(go.Frame(
+        data=[
+            go.Scatter(x=x, y=un1, mode="lines", name="p(x|ω1)P(ω1)"),
+            go.Scatter(x=x, y=un2, mode="lines", name="p(x|ω2)P(ω2)"),
+            go.Scatter(x=x, y=post1, mode="lines", name="P(ω1|x)", yaxis="y2"),
+            go.Scatter(x=[x[boundary_idx], x[boundary_idx]], y=[0, max(un1.max(), un2.max())], mode="lines", name="frontera")
+        ],
+        name=f"P(ω1)={p1:.1f}"
+    ))
+
+fig = go.Figure(data=frames[4].data, frames=frames)
+fig.update_layout(
+    title="Mover el prior desplaza la frontera de decisión",
+    xaxis_title="x",
+    yaxis=dict(title="densidad no normalizada"),
+    yaxis2=dict(title="posterior", overlaying="y", side="right", range=[0, 1]),
+    height=500,
+    updatemenus=[dict(type="buttons", buttons=[dict(label="Animar", method="animate", args=[None])])],
+    sliders=[dict(
+        steps=[dict(method="animate", args=[[fr.name], {"mode":"immediate"}], label=fr.name) for fr in frames]
+    )]
+)
+fig.show()
+```
+
+## Clasificación gaussiana en 2D
+
+En 2D, cada clase tiene:
+
+- Un centro $\boldsymbol{\mu}_i$.
+- Una matriz de covarianza $\Sigma_i$.
+- Un prior $P(\omega_i)$.
+
+La frontera se obtiene donde:
+
+$$
+g_1(\mathbf{x})=g_2(\mathbf{x}).
+$$
+
+## Ejemplo interactivo 3: frontera en 2D
+
+```{python}
+#| label: fig-gaussian-2d
+#| fig-cap: "Frontera MAP para dos clases gaussianas en dos dimensiones."
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(7)
+n = 180
+mu1 = np.array([-1.2, 0.0])
+mu2 = np.array([1.2, 0.6])
+S1 = np.array([[1.0, 0.55], [0.55, 1.0]])
+S2 = np.array([[1.2, -0.45], [-0.45, 0.75]])
+X1 = np.random.multivariate_normal(mu1, S1, n)
+X2 = np.random.multivariate_normal(mu2, S2, n)
+
+xx, yy = np.meshgrid(np.linspace(-5, 5, 180), np.linspace(-4, 5, 180))
+G = np.c_[xx.ravel(), yy.ravel()]
+
+def log_gauss(X, mu, S):
+    invS = np.linalg.inv(S)
+    diff = X - mu
+    q = np.sum(diff @ invS * diff, axis=1)
+    return -0.5*q - 0.5*np.log(np.linalg.det(S))
+
+p1 = 0.5
+score = log_gauss(G, mu1, S1) + np.log(p1) - log_gauss(G, mu2, S2) - np.log(1-p1)
+Z = score.reshape(xx.shape)
+
+fig = go.Figure()
+fig.add_trace(go.Contour(x=xx[0], y=yy[:,0], z=Z, contours=dict(start=0, end=0, size=1), showscale=False, name="frontera"))
+fig.add_trace(go.Scatter(x=X1[:,0], y=X1[:,1], mode="markers", name="ω1", opacity=0.75))
+fig.add_trace(go.Scatter(x=X2[:,0], y=X2[:,1], mode="markers", name="ω2", opacity=0.75))
+fig.update_layout(title="Si las covarianzas son distintas, la frontera puede ser cuadrática", xaxis_title="x1", yaxis_title="x2", height=520)
+fig.show()
+```
+
+## Interpretación geométrica
+
+La cantidad
+
+$$
+(\mathbf{x}-\boldsymbol{\mu}_i)^T\Sigma_i^{-1}(\mathbf{x}-\boldsymbol{\mu}_i)
+$$
+
+es una distancia de Mahalanobis.
+
+Significa que el modelo no mide sólo cercanía euclidiana, sino cercanía relativa a la forma de la nube de datos.
+
+::: {.callout-tip}
+La covarianza codifica orientación, escala y correlación.
+:::
+
+## ¿Cómo evaluar el supuesto gaussiano?
+
+Tres preguntas prácticas:
+
+1. ¿Las variables son aproximadamente unimodales por clase?
+2. ¿Hay colas pesadas o valores atípicos?
+3. ¿La covarianza estimada es estable con el tamaño muestral?
+
+No se trata de que la normalidad sea perfecta, sino de si produce una frontera útil y estable.
+
+## Diagnóstico visual rápido
+
+```{python}
+#| label: fig-diagnostico-gaussiano
+#| fig-cap: "QQ-plot aproximado para revisar normalidad marginal por clase."
+import numpy as np
+import plotly.graph_objects as go
+from statistics import NormalDist
+
+np.random.seed(12)
+z_gauss = np.random.normal(size=220)
+z_heavy = np.random.standard_t(df=3, size=220)
+
+def qq_points(z):
+    z = np.sort((z - np.mean(z))/np.std(z))
+    p = (np.arange(1, len(z)+1) - 0.5) / len(z)
+    q = np.array([NormalDist().inv_cdf(pi) for pi in p])
+    return q, z
+
+q1, y1 = qq_points(z_gauss)
+q2, y2 = qq_points(z_heavy)
+line = np.linspace(-3, 3, 100)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=q1, y=y1, mode="markers", name="muestra casi normal"))
+fig.add_trace(go.Scatter(x=q2, y=y2, mode="markers", name="colas pesadas"))
+fig.add_trace(go.Scatter(x=line, y=line, mode="lines", name="referencia normal"))
+fig.update_layout(title="Un QQ-plot revela desviaciones fuertes del supuesto gaussiano", xaxis_title="cuantiles normales teóricos", yaxis_title="cuantiles muestrales", height=480)
+fig.show()
+```
+
+## Clasificación de secuencias discretas
+
+En secuencias, la observación no es un vector continuo sino una cadena:
+
+$$
+\mathbf{x}=(x_1,x_2,\ldots,x_T).
+$$
+
+Ejemplos:
+
+- ADN: A, C, G, T.
+- Texto: palabras o caracteres.
+- Clickstream: eventos de usuario.
+
+Una opción simple es modelar transiciones con cadenas de Markov.
+
+## Cadenas de Markov de primer orden
+
+El supuesto es:
+
+$$
+P(x_1,x_2,\ldots,x_T\mid\omega_i)
+= P(x_1\mid\omega_i)\prod_{t=2}^{T}P(x_t\mid x_{t-1},\omega_i).
+$$
+
+La decisión MAP compara:
+
+$$
+\log P(\omega_i)+\log P(x_1\mid\omega_i)+
+\sum_{t=2}^{T}\log P(x_t\mid x_{t-1},\omega_i).
+$$
+
+## Ejemplo interactivo 4: secuencia de ADN
+
+```{python}
+#| label: fig-markov-dna
+#| fig-cap: "Aportes logarítmicos de una secuencia bajo dos modelos de Markov."
+import numpy as np
+import plotly.graph_objects as go
+
+seq = "ACGCGCGTACGC"
+states = list("ACGT")
+idx = {s:i for i,s in enumerate(states)}
+
+# Modelo 1 favorece alternancias C-G; modelo 2 favorece A/T.
+T1 = np.array([
+    [0.10, 0.20, 0.20, 0.50],
+    [0.05, 0.10, 0.75, 0.10],
+    [0.05, 0.75, 0.10, 0.10],
+    [0.50, 0.20, 0.20, 0.10]
+])
+T2 = np.array([
+    [0.45, 0.15, 0.10, 0.30],
+    [0.35, 0.25, 0.15, 0.25],
+    [0.30, 0.15, 0.25, 0.30],
+    [0.35, 0.10, 0.15, 0.40]
+])
+
+transitions = [seq[t-1:t+1] for t in range(1, len(seq))]
+log1 = [np.log(T1[idx[a], idx[b]]) for a,b in transitions]
+log2 = [np.log(T2[idx[a], idx[b]]) for a,b in transitions]
+
+fig = go.Figure()
+fig.add_trace(go.Bar(x=transitions, y=log1, name="log P(transición | ω1)"))
+fig.add_trace(go.Bar(x=transitions, y=log2, name="log P(transición | ω2)"))
+fig.update_layout(barmode="group", title=f"Secuencia: {seq}", xaxis_title="transición", yaxis_title="log-probabilidad", height=470)
+fig.show()
+
+print("Score ω1:", round(sum(log1), 3))
+print("Score ω2:", round(sum(log2), 3))
+print("Decisión:", "ω1" if sum(log1) > sum(log2) else "ω2")
+```
+
+## Naïve Bayes: independencia condicional
+
+El supuesto central: **dada la clase, las características son independientes entre sí**.
+
+$$
+p(\mathbf{x}\mid\omega_i)=\prod_{j=1}^{d}p(x_j\mid\omega_i).
+$$
+
+En lugar de estimar una distribución conjunta en $d$ dimensiones, estimamos $d$ marginales de 1D:
+
+$$
+\log P(\omega_i\mid\mathbf{x})
+= C + \log P(\omega_i)+\sum_{j=1}^{d}\log p(x_j\mid\omega_i).
+$$
+
+::: {.callout-tip}
+El supuesto rara vez es exacto, pero reduce el número de parámetros de $O(d^2)$ a $O(d)$, lo que lo hace estable con pocas muestras.
+:::
+
+## Independencia: ¿qué implica geométricamente?
+
+```{python}
+#| label: fig-nb-vs-qda
+#| fig-cap: "NB asume covarianzas diagonales; la frontera resultante difiere de QDA."
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(42)
+n = 220
+
+mu1 = np.array([-1.3, -0.9])
+mu2 = np.array([ 1.5,  1.3])
+S1_true = np.array([[1.0,  0.75], [ 0.75, 1.0]])
+S2_true = np.array([[1.0, -0.60], [-0.60, 0.85]])
+S1_nb   = np.diag(np.diag(S1_true))
+S2_nb   = np.diag(np.diag(S2_true))
+
+X1 = np.random.multivariate_normal(mu1, S1_true, n)
+X2 = np.random.multivariate_normal(mu2, S2_true, n)
+
+xx, yy = np.meshgrid(np.linspace(-5, 5, 160), np.linspace(-5, 5, 160))
+G = np.c_[xx.ravel(), yy.ravel()]
+
+def log_g(X, mu, S):
+    invS = np.linalg.inv(S)
+    d = X - mu
+    return -0.5 * np.sum(d @ invS * d, axis=1) - 0.5 * np.log(np.linalg.det(S))
+
+score_qda = (log_g(G, mu1, S1_true) - log_g(G, mu2, S2_true)).reshape(xx.shape)
+score_nb  = (log_g(G, mu1, S1_nb)   - log_g(G, mu2, S2_nb)).reshape(xx.shape)
+
+fig = make_subplots(rows=1, cols=2,
+    subplot_titles=["QDA — covarianzas completas", "Naïve Bayes — covarianzas diagonales"],
+    horizontal_spacing=0.08)
+
+c1, c2 = "#4C72B0", "#DD8452"
+for col, score in enumerate([score_qda, score_nb], 1):
+    fig.add_trace(go.Contour(
+        x=xx[0], y=yy[:,0], z=score,
+        contours=dict(start=0, end=0, size=1, coloring="none"),
+        line=dict(color="black", width=2.5),
+        showscale=False, showlegend=False), row=1, col=col)
+    fig.add_trace(go.Scatter(x=X1[:,0], y=X1[:,1], mode="markers",
+        marker=dict(color=c1, opacity=0.5, size=5),
+        name="ω1", showlegend=(col == 1)), row=1, col=col)
+    fig.add_trace(go.Scatter(x=X2[:,0], y=X2[:,1], mode="markers",
+        marker=dict(color=c2, opacity=0.5, size=5),
+        name="ω2", showlegend=(col == 1)), row=1, col=col)
+
+fig.update_layout(height=470,
+    title="La diagonal elimina la rotación: la frontera cambia cuando hay correlación")
+fig.show()
+```
+
+## Variantes de Naïve Bayes
+
+| Variante | Modelo de $p(x_j \mid \omega_i)$ | Cuándo usarlo |
+|---|---|---|
+| **Gaussiano** | $\mathcal{N}(\mu_{ij},\,\sigma_{ij}^2)$ | Variables continuas |
+| **Multinomial** | $\theta_{ij}^{n_j}$ (proporcional) | Conteos de palabras / frecuencias |
+| **Bernoulli** | $\theta_{ij}^{x_j}(1-\theta_{ij})^{1-x_j}$ | Variables binarias (presencia/ausencia) |
+| **Complemento** | Usa la clase complementaria | Texto con clases desbalanceadas |
+
+::: {.callout-note}
+La elección de la variante depende del tipo de dato, no de preferencias: equivocarse aquí puede degradar el modelo significativamente.
+:::
+
+## Naïve Bayes Gaussiano: densidades marginales
+
+```{python}
+#| label: fig-gnb-marginals
+#| fig-cap: "GNB estima una gaussiana 1D independiente por característica y clase."
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(7)
+n = 300
+mu1, mu2 = [1.0, 3.2], [3.5, 1.6]
+s1,  s2  = [0.85, 0.80], [0.90, 0.70]
+
+X1 = np.column_stack([np.random.normal(mu1[j], s1[j], n) for j in range(2)])
+X2 = np.column_stack([np.random.normal(mu2[j], s2[j], n) for j in range(2)])
+
+x_range = np.linspace(-2, 7, 400)
+names = ["Característica x₁", "Característica x₂"]
+
+fig = make_subplots(rows=1, cols=2, subplot_titles=names)
+
+spec = [
+    (mu1, s1, X1, "ω1", "#4C72B0"),
+    (mu2, s2, X2, "ω2", "#DD8452"),
+]
+for j in range(2):
+    for mu, s, X, lbl, col in spec:
+        pdf = np.exp(-0.5 * ((x_range - mu[j]) / s[j])**2) / (s[j] * np.sqrt(2 * np.pi))
+        fig.add_trace(go.Histogram(x=X[:, j], histnorm="probability density",
+            nbinsx=28, marker_color=col, opacity=0.25, showlegend=False), row=1, col=j+1)
+        fig.add_trace(go.Scatter(x=x_range, y=pdf, mode="lines",
+            line=dict(color=col, width=2.5),
+            name=lbl, showlegend=(j == 0)), row=1, col=j+1)
+
+fig.update_layout(height=460, barmode="overlay",
+    title="Cada marginal se estima por separado: 2·d parámetros en lugar de d×d")
+fig.show()
+```
+
+## Por qué funciona bien en texto
+
+Un documento se representa como vector de conteos de palabras:
+
+$$
+\mathbf{x}=(n_1,n_2,\ldots,n_V), \quad \text{donde }V\text{ es el tamaño del vocabulario.}
+$$
+
+En **Naïve Bayes Multinomial**:
+
+$$
+\log P(\mathbf{x}\mid\omega_i)=\sum_{j=1}^{V}n_j\log\theta_{ij}+\text{constante.}
+$$
+
+Cada palabra contribuye de forma **aditiva e independiente** con su peso logarítmico.
+
+::: {.callout-note}
+Con $V=50{,}000$ palabras, estimar la distribución conjunta es imposible. La independencia lo hace tratable con miles de documentos.
+:::
+
+## Suavizado de Laplace
+
+Para evitar probabilidades cero cuando una palabra no aparece en entrenamiento:
+
+$$
+\hat{\theta}_{ij}=
+\frac{N_{ij}+\alpha}{\displaystyle\sum_{k=1}^V N_{ik}+\alpha V}.
+$$
+
+- $N_{ij}$: conteo de palabra $j$ en clase $i$.
+- $\alpha$: intensidad de suavizado ($\alpha=1$ es suavizado de Laplace clásico).
+- $V$: tamaño del vocabulario.
+
+::: {.callout-warning}
+Sin suavizado, **una sola palabra no vista** convierte toda la probabilidad del documento en cero, sin importar el resto del texto.
+:::
+
+## Ejemplo interactivo 5: clasificación de mensajes
+
+```{python}
+#| label: fig-nb-texto-mejorado
+#| fig-cap: "Contribución logarítmica de cada palabra a la decisión de clase."
+import numpy as np
+import plotly.graph_objects as go
+from collections import Counter
+
+train = [
+    ("oferta descuento gana premio ahora gratis",  "spam"),
+    ("premio gratis descuento urgente dinero",      "spam"),
+    ("urgente gana oferta dinero ahora gratis",     "spam"),
+    ("reunion proyecto entrega informe revision",   "legítimo"),
+    ("informe clase proyecto datos revision",       "legítimo"),
+    ("clase reunion datos entrega proyecto",        "legítimo"),
+    ("agenda reunion semana informe equipo",        "legítimo"),
+]
+
+doc_test = "urgente gana proyecto informe"
+
+classes = ["spam", "legítimo"]
+vocab   = sorted({w for text, _ in train for w in text.split()})
+V       = len(vocab)
+alpha   = 1.0
+
+class_counts = Counter(y for _, y in train)
+word_counts  = {c: Counter() for c in classes}
+for text, y in train:
+    word_counts[y].update(text.split())
+
+totals    = {c: sum(word_counts[c].values()) for c in classes}
+log_prior = {c: np.log(class_counts[c] / len(train)) for c in classes}
+
+words = doc_test.split()
+contribs   = {}
+log_scores = {}
+for c in classes:
+    contribs[c] = []
+    score = log_prior[c]
+    for w in words:
+        theta = (word_counts[c][w] + alpha) / (totals[c] + alpha * V)
+        lp    = np.log(theta)
+        contribs[c].append(lp)
+        score += lp
+    log_scores[c] = score
+
+palette  = {"spam": "#DD8452", "legítimo": "#4C72B0"}
+decision = max(log_scores, key=log_scores.get)
+subtitle = "  |  ".join(f"log P({c}|doc) = {v:.2f}" for c, v in log_scores.items())
+
+fig = go.Figure()
+for c in classes:
+    fig.add_trace(go.Bar(x=words, y=contribs[c], name=c,
+        marker_color=palette[c]))
+
+fig.update_layout(
+    barmode="group",
+    title=f"Documento: '{doc_test}'<br><sup>{subtitle}  →  Decisión: <b>{decision}</b></sup>",
+    xaxis_title="Palabra",
+    yaxis_title="Contribución  log P(palabra | clase)",
+    height=470,
+    legend=dict(orientation="h", y=1.13))
+fig.show()
+```
+
+## Calibración: las probabilidades de NB son extremas
+
+```{python}
+#| label: fig-nb-calibracion
+#| fig-cap: "NB tiende a concentrar las probabilidades cerca de 0 y 1."
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+np.random.seed(42)
+n = 900
+
+true_p = np.random.uniform(0.1, 0.9, n)
+labels = (np.random.uniform(size=n) < true_p).astype(int)
+
+p_calib = np.clip(true_p + np.random.normal(0, 0.06, n), 0.01, 0.99)
+
+sigmoid  = lambda x: 1 / (1 + np.exp(-x))
+logit_p  = np.log(true_p / (1 - true_p))
+p_nb     = np.clip(sigmoid(logit_p * 2.8) + np.random.normal(0, 0.05, n), 0.01, 0.99)
+
+def cal_curve(p, y, n_bins=10):
+    bins = np.linspace(0, 1, n_bins + 1)
+    mp, fp = [], []
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        mask = (p >= lo) & (p < hi)
+        if mask.sum() > 8:
+            mp.append(p[mask].mean())
+            fp.append(y[mask].mean())
+    return np.array(mp), np.array(fp)
+
+mp_c, fp_c = cal_curve(p_calib, labels)
+mp_n, fp_n = cal_curve(p_nb,    labels)
+
+fig = make_subplots(rows=1, cols=2,
+    subplot_titles=["Curva de calibración", "Distribución de probabilidades predichas"],
+    horizontal_spacing=0.1)
+
+ref = np.linspace(0, 1, 50)
+fig.add_trace(go.Scatter(x=ref, y=ref, mode="lines", name="perfecta",
+    line=dict(color="gray", dash="dash")), row=1, col=1)
+fig.add_trace(go.Scatter(x=mp_c, y=fp_c, mode="lines+markers", name="bien calibrado",
+    line=dict(color="#4C72B0")), row=1, col=1)
+fig.add_trace(go.Scatter(x=mp_n, y=fp_n, mode="lines+markers", name="NB (sobreconfiado)",
+    line=dict(color="#DD8452")), row=1, col=1)
+
+fig.add_trace(go.Histogram(x=p_calib, nbinsx=30, histnorm="probability",
+    marker_color="#4C72B0", opacity=0.6, showlegend=False), row=1, col=2)
+fig.add_trace(go.Histogram(x=p_nb,    nbinsx=30, histnorm="probability",
+    marker_color="#DD8452", opacity=0.6, showlegend=False), row=1, col=2)
+
+fig.update_xaxes(title_text="Probabilidad predicha",  row=1, col=1)
+fig.update_yaxes(title_text="Fracción positiva real", row=1, col=1)
+fig.update_xaxes(title_text="Probabilidad predicha",  row=1, col=2)
+fig.update_yaxes(title_text="Densidad",               row=1, col=2)
+
+fig.update_layout(height=460, barmode="overlay",
+    title="NB produce probabilidades extremas; calibrar si se usan como probabilidades reales")
+fig.show()
+```
+
+## Ventajas y límites de Naïve Bayes
+
+::: columns
+::: {.column width="50%"}
+
+**Ventajas**
+
+- Entrenamiento $O(nd)$: muy rápido.
+- Estable con pocas muestras de entrenamiento.
+- Escala bien a alta dimensión ($V \gg n$).
+- Interpretable: contribuciones logarítmicas por variable.
+- Robusto a características irrelevantes.
+
+:::
+::: {.column width="50%"}
+
+**Límites**
+
+- Independencia condicional rara vez se cumple.
+- Correlaciones entre variables sesgan la evidencia acumulada.
+- Probabilidades **mal calibradas** (tienden a ser extremas).
+- No captura interacciones entre variables.
+
+:::
+:::
+
+::: {.callout-tip}
+Para mejorar calibración: aplicar regresión logística sobre las salidas de NB (*calibración de Platt*).
+:::
+
+## Decisión bayesiana con costos
+
+Hasta ahora asumimos que todos los errores cuestan lo mismo.
+
+Pero en problemas reales:
+
+- Falso negativo en diagnóstico médico puede ser más grave que falso positivo.
+- Falso positivo en fraude puede bloquear una transacción legítima.
+- Falso negativo en seguridad puede dejar pasar un evento riesgoso.
+
+Necesitamos minimizar **riesgo esperado**, no sólo error.
+
+## Matriz de pérdidas
+
+Sea $\lambda(\alpha_i\mid\omega_j)$ la pérdida por decidir acción $\alpha_i$ cuando la clase verdadera es $\omega_j$.
+
+El riesgo condicional es:
+
+$$
+R(\alpha_i\mid\mathbf{x})=
+\sum_j \lambda(\alpha_i\mid\omega_j)P(\omega_j\mid\mathbf{x}).
+$$
+
+Decidimos:
+
+$$
+\alpha^*(\mathbf{x})=\arg\min_i R(\alpha_i\mid\mathbf{x}).
+$$
+
+## Dos clases con costos asimétricos
+
+Supón:
+
+- $\alpha_1$: decidir normal.
+- $\alpha_2$: decidir enfermedad.
+- $\omega_1$: normal.
+- $\omega_2$: enfermedad.
+
+Si los aciertos tienen pérdida cero:
+
+$$
+R(\alpha_1\mid x)=\lambda_{12}P(\omega_2\mid x),
+$$
+
+$$
+R(\alpha_2\mid x)=\lambda_{21}P(\omega_1\mid x).
+$$
+
+## Ejemplo interactivo 6: riesgo y umbral
+
+```{python}
+#| label: fig-riesgo-umbral
+#| fig-cap: "Cambiar el costo de falso negativo cambia el umbral óptimo."
+import numpy as np
+import plotly.graph_objects as go
+
+p = np.linspace(0.001, 0.999, 400)  # p = P(enfermedad | x)
+fp_cost = 1.0
+fn_cost_values = [1, 2, 5, 10, 20]
+
+fig = go.Figure()
+for fn_cost in fn_cost_values:
+    risk_normal = fn_cost * p
+    risk_disease = fp_cost * (1 - p)
+    threshold = fp_cost / (fp_cost + fn_cost)
+    fig.add_trace(go.Scatter(x=p, y=risk_normal-risk_disease, mode="lines", name=f"FN cost={fn_cost}, umbral={threshold:.2f}"))
+fig.add_hline(y=0, line_dash="dash")
+fig.update_layout(
+    title="Decidir enfermedad cuando R(enfermedad|x) < R(normal|x)",
+    xaxis_title="P(enfermedad | x)",
+    yaxis_title="R(normal|x) - R(enfermedad|x)",
+    height=480
+)
+fig.show()
+```
+
+## Lectura del umbral
+
+Si el falso negativo cuesta más, se requiere una posterior menor para decidir enfermedad.
+
+Con aciertos de costo cero:
+
+$$
+\text{decidir enfermedad si}\quad
+P(\omega_2\mid x)>
+\frac{\lambda_{21}}{\lambda_{12}+\lambda_{21}}.
+$$
+
+Donde:
+
+- $\lambda_{12}$: costo de falso negativo.
+- $\lambda_{21}$: costo de falso positivo.
+
+## Minimizar un error condicionado al otro
+
+A veces no queremos minimizar error total, sino imponer una restricción:
+
+$$
+P(\text{falso positivo})\leq \alpha.
+$$
+
+Esto aparece en:
+
+- detección de fraude,
+- diagnóstico de tamizaje,
+- control de calidad,
+- seguridad.
+
+La decisión se convierte en elegir un umbral que respete la restricción.
+
+## Ejemplo interactivo 7: ROC y restricción
+
+```{python}
+#| label: fig-roc-restriccion
+#| fig-cap: "Selección de umbral bajo restricción de tasa de falsos positivos."
+import numpy as np
+import plotly.graph_objects as go
+
+np.random.seed(24)
+n0, n1 = 700, 300
+scores0 = np.random.normal(0.2, 0.16, n0)
+scores1 = np.random.normal(0.65, 0.18, n1)
+scores0 = np.clip(scores0, 0, 1)
+scores1 = np.clip(scores1, 0, 1)
+thresholds = np.linspace(0, 1, 250)
+
+fpr, tpr = [], []
+for t in thresholds:
+    fpr.append(np.mean(scores0 >= t))
+    tpr.append(np.mean(scores1 >= t))
+fpr, tpr = np.array(fpr), np.array(tpr)
+alpha = 0.05
+valid = np.where(fpr <= alpha)[0]
+idx = valid[np.argmax(tpr[valid])]
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name="ROC"))
+fig.add_trace(go.Scatter(x=[fpr[idx]], y=[tpr[idx]], mode="markers", marker=dict(size=12), name=f"umbral={thresholds[idx]:.2f}"))
+fig.add_vline(x=alpha, line_dash="dash", annotation_text="FPR máximo")
+fig.update_layout(title="Elegir el mejor TPR sujeto a FPR ≤ 0.05", xaxis_title="FPR", yaxis_title="TPR / recall", height=480)
+fig.show()
+```
+
+## Criterio minimax
+
+Cuando los priors no son confiables, una alternativa es minimizar el peor caso.
+
+En lugar de minimizar:
+
+$$
+R = \sum_i P(\omega_i)R_i,
+$$
+
+se busca:
+
+$$
+\min_\delta \max_i R_i(\delta).
+$$
+
+Intuición: elegir una regla que no dependa demasiado de una estimación incierta del prior.
+
+## Minimax en lenguaje simple
+
+MAP responde:
+
+> ¿Cuál decisión minimiza el error promedio dado mi prior?
+
+Minimax responde:
+
+> ¿Cuál decisión evita que una clase quede con un error excesivamente malo?
+
+Esto es útil cuando:
+
+- los priors cambian con el tiempo,
+- el conjunto de entrenamiento no representa la población real,
+- hay incertidumbre fuerte sobre prevalencias.
+
+## Comparación final de enfoques
+
+| Enfoque | Qué optimiza | Cuándo usarlo |
+|---|---|---|
+| MAP | Error promedio con costos iguales | Clases y costos estables |
+| Riesgo mínimo | Costo esperado | Errores asimétricos |
+| Restricción FPR/TPR | Error bajo restricción | Seguridad, medicina, fraude |
+| Minimax | Peor caso | Priors inciertos |
+
+## Mini-ejercicio de cierre
+
+Tienes un clasificador que devuelve:
+
+$$
+P(\text{fraude}\mid x)=0.18.
+$$
+
+Costos:
+
+- Falso positivo: bloquear una compra legítima cuesta 1.
+- Falso negativo: dejar pasar fraude cuesta 8.
+
+::: {.callout-question}
+¿Bloqueas la transacción?
+:::
+
+## Solución del mini-ejercicio
+
+El umbral para decidir fraude es:
+
+$$
+\frac{\lambda_{FP}}{\lambda_{FN}+\lambda_{FP}}
+=\frac{1}{8+1}=0.111.
+$$
+
+Como
+
+$$
+0.18>0.111,
+$$
+
+conviene bloquear según riesgo mínimo.
+
+::: {.callout-note}
+Con MAP puro y umbral 0.5, no bloquearíamos. Con costos, sí.
+:::
+
+## Recomendaciones prácticas
+
+1. Empieza con priors realistas o estima priors por clase.
+2. Usa log-probabilidades.
+3. Aplica suavizado en modelos discretos.
+4. Revisa calibración si usarás probabilidades como probabilidades reales.
+5. No evalúes sólo accuracy: revisa matriz de confusión, recall, precision, ROC/PR y costos.
+6. En clases desbalanceadas, reporta desempeño por clase.
+
+## Qué debe quedar claro
+
+Los clasificadores bayesianos son una familia de modelos que combinan:
+
+$$
+\text{posterior} \propto \text{verosimilitud}\times\text{prior}.
+$$
+
+La decisión puede buscar:
+
+- máxima posterior,
+- mínimo error,
+- mínimo riesgo,
+- control de un tipo de error,
+- robustez frente a priors desconocidos.
+
+## Referencias sugeridas
+
+- Duda, Hart y Stork. *Pattern Classification*.
+- Bishop. *Pattern Recognition and Machine Learning*.
+- Murphy. *Machine Learning: A Probabilistic Perspective*.
+- Jaynes. *Probability Theory: The Logic of Science*.
+
+## Cierre para discusión
+
+::: {.callout-question}
+Si tuvieras que usar un clasificador bayesiano en un proyecto real, ¿qué sería más delicado: estimar la verosimilitud, estimar el prior o definir la matriz de costos?
+:::
