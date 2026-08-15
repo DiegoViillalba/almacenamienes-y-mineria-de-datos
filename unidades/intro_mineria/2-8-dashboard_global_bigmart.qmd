@@ -1,21 +1,29 @@
 ---
 title: "Dashboard global"
+author: "Diego Villalba"
+date: today
+lang: es
 format:
   html:
     toc: true
+    toc-depth: 3
     number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
     page-layout: full
   pdf:
     toc: true
     number-sections: true
 jupyter: python3
+bibliography: referencias_eda.bib
 ---
 
 # Introducción
 
-A lo largo de los capítulos anteriores se desarrolló una ruta progresiva para el análisis exploratorio del conjunto de datos **Big Mart Sales**. La lógica seguida no fue arbitraria: se construyó una descripción estadística de las ventas a partir de cinco dimensiones complementarias.
+A lo largo de los capítulos anteriores se desarrolló una ruta progresiva para el análisis exploratorio del conjunto de datos **Big Mart Sales**. La lógica seguida no fue arbitraria: se construyó una descripción estadística de las ventas a partir de seis dimensiones complementarias.
 
-Primero se estudió la **localización**, para responder dónde se sitúan los valores típicos. Después se introdujo la **variabilidad**, para cuantificar la dispersión alrededor de esos centros. Más adelante se abordó la **forma**, con el fin de entender la asimetría, la curtosis y la estructura general de las distribuciones. Luego se examinó la **heterogeneidad**, es decir, las diferencias entre categorías, tipos de outlet y otros subgrupos. Finalmente, se incorporó la **concentración**, que permite analizar cómo se reparte el total de ventas entre las unidades que componen el sistema.
+Primero se estudió la **localización**, para responder dónde se sitúan los valores típicos. Después se introdujo la **variabilidad**, para cuantificar la dispersión alrededor de esos centros. Más adelante se abordó la **forma**, con el fin de entender la asimetría, la curtosis y la estructura general de las distribuciones. Luego se examinó la **heterogeneidad**, es decir, las diferencias entre categorías, tipos de outlet y otros subgrupos. La **concentración** permitió analizar cómo se reparte el total entre las unidades del sistema y la **correlación** añadió la exploración de asociaciones entre variables numéricas.
 
 El propósito de este capítulo es integrar todas esas perspectivas en un **dashboard global**, útil tanto para la enseñanza del EDA como para la comunicación de hallazgos en un entorno de análisis aplicado. Este dashboard no sustituye el análisis detallado de los capítulos previos; más bien, actúa como una síntesis estructurada que permite recorrer, de manera compacta, la construcción progresiva de la medida.
 
@@ -26,7 +34,7 @@ Este capítulo busca que el lector sea capaz de:
 1. integrar múltiples dimensiones del EDA en una misma narrativa analítica;
 2. construir indicadores resumidos y visualizaciones consistentes entre sí;
 3. diseñar un dashboard reproducible en Quarto compatible con un libro;
-4. interpretar de forma conjunta las dimensiones de localización, variabilidad, forma, heterogeneidad y concentración.
+4. interpretar de forma conjunta las dimensiones de localización, variabilidad, forma, heterogeneidad, concentración y correlación.
 
 # Carga y preparación de datos
 
@@ -54,7 +62,7 @@ df.head()
 
 # Arquitectura conceptual del dashboard
 
-El dashboard global puede entenderse como una composición de cinco capas analíticas:
+El dashboard global puede entenderse como una composición de seis capas analíticas:
 
 ## Capa 1. Localización
 Resume el centro de la distribución mediante indicadores como media, mediana, moda y cuantiles.
@@ -71,7 +79,10 @@ Compara la estructura de ventas entre subgrupos relevantes, como tipos de produc
 ## Capa 5. Concentración
 Evalúa qué tan equilibrada o dominada está la estructura total de ventas.
 
-En un dashboard pedagógico, estas cinco capas deben coexistir de forma coherente, de manera que el lector pueda pasar del nivel global al comparativo sin perder el hilo interpretativo.
+## Capa 6. Correlación
+Explora asociaciones lineales y monótonas entre variables numéricas sin atribuir causalidad.
+
+En un dashboard pedagógico, estas seis capas deben coexistir de forma coherente, de manera que el lector pueda pasar del nivel global al comparativo sin perder el hilo interpretativo.
 
 # Selección de variable principal
 
@@ -356,6 +367,51 @@ concentration_kpis = pd.DataFrame({
 concentration_kpis
 ```
 
+# Panel de correlación
+
+La síntesis se completa con Pearson y Spearman. La comparación ayuda a detectar asociaciones monotónicas que no son estrictamente lineales.
+
+```{python}
+num_cols = df.select_dtypes(include=np.number).columns
+pearson = df[num_cols].corr(method="pearson")
+spearman = df[num_cols].corr(method="spearman")
+
+fig = px.imshow(
+    pearson,
+    text_auto=".2f",
+    color_continuous_scale="RdBu_r",
+    zmin=-1,
+    zmax=1,
+    title="Matriz de correlación de Pearson"
+)
+fig.update_layout(height=650)
+fig.show()
+```
+
+```{python}
+corr_target = pd.DataFrame({
+    "Variable": [c for c in num_cols if c != "Item_Outlet_Sales"],
+    "Pearson": [pearson.loc[c, "Item_Outlet_Sales"] for c in num_cols if c != "Item_Outlet_Sales"],
+    "Spearman": [spearman.loc[c, "Item_Outlet_Sales"] for c in num_cols if c != "Item_Outlet_Sales"]
+}).melt(id_vars="Variable", var_name="Coeficiente", value_name="Correlación")
+
+fig = px.bar(
+    corr_target,
+    x="Variable",
+    y="Correlación",
+    color="Coeficiente",
+    barmode="group",
+    range_y=[-1, 1],
+    title="Asociaciones con Item_Outlet_Sales"
+)
+fig.add_hline(y=0, line_dash="dot")
+fig.show()
+```
+
+::: {.callout-warning appearance="minimal"}
+El panel de correlación sirve para generar hipótesis, no para afirmar causalidad. Cada coeficiente relevante debe contrastarse con un diagrama de dispersión y con el patrón de faltantes.
+:::
+
 # Ensamblaje del dashboard global
 
 En un libro de Quarto, el dashboard puede presentarse como una secuencia ordenada de paneles. Una estructura práctica es la siguiente:
@@ -364,7 +420,8 @@ En un libro de Quarto, el dashboard puede presentarse como una secuencia ordenad
 2. **Distribución global**: histograma y boxplot para localización, forma y variabilidad.
 3. **Comparación entre grupos**: heterogeneidad por outlet y por producto.
 4. **Concentración**: Pareto y tabla de acumulación.
-5. **Texto interpretativo**: síntesis narrativa de hallazgos.
+5. **Correlación**: heatmap y comparación Pearson–Spearman.
+6. **Texto interpretativo**: síntesis narrativa de hallazgos.
 
 ## Ejemplo de lectura integrada
 
