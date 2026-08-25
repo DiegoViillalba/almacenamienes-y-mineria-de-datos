@@ -1,0 +1,769 @@
+---
+title: "Construyamos un Data Warehouse"
+subtitle: "De transacciones OLTP a preguntas OLAP · clase-taller de 60 minutos"
+author: "Diego Villalba"
+lang: es
+format:
+  revealjs:
+    theme: ../../assets/unam-theme.scss
+    logo: false
+    slide-number: c/t
+    controls: true
+    progress: true
+    transition: slide
+    background-transition: fade
+    center: false
+    width: 1280
+    height: 720
+    margin: 0.08
+    preview-links: auto
+    footer: "Facultad de Ciencias UNAM · Almacenes y Minería de Datos"
+    code-overflow: wrap
+    embed-resources: true
+execute:
+  enabled: false
+---
+
+<!--
+CLASE DE 60 MINUTOS
+
+Ruta: repaso (0–10) → diseñar (10–22) → construir (22–45) → consultar
+(45–51) → datos no tabulares y lakehouse (51–58) → cierre (58–60).
+
+Las notas del presentador contienen el guion detallado. Presione S para abrirlas.
+La guía docente independiente está en guion-docente.md.
+-->
+
+# Construyamos un Data Warehouse
+
+## La misión de hoy
+
+Partiremos de **pedidos operacionales** y terminaremos respondiendo:
+
+> ¿Cuánto vendimos por mes y categoría, sin frenar la operación diaria?
+
+Al final podremos explicar por qué un archivo de clics en JSON abre una pregunta arquitectónica nueva.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 2).
+
+**Guion:** Presente la pregunta, no la solución. Explique que hoy el producto observable será una base analítica pequeña pero completa: fuente OLTP, proceso ETL, esquema estrella, validaciones y consulta OLAP.
+
+**Transición:** “Antes de construir, comprobemos qué ideas siguen disponibles de la clase anterior”.
+:::
+
+## Ruta de la hora
+
+| Minutos | Lo que haremos | Evidencia |
+|---:|---|---|
+| 0–10 | Preguntas de repaso | Decisiones justificadas |
+| 10–22 | Definir pregunta, grano y estrella | Diseño en el pizarrón |
+| 22–45 | Construir juntos | DW ejecutable |
+| 45–51 | Consultar y validar | Respuesta OLAP |
+| 51–58 | Romper el molde tabular | Puente a lakehouse |
+| 58–60 | Cerrar | *Exit ticket* |
+
+::: {.notes}
+**Tiempo:** 1 min (acumulado: 3).
+
+**Guion:** Señale que la agenda contiene decisiones, no una lista de comandos. Avise que en el bloque práctico se puede trabajar en dos modos: demostración dirigida o seguimiento individual en Colab.
+:::
+
+# Preguntas de repaso {.title-section}
+
+## 1 · ¿Cuál es la ventaja de OLAP frente a OLTP?
+
+:::: {.columns}
+::: {.column width="50%"}
+**A.** OLAP registra una compra individual con menor latencia.
+
+**B.** OLAP favorece agregaciones históricas y consultas multidimensionales.
+:::
+
+::: {.column width="50%"}
+**C.** OLAP elimina la necesidad de integrar fuentes.
+
+**D.** OLAP garantiza que cualquier consulta sea barata.
+:::
+::::
+
+**Vota primero; justifica después.**
+
+:::: {.fragment}
+::: {.callout-tip appearance="minimal"}
+**Respuesta: B.** OLAP favorece lecturas amplias, historia, agregaciones y navegación multidimensional.
+:::
+::::
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 5).
+
+**Interacción:** Votación con dedos A–D. Pida a una persona explicar por qué descartó una opción, en vez de limitarse a nombrar la correcta.
+
+**Respuesta:** B. OLTP prioriza escrituras breves, consistentes y concurrentes; OLAP prioriza lecturas amplias, historia y agregación. OLAP no elimina ETL ni garantiza costo bajo.
+:::
+
+## OLTP y OLAP protegen trabajos distintos
+
+```{=html}
+<div role="img" aria-label="Comparación visual entre el flujo transaccional OLTP y el flujo analítico OLAP" style="display:flex;align-items:stretch;justify-content:center;gap:18px;margin:8px auto 16px;font-size:.66em;line-height:1.25;">
+  <div style="flex:1;border:3px solid #5c7f9b;border-radius:12px;background:#fff;overflow:hidden;">
+    <div style="background:#5c7f9b;color:#fff;padding:10px 14px;font-size:1.15em;font-weight:700;text-align:center;">OLTP · registrar</div>
+    <div style="padding:15px;text-align:center;">
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px;font-size:1.15em;"><span>🛒</span><span style="color:#4fb6d6;font-size:1.5em;">→</span><span style="padding:7px 12px;border:1px solid #94a3b8;border-radius:6px;"><strong>1 pedido</strong><br><code>INSERT / UPDATE</code></span></div>
+      <div style="margin-top:13px;padding:9px;background:#f8fafc;border-radius:6px;"><strong>Optimiza:</strong> transacciones breves, concurrentes y consistentes</div>
+      <div style="margin-top:10px;color:#475569;">Responde: <strong>¿qué acaba de ocurrir?</strong></div>
+    </div>
+  </div>
+  <div class="fragment" style="align-self:center;color:#4fb6d6;font-size:2.2em;font-weight:700;">≠</div>
+  <div class="fragment" style="flex:1.2;border:3px solid #0b4a6f;border-radius:12px;background:#edf7fb;overflow:hidden;">
+    <div style="background:#0b4a6f;color:#fff;padding:10px 14px;font-size:1.15em;font-weight:700;text-align:center;">OLAP · explicar</div>
+    <div style="padding:15px;text-align:center;">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;"><span style="padding:7px;border:1px solid #94a3b8;border-radius:6px;">muchos<br>eventos</span><span style="color:#4fb6d6;font-size:1.5em;">→</span><span style="padding:7px;border:2px solid #0b4a6f;border-radius:6px;"><strong>Σ</strong><br>mes × categoría</span><span style="color:#4fb6d6;font-size:1.5em;">→</span><span>📊</span></div>
+      <div style="margin-top:13px;padding:9px;background:#fff;border-radius:6px;"><strong>Optimiza:</strong> historia, lectura amplia y agregaciones</div>
+      <div style="margin-top:10px;color:#0b4a6f;">Responde: <strong>¿qué patrón se forma?</strong></div>
+    </div>
+  </div>
+</div>
+```
+
+> La ventaja no es “más velocidad” en abstracto: es un diseño adecuado para otra carga de trabajo.
+
+::: {.notes}
+**Tiempo:** 1 min (acumulado: 6).
+
+**Guion:** Subraye la última frase. Una transacción puntual podría ser rápida en ambos sistemas; la diferencia está en la forma y el propósito de la carga.
+
+**Transición:** “Si la demanda crece, ¿qué significa escalar este sistema analítico?”.
+:::
+
+## 2 · Escalamiento: ¿vertical u horizontal?
+
+La consulta nocturna ya no termina a tiempo. ¿Qué afirmación es más precisa?
+
+1. **Vertical:** añadir CPU/RAM a una máquina; simple, pero con techo físico y costo creciente.
+2. **Horizontal:** repartir datos y cómputo entre nodos; más elástico, pero exige partición y coordinación.
+3. Horizontal siempre es más barato y no cambia el diseño.
+4. Vertical significa agregar más filas.
+
+```{=html}
+<div class="fragment" role="img" aria-label="Comparación de escalamiento vertical y horizontal" style="display:flex;gap:18px;justify-content:center;margin:12px auto 0;font-size:.58em;line-height:1.2;">
+  <div style="flex:1;display:flex;align-items:center;gap:12px;padding:10px 14px;border:2px solid #5c7f9b;border-radius:10px;background:#fff;">
+    <div style="font-size:2.5em;color:#0b4a6f;">↑</div>
+    <div style="flex:1;"><strong style="font-size:1.15em;color:#0b4a6f;">VERTICAL · scale up</strong><div style="margin-top:5px;padding:7px;border:1px solid #94a3b8;border-radius:6px;text-align:center;">UN SERVIDOR<br><strong>+ CPU · + RAM</strong></div><span>Simple; llega a un techo.</span></div>
+  </div>
+  <div style="flex:1.3;display:flex;align-items:center;gap:12px;padding:10px 14px;border:2px solid #4fb6d6;border-radius:10px;background:#f4fbfd;">
+    <div style="font-size:2em;color:#0b4a6f;">↔</div>
+    <div style="flex:1;"><strong style="font-size:1.15em;color:#0b4a6f;">HORIZONTAL · scale out</strong><div style="display:flex;gap:6px;margin:5px 0;"><span style="flex:1;padding:7px;border:1px solid #4fb6d6;border-radius:5px;text-align:center;">nodo 1</span><span style="flex:1;padding:7px;border:1px solid #4fb6d6;border-radius:5px;text-align:center;">nodo 2</span><span style="flex:1;padding:7px;border:1px solid #4fb6d6;border-radius:5px;text-align:center;">nodo 3</span></div><span>Elástico; exige partición, red y coordinación.</span></div>
+  </div>
+</div>
+```
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 8).
+
+**Interacción:** Pida elegir todas las afirmaciones correctas. Respuestas: 1 y 2.
+
+**Aclaración:** Escalar almacenamiento y escalar cómputo son decisiones relacionadas pero diferentes. La distribución agrega costos de red, coordinación y consistencia; no es una mejora gratuita.
+:::
+
+## 3 · ¿Qué propiedad se pierde?
+
+El CRM corrige la ciudad de una clienta y el reporte del año pasado cambia sin dejar rastro.
+
+¿Qué propiedad clásica del Data Warehouse quedó comprometida?
+
+- Orientado a temas
+- Integrado
+- Variante en el tiempo / conservación histórica
+- No volátil
+
+```{=html}
+<div class="fragment" role="img" aria-label="Comparación entre conservar historia y sobrescribir el pasado" style="display:flex;align-items:stretch;gap:18px;margin:12px auto 0;font-size:.57em;line-height:1.2;">
+  <div style="flex:1;padding:10px 14px;border:2px solid #15803d;border-radius:10px;background:#f0fdf4;">
+    <strong style="color:#166534;font-size:1.15em;">✓ DW CON HISTORIA</strong>
+    <div style="display:flex;align-items:center;gap:7px;margin-top:7px;"><span style="padding:6px;border:1px solid #86b894;border-radius:5px;">2025<br><strong>Puebla</strong></span><span>→</span><span style="padding:6px;border:1px solid #86b894;border-radius:5px;">2026<br><strong>CDMX</strong></span><span style="margin-left:6px;">ambos estados permanecen</span></div>
+  </div>
+  <div style="flex:1;padding:10px 14px;border:2px solid #b45309;border-radius:10px;background:#fffbeb;">
+    <strong style="color:#92400e;font-size:1.15em;">✗ SOBRESCRIBIR</strong>
+    <div style="display:flex;align-items:center;gap:7px;margin-top:7px;"><span style="padding:6px;border:1px dashed #b45309;border-radius:5px;text-decoration:line-through;">2025<br>Puebla</span><span>→</span><span style="padding:6px;border:1px solid #b45309;border-radius:5px;"><strong>CDMX</strong></span><span style="margin-left:6px;">el reporte pasado cambia</span></div>
+  </div>
+</div>
+```
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 10).
+
+**Respuesta:** Principalmente variante en el tiempo; también se pone en riesgo la no volatilidad si se sobreescribe el pasado. Use la ambigüedad para mostrar que las cuatro propiedades de Inmon trabajan juntas.
+
+**Conexión:** Orientado a temas, integrado, variante en el tiempo y no volátil convierten registros dispersos en memoria organizacional.
+
+**Transición:** “Apliquemos estas decisiones a una tienda mínima”.
+:::
+
+# Diseñemos antes de programar {.title-section}
+
+## Caso · Café Ciencia
+
+Tenemos cuatro tablas operacionales:
+
+`clientes` · `productos` · `pedidos` · `detalle_pedido`
+
+Dirección pregunta:
+
+> ¿Cómo evoluciona la **venta neta** por mes, categoría y ciudad?
+
+**Criterio de éxito:** una sola consulta reproducible, con totales conciliados contra la fuente.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 12).
+
+**Guion:** Dibuje un rectángulo llamado “pregunta de negocio”. Destaque que una arquitectura sirve a una decisión concreta. Defina venta neta como cantidad × precio unitario − descuento, únicamente para pedidos completados.
+:::
+
+## La decisión que manda sobre el modelo
+
+### ¿Cuál será el grano de la tabla de hechos?
+
+:::: {.columns}
+::: {.column width="50%"}
+- Una fila por cliente
+- Una fila por pedido
+- Una fila por renglón de pedido completado
+- Una fila por mes
+:::
+
+::: {.column width="50%" .fragment}
+**Elección: un renglón de pedido completado.**
+
+Con el renglón de pedido podemos:
+
+- sumar cantidades e importes;
+- analizar producto y categoría;
+- reagrupar después por pedido, día o mes.
+:::
+::::
+
+::: {.callout-warning appearance="minimal"}
+El grano se declara **antes** de elegir dimensiones o métricas.
+:::
+
+::: {.notes}
+**Tiempo:** 3 min (acumulado: 15).
+
+**Interacción:** Dé 30 segundos en parejas. Pregunte qué análisis se perdería con “una fila por pedido” si un pedido contiene productos de categorías distintas.
+
+**Respuesta:** El renglón de pedido es el evento atómico requerido. Un agregado mensual temprano impediría *drill-down*; una fila por pedido ocultaría el producto.
+:::
+
+## Fuente OLTP · buena para escribir
+
+```{=html}
+<div role="img" aria-label="Modelo operacional normalizado de clientes, pedidos, detalle y productos" style="display:flex;align-items:stretch;justify-content:center;gap:10px;margin:18px auto 22px;font-size:.62em;line-height:1.25;">
+  <div style="flex:1;border:2px solid #0b4a6f;border-radius:10px;background:#fff;overflow:hidden;">
+    <div style="background:#0b4a6f;color:#fff;padding:9px 12px;font-weight:700;">clientes</div>
+    <div style="padding:10px 12px;"><strong>PK</strong> id_cliente<br>nombre<br>ciudad</div>
+  </div>
+  <div style="align-self:center;text-align:center;color:#0b4a6f;font-weight:700;min-width:54px;"><span style="display:block;font-size:.7em;">1 : N</span>→</div>
+  <div style="flex:1;border:2px solid #5c7f9b;border-radius:10px;background:#fff;overflow:hidden;">
+    <div style="background:#5c7f9b;color:#fff;padding:9px 12px;font-weight:700;">pedidos</div>
+    <div style="padding:10px 12px;"><strong>PK</strong> id_pedido<br><strong>FK</strong> id_cliente<br>fecha · estado</div>
+  </div>
+  <div style="align-self:center;text-align:center;color:#0b4a6f;font-weight:700;min-width:54px;"><span style="display:block;font-size:.7em;">1 : N</span>→</div>
+  <div style="flex:1.25;border:3px solid #4fb6d6;border-radius:10px;background:#f4fbfd;overflow:hidden;">
+    <div style="background:#4fb6d6;color:#07364d;padding:9px 12px;font-weight:700;">detalle_pedido</div>
+    <div style="padding:10px 12px;"><strong>PK</strong> id_pedido + num_linea<br><strong>FK</strong> id_producto<br>cantidad · precio_unitario<br>descuento</div>
+  </div>
+  <div style="align-self:center;text-align:center;color:#0b4a6f;font-weight:700;min-width:54px;"><span style="display:block;font-size:.7em;">N : 1</span>→</div>
+  <div style="flex:1;border:2px solid #0b4a6f;border-radius:10px;background:#fff;overflow:hidden;">
+    <div style="background:#0b4a6f;color:#fff;padding:9px 12px;font-weight:700;">productos</div>
+    <div style="padding:10px 12px;"><strong>PK</strong> id_producto<br>nombre · categoría<br>precio_lista</div>
+  </div>
+</div>
+```
+
+- Evita repetir nombres y categorías en cada transacción.
+- Protege integridad durante muchas escrituras concurrentes.
+- Obliga a varios *joins* para preguntas históricas.
+
+::: {.notes}
+**Tiempo:** 3 min (acumulado: 18).
+
+**Pizarrón:** Dibuje las cardinalidades y pregunte dónde vive el precio realmente cobrado. Debe vivir en el detalle: el precio de lista puede cambiar.
+
+**Error frecuente:** Usar el precio actual del producto para recomputar ventas pasadas.
+:::
+
+## Destino OLAP · esquema estrella
+
+```{=html}
+<div role="img" aria-label="Esquema estrella con fact ventas al centro y dimensiones fecha, cliente y producto" style="margin:4px auto 14px;font-size:.59em;line-height:1.25;">
+  <div style="display:flex;justify-content:center;">
+    <div class="fragment" style="width:28%;border:2px solid #5c7f9b;border-radius:10px;background:#fff;overflow:hidden;">
+      <div style="background:#5c7f9b;color:#fff;padding:7px 12px;font-weight:700;">dim_fecha</div>
+      <div style="padding:8px 12px;">fecha_key · fecha<br>año · mes · día</div>
+    </div>
+  </div>
+  <div class="fragment" style="text-align:center;color:#4fb6d6;font-size:1.8em;height:28px;line-height:28px;">↓</div>
+  <div style="display:flex;align-items:center;justify-content:center;gap:12px;">
+    <div class="fragment" style="width:25%;border:2px solid #5c7f9b;border-radius:10px;background:#fff;overflow:hidden;">
+      <div style="background:#5c7f9b;color:#fff;padding:7px 12px;font-weight:700;">dim_cliente</div>
+      <div style="padding:8px 12px;">cliente_key<br>nombre · ciudad</div>
+    </div>
+    <div class="fragment" style="color:#4fb6d6;font-size:1.8em;">→</div>
+    <div style="width:31%;border:3px solid #0b4a6f;border-radius:10px;background:#edf7fb;overflow:hidden;box-shadow:0 4px 12px rgba(11,74,111,.16);">
+      <div style="background:#0b4a6f;color:#fff;padding:8px 12px;font-weight:700;">fact_ventas</div>
+      <div style="padding:9px 12px;"><strong>FK</strong> fecha · cliente · producto<br><strong>medidas</strong><br>cantidad · bruto<br>descuento · venta_neta</div>
+    </div>
+    <div class="fragment" style="color:#4fb6d6;font-size:1.8em;">←</div>
+    <div class="fragment" style="width:25%;border:2px solid #5c7f9b;border-radius:10px;background:#fff;overflow:hidden;">
+      <div style="background:#5c7f9b;color:#fff;padding:7px 12px;font-weight:700;">dim_producto</div>
+      <div style="padding:8px 12px;">producto_key<br>nombre · categoría</div>
+    </div>
+  </div>
+</div>
+```
+
+| Decisión | Elección de hoy |
+|---|---|
+| Hecho | Renglón de pedido completado |
+| Dimensiones | Fecha, cliente, producto |
+| Medidas aditivas | Cantidad, bruto, descuento, neto |
+| Claves del DW | Sustitutas, independientes del origen |
+
+::: {.notes}
+**Tiempo:** 4 min (acumulado: 22).
+
+**Guion:** Construya la estrella con el grupo. Encierre medidas dentro del hecho y atributos descriptivos en dimensiones. Explique que las claves sustitutas desacoplan al DW de claves operacionales y permiten administrar historia; hoy no implementaremos SCD tipo 2.
+
+**Transición:** “El diseño ya expresa nuestra pregunta. Ahora hagámoslo ejecutable”.
+:::
+
+# Construyamos juntos {.title-section}
+
+## Dos modos, el mismo aprendizaje
+
+:::: {.columns}
+::: {.column width="50%"}
+### Modo demostración
+
+1. El profesor ejecuta.
+2. El grupo predice cada salida.
+3. El diseño se reconstruye en el pizarrón.
+:::
+
+::: {.column width="50%"}
+### Modo Colab
+
+1. Abre el [laboratorio en Colab](https://colab.research.google.com/github/DiegoViillalba/almacenamienes-y-mineria-de-datos/blob/main/lectures/02-DW/data-warehouse-lake/laboratorio-data-warehouse.ipynb).
+2. **Entorno de ejecución → Ejecutar todas**.
+3. Compara validaciones con la pantalla.
+:::
+::::
+
+**Sin internet:** abra localmente `laboratorio-data-warehouse.ipynb` con el entorno `.env` del repositorio.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 24).
+
+**Elección docente:** Si los teléfonos o la red distraen, use Modo demostración. El aprendizaje activo se conserva haciendo que cada ejecución requiera una predicción. Para local: `.env/bin/jupyter lab lectures/02-DW/data-warehouse-lake/laboratorio-data-warehouse.ipynb`.
+
+**Nota:** Colab sí requiere internet; la presentación y el laboratorio local no.
+:::
+
+## Paso 1 · Crear las dimensiones
+
+::::: {.columns}
+:::: {.column style="width:74%;font-size:1.08em;"}
+```{.python code-line-numbers="1-4|5-8|9-12"}
+dw.executescript("""
+CREATE TABLE dim_fecha (
+  fecha_key INTEGER PRIMARY KEY, fecha TEXT, anio INTEGER, mes INTEGER
+);
+CREATE TABLE dim_cliente (
+  cliente_key INTEGER PRIMARY KEY, cliente_id_origen INTEGER,
+  nombre TEXT, ciudad TEXT
+);
+CREATE TABLE dim_producto (
+  producto_key INTEGER PRIMARY KEY, producto_id_origen INTEGER,
+  nombre TEXT, categoria TEXT
+);
+""")
+```
+::::
+
+:::: {.column width="26%"}
+**Pregunta antes de ejecutar:** ¿por qué guardamos la clave de origen y otra clave propia?
+
+::: {.fragment style="margin-top:18px;padding:14px;border-left:5px solid #4fb6d6;background:#f4fbfd;border-radius:6px;"}
+**Salida**
+
+✓ `dim_fecha`  
+✓ `dim_cliente`  
+✓ `dim_producto`
+
+**3 dimensiones creadas**
+:::
+::::
+:::::
+
+::: {.notes}
+**Tiempo:** 4 min (acumulado: 28).
+
+**Respuesta:** La clave de origen permite trazabilidad; la sustituta permite integrar varios sistemas y gestionar cambios históricos sin depender de la semántica operacional.
+
+**En vivo:** Ejecute las celdas 1–4 del notebook. Deténgase después de listar las tablas OLTP.
+:::
+
+## Paso 2 · Crear la tabla de hechos
+
+::::: {.columns}
+:::: {.column style="width:74%;font-size:1.08em;"}
+```{.sql code-line-numbers="1-5|6-9|10"}
+CREATE TABLE fact_ventas (
+  pedido_id_origen INTEGER,
+  num_linea INTEGER,
+  fecha_key INTEGER,
+  cliente_key INTEGER,
+  producto_key INTEGER,
+  cantidad INTEGER,
+  importe_bruto REAL,
+  descuento REAL,
+  venta_neta REAL,
+  PRIMARY KEY (pedido_id_origen, num_linea)
+);
+```
+::::
+
+:::: {.column width="26%"}
+La llave primaria protege el **grano declarado**.
+
+::: {.fragment style="margin-top:18px;padding:14px;border-left:5px solid #4fb6d6;background:#f4fbfd;border-radius:6px;"}
+**Salida**
+
+✓ `fact_ventas` creada  
+✓ 3 claves foráneas  
+✓ 4 medidas
+
+`PK (pedido, línea)`
+:::
+::::
+:::::
+
+::: {.notes}
+**Tiempo:** 3 min (acumulado: 31).
+
+**Interacción:** Pregunte qué error detectaría la llave compuesta. Respuesta: cargar dos veces el mismo renglón del pedido. Aclare que esto ayuda con idempotencia, pero no sustituye todas las pruebas ETL.
+:::
+
+## Paso 3 · Extraer y filtrar
+
+::::: {.columns}
+:::: {.column style="width:72%;font-size:1.08em;"}
+```{.python code-line-numbers="1-4|5-6|7"}
+filas = oltp.execute("""
+SELECT p.id_pedido, d.num_linea, p.fecha, p.id_cliente,
+       d.id_producto, d.cantidad, d.precio_unitario, d.descuento
+FROM pedidos p
+JOIN detalle_pedido d USING (id_pedido)
+WHERE p.estado = 'COMPLETADO'
+""").fetchall()
+```
+::::
+
+:::: {.column width="28%"}
+**Regla de negocio:** un pedido cancelado **no es venta**.
+
+**Predicción:** ¿cuántos renglones pasarán a la tabla de hechos?
+
+::: {.fragment style="margin-top:14px;padding:14px;border-left:5px solid #4fb6d6;background:#f4fbfd;border-radius:6px;"}
+**Resultado**
+
+<span style="font-size:1.7em;color:#0b4a6f;font-weight:700;">7</span> renglones pasan
+
+2 quedan fuera  
+(pedido 1003 cancelado)
+:::
+::::
+:::::
+
+::: {.notes}
+**Tiempo:** 4 min (acumulado: 35).
+
+**En vivo:** Ejecute la extracción del notebook. Respuesta esperada: 7 renglones completados; el pedido 1003 cancelado y sus 2 renglones quedan fuera.
+
+**Discusión:** ¿Dónde debe documentarse esta regla? En el contrato de la métrica y en pruebas del pipeline, no sólo escondida en SQL.
+:::
+
+## Paso 4 · Transformar y cargar
+
+::::: {.columns}
+:::: {.column style="width:72%;font-size:1.08em;"}
+```{.python code-line-numbers="1-3|4-9|10"}
+for f in filas:
+    bruto = round(f[5] * f[6], 2)
+    neto  = round(bruto - f[7], 2)
+    dw.execute(
+        "INSERT INTO fact_ventas VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (f[0], f[1], fecha_key(f[2]),
+         cliente_keys[f[3]], producto_keys[f[4]],
+         f[5], bruto, f[7], neto)
+    )
+dw.commit()
+```
+::::
+
+:::: {.column width="28%"}
+**ETL:** extraer → aplicar reglas y claves → cargar.
+
+::: {.fragment style="margin-top:16px;padding:13px;border:1px solid #b6dce8;border-radius:8px;background:#f8fcfd;font-size:.78em;"}
+**Primera fila cargada**
+
+`pedido` 1001 · línea 1  
+`cantidad` 2  
+`bruto` 180.00  
+`descuento` 10.00  
+**`venta_neta` 170.00**
+:::
+
+::: {.fragment style="margin-top:10px;color:#0b4a6f;font-weight:700;"}
+✓ 7 filas cargadas
+:::
+::::
+:::::
+
+::: {.notes}
+**Tiempo:** 5 min (acumulado: 40).
+
+**Guion:** Recorra una fila con el dedo. Señale dónde se traducen claves naturales a sustitutas y dónde se calcula una medida. En Colab, pida que una pareja verifique manualmente un importe.
+
+**Extensión si el grupo avanza rápido:** Pregunte qué ocurriría si llega un producto desconocido. Introduzca la dimensión “desconocido” o una cuarentena, sin implementarla.
+:::
+
+## Paso 5 · No confiar: validar
+
+::::: {.columns}
+:::: {.column style="width:68%;font-size:1.12em;"}
+```{.python code-line-numbers="1|2|3"}
+assert filas_fuente == filas_hecho == 7
+assert round(neto_fuente, 2) == round(neto_dw, 2) == 702.50
+assert claves_huerfanas == 0
+```
+
+> Una carga que “terminó sin error” todavía puede estar equivocada.
+::::
+
+:::: {.column width="32%"}
+::: {.fragment style="padding:14px 16px;border:2px solid #4fb6d6;border-radius:10px;background:#f4fbfd;font-size:.82em;"}
+**SALIDA DE VALIDACIÓN**
+
+| Contrato | Resultado esperado |
+|---|---:|
+| ✓ Renglones | 7 |
+| ✓ Venta neta | $702.50 |
+| ✓ Huérfanas | 0 |
+:::
+::::
+:::::
+
+::: {.notes}
+**Tiempo:** 5 min (acumulado: 45).
+
+**En vivo:** Ejecute las validaciones. Si una falla, úsela como evidencia y no como interrupción: compare fuente, transformación y destino.
+
+**Idea clave:** Calidad técnica (el código corrió) no equivale a calidad semántica (la métrica representa la regla acordada).
+
+**Transición:** “Ahora sí merecemos hacer la pregunta analítica”.
+:::
+
+# Consultemos como analistas {.title-section}
+
+## Consulta OLAP · *roll-up* por mes y categoría
+
+::::: {.columns}
+:::: {.column style="width:63%;font-size:1.08em;"}
+```{.sql code-line-numbers="1-3|4-6|7-8"}
+SELECT f.anio, f.mes, p.categoria,
+       SUM(v.cantidad) AS unidades,
+       ROUND(SUM(v.venta_neta), 2) AS venta_neta
+FROM fact_ventas v
+JOIN dim_fecha f USING (fecha_key)
+JOIN dim_producto p USING (producto_key)
+GROUP BY f.anio, f.mes, p.categoria
+ORDER BY f.anio, f.mes, p.categoria;
+```
+::::
+
+:::: {.column width="37%"}
+::: {.fragment style="padding:10px;border-left:5px solid #4fb6d6;background:#f8fcfd;border-radius:6px;font-size:.78em;"}
+**Resultado de la consulta**
+
+| Año | Mes | Categoría | Unidades | Venta neta |
+|---:|---:|---|---:|---:|
+| 2026 | 1 | Bebidas | 4 | $317.50 |
+| 2026 | 1 | Equipo | 1 | $120.00 |
+| 2026 | 2 | Alimentos | 4 | $205.00 |
+| 2026 | 2 | Bebidas | 1 | $60.00 |
+:::
+::::
+:::::
+
+::: {.notes}
+**Tiempo:** 4 min (acumulado: 49).
+
+**Guion:** Antes de mostrar el resultado, pida predecir cuántas filas tendrá: una por combinación observada de mes y categoría. Nombre la operación: *roll-up*. Proponga un *drill-down* a ciudad como pregunta siguiente.
+:::
+
+## ¿Qué compramos con el Data Warehouse?
+
+:::: {.columns}
+::: {.column width="50%"}
+### Antes
+
+- Modelo para registrar pedidos
+- Estado operativo mutable
+- Reglas repartidas entre tablas
+- Consultas que compiten con la operación
+:::
+
+::: {.column width="50%"}
+### Después
+
+- Grano analítico explícito
+- Historia lista para comparar
+- Dimensiones con lenguaje de negocio
+- Métricas conciliadas y reutilizables
+:::
+::::
+
+**Costo:** duplicación controlada, ETL, pruebas, gobierno y mantenimiento.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 51).
+
+**Guion:** Evite presentar el DW como magia o como copia completa del OLTP. Es una representación deliberada, con costo, creada para decisiones repetibles.
+
+**Transición:** “Nuestro modelo funcionó porque el evento cabía limpiamente en filas y columnas. Probemos ahora un dato diferente”.
+:::
+
+# Cuando una fila ya no basta {.title-section}
+
+## Llega el comportamiento digital
+
+```{.json code-line-numbers="1-2|3-5"}
+{"evento":"ver_producto","ts":"2026-02-03T10:15:00",
+ "cliente_id":2,
+ "producto":{"id":103,"categoria":"Alimentos"},
+ "dispositivo":{"tipo":"movil","so":"Android"}}
+```
+
+::: {.fragment}
+El evento siguiente agrega una estructura que antes no existía:
+
+```json
+"experimento":{"nombre":"checkout_v2","variante":"B"}
+```
+:::
+
+::: {.fragment}
+**Llaves observadas:**
+
+- Evento 1: `cliente_id`, `dispositivo`, `evento`, `producto`, `ts`
+- Evento 2: las anteriores **+ `experimento`**
+
+Y además llegan reseñas en texto e imágenes de productos.
+:::
+
+**Pregunta:** ¿qué columnas crearíamos sin perder el original?
+
+::: {.notes}
+**Tiempo:** 3 min (acumulado: 54).
+
+**Interacción:** Dé 30 segundos para proponer una tabla. Después revele el segundo evento con un campo nuevo. Pregunte qué sucede con anidamiento, esquema cambiante, texto e imágenes.
+
+**En vivo:** Ejecute la última sección del notebook; compara las llaves de dos eventos JSON y preserva una copia Bronze.
+:::
+
+## No es “JSON ⇒ lakehouse”
+
+Un Data Warehouse moderno puede almacenar JSON, y un proceso ETL puede tabularlo.
+
+La tensión aparece cuando necesitamos simultáneamente:
+
+- conservar datos crudos diversos a gran escala;
+- aceptar evolución de esquema sin perder evidencia;
+- servir BI **y** ciencia de datos / ML;
+- separar y escalar almacenamiento y cómputo;
+- administrar archivos como tablas confiables.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 56).
+
+**Guion:** Esta es la corrección conceptual más importante del cierre. El formato de un solo archivo no decide la arquitectura. La decisión surge del conjunto de requisitos, volumen, velocidad, gobernanza y cargas de trabajo.
+:::
+
+## Puente a la próxima clase · Data Lakehouse
+
+```{=html}
+<div role="img" aria-label="Flujo Lakehouse desde fuentes diversas por Bronze Silver Gold hasta SQL BI y aprendizaje automático" style="margin:12px auto 16px;font-size:.61em;line-height:1.25;">
+  <div style="display:flex;align-items:stretch;justify-content:center;gap:10px;">
+    <div style="flex:1.15;border:2px solid #0b4a6f;border-radius:10px;background:#fff;overflow:hidden;">
+      <div style="background:#0b4a6f;color:#fff;padding:9px;font-weight:700;text-align:center;">FUENTES DIVERSAS</div>
+      <div style="padding:13px;text-align:center;">CSV · bases SQL<br>JSON · texto · imágenes</div>
+    </div>
+    <div style="align-self:center;color:#4fb6d6;font-size:2em;">→</div>
+    <div class="fragment" style="flex:1;border:2px solid #a16207;border-radius:10px;background:#fff7ed;overflow:hidden;">
+      <div style="background:#a16207;color:#fff;padding:9px;font-weight:700;text-align:center;">BRONZE</div>
+      <div style="padding:13px;text-align:center;"><strong>Conservar</strong><br>dato original</div>
+    </div>
+    <div class="fragment" style="align-self:center;color:#4fb6d6;font-size:2em;">→</div>
+    <div class="fragment" style="flex:1;border:2px solid #64748b;border-radius:10px;background:#f8fafc;overflow:hidden;">
+      <div style="background:#64748b;color:#fff;padding:9px;font-weight:700;text-align:center;">SILVER</div>
+      <div style="padding:13px;text-align:center;"><strong>Validar</strong><br>deduplicar · integrar</div>
+    </div>
+    <div class="fragment" style="align-self:center;color:#4fb6d6;font-size:2em;">→</div>
+    <div class="fragment" style="flex:1;border:2px solid #ca8a04;border-radius:10px;background:#fffbeb;overflow:hidden;">
+      <div style="background:#ca8a04;color:#fff;padding:9px;font-weight:700;text-align:center;">GOLD</div>
+      <div style="padding:13px;text-align:center;"><strong>Publicar</strong><br>métricas · productos</div>
+    </div>
+    <div class="fragment" style="align-self:center;color:#4fb6d6;font-size:2em;">→</div>
+    <div class="fragment" style="flex:1.05;border:2px solid #0b4a6f;border-radius:10px;background:#edf7fb;overflow:hidden;">
+      <div style="background:#0b4a6f;color:#fff;padding:9px;font-weight:700;text-align:center;">CONSUMO</div>
+      <div style="padding:13px;text-align:center;">SQL · BI<br>ciencia de datos · ML</div>
+    </div>
+  </div>
+  <div class="fragment" style="margin:16px 15% 0;padding:10px 16px;border:2px dashed #7e22ce;border-radius:9px;background:#faf5ff;text-align:center;color:#5b168f;"><strong>CAPA DE METADATOS / FORMATO DE TABLA</strong><br>catálogo · esquema · versiones · transacciones · permisos</div>
+</div>
+```
+
+> Parquet organiza un archivo; Delta, Iceberg o Hudi coordinan tablas formadas por muchos archivos.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 58).
+
+**Guion:** Presente esto como avance, no como una segunda clase comprimida. El componente decisivo es la capa de metadatos/protocolo que aporta identidad, esquema, versiones y transacciones al conjunto de archivos.
+
+**Conexión con hoy:** Nuestra `fact_ventas` se parece a un producto Gold; los JSON originales quedarían en Bronze; una representación validada de eventos viviría en Silver.
+:::
+
+# Cierre {.title-section}
+
+## *Exit ticket* · 60 segundos
+
+En una frase por punto:
+
+1. ¿Por qué no consultamos directamente el OLTP para todo?
+2. ¿Cuál fue el grano de `fact_ventas` y qué protegió?
+3. ¿Qué requisito —no qué formato— podría llevarnos a una lakehouse?
+
+### Próxima clase
+
+De archivos diversos a **tablas abiertas, gobernadas y versionadas**.
+
+::: {.notes}
+**Tiempo:** 2 min (acumulado: 60).
+
+**Respuestas esperadas:** (1) protege la operación y crea historia optimizada para agregación; (2) un renglón de pedido completado, que preserva análisis por producto y agregaciones posteriores; (3) una combinación como conservación de crudos a escala, evolución de esquema, múltiples motores/cargas y garantías transaccionales.
+
+**Cierre verbal:** “Hoy construimos memoria analítica; la próxima clase aprenderemos a conservar también la diversidad sin renunciar a la confianza”.
+:::
