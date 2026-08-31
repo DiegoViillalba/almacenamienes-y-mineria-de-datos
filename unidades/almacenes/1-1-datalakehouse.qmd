@@ -1,445 +1,854 @@
 ---
 title: "Data Lakehouse"
-format: html
+subtitle: "De silos a una base abierta y gobernada"
+lang: es
+format:
+  html:
+    css: 1-1-datalakehouse.css
 ---
 
-```{=html}
-<style>
-.lh-visual {
-  --lh-blue: #2563eb;
-  --lh-blue-soft: #eff6ff;
-  --lh-cyan: #0891b2;
-  --lh-cyan-soft: #ecfeff;
-  --lh-green: #15803d;
-  --lh-green-soft: #f0fdf4;
-  --lh-amber: #b45309;
-  --lh-amber-soft: #fffbeb;
-  --lh-purple: #7e22ce;
-  --lh-purple-soft: #faf5ff;
-  margin: 1.8rem 0;
-  color: #1e293b;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-.lh-visual * { box-sizing: border-box; }
-.lh-visual .lh-grid { display: grid; gap: 1rem; }
-.lh-visual .lh-card {
-  padding: 1rem;
-  background: #fff;
-  border: 1px solid #cbd5e1;
-  border-radius: .85rem;
-  box-shadow: 0 2px 9px rgba(15, 23, 42, .06);
-}
-.lh-visual .lh-title { margin-bottom: .35rem; font-weight: 760; }
-.lh-visual .lh-small { color: #475569; font-size: .9rem; line-height: 1.45; }
-.lh-visual .lh-arrow { color: #64748b; font-size: 1.5rem; font-weight: 750; text-align: center; }
-.lh-visual .lh-caption { margin-top: .75rem; color: #64748b; font-size: .88rem; line-height: 1.45; text-align: center; }
-@media (max-width: 760px) {
-  .lh-visual .lh-flow { grid-template-columns: 1fr !important; }
-  .lh-visual .lh-arrow { transform: rotate(90deg); }
-  .lakehouse-5-layers-container > div[style*="font-size: 1.5em"] { transform: rotate(90deg); width: 100%; }
-}
-/* @media (prefers-color-scheme: dark) {
-  .lh-visual { color: #e2e8f0; }
-  .lh-visual .lh-card { background: #0f172a; border-color: #334155; }
-  .lh-visual .lh-small, .lh-visual .lh-caption { color: #cbd5e1; }
-} */
-</style>
-```
+## Pregunta rectora
 
-## Introducción a la Arquitectura Lakehouse
+> ¿En qué momento compartir una base abierta y gobernada para BI, *streaming* y aprendizaje automático justifica asumir la operación adicional de un Lakehouse?
 
-Como se discutió en el capítulo anterior, tanto el Data Warehouse (consistente pero rígido y costoso) como el Data Lake (flexible pero propenso al desorden y sin soporte transaccional) presentan desafíos importantes para los equipos modernos de datos. Para unificar el rendimiento SQL y la gobernanza del DWH con el bajo costo y la escalabilidad del Data Lake, surge la arquitectura del **Data Lakehouse**.
+Un **Data Lakehouse** no es el destino obligatorio de toda plataforma de datos. En una organización pequeña, un Data Warehouse administrado puede entregar resultados con menos componentes y menos personal. El Lakehouse se vuelve razonable cuando la duplicación, el movimiento de datos, la variedad de cargas y la necesidad de reutilizar contratos comunes superan el costo de operar tablas, metadatos, catálogo, gobierno y mantenimiento.
 
-Esta caracterización describe tendencias históricas, no reglas absolutas: existen Data Warehouses elásticos y Data Lakes bien gobernados. El problema aparece cuando una organización mantiene ambos como mundos separados. Los datos se copian del lago al almacén para producir reportes; después se vuelven a preparar para ciencia de datos. Cada copia agrega latencia, costo y la posibilidad de que dos equipos trabajen con versiones diferentes de la realidad.
+Esta lectura sigue un caso de una *fintech* desde sus primeros reportes hasta una plataforma compartida. El propósito no es memorizar productos, sino aprender a separar responsabilidades y argumentar una decisión arquitectónica.
 
-El Lakehouse puede entenderse como una **evolución natural del Data Lake**. Mantiene el almacenamiento de objetos, su capacidad para recibir datos diversos y la separación entre almacenamiento y cómputo, pero incorpora una capa de tablas, metadatos y gobierno capaz de ofrecer transacciones, esquemas, control de acceso y consultas SQL confiables. No consiste en colocar un Data Warehouse junto a un Data Lake, sino en hacer que los datos del lago se comporten como tablas administradas sin perder su apertura y flexibilidad.
+::: {.callout-note title="Ruta de lectura"}
+Tiempo estimado: 35–45 minutos. Conviene haber leído antes el capítulo de Data Warehouse. Los diagramas usan siempre la misma convención: azul para datos y almacenamiento, morado para metadatos y gobierno, naranja para ingesta, gris para cómputo, verde para consumo confiable y rojo para riesgo o duplicación.
+:::
 
 ```{=html}
-<div class="lh-visual" role="img" aria-label="Evolución del Data Lake hacia el Data Lakehouse">
-  <div class="lh-grid lh-flow" style="grid-template-columns:minmax(190px,1fr) auto minmax(220px,1.15fr) auto minmax(210px,1fr);align-items:center;">
-    <div class="lh-card" style="border-top:5px solid var(--lh-cyan);">
-      <div style="font-size:2rem;" aria-hidden="true">🌊</div>
-      <div class="lh-title">Data Lake</div>
-      <div class="lh-small">Datos de cualquier tipo, almacenamiento económico y acceso flexible para ingeniería y ciencia de datos.</div>
-    </div>
-    <div class="lh-arrow" aria-hidden="true">＋</div>
-    <div class="lh-card" style="border-top:5px solid var(--lh-purple);">
-      <div style="font-size:2rem;" aria-hidden="true">🗂️</div>
-      <div class="lh-title">Capa de administración</div>
-      <div class="lh-small">Catálogo, formato de tabla, transacciones ACID, evolución de esquema, linaje, seguridad y optimización.</div>
-    </div>
-    <div class="lh-arrow" aria-hidden="true">＝</div>
-    <div class="lh-card" style="border-top:5px solid var(--lh-green);">
-      <div style="font-size:2rem;" aria-hidden="true">🏡</div>
-      <div class="lh-title">Data Lakehouse</div>
-      <div class="lh-small">Una misma base de datos para BI, analítica avanzada, procesamiento en tiempo real y aprendizaje automático.</div>
-    </div>
-  </div>
-  <div class="lh-caption">Evolución conceptual. El Lakehouse añade semántica y confiabilidad al almacenamiento flexible del Data Lake.</div>
+<div class="lh-reading-path" aria-label="Ruta conceptual del capítulo">
+  <div><strong>1. Problema</strong><br>Silos, copias y dos respuestas.</div>
+  <div><strong>2. Mecanismo</strong><br>Objetos, tablas, snapshots y catálogo.</div>
+  <div><strong>3. Integración</strong><br>BI, ML y streaming sobre contratos comunes.</div>
+  <div><strong>4. Decisión</strong><br>Beneficios, operación y criterios de adopción.</div>
 </div>
 ```
 
-## Lo mejor de dos tradiciones
+### Objetivos de aprendizaje
 
-El término *Lakehouse* expresa una convergencia. Del Data Lake conserva la escala, el costo del almacenamiento de objetos, la variedad de formatos y el acceso desde distintos motores. Del Data Warehouse recupera las garantías necesarias para que los datos puedan utilizarse como producto empresarial: calidad verificable, modelos entendibles, consultas concurrentes y gobierno centralizado.
+Al terminar, podrás:
+
+1. explicar por qué un Data Warehouse fue una elección correcta durante la primera etapa de la *fintech*;
+2. localizar duplicación, latencia y controles dobles en una arquitectura con silos;
+3. distinguir objeto, *bucket*, formato de archivo, formato de tabla, catálogo, gobierno y motor de cómputo;
+4. narrar cómo un *snapshot* evita que una escritura incompleta se vuelva visible;
+5. justificar una transición usando volumen, variedad, velocidad, cargas de trabajo, costo y capacidad operativa;
+6. reconocer que compactación, evolución de esquemas, observabilidad y radio de impacto siguen siendo responsabilidades del equipo.
+
+## El problema antes de la definición
+
+A las 10:02, la *fintech* recibe la transacción `tx_8472` por `$3,200`. Finanzas la incluye en los ingresos del día, pero el sistema de fraude la presenta como bloqueada. Ambos equipos ejecutaron correctamente su propio proceso. La discrepancia está en las rutas y contratos que utilizaron.
 
 ```{=html}
-<div class="lh-visual" role="img" aria-label="Capacidades que un Lakehouse hereda del Data Lake y del Data Warehouse">
-  <div class="lh-grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));">
-    <div class="lh-card" style="background:linear-gradient(145deg,var(--lh-cyan-soft),#fff);border-left:5px solid var(--lh-cyan);">
-      <div style="font-size:1.8rem;" aria-hidden="true">🌊</div>
-      <div class="lh-title">Del Data Lake</div>
-      <div class="lh-small">Escala masiva · objetos económicos · datos estructurados y no estructurados · formatos abiertos · múltiples motores.</div>
+<div class="lh-diagram" role="img" aria-label="Una transacción se procesa por dos rutas separadas. Finanzas la incluye mediante una réplica y un Warehouse actualizado por lotes, mientras Fraude la bloquea desde Kafka en tiempo real. Las copias, la latencia y reglas distintas explican la discrepancia.">
+  <div class="lh-grid lh-grid-3" style="align-items:stretch;">
+    <div class="lh-node" data-kind="data">
+      <i class="bi bi-receipt" aria-hidden="true"></i>
+      <div class="lh-title">Evento operacional</div>
+      <code>tx_8472 · $3,200 · 10:02</code><br>
+      <span class="lh-meta-text">Estado inicial: aprobada</span>
     </div>
-    <div class="lh-card" style="background:linear-gradient(145deg,var(--lh-purple-soft),#fff);border:2px solid var(--lh-purple);">
-      <div style="font-size:1.8rem;" aria-hidden="true">🏡</div>
-      <div class="lh-title">En el Lakehouse</div>
-      <div class="lh-small">Una base compartida para SQL, BI, streaming, ciencia de datos e IA, con menos duplicación entre plataformas.</div>
+    <div class="lh-panel">
+      <div class="lh-title">Ruta de Finanzas</div>
+      <div class="lh-steps">
+        <span class="lh-step" data-kind="ingest">réplica</span>
+        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+        <span class="lh-step" data-kind="ingest">ELT</span>
+        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+        <span class="lh-step" data-kind="data">Warehouse</span>
+      </div>
+      <p class="lh-meta-text"><strong>Resultado:</strong> incluida en ingresos.<br><strong>Actualización:</strong> 08:00.</p>
     </div>
-    <div class="lh-card" style="background:linear-gradient(145deg,var(--lh-blue-soft),#fff);border-left:5px solid var(--lh-blue);">
-      <div style="font-size:1.8rem;" aria-hidden="true">🏢</div>
-      <div class="lh-title">Del Data Warehouse</div>
-      <div class="lh-small">Transacciones · esquemas controlados · gobierno · desempeño SQL · auditoría · datos preparados para negocio.</div>
+    <div class="lh-panel">
+      <div class="lh-title">Ruta de Fraude</div>
+      <div class="lh-steps">
+        <span class="lh-step" data-kind="ingest">Kafka</span>
+        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+        <span class="lh-step" data-kind="data">archivos</span>
+        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+        <span class="lh-step" data-kind="compute">modelo</span>
+      </div>
+      <p class="lh-meta-text"><strong>Resultado:</strong> bloqueada.<br><strong>Actualización:</strong> 10:02:03.</p>
     </div>
   </div>
-  <div class="lh-caption">Convergencia. El objetivo no es borrar las diferencias entre cargas de trabajo, sino servirlas desde datos coherentes y gobernados.</div>
+  <div class="lh-risk-band"><strong>Frontera de riesgo:</strong> copias, latencia y reglas distintas pueden producir dos versiones de la realidad.</div>
+  <p class="lh-caption">La contradicción no se origina necesariamente en un cálculo incorrecto, sino en dos pipelines con tiempos y contratos distintos.</p>
 </div>
 ```
 
-Esta unión no significa que todos los datos deban tener el mismo grado de transformación. Un archivo recién recibido puede convivir con una tabla certificada para dirección, siempre que la arquitectura permita distinguir su nivel de calidad, controlar quién puede utilizarlo y rastrear cómo se produjo.
+La pregunta útil no es todavía «¿qué producto compraremos?», sino «¿qué trabajo se duplica para sostener estas dos rutas?».
 
-Para comprender cómo opera esta tecnología en la práctica, estudiaremos las **cinco capas lógicas** que integran una arquitectura de Data Lakehouse robusta.
+## Dos caminos que deben representar el mismo negocio
 
----
+Históricamente, el Data Warehouse y el Data Lake resolvieron problemas legítimos:
 
-## Las Cinco Capas de la Arquitectura Data Lakehouse
+- El **Data Warehouse** ofreció tablas controladas, SQL, concurrencia y reportes comprensibles para el negocio.
+- El **Data Lake** permitió conservar grandes volúmenes y tipos diversos en almacenamiento de objetos económico y flexible.
 
-El siguiente diagrama visual organiza los componentes de esta arquitectura, desde los orígenes de datos hasta el consumo analítico final:
+El costo aparece cuando cada uno se convierte en una autoridad separada.
 
 ```{=html}
-<div class="lakehouse-5-layers-container" style="display: flex; flex-direction: row; gap: 10px; align-items: stretch; margin: 2.5rem 0; font-family: system-ui, -apple-system, sans-serif; flex-wrap: wrap; justify-content: center; width: 100%;">
-
-  <!-- 1. Orígenes (Fuentes) -->
-  <div style="flex: 1.2; min-width: 140px; border: 1.5px solid #dcdcdc; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 12px; background: rgba(0,0,0,0.01); text-align: center; justify-content: center;">
-    <div style="font-size: 0.8em; font-weight: bold; color: #555; text-transform: uppercase;">Orígenes de Datos</div>
-    
-    <div style="background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px; font-size: 0.8em; color: #0d47a1;">
-      <div style="font-size: 1.5em; margin-bottom: 2px;">💾</div>
-      <strong>Estructurados</strong><br>Bases de datos SQL, ERPs
-    </div>
-    
-    <div style="background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px; font-size: 0.8em; color: #0d47a1;">
-      <div style="font-size: 1.5em; margin-bottom: 2px;">⏯️</div>
-      <strong>Semi-estructurados</strong><br>JSON, logs, eventos IoT
-    </div>
-    
-    <div style="background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px; font-size: 0.8em; color: #0d47a1;">
-      <div style="font-size: 1.5em; margin-bottom: 2px;">📄</div>
-      <strong>No estructurados</strong><br>Audios, imágenes, PDFs
+<div class="lh-diagram" role="img" aria-label="Dos carriles paralelos llevan datos hacia un Warehouse para BI y hacia un Data Lake para ciencia de datos. El intercambio entre ambos exige copias y duplica esquemas, calidad, políticas, sincronización y versiones.">
+  <div class="lh-lane">
+    <div class="lh-lane-label"><i class="bi bi-bar-chart-line" aria-hidden="true"></i> Carril BI</div>
+    <div class="lh-steps">
+      <span class="lh-step" data-kind="data">sistemas transaccionales</span>
+      <i class="bi bi-arrow-right" aria-hidden="true"></i>
+      <span class="lh-step" data-kind="ingest">ETL</span>
+      <i class="bi bi-arrow-right" aria-hidden="true"></i>
+      <span class="lh-step" data-kind="data">Data Warehouse</span>
+      <i class="bi bi-arrow-right" aria-hidden="true"></i>
+      <span class="lh-step" data-kind="consume">Finanzas y BI</span>
     </div>
   </div>
-
-  <!-- Flecha 1 -->
-  <div style="display: flex; align-items: center; justify-content: center; font-size: 1.5em; color: #99a; font-weight: bold;">➔</div>
-
-  <!-- 2. Capa de Ingesta -->
-  <div style="flex: 0.8; min-width: 100px; border: 1.5px solid #dcdcdc; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: center; background: rgba(0,0,0,0.01); text-align: center; gap: 8px;">
-    <div style="font-size: 0.8em; font-weight: bold; color: #555; text-transform: uppercase;">Capa de Ingesta</div>
-    <div style="font-size: 1.2em; font-weight: bold; color: #e65100;">Batch / Streaming</div>
-    <div style="font-size: 2.2em; margin: 5px 0;">⚡</div>
-    <div style="font-size: 0.8em; opacity: 0.8;">Carga masiva (lotes) o en tiempo real (flujo).</div>
-  </div>
-
-  <!-- Flecha 2 -->
-  <div style="display: flex; align-items: center; justify-content: center; font-size: 1.5em; color: #99a; font-weight: bold;">➔</div>
-
-  <!-- 3 & 4. Capas de Almacenamiento y Metadatos (Caja Compartida) -->
-  <div style="flex: 3; min-width: 320px; border: 2px solid #0d47a1; border-radius: 12px; padding: 15px; background: rgba(13, 71, 161, 0.02); display: flex; flex-direction: column; gap: 12px; justify-content: space-between;">
-    <div style="display: flex; justify-content: space-between; gap: 15px; height: 100%;">
-      
-      <!-- Storage Layer -->
-      <div style="flex: 1; border-right: 1.5px dashed #bbdefb; padding-right: 15px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
-        <div style="font-size: 0.75em; font-weight: bold; color: #0d47a1; text-transform: uppercase; margin-bottom: 5px;">Capa de Almacenamiento</div>
-        <div style="background: #fff; border: 1.5px solid #2196f3; border-radius: 50%; width: 95px; height: 95px; display: flex; flex-direction: column; justify-content: center; align-items: center; margin: 10px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.04); position: relative;">
-          <div style="font-size: 0.85em; font-weight: bold; color: #0d47a1;">Data Lake</div>
-          <div style="font-size: 0.65em; background: #ffeb3b; padding: 2px 6px; border-radius: 10px; color: #000; font-weight: bold; margin-top: 3px; border: 1px solid #fbc02d;">ETL</div>
-          <div style="font-size: 1em; position: absolute; bottom: 5px; right: 5px;">🦆</div>
-        </div>
-        <div style="font-size: 0.8em; font-weight: bold; margin-bottom: 3px;">Archivos Abiertos</div>
-        <p style="margin: 0; font-size: 0.75em; opacity: 0.8;">Formatos abiertos de datos en disco (Parquet, ORC, etc.) hospedados en buckets económicos.</p>
-      </div>
-
-      <!-- Metadata Layer -->
-      <div style="flex: 1; padding-left: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
-        <div style="font-size: 0.75em; font-weight: bold; color: #6a1b9a; text-transform: uppercase; margin-bottom: 5px;">Capa de Metadatos</div>
-        <div style="font-size: 2.2em; margin: 10px 0;">🔑</div>
-        <div style="font-size: 0.8em; font-weight: bold; color: #6a1b9a; margin-bottom: 3px;">Metadatos, Caché e Índices</div>
-        <p style="margin: 0; font-size: 0.75em; opacity: 0.8; line-height: 1.35;">Control transaccional ACID, cumplimiento de esquemas, linaje de datos, y versionado temporal (Time Travel).</p>
-      </div>
-      
+  <div class="lh-lane">
+    <div class="lh-lane-label"><i class="bi bi-cpu" aria-hidden="true"></i> Carril ML</div>
+    <div class="lh-steps">
+      <span class="lh-step" data-kind="data">apps, Kafka, PDFs</span>
+      <i class="bi bi-arrow-right" aria-hidden="true"></i>
+      <span class="lh-step" data-kind="ingest">ingesta</span>
+      <i class="bi bi-arrow-right" aria-hidden="true"></i>
+      <span class="lh-step" data-kind="data">Data Lake</span>
+      <i class="bi bi-arrow-right" aria-hidden="true"></i>
+      <span class="lh-step" data-kind="consume">ciencia de datos</span>
     </div>
   </div>
-
-  <!-- Flecha 3 -->
-  <div style="display: flex; align-items: center; justify-content: center; font-size: 1.5em; color: #99a; font-weight: bold;">➔</div>
-
-  <!-- 5. APIs -->
-  <div style="flex: 1.5; min-width: 160px; border: 1.5px solid #dcdcdc; border-radius: 8px; padding: 12px; display: flex; flex-direction: row; gap: 8px; background: rgba(0,0,0,0.01); align-items: center; justify-content: center;">
-    
-    <!-- Metadata API -->
-    <div style="flex: 1; height: 100%; min-height: 120px; background: #eceff1; border: 1px solid #b0bec5; border-radius: 6px; padding: 5px; font-size: 0.8em; font-weight: bold; display: flex; align-items: center; justify-content: center; text-align: center; color: #37474f;">
-      <div style="writing-mode: vertical-lr; transform: rotate(180deg);">Metadata APIs</div>
-    </div>
-    
-    <!-- SQL & Dataframe APIs -->
-    <div style="flex: 2; display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: space-around;">
-      <div style="background: #eceff1; border: 1px solid #b0bec5; border-radius: 6px; padding: 8px; font-size: 0.75em; font-weight: bold; text-align: center; color: #37474f;">
-        SQL APIs
-      </div>
-      <div style="background: #eceff1; border: 1px solid #b0bec5; border-radius: 6px; padding: 8px; font-size: 0.75em; font-weight: bold; text-align: center; color: #37474f;">
-        Declarative Dataframe APIs
-      </div>
-    </div>
-    
+  <div class="lh-risk-band">
+    <strong>Impuesto de coordinación:</strong> copiar Lake → Warehouse para BI y Warehouse → entorno ML para modelar implica dos esquemas, dos controles de calidad, dos políticas, sincronización y versiones distintas.
   </div>
-
-  <!-- Flecha 4 -->
-  <div style="display: flex; align-items: center; justify-content: center; font-size: 1.5em; color: #99a; font-weight: bold;">➔</div>
-
-  <!-- 6. Capa de Consumo -->
-  <div style="flex: 1.5; min-width: 160px; border: 1.5px solid #0d47a1; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; justify-content: center; background: rgba(13,71,161,0.05); text-align: center; gap: 15px; box-shadow: 0 4px 6px rgba(13,71,161,0.04);">
-    <div style="font-size: 0.8em; font-weight: bold; color: #0d47a1; text-transform: uppercase;">Capa de Consumo</div>
-    
-    <div style="background: #fff; border: 1px solid #90caf9; border-radius: 6px; padding: 10px; font-size: 0.85em; font-weight: bold; color: #1565c0; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-      📊 BI & Reportes
-    </div>
-    
-    <div style="background: #fff; border: 1px solid #a5d6a7; border-radius: 6px; padding: 10px; font-size: 0.85em; font-weight: bold; color: #2e7d32; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-      🧪 Data Science & ML
-    </div>
-  </div>
-
+  <p class="lh-caption">Un silo es un sistema con contratos, ciclos y autoridades propios; no significa que nunca intercambie datos.</p>
 </div>
 ```
 
----
+Si Producto agrega `device_risk_score`, el cambio debe capturarse, aterrizarse, transformarse, incorporarse a la tabla analítica, probarse, publicarse, autorizarse y comunicarse a consumidores. Cuando las rutas están separadas, varias de esas decisiones se repiten. La deuda no está sólo en los bytes duplicados: está en las decisiones duplicadas.
 
-## Detalle Teórico de las Cinco Capas
+## Caso Fintech, fase 1: el Warehouse era suficiente
 
-A continuación, analizaremos en profundidad las responsabilidades técnicas de cada una de las cinco capas lógicas que estructuran esta arquitectura moderna:
-
-### 1. Capa de Ingesta (Ingestion Layer)
-Es el punto de entrada que conecta los múltiples orígenes de datos (estructurados, semi-estructurados o no estructurados) con la plataforma. Soporta dos modalidades operativas esenciales:
-*   **Procesamiento por Lotes (Batch)**: Cargas periódicas de datos acumulados a intervalos programados (por ejemplo, importaciones nocturnas de transacciones desde una base de datos PostgreSQL).
-*   **Procesamiento en Tiempo Real (Streaming)**: Captura y carga continua de datos a medida que se generan (por ejemplo, flujos de eventos de navegación web o lecturas de sensores industriales).
-
-### 2. Capa de Almacenamiento (Storage Layer)
-El Data Lakehouse implementa su almacenamiento físico directamente sobre un **Data Lake** conformado por sistemas de almacenamiento de objetos distribuidos y económicos (como Amazon S3, Google Cloud Storage o Azure ADLS).
-*   **Formatos Abiertos**: A diferencia de los DWH clásicos (que encapsulan los datos en formatos binarios propietarios), el Lakehouse almacena los datos en archivos con especificaciones de código abierto y altamente eficientes para lectura columnar (como **Apache Parquet** u **ORC**). Esto evita la dependencia de un único proveedor (*vendor lock-in*).
-
-### 3. Capa de Metadatos (Metadata Layer)
-Es el núcleo innovador del Data Lakehouse. Consiste en una delgada capa lógica que gestiona metadatos estructurados sobre los archivos físicos del Data Lake, cerrando la brecha técnica respecto a un DWH relacional. Aporta:
-*   **Transacciones ACID**: Garantiza que múltiples procesos puedan leer y escribir archivos Parquet de manera simultánea sin generar inconsistencias de datos o archivos corruptos.
-*   **Gobernanza y Cumplimiento**: Valida de manera estricta que los datos que se escriben cumplan con el esquema esperado (*Schema Enforcement*), evitando el desorden o la degradación de datos.
-*   **Viaje en el Tiempo (Time Travel)**: Mantiene un historial de versiones de los metadatos, lo que permite ejecutar consultas sobre el estado exacto de los datos en un punto específico en el pasado.
-
-### 4. Capa de APIs
-Proporciona interfaces estándar de acceso para que diferentes herramientas consuman la información del almacenamiento de forma nativa sin necesidad de copiarla o moverla:
-*   **SQL APIs**: Permite consultas directas con sintaxis SQL estándar utilizando motores optimizados de consulta (como Spark SQL o Photon).
-*   **Declarative Dataframe APIs**: Provee interfaces de programación declarativas (como PySpark o Polars Dataframes) diseñadas para la transformación compleja de datos masivos.
-*   **Metadata APIs**: Facilita la lectura directa del linaje de datos y los metadatos históricos para auditorías.
-
-### 5. Capa de Consumo (Consumption Layer)
-Es el nivel superior donde se genera el valor del negocio a partir de los datos consolidados. A diferencia de las arquitecturas tradicionales que requerían bases de datos distintas, el Lakehouse soporta directamente:
-*   **Business Intelligence (BI)**: Reportes interactivos y tableros en vivo (con herramientas como Metabase, Tableau o Power BI) consultando tablas con rendimiento de nivel de DWH.
-*   **Ciencia de Datos y Machine Learning**: Acceso veloz en crudo para entrenamiento de modelos de Inteligencia Artificial (con Python, R o PyTorch) interactuando directamente con el almacenamiento columnar.
-
-Las cinco capas deben leerse como responsabilidades y no necesariamente como cinco productos separados. Un servicio administrado puede cubrir varias de ellas, mientras que una arquitectura basada en componentes abiertos puede asignarlas a distintas herramientas. Lo importante es que el contrato entre capas sea explícito: dónde viven los datos, quién administra las tablas, qué motor procesa cada carga y dónde se aplican las políticas.
-
-## El componente decisivo: de archivos a tablas confiables
-
-Un Data Lake tradicional puede contener miles de archivos Parquet correctamente organizados y, aun así, carecer de comportamiento transaccional. Si dos procesos escriben al mismo tiempo, un lector podría observar solo parte de una actualización. Tampoco existe, por el simple hecho de usar Parquet, un registro confiable de qué archivos forman una tabla en un instante determinado.
-
-Los formatos de tabla modernos —como **Apache Iceberg**, **Delta Lake** y **Apache Hudi**— añaden metadatos y protocolos sobre los archivos. Estos protocolos describen versiones, esquemas, particiones y operaciones válidas. Gracias a ellos, el motor no necesita interpretar una carpeta como una colección accidental de archivos: puede tratarla como una tabla con identidad e historia.
+Durante los años 0–3, la empresa tenía datos relacionales, unas 10,000 transacciones diarias, alrededor de 500 GB al año y reportes por lotes. Su necesidad dominante era conocer ingresos, morosidad y crecimiento con rapidez.
 
 ```{=html}
-<div class="lh-visual" role="img" aria-label="Cómo una capa de metadatos convierte archivos en una tabla Lakehouse">
-  <div class="lh-card" style="padding:1.2rem;border-top:5px solid var(--lh-purple);">
-    <div class="lh-grid lh-flow" style="grid-template-columns:minmax(210px,1fr) auto minmax(250px,1.2fr) auto minmax(210px,1fr);align-items:center;">
-      <div style="text-align:center;">
-        <div style="font-size:2.2rem;" aria-hidden="true">📦 📦 📦</div>
-        <div class="lh-title">Archivos en objetos</div>
-        <div class="lh-small">Parquet, ORC y otros formatos almacenados en buckets.</div>
-      </div>
-      <div class="lh-arrow" aria-hidden="true">→</div>
-      <div style="padding:1rem;border-radius:.75rem;background:var(--lh-purple-soft);text-align:center;">
-        <div style="font-size:2rem;" aria-hidden="true">📚</div>
-        <div class="lh-title">Formato de tabla + catálogo</div>
-        <div class="lh-small">Snapshots · esquema · transacciones · particiones · permisos · estadísticas.</div>
-      </div>
-      <div class="lh-arrow" aria-hidden="true">→</div>
-      <div style="text-align:center;">
-        <div style="font-size:2.2rem;" aria-hidden="true">✅</div>
-        <div class="lh-title">Tabla administrada</div>
-        <div class="lh-small">Lecturas consistentes desde SQL, Spark, BI o procesos de aprendizaje automático.</div>
-      </div>
-    </div>
+<div class="lh-diagram" role="img" aria-label="En los primeros tres años, PostgreSQL alimenta mediante Fivetran un Warehouse administrado; dbt modela y Metabase o Tableau presentan reportes. El volumen y la operación son moderados.">
+  <div class="lh-stat-row">
+    <div class="lh-stat"><strong>10,000</strong> transacciones por día</div>
+    <div class="lh-stat"><strong>≈500 GB</strong> por año</div>
+    <div class="lh-stat"><strong>Relacionales</strong> datos dominantes</div>
+    <div class="lh-stat"><strong>Por lotes</strong> reportes</div>
   </div>
-  <div class="lh-caption">La innovación central del Lakehouse no es un nuevo tipo de disco, sino el protocolo que coordina cómo se interpretan y modifican los datos.</div>
+  <div class="lh-flow-5">
+    <div class="lh-node" data-kind="data"><i class="bi bi-database" aria-hidden="true"></i><div class="lh-title">PostgreSQL</div><div class="lh-meta-text">Operación</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="ingest"><i class="bi bi-arrow-left-right" aria-hidden="true"></i><div class="lh-title">Fivetran</div><div class="lh-meta-text">Replica</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="data"><i class="bi bi-table" aria-hidden="true"></i><div class="lh-title">BigQuery o Snowflake</div><div class="lh-meta-text">Almacena y consulta</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="compute"><i class="bi bi-diagram-3" aria-hidden="true"></i><div class="lh-title">dbt</div><div class="lh-meta-text">Modela y prueba</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="consume"><i class="bi bi-bar-chart" aria-hidden="true"></i><div class="lh-title">Metabase o Tableau</div><div class="lh-meta-text">Muestra</div></div>
+  </div>
+  <p class="lh-caption">Una arquitectura pequeña para un problema pequeño: tiempo a valor alto y carga operativa baja.</p>
 </div>
 ```
 
-Esta distinción evita una confusión común: **Parquet es un formato de archivo; Iceberg, Delta Lake o Hudi son formatos de tabla**. El primero organiza columnas dentro de un archivo; los segundos coordinan conjuntos de archivos y sus cambios a lo largo del tiempo.
+Un servicio administrado, dbt y una persona analista podían entregar valor en una semana y operar por cientos de dólares mensuales dentro del supuesto didáctico. Contratar un equipo especializado para un Lakehouse habría agregado observabilidad, integración y mantenimiento sin un retorno claro.
 
-## Arquitectura Medallion: Bronze, Silver y Gold
+::: {.callout-important title="Principio de decisión"}
+Elegir un Data Warehouse en esta fase no fue falta de visión. Fue ajustar arquitectura, costo y capacidad del equipo al problema real.
+:::
 
-Una forma frecuente de organizar la calidad dentro del Lakehouse es la arquitectura de medallones. Los nombres Bronze, Silver y Gold no indican productos ni ubicaciones físicas obligatorias; representan estados progresivos de refinamiento. El patrón permite conservar evidencia original y, al mismo tiempo, publicar datos listos para decisiones.
+### Qué hace cada producto en esa fase
+
+- **PostgreSQL, MySQL o una base operacional administrada** registra usuarios, cuentas y pagos de la aplicación. Está optimizada para operar el negocio, no para escanear años de historia.
+- **Fivetran** o **Airbyte** extrae o replica datos desde las fuentes hacia un destino analítico.
+- **BigQuery, Snowflake, Amazon Redshift o Fabric Warehouse** puede cumplir el rol de Data Warehouse. Son alternativas; no es necesario contratar todos.
+- **dbt** ejecuta transformaciones y pruebas principalmente mediante SQL sobre el Warehouse; no es el lugar principal donde viven los datos.
+- **Metabase, Tableau, Power BI o Looker** presenta métricas y tableros a usuarios de negocio.
+
+La marca no determina por sí sola la arquitectura. BigQuery puede ser un Warehouse de tablas nativas y también un motor que consulta tablas abiertas. Siempre pregunta: **¿qué almacena, qué cataloga y qué procesa?**
+
+Un Data Warehouse moderno también puede ser elástico, admitir datos semiestructurados y consultar almacenamiento externo. La decisión se toma por requisitos, economía y capacidad operativa, no por presentar al Warehouse como una tecnología rígida por definición.
+
+## Año 4: el punto de quiebre
+
+La arquitectura inicial no falla por recibir un JSON aislado. El cambio aparece por una combinación de presiones.
 
 ```{=html}
-<div class="lh-visual" role="img" aria-label="Flujo de calidad Bronze Silver Gold en un Data Lakehouse">
-  <div class="lh-grid lh-flow" style="grid-template-columns:minmax(210px,1fr) auto minmax(210px,1fr) auto minmax(210px,1fr);align-items:stretch;">
-    <div class="lh-card" style="border-top:6px solid #a16207;background:linear-gradient(180deg,#fff7ed,#fff);">
-      <div style="font-size:2rem;" aria-hidden="true">🥉</div>
-      <div class="lh-title">Bronze · datos recibidos</div>
-      <div class="lh-small">Conserva la granularidad y el contenido de origen. Facilita auditoría, reprocesamiento y recuperación.</div>
-      <div style="margin-top:.7rem;font-size:.82rem;color:#92400e;"><strong>Ejemplo:</strong> eventos JSON tal como llegaron.</div>
-    </div>
-    <div class="lh-arrow" aria-hidden="true">→</div>
-    <div class="lh-card" style="border-top:6px solid #64748b;background:linear-gradient(180deg,#f8fafc,#fff);">
-      <div style="font-size:2rem;" aria-hidden="true">🥈</div>
-      <div class="lh-title">Silver · datos validados</div>
-      <div class="lh-small">Corrige tipos, deduplica, estandariza entidades y aplica reglas de calidad reutilizables.</div>
-      <div style="margin-top:.7rem;font-size:.82rem;color:#475569;"><strong>Ejemplo:</strong> clientes unificados entre canales.</div>
-    </div>
-    <div class="lh-arrow" aria-hidden="true">→</div>
-    <div class="lh-card" style="border-top:6px solid #ca8a04;background:linear-gradient(180deg,var(--lh-amber-soft),#fff);">
-      <div style="font-size:2rem;" aria-hidden="true">🥇</div>
-      <div class="lh-title">Gold · producto de datos</div>
-      <div class="lh-small">Publica métricas, agregaciones y modelos semánticos preparados para un caso de uso.</div>
-      <div style="margin-top:.7rem;font-size:.82rem;color:#854d0e;"><strong>Ejemplo:</strong> venta neta diaria por región.</div>
-    </div>
+<div class="lh-diagram" role="img" aria-label="Seis presiones actúan al mismo tiempo sobre el pipeline inicial: volumen, velocidad, variedad, nuevos consumidores, movimiento de datos y economía operativa.">
+  <div class="lh-grid lh-grid-3">
+    <div class="lh-node" data-kind="risk"><i class="bi bi-hdd-stack" aria-hidden="true"></i><div class="lh-title">Volumen</div><div class="lh-meta-text">4 TB/mes, cerca de 48 TB/año antes de crecimiento y réplicas.</div></div>
+    <div class="lh-node" data-kind="risk"><i class="bi bi-speedometer2" aria-hidden="true"></i><div class="lh-title">Velocidad</div><div class="lh-meta-text">Kafka y decisiones de fraude en minutos o segundos.</div></div>
+    <div class="lh-node" data-kind="risk"><i class="bi bi-file-earmark-richtext" aria-hidden="true"></i><div class="lh-title">Variedad</div><div class="lh-meta-text">Eventos, logs, PDFs, OCR e imágenes biométricas.</div></div>
+    <div class="lh-node" data-kind="risk"><i class="bi bi-people" aria-hidden="true"></i><div class="lh-title">Consumidores</div><div class="lh-meta-text">BI, científicos de datos, ingeniería y fraude.</div></div>
+    <div class="lh-node" data-kind="risk"><i class="bi bi-arrow-left-right" aria-hidden="true"></i><div class="lh-title">Movimiento</div><div class="lh-meta-text">Exportaciones de terabytes y copias locales.</div></div>
+    <div class="lh-node" data-kind="risk"><i class="bi bi-cash-stack" aria-hidden="true"></i><div class="lh-title">Economía y operación</div><div class="lh-meta-text">Almacenamiento y transformaciones propietarios dominan el supuesto de costo.</div></div>
   </div>
-  <div class="lh-caption">Refinamiento progresivo. La calidad aumenta sin perder la posibilidad de reconstruir el resultado desde su origen.</div>
+  <div class="lh-risk-band"><strong>Año 4:</strong> el problema dejó de ser sólo reporting. La empresa creció de 10 mil transacciones diarias a 5 millones de usuarios.</div>
+  <p class="lh-caption">El punto de quiebre lo produce la combinación de fuerzas, no una palabra como Kafka, JSON o ML.</p>
 </div>
 ```
 
-La capa Bronze no debe convertirse en un destino permanente para todo consumo; su función es preservar. Silver crea entidades reutilizables y coherentes. Gold materializa el lenguaje del negocio. Una misma organización puede tener varias tablas Gold, porque cada producto analítico responde a decisiones y niveles de agregación diferentes.
+Los `4 TB/mes` equivalen aproximadamente a `48 TB/año`. Llegar a petabytes requeriría crecimiento y retención durante varios años; no debe afirmarse que cuatro terabytes mensuales ya sean un petabyte. Los montos del caso son supuestos docentes, no cotizaciones de proveedores.
 
-## Separar almacenamiento y cómputo
+### Actividad de clasificación
 
-La nube hizo viable otra propiedad fundamental: almacenar los datos una vez y asignar capacidad de cómputo según la carga. Un tablero ejecutivo, una transformación de Spark y el entrenamiento de un modelo requieren perfiles de procesamiento distintos. En un Lakehouse, esos motores pueden escalar de manera independiente y acceder a tablas gobernadas sobre la misma base de almacenamiento.
+| Síntoma | Fuerza principal |
+|---|---|
+| Millones de clics móviles | Volumen y velocidad |
+| PDFs de contratos | Variedad |
+| Modelo de fraude que necesita segundos | Velocidad y nuevos consumidores |
+| Científicos que descargan terabytes | Movimiento |
+| Dos equipos calculan la misma característica de riesgo | Coordinación |
+| La factura de transformaciones se dispara | Economía y operación |
 
-Esta separación aporta elasticidad, pero no significa que cualquier motor producirá el mismo desempeño. El formato de tabla, el catálogo, las estadísticas, el tamaño de los archivos, la partición y las cachés siguen siendo determinantes. La promesa correcta no es «un motor para todo», sino **varios motores especializados sobre contratos de datos compartidos**.
+La pregunta de diseño es: **¿escalamos el Warehouse, añadimos un Lake separado o rediseñamos una base compartida?** La respuesta debe empezar por requisitos, no por productos.
 
-# Lakehouse en plataformas modernas de nube
+# La base técnica del Lakehouse
 
-Las compañías rara vez implementan cada capa desde cero. Combinan servicios administrados de almacenamiento, catálogo, procesamiento, gobierno y consumo. Las tres nubes principales ofrecen rutas distintas hacia la misma idea arquitectónica: reducir la frontera entre lago y almacén sin renunciar a cargas SQL, ciencia de datos o IA.
+## Vocabulario mínimo
+
+::: {.table-responsive}
+
+| Término | Explicación cotidiana | Ejemplo en la fintech | Qué no significa |
+|---|---|---|---|
+| **Objeto** | Unidad guardada en la nube: bytes, nombre o *key* y metadatos. | PDF, imagen o archivo Parquet. | No es necesariamente una fila ni una tabla. |
+| **Bucket** | Contenedor con nombre donde un proveedor guarda objetos. | `s3://fintech-datos-prod/`. | No es motor SQL, base relacional ni todo el Data Lake. |
+| **Key** | Localizador único de un objeto dentro del bucket; puede parecer una ruta. | `bronze/kafka/2026/08/25/part-0001.json`. | Los separadores `/` no siempre representan carpetas tradicionales. |
+| **Data Lake** | Arquitectura para conservar y procesar datos diversos sobre almacenamiento económico, con ingesta, organización, seguridad y gobierno. | Objetos, políticas, catálogo y procesos. | Un bucket aislado no se vuelve automáticamente un Data Lake. |
+| **Data Warehouse** | Sistema analítico orientado a tablas, SQL y datos preparados para decisiones. | Tablas de ingresos y morosidad. | No es la base operacional que autoriza cada pago. |
+| **Motor de cómputo** | Software que consulta, transforma, agrega o entrena. | BigQuery, Trino, Spark o Databricks SQL. | El almacenamiento de objetos no procesa consultas por sí solo. |
+| **Formato de archivo** | Organización de bytes dentro de un archivo. | Parquet organiza columnas y compresión. | No coordina por sí mismo una tabla de muchos archivos. |
+| **Formato de tabla** | Protocolo que decide qué archivos forman una tabla y conserva cambios, esquema y snapshots. | Iceberg, Delta Lake o Hudi. | No sustituye almacenamiento, catálogo ni motor. |
+| **Catálogo** | Mapa que relaciona un nombre con ubicación, esquema, propietario y metadatos vigentes. | `fintech.silver.transactions`. | Una lista no garantiza calidad sin procesos y responsables. |
+
+:::
+
+Una analogía breve ayuda a recordar las responsabilidades:
+
+> El bucket es el contenedor; los objetos son los paquetes; la *key* es la etiqueta. Parquet organiza el contenido de ciertos paquetes. Iceberg, Delta Lake o Hudi mantienen el inventario versionado que dice qué paquetes forman una tabla. El catálogo permite pedir la tabla por nombre y verificar el acceso. El motor abre los paquetes y realiza el cálculo.
+
+### Anatomía de un bucket
 
 ```{=html}
-<div class="lh-visual" role="img" aria-label="Ejemplos de componentes Lakehouse en Google Cloud AWS y Microsoft Azure">
-  <div class="lh-grid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr));">
-    <div class="lh-card" style="border-top:5px solid #4285f4;">
-      <div style="font-size:1.8rem;" aria-hidden="true">☁️</div>
+<div class="lh-diagram" role="img" aria-label="Un bucket llamado fintech-datos-prod contiene objetos identificados por keys. Cada objeto tiene bytes y metadatos. Los prefijos parecen carpetas, pero el bucket no conoce filas, joins ni transacciones de tabla.">
+  <div class="lh-bucket">
+    <div class="lh-bucket-head">
+      <div><i class="bi bi-bucket" aria-hidden="true"></i> <strong>bucket:</strong> <code>fintech-datos-prod</code></div>
+      <div><strong>proveedor:</strong> Amazon S3</div>
+      <div><strong>región:</strong> <code>us-east-1</code></div>
+    </div>
+    <div class="lh-object-grid">
+      <div class="lh-object"><strong>Evento</strong><br><code>bronze/kafka/2026/08/25/part-0001.json</code><br><span class="lh-meta-text">JSON · 2 MB · cifrado</span></div>
+      <div class="lh-object"><strong>Contrato</strong><br><code>documents/loan-8472.pdf</code><br><span class="lh-meta-text">PDF · 680 KB · PII</span></div>
+      <div class="lh-object"><strong>Datos columnares</strong><br><code>silver/transactions/part-0042.parquet</code><br><span class="lh-meta-text">Parquet · 256 MB</span></div>
+      <div class="lh-object"><strong>Modelo</strong><br><code>models/fraud/v12/model.bin</code><br><span class="lh-meta-text">versión 12 · owner=risk-team</span></div>
+    </div>
+  </div>
+  <div class="lh-risk-band"><strong>Límite:</strong> el bucket conserva objetos, pero no conoce por sí solo filas, joins, esquema de tabla ni un commit que abarque varios archivos.</div>
+  <p class="lh-caption">S3 y Cloud Storage usan el término bucket; Azure Blob Storage y ADLS Gen2 usan container o file system; OneLake ofrece una capa unificada administrada por Fabric.</p>
+</div>
+```
+
+La URI `s3://fintech-datos-prod/documents/loan-8472.pdf` se interpreta así: `s3` identifica el servicio, `fintech-datos-prod` es el bucket y el resto es la *key*. En Google Cloud se vería `gs://...`; en ADLS Gen2 se usa un contenedor dentro de una cuenta de almacenamiento.
+
+Tres distinciones deben quedar explícitas:
+
+1. **Bucket ≠ archivo.** El bucket contiene objetos; el PDF o Parquet es el objeto.
+2. **Bucket ≠ Data Lake.** Un Data Lake incluye ingesta, organización, seguridad, catálogo, cómputo y operación.
+3. **Bucket ≠ Lakehouse.** El Lakehouse añade tablas transaccionales, catálogo, gobierno y motores coordinados.
+
+## Una base física compartida todavía no es una tabla
+
+El primer paso del Lakehouse es desacoplar los bytes del motor: guardar datos en objetos y asignar cómputo distinto a SQL, ML o *streaming*. Esa base ofrece escala, formatos abiertos y economía de capacidad. Sin embargo, una carpeta puede contener:
+
+```text
+transactions/
+  part-0001.parquet
+  part-0002.parquet
+  part-0003.parquet
+  part-0003-retry.parquet
+  _temporary-part-0004.parquet
+```
+
+El nombre de la carpeta no decide de forma confiable cuáles archivos pertenecen a la tabla, cuál fue un reintento y si la escritura terminó.
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="Fuentes diversas convergen en almacenamiento de objetos con JSON, PDFs, imágenes y Parquet. SQL, Spark y streaming podrían leerlos, pero antes necesitan resolver archivos vigentes, esquema, commit y permisos.">
+  <div class="lh-grid lh-grid-3" style="align-items:stretch;">
+    <div class="lh-node" data-kind="ingest">
+      <i class="bi bi-box-arrow-in-right" aria-hidden="true"></i>
+      <div class="lh-title">Fuentes</div>
+      <div class="lh-meta-text">PostgreSQL/CDC<br>Kafka<br>logs<br>PDFs e imágenes</div>
+    </div>
+    <div class="lh-node" data-kind="data">
+      <i class="bi bi-cloud" aria-hidden="true"></i>
+      <div class="lh-title">Almacenamiento de objetos</div>
+      <div class="lh-meta-text">Objetos crudos<br>Parquet/ORC<br>resultados refinados</div>
+    </div>
+    <div class="lh-node" data-kind="compute">
+      <i class="bi bi-question-diamond" aria-hidden="true"></i>
+      <div class="lh-title">Consumidores potenciales</div>
+      <div class="lh-meta-text">SQL · Spark/Ray · streaming</div>
+    </div>
+  </div>
+  <div class="lh-risk-band"><strong>Preguntas abiertas:</strong> ¿qué archivos están vigentes?, ¿cuál es el esquema?, ¿se completó la escritura?, ¿quién puede leer?</div>
+  <p class="lh-caption">Una ubicación común reduce movimiento, pero no crea por sí sola semántica de tabla.</p>
+</div>
+```
+
+## La idea que debe sobrevivir
+
+```{=html}
+<div class="lh-equation" role="note">
+  Lakehouse = almacenamiento de objetos + formato de tabla transaccional + catálogo y gobierno + motores especializados sobre datos compartidos + operación continua
+</div>
+```
+
+No es «un lago junto a un almacén» ni «guardar Parquet en S3». Es hacer que conjuntos de archivos se comporten como tablas confiables sin perder apertura y separación entre almacenamiento y cómputo.
+
+## Responsabilidades lógicas de la arquitectura
+
+Una implementación puede agrupar varias responsabilidades en un servicio administrado o distribuirlas entre herramientas. Las capas son lógicas, no una lista obligatoria de cinco productos.
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="La arquitectura fluye desde fuentes e ingesta hacia almacenamiento de objetos, formato de tabla y catálogo, interfaces de acceso, motores y consumidores. Gobierno, seguridad, calidad y linaje atraviesan las capas.">
+  <div class="lh-band"><i class="bi bi-shield-check" aria-hidden="true"></i> Gobierno transversal: identidad · permisos · calidad · linaje · auditoría</div>
+  <div class="lh-flow-5">
+    <div class="lh-node" data-kind="ingest"><i class="bi bi-box-arrow-in-down" aria-hidden="true"></i><div class="lh-title">1. Ingesta</div><div class="lh-meta-text">Batch, CDC y streaming.</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="data"><i class="bi bi-device-ssd" aria-hidden="true"></i><div class="lh-title">2. Almacenamiento</div><div class="lh-meta-text">Objetos y formatos abiertos.</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="meta"><i class="bi bi-journal-text" aria-hidden="true"></i><div class="lh-title">3. Tablas y catálogo</div><div class="lh-meta-text">Snapshots, esquema, nombres y políticas.</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="compute"><i class="bi bi-braces" aria-hidden="true"></i><div class="lh-title">4. Interfaces y motores</div><div class="lh-meta-text">SQL, DataFrame, metadatos y streaming.</div></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i></div>
+    <div class="lh-node" data-kind="consume"><i class="bi bi-graph-up" aria-hidden="true"></i><div class="lh-title">5. Consumo</div><div class="lh-meta-text">BI, ML, auditoría y productos.</div></div>
+  </div>
+  <p class="lh-caption">Las responsabilidades permanecen aunque cambien las marcas o una plataforma oculte varias detrás de una interfaz.</p>
+</div>
+```
+
+### 1. Ingesta
+
+Conecta datos estructurados, semiestructurados y no estructurados. Las cargas **batch** mueven datos acumulados a intervalos; **CDC** replica cambios de una fuente; *streaming* procesa eventos a medida que llegan. La modalidad determina frescura, tamaño de archivos, reintentos y costo operativo.
+
+### 2. Almacenamiento
+
+S3, Cloud Storage, ADLS Gen2 u OneLake conservan objetos a gran escala. Parquet y ORC son formatos columnares eficientes para datos tabulares; JSON, PDFs e imágenes pueden permanecer como objetos. Usar un formato abierto reduce dependencia, pero no garantiza que todos los motores soporten las mismas operaciones.
+
+### 3. Formato de tabla, catálogo y gobierno
+
+Iceberg, Delta Lake y Hudi coordinan archivos como tablas versionadas. El catálogo resuelve nombres, ubicaciones, esquemas y metadatos vigentes. El gobierno añade identidad, clasificación, permisos, auditoría y responsabilidades. Son tareas relacionadas, pero distintas.
+
+### 4. Interfaces y motores
+
+SQL, APIs de DataFrame y APIs de metadatos permiten que motores como BigQuery, Trino, Spark o Databricks SQL procesen datos sin convertir el almacenamiento en el motor. La compatibilidad se verifica por operación, versión del formato y configuración.
+
+### 5. Consumo
+
+BI necesita métricas certificadas; ciencia de datos necesita entidades reutilizables y datos autorizados; fraude necesita baja latencia; auditoría necesita historia y evidencias. Compartir la base no obliga a compartir un único motor ni a consultar la misma capa de calidad.
+
+## Archivo, tabla y catálogo no son sinónimos
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="Una pila distingue almacenamiento de objetos, formato de archivo, formato de tabla, catálogo y motores. Los motores preguntan al catálogo y luego leen los objetos autorizados.">
+  <div class="lh-stack">
+    <div class="lh-stack-layer" data-kind="consume"><strong>Consumo:</strong> BI, ciencia de datos, ML, fraude y auditoría.</div>
+    <div class="lh-stack-layer" data-kind="compute"><strong>Motores:</strong> ejecutan SQL, transformaciones, streaming o entrenamiento.</div>
+    <div class="lh-stack-layer" data-kind="meta"><strong>Catálogo y gobierno:</strong> resuelven nombre, ubicación, metadatos vigentes y acceso.</div>
+    <div class="lh-stack-layer" data-kind="meta"><strong>Formato de tabla:</strong> coordina archivos, snapshots, esquema y cambios.</div>
+    <div class="lh-stack-layer"><strong>Parquet / ORC:</strong> organizan columnas y compresión dentro de cada archivo.</div>
+    <div class="lh-stack-layer"><strong>Almacenamiento de objetos:</strong> conserva bytes y keys.</div>
+  </div>
+  <p class="lh-caption">El motor pregunta arriba para saber qué leer y después accede a los objetos autorizados abajo.</p>
+</div>
+```
+
+Parquet no publica una transacción sobre veinte archivos. El formato de tabla mantiene la lista autorizada, el esquema, las particiones y los snapshots. El catálogo permite que un nombre estable apunte a esos metadatos. Iceberg, Delta Lake y Hudi comparten esa intención general, pero no son idénticos.
+
+## Cómo un snapshot oculta una escritura incompleta
+
+El reto no es que S3, Cloud Storage o Azure Blob Storage necesariamente «pierdan consistencia». Una modificación de tabla puede crear muchos objetos; hace falta un **commit de tabla atómico** que publique el conjunto completo.
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="Sin protocolo de tabla, un lector puede observar A B C D E después de una escritura fallida. Con snapshots, D y E permanecen sin publicar y el puntero sigue en snapshot 17 con A B C. Sólo un commit exitoso mueve el puntero a snapshot 18 con A B C D E F.">
+  <div class="lh-grid lh-grid-2">
+    <div class="lh-panel">
+      <div class="lh-title"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> Carpeta sin protocolo de tabla</div>
+      <p class="lh-meta-text">El job quiere añadir D, E y F, pero falla antes de F.</p>
+      <div class="lh-file-row">
+        <span class="lh-file">A</span><span class="lh-file">B</span><span class="lh-file">C</span><span class="lh-file is-failed">D</span><span class="lh-file is-failed">E</span>
+      </div>
+      <div class="lh-risk-band"><strong>Lectura visible:</strong> A B C D E. ¿Es una actualización completa?</div>
+    </div>
+    <div class="lh-panel">
+      <div class="lh-title"><i class="bi bi-journal-check" aria-hidden="true"></i> Tabla con snapshots</div>
+      <div class="lh-snapshot"><strong>actual → snapshot 17</strong><div class="lh-file-row"><span class="lh-file">A</span><span class="lh-file">B</span><span class="lh-file">C</span></div></div>
+      <p class="lh-meta-text">D y E se escriben, pero quedan sin publicar cuando el job falla.</p>
+      <div class="lh-file-row"><span class="lh-file is-unpublished">D</span><span class="lh-file is-unpublished">E</span><span class="lh-file is-unpublished">F pendiente</span></div>
+    </div>
+  </div>
+  <div class="lh-flow" style="margin-top:.85rem;">
+    <div class="lh-snapshot"><strong>snapshot 17</strong><br>A · B · C</div>
+    <div class="lh-arrow"><i class="bi bi-check2-circle" aria-hidden="true"></i><br>commit atómico</div>
+    <div class="lh-snapshot"><strong>snapshot 18</strong><br>A · B · C · D · E · F</div>
+  </div>
+  <p class="lh-caption">Los archivos no referenciados pueden existir físicamente y requieren limpieza posterior; no pertenecen a la tabla hasta un commit exitoso.</p>
+</div>
+```
+
+La atomicidad se logra porque los lectores consultan una lista autorizada. Si el job falla antes de publicar, el puntero sigue en el snapshot 17. Si termina, un commit mueve el puntero a la versión 18 completa. Un lector que resolvió la versión antes del commit continúa con una vista consistente según el aislamiento y el motor.
+
+Las garantías ACID suelen expresarse por tabla. No debe suponerse automáticamente una transacción atómica entre muchas tablas; hay que verificar el formato y el motor.
+
+## Evolución de esquema sin reescribir toda la historia
+
+Los metadatos pueden separar la identidad de una columna de su nombre visible.
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="El snapshot 41 usa el nombre amount para field 2. El snapshot 42 conserva field 2 pero muestra gross_amount. Los archivos históricos no cambian; los metadatos realizan el mapeo lógico.">
+  <div class="lh-flow">
+    <div class="lh-node" data-kind="meta"><div class="lh-title">Snapshot 41 · esquema v1</div><code>customer_id [field 1]</code><br><code>amount [field 2]</code></div>
+    <div class="lh-arrow"><i class="bi bi-arrow-right" aria-hidden="true"></i><br><span class="lh-meta-text">rename lógico</span></div>
+    <div class="lh-node" data-kind="meta"><div class="lh-title">Snapshot 42 · esquema v2</div><code>customer_id [field 1]</code><br><code>gross_amount [field 2]</code></div>
+  </div>
+  <div class="lh-grid lh-grid-2" style="margin-top:.8rem;">
+    <div class="lh-node" data-kind="data"><div class="lh-title">Archivos históricos</div><code>amount</code> permanece físicamente en Parquet.</div>
+    <div class="lh-node" data-kind="meta"><div class="lh-title">Mapa vigente</div><code>field 2 → gross_amount</code></div>
+  </div>
+  <p class="lh-caption">Un cambio seguro depende de IDs o mapeo de columnas, configuración y soporte de cada motor.</p>
+</div>
+```
+
+Esto habilita evolución de esquema y viaje en el tiempo, pero no vuelve gratuitos todos los cambios. Modificar tipos incompatibles, semántica, particiones o unidades puede exigir migración, *backfill*, vistas de transición y pruebas.
+
+## Catálogo y gobierno: mapa, versión y acceso
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="El catálogo resuelve el nombre fintech.silver.transactions, su ubicación, metadata vigente, esquema, propietario y clasificación. Las políticas conceden vistas diferentes a Finanzas, Fraude, Data Science y Auditoría.">
+  <div class="lh-band">identidad · permisos · linaje · auditoría</div>
+  <div class="lh-grid lh-grid-2">
+    <div class="lh-metadata-card">
+      <div class="lh-title"><i class="bi bi-journal-bookmark" aria-hidden="true"></i> Catálogo unificado</div>
+      <code>fintech.silver.transactions</code><br>
+      <span class="lh-meta-text">
+        ubicación: <code>s3://fintech/silver/transactions/</code><br>
+        metadata vigente: <code>v018.metadata.json</code><br>
+        esquema: transaction_id, user_id, amount, device_risk<br>
+        propietario: Risk Data Team<br>
+        clasificación: PII · financiera
+      </span>
+    </div>
+    <div class="lh-policy-list">
+      <div class="lh-policy"><strong>Finanzas:</strong> Gold de ingresos; PII enmascarada.</div>
+      <div class="lh-policy"><strong>Fraude:</strong> transacciones y señales de dispositivo.</div>
+      <div class="lh-policy"><strong>Data Science:</strong> Silver seudonimizada en entorno controlado.</div>
+      <div class="lh-policy"><strong>Auditoría:</strong> historial y logs de acceso.</div>
+    </div>
+  </div>
+  <p class="lh-caption">Un motor consulta los metadatos y permisos antes de leer los objetos. Conocer una ruta no debería equivaler a evadir el gobierno.</p>
+</div>
+```
+
+El catálogo convierte un nombre de negocio en ubicación, esquema y metadatos vigentes. El gobierno responde otra pregunta: aunque alguien conozca la ruta, ¿tiene derecho a verla y con qué detalle? Un catálogo no mueve datos ni garantiza calidad por existir. Requiere propietarios, políticas, clasificación, auditoría y credenciales con privilegio mínimo.
+
+### Comprobación rápida
+
+Asigna cada responsabilidad:
+
+1. «Organiza columnas y compresión dentro de `part-0007`» → **formato de archivo**.
+2. «Decide que A, B y C forman la versión 17» → **formato de tabla**.
+3. «Resuelve dónde vive `silver.transactions` y verifica permisos» → **catálogo y gobierno**.
+4. «Conserva el PDF original y los bytes de Parquet» → **almacenamiento de objetos**.
+
+# Integrar calidad, cargas y productos de datos
+
+## Medallion: Bronze, Silver y Gold
+
+La arquitectura Medallion es una forma frecuente, no una ley universal, de representar estados de calidad. Los nombres no designan productos ni ubicaciones físicas obligatorias.
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="Bronze conserva los datos recibidos, Silver valida y unifica entidades, y Gold publica productos de datos para decisiones.">
+  <div class="lh-medallion">
+    <div><i class="bi bi-inbox" aria-hidden="true"></i><div class="lh-title">Bronze · evidencia recibida</div><div class="lh-meta-text">JSON original, réplicas, logs y referencias a documentos. Facilita auditoría y reprocesamiento.</div></div>
+    <div><i class="bi bi-check2-square" aria-hidden="true"></i><div class="lh-title">Silver · entidades validadas</div><div class="lh-meta-text">Tipos corregidos, duplicados resueltos, usuarios seudonimizados y reglas reutilizables.</div></div>
+    <div><i class="bi bi-patch-check" aria-hidden="true"></i><div class="lh-title">Gold · producto de datos</div><div class="lh-meta-text">Ingresos, morosidad, cartera y métricas preparadas para una decisión.</div></div>
+  </div>
+  <p class="lh-caption">La calidad aumenta sin perder la capacidad de reconstruir el resultado desde la evidencia autorizada.</p>
+</div>
+```
+
+Bronze preserva; Silver integra; Gold traduce al lenguaje del negocio. Finanzas no debería calcular ingresos directamente desde JSON Bronze. Una organización puede publicar varias tablas Gold porque cada producto responde a una decisión y granularidad distintas.
+
+PDFs, imágenes y otros binarios permanecen como objetos. Una tabla Silver puede registrar `object_uri`, hash, propietario, clasificación, estado de OCR y relaciones. No conviene afirmar que una fotografía «se convierte en Iceberg».
+
+## Fase 2: una base gobernada y varios motores
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="La fintech ingiere transacciones, Kafka, logs, PDFs e imágenes hacia una base compartida con Bronze, Silver y Gold. Un formato de tabla y un catálogo gobiernan las tablas. Motores SQL, Spark y streaming escalan de forma independiente para BI, ML y fraude.">
+  <div class="lh-band">Catálogo + gobierno + linaje + calidad</div>
+  <div class="lh-grid lh-grid-3" style="align-items:stretch;">
+    <div class="lh-node" data-kind="ingest">
+      <i class="bi bi-box-arrow-in-right" aria-hidden="true"></i>
+      <div class="lh-title">Fuentes e ingesta</div>
+      <div class="lh-meta-text">transacciones/CDC<br>Kafka y telemetría<br>logs de auditoría<br>PDFs/OCR<br>imágenes/biometría<br><br><strong>batch/CDC + streaming</strong></div>
+    </div>
+    <div class="lh-node" data-kind="data">
+      <i class="bi bi-layers" aria-hidden="true"></i>
+      <div class="lh-title">Base compartida sobre objetos</div>
+      <div class="lh-meta-text"><strong>Bronze:</strong> evidencia recibida.<br><strong>Silver:</strong> entidades y señales validadas.<br><strong>Gold:</strong> productos certificados.<br><br><strong>Iceberg/Delta/Hudi:</strong> snapshots, esquema y commits.</div>
+    </div>
+    <div class="lh-node" data-kind="compute">
+      <i class="bi bi-cpu" aria-hidden="true"></i>
+      <div class="lh-title">Cómputo desacoplado</div>
+      <div class="lh-meta-text"><strong>Motor SQL →</strong> BI financiero.<br><strong>Spark/Ray →</strong> entrenamiento ML.<br><strong>Motor de streaming →</strong> fraude en tiempo real.<br><br>Cada recurso escala según su carga.</div>
+    </div>
+  </div>
+  <div class="lh-risk-band"><strong>Movimiento evitado:</strong> exportar terabytes al portátil y crear una copia Lake → Warehouse por cada consumidor dejan de ser el camino predeterminado.</div>
+  <p class="lh-caption">Fuente compartida no significa una sola tabla ni un solo motor; significa contratos versionados, catalogados y con responsables comunes.</p>
+</div>
+```
+
+La *fintech* no cambió sólo de contenedor. Cambió el contrato:
+
+- **Finanzas** consulta productos Gold certificados.
+- **ML** utiliza entidades Silver autorizadas y resultados derivados de documentos sin descargar terabytes a almacenamiento local.
+- **Fraude** procesa eventos en tiempo real y consulta o actualiza señales gobernadas según las garantías del pipeline.
+
+Separar almacenamiento y cómputo permite dimensionar y apagar motores por carga, pero no garantiza costos menores. Formato, estadísticas, tamaño de archivos, partición, cachés y consultas siguen determinando desempeño y gasto.
+
+## Tecnologías abiertas y servicios administrados
+
+::: {.table-responsive}
+
+| Responsabilidad | Ejemplos frecuentes | Función en el caso |
+|---|---|---|
+| Fuente operacional | PostgreSQL, MySQL, SQL Server, Cloud SQL, RDS, Azure SQL | Usuarios, cuentas, cobros y transferencias. |
+| Ingesta batch/CDC | Fivetran, Airbyte, AWS DMS, Datastream, Azure Data Factory | Replica cambios operacionales. |
+| Eventos | Kafka, Confluent, Kinesis, Pub/Sub, Event Hubs | Clics, telemetría y fraude. |
+| Almacenamiento de objetos | S3, Cloud Storage, ADLS Gen2, OneLake | Conserva JSON, Parquet, PDFs e imágenes. |
+| Formato de archivo | Parquet, ORC, Avro, JSON | Organiza bytes dentro de cada archivo. |
+| Formato de tabla | Iceberg, Delta Lake, Hudi | Publica snapshots, esquema e inventario de archivos. |
+| Catálogo y gobierno | Glue + Lake Formation, Lakehouse runtime catalog + Knowledge Catalog, Unity Catalog, Fabric + Purview | Descubrimiento, permisos, linaje y auditoría. |
+| Motores | BigQuery, Athena, Redshift, Trino, Spark, Databricks SQL, Fabric SQL | Ejecuta la carga analítica o de ingeniería. |
+| Consumo | Looker, QuickSight, Power BI, Tableau, notebooks, modelos | Convierte datos en decisiones o productos. |
+
+:::
+
+Parquet, Iceberg, Delta Lake, Hudi, Spark, Kafka y Trino son estándares o proyectos abiertos. S3, BigQuery, Redshift, Databricks, Fabric y Fivetran son servicios o plataformas administradas. Una plataforma comercial puede administrar tecnologías abiertas.
+
+# Implementaciones en Google Cloud, AWS y Azure
+
+No hay traducción exacta entre servicios. La comparación debe mantener fijas las responsabilidades: almacenamiento, tabla, catálogo, gobierno, cómputo, consumo y operación.
+
+```{=html}
+<div class="lh-diagram" role="img" aria-label="Tres pilas de referencia muestran las responsabilidades Lakehouse en Google Cloud, AWS y Microsoft. Cada nube combina almacenamiento, formato de tabla, catálogo, gobierno, motores y consumo de manera distinta.">
+  <div class="lh-grid lh-grid-3">
+    <div class="lh-node" data-kind="data">
+      <i class="bi bi-cloud" aria-hidden="true"></i>
       <div class="lh-title">Google Cloud</div>
-      <div class="lh-small"><strong>Base:</strong> Cloud Storage e Iceberg<br><strong>Tablas y gobierno:</strong> BigLake y catálogo<br><strong>Motores:</strong> BigQuery y Spark<br><strong>Consumo:</strong> SQL, BI, datos e IA</div>
+      <div class="lh-meta-text"><strong>Base:</strong> Cloud Storage.<br><strong>Tablas:</strong> Apache Iceberg.<br><strong>Catálogo:</strong> Lakehouse runtime catalog.<br><strong>Gobierno:</strong> Knowledge Catalog e IAM.<br><strong>Motores:</strong> BigQuery, Spark, Flink o Trino.</div>
     </div>
-    <div class="lh-card" style="border-top:5px solid #ff9900;">
-      <div style="font-size:1.8rem;" aria-hidden="true">📦</div>
+    <div class="lh-node" data-kind="data">
+      <i class="bi bi-cloud" aria-hidden="true"></i>
       <div class="lh-title">Amazon Web Services</div>
-      <div class="lh-small"><strong>Base:</strong> Amazon S3 e Iceberg<br><strong>Catálogo y gobierno:</strong> Glue y Lake Formation<br><strong>Motores:</strong> Athena, Redshift, EMR y Glue<br><strong>Consumo:</strong> SQL, BI, datos e IA</div>
+      <div class="lh-meta-text"><strong>Base:</strong> S3 y S3 Tables.<br><strong>Tablas:</strong> Apache Iceberg.<br><strong>Catálogo:</strong> Glue Data Catalog.<br><strong>Gobierno:</strong> Lake Formation.<br><strong>Motores:</strong> Athena, Redshift, EMR y Glue.</div>
     </div>
-    <div class="lh-card" style="border-top:5px solid #0078d4;">
-      <div style="font-size:1.8rem;" aria-hidden="true">🔷</div>
+    <div class="lh-node" data-kind="data">
+      <i class="bi bi-cloud" aria-hidden="true"></i>
       <div class="lh-title">Microsoft</div>
-      <div class="lh-small"><strong>Base:</strong> OneLake sobre ADLS Gen2<br><strong>Tablas:</strong> Delta<br><strong>Motores:</strong> Fabric, SQL y Spark<br><strong>Consumo:</strong> Power BI, datos e IA</div>
+      <div class="lh-meta-text"><strong>Base:</strong> OneLake/ADLS Gen2.<br><strong>Tablas:</strong> Delta Lake.<br><strong>Plataforma:</strong> Fabric Lakehouse o Azure Databricks.<br><strong>Motores:</strong> Spark y SQL.<br><strong>Consumo:</strong> Power BI y ML.</div>
     </div>
   </div>
-  <div style="margin:.85rem auto 0;max-width:760px;padding:.7rem 1rem;border-radius:999px;background:#f1f5f9;color:#334155;text-align:center;font-size:.86rem;">🧭 Los nombres cambian; las responsabilidades permanecen: almacenar, catalogar, gobernar, procesar y servir.</div>
-  <div class="lh-caption">Mapa conceptual de servicios. No representa equivalencias exactas ni obliga a utilizar todos los componentes.</div>
+  <p class="lh-caption">Mapa de responsabilidades, no equivalencia de productos ni obligación de instalar todos los componentes.</p>
 </div>
 ```
 
-## Google Cloud: BigQuery, BigLake y almacenamiento abierto
+## Google Cloud: Cloud Storage, Iceberg y varios motores
 
-En Google Cloud, **BigQuery** aporta el motor SQL administrado y sin servidores, mientras que **BigLake** extiende gobierno y acceso tabular hacia datos almacenados en Cloud Storage y, mediante capacidades multinube, hacia Amazon S3 o Azure Blob Storage. Las tablas administradas con Apache Iceberg permiten que los datos permanezcan en almacenamiento controlado por la organización y sean interoperables con otros motores. La documentación actual de Google presenta esta combinación como la base para Lakehouses abiertos sobre Iceberg. Véanse la [introducción oficial a BigLake](https://docs.cloud.google.com/bigquery/docs/biglake-intro) y las [tablas administradas con Apache Iceberg](https://docs.cloud.google.com/bigquery/docs/biglake-iceberg-tables-in-bigquery).
+La arquitectura actual de Google Cloud combina Cloud Storage, Apache Iceberg, un *runtime catalog*, gobierno y motores como BigQuery, Spark, Flink y Trino, según su [documentación de arquitectura Lakehouse](https://docs.cloud.google.com/lakehouse/docs/lakehouse-basics). Las tablas Iceberg administradas por BigQuery permanecen en buckets controlados por la organización y añaden evolución de esquema, *time travel* y optimización automática, como detalla la [guía de tablas Iceberg administradas](https://docs.cloud.google.com/bigquery/docs/biglake-iceberg-tables-in-bigquery).
 
-BigQuery, por sí solo, también puede operar como un Data Warehouse moderno. La concepción Lakehouse aparece cuando el cómputo SQL, el almacenamiento de objetos, los formatos abiertos y el gobierno se conectan para consultar una misma base de datos sin exigir que toda la información se copie primero a tablas nativas.
+Una ruta de implementación razonable es:
 
-## Amazon Web Services: S3, catálogo, gobierno y varios motores
+1. elegir región, proyecto y bucket con políticas de retención y cifrado;
+2. crear un Lakehouse runtime catalog y definir namespaces;
+3. usar Iceberg V2 para nuevas tablas abiertas y decidir quién administra sus metadatos;
+4. configurar IAM y, cuando corresponda, credenciales delegadas con privilegio mínimo;
+5. conectar BigQuery y los motores abiertos que realmente utilizará el equipo;
+6. probar lectura, escritura, evolución, recuperación y costos antes de declarar interoperabilidad.
 
-En AWS, Amazon S3 suele funcionar como almacenamiento base; AWS Glue Data Catalog registra las tablas y AWS Lake Formation centraliza permisos. Motores como Amazon Athena, Amazon Redshift Spectrum, Amazon EMR y AWS Glue pueden consultar o transformar datos gobernados. La arquitectura Lakehouse de Amazon también integra datos de S3 y del almacenamiento administrado de Redshift mediante catálogos, y expone tablas Apache Iceberg a motores compatibles. Véanse la [arquitectura Lakehouse de Amazon](https://docs.aws.amazon.com/sagemaker-lakehouse-architecture/latest/userguide/lakehouse-how.html) y la [documentación de AWS Lake Formation](https://docs.aws.amazon.com/lake-formation/latest/dg/what-is-lake-formation.html).
+El [*quickstart* oficial](https://docs.cloud.google.com/lakehouse/docs/query-iceberg-tables-with-lakehouse) recorre la creación del catálogo Iceberg REST, permisos, tablas y consultas. BigQuery también puede operar como un Data Warehouse moderno sin que la arquitectura deba llamarse Lakehouse.
 
-Este ecosistema ilustra una característica común del Lakehouse: la plataforma no es un solo servicio. S3 conserva los objetos, el catálogo describe los datos, Lake Formation aplica gobierno y los motores se eligen según la carga de trabajo.
+## AWS: S3, Iceberg, Glue y Lake Formation
 
-## Microsoft Azure: OneLake, Fabric y Azure Databricks
+La [arquitectura Lakehouse de SageMaker](https://docs.aws.amazon.com/sagemaker-lakehouse-architecture/latest/userguide/what-is-smlh.html) unifica datos en S3, S3 Tables y Redshift mediante catálogos y acceso gobernado. En una pila modular, S3 conserva objetos, Iceberg coordina tablas, Glue Data Catalog registra metadatos, Lake Formation aplica permisos y Athena, Redshift, EMR o Glue ejecutan las cargas.
 
-Microsoft ofrece más de una ruta. En **Microsoft Fabric**, OneLake proporciona un almacenamiento unificado construido sobre ADLS Gen2; los elementos Lakehouse organizan archivos y tablas, mientras que Spark, los puntos de conexión SQL y Power BI trabajan sobre esa base. Fabric utiliza Delta como formato abierto de tabla y busca reducir copias entre ingeniería, almacenes y BI. Véanse la [descripción oficial de Microsoft Fabric](https://learn.microsoft.com/en-us/fabric/fundamentals/microsoft-fabric-overview) y su [arquitectura de Data Warehouse sobre OneLake](https://learn.microsoft.com/en-us/fabric/data-warehouse/architecture).
+Una ruta de implementación es:
 
-Otra alternativa es **Azure Databricks**, donde Delta Lake aporta transacciones y control de esquema, Unity Catalog centraliza gobierno, Spark procesa ingeniería y ciencia de datos, y Databricks SQL atiende cargas analíticas. Microsoft define explícitamente este patrón como una combinación de las ventajas del lago y el almacén. Véase [¿Qué es un Data Lakehouse? en Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/).
+1. definir cuentas, regiones, buckets, cifrado, retención y límites de red;
+2. registrar ubicaciones y tablas en Glue Data Catalog;
+3. aplicar Lake Formation e IAM con separación entre administración, escritura y consumo;
+4. crear tablas Iceberg y seleccionar motores compatibles por operación;
+5. probar *compaction*, snapshots, limpieza y evolución de esquema;
+6. publicar productos de datos y observar frescura, uso y costo.
 
-## Cómo leer estas equivalencias
+AWS ofrece un [recorrido inicial](https://docs.aws.amazon.com/sagemaker-lakehouse-architecture/latest/userguide/lakehouse-get-started.html) para crear proyecto, explorar, cargar, consultar y publicar datos. Su [guía prescriptiva de Iceberg](https://docs.aws.amazon.com/prescriptive-guidance/latest/apache-iceberg-on-aws/introduction.html) cubre servicios compatibles y prácticas para costo, rendimiento y operación a escala.
 
-No existe una traducción perfecta de un servicio a otro. BigQuery, Redshift, Athena, Fabric Warehouse y Databricks SQL no ocupan exactamente el mismo lugar ni tienen el mismo modelo operativo. Una comparación útil debe comenzar por las capacidades que necesita la organización:
+## Azure y Microsoft Fabric: OneLake, Delta y Medallion
 
-- ¿Dónde estarán físicamente los datos y quién controlará ese almacenamiento?
-- ¿Qué formato de tabla permitirá transacciones e interoperabilidad?
-- ¿Qué catálogo será la autoridad para esquemas, permisos y linaje?
-- ¿Qué motores atenderán SQL, streaming, ingeniería e IA?
-- ¿Cómo se controlarán costos, calidad, observabilidad y recuperación?
+Microsoft ofrece al menos dos rutas frecuentes. **Fabric Lakehouse** usa OneLake, tablas Delta, Spark, un endpoint SQL y Power BI. **Azure Databricks** combina ADLS Gen2, Delta Lake, Unity Catalog, Spark y Databricks SQL. La elección depende de integración, gobierno, habilidades y modelo operativo.
 
-# Ejemplo práctico: comercio digital
+Para Fabric, una ruta de implementación es:
 
-Supongamos que una empresa de comercio electrónico conserva transacciones en una base relacional, eventos de navegación en archivos JSON, imágenes de productos en almacenamiento de objetos y conversaciones de soporte en texto. El área financiera necesita ventas certificadas; marketing requiere sesiones casi en tiempo real; el equipo de ciencia de datos entrena modelos de recomendación.
+1. decidir dominios, workspaces y fronteras de seguridad;
+2. crear el Lakehouse y diseñar Bronze, Silver y Gold por calidad y propietario;
+3. ingerir o enlazar datos, conservando el original cuando sea necesario;
+4. publicar Silver y Gold como tablas Delta;
+5. conectar Spark, endpoint SQL y Power BI según la carga;
+6. automatizar pruebas, mantenimiento, `OPTIMIZE`, retención y observabilidad.
 
-En una arquitectura separada, cada equipo construiría copias y pipelines propios. En un Lakehouse, los eventos aterrizan en Bronze; las identidades de cliente, producto y sesión se validan en Silver; las métricas de venta, conversión y abandono se publican en Gold. BI consulta las tablas Gold, mientras que los modelos pueden combinar entidades Silver con datos no estructurados autorizados. Todos parten del mismo catálogo y de políticas comunes.
+La [guía de Medallion en OneLake](https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture) explica modelos de despliegue, formatos, tamaño de archivos, retención y acceso. El [tutorial de extremo a extremo](https://learn.microsoft.com/en-us/fabric/data-engineering/tutorial-lakehouse-introduction) cubre workspace, ingesta, transformación, Delta, endpoint SQL y consumo. Para una ruta empresarial con Data Factory y Azure Databricks, Microsoft organiza el [diseño desde una base inicial hasta endurecimiento y misión crítica](https://learn.microsoft.com/en-us/azure/architecture/databases/architecture/azure-data-factory-on-azure-landing-zones-index).
+
+::: {.callout-warning title="No confundas una demostración con una arquitectura de producción"}
+Un tutorial valida el flujo funcional. Producción exige además identidad, red, cifrado, continuidad, RPO/RTO, segregación de entornos, CI/CD, contratos, observabilidad, presupuestos, soporte y responsables.
+:::
+
+# El trabajo que no desaparece
+
+## El impuesto de los archivos pequeños
+
+El *streaming* puede crear muchos archivos válidos y pequeños. El motor debe enumerarlos, abrirlos y planificarlos. La compactación reescribe el mismo contenido en menos archivos y publica el reemplazo mediante un nuevo snapshot.
 
 ```{=html}
-<div class="lh-visual" role="img" aria-label="Ejemplo de una empresa digital que utiliza un Lakehouse para varias cargas de trabajo">
-  <div class="lh-grid" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));align-items:stretch;">
-    <div class="lh-card" style="border-top:5px solid var(--lh-cyan);">
-      <div style="font-size:1.8rem;" aria-hidden="true">🛒 📱 💬</div>
-      <div class="lh-title">Eventos diversos</div>
-      <div class="lh-small">Compras, clics, catálogo, imágenes y conversaciones.</div>
+<div class="lh-diagram" role="img" aria-label="Muchos archivos pequeños producidos por streaming se compactan en cuatro archivos grandes. El resultado reduce aperturas y mejora lectura, pero requiere una tarea operativa recurrente.">
+  <div class="lh-grid lh-grid-3" style="align-items:center;">
+    <div class="lh-node" data-kind="risk">
+      <div class="lh-title">Antes: streaming</div>
+      <div class="lh-mini-files" aria-hidden="true">
+        <span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span>
+        <span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span><span class="lh-mini-file"></span>
+      </div>
+      <div class="lh-meta-text">Muchos archivos de 1–5 MB: más metadatos y aperturas.</div>
     </div>
-    <div class="lh-card" style="border-top:5px solid var(--lh-purple);">
-      <div style="font-size:1.8rem;" aria-hidden="true">🏡</div>
-      <div class="lh-title">Lakehouse gobernado</div>
-      <div class="lh-small">Bronze conserva; Silver integra; Gold publica métricas y productos de datos.</div>
-    </div>
-    <div class="lh-card" style="border-top:5px solid var(--lh-green);">
-      <div style="font-size:1.8rem;" aria-hidden="true">📊 🧠 ⚡</div>
-      <div class="lh-title">Múltiples decisiones</div>
-      <div class="lh-small">Cierre financiero, tableros, recomendaciones y detección de anomalías.</div>
+    <div class="lh-node" data-kind="meta"><i class="bi bi-gear" aria-hidden="true"></i><div class="lh-title">Compactar</div><div class="lh-meta-text">Leer, reescribir y publicar un nuevo snapshot.</div></div>
+    <div class="lh-node" data-kind="consume">
+      <div class="lh-title">Después: lectura</div>
+      <div class="lh-large-files" aria-hidden="true"><span class="lh-large-file"></span><span class="lh-large-file"></span><span class="lh-large-file"></span><span class="lh-large-file"></span></div>
+      <div class="lh-meta-text">Menos archivos de tamaño objetivo: menos overhead.</div>
     </div>
   </div>
-  <div class="lh-caption">Un mismo fundamento de datos puede servir productos diferentes sin imponer el mismo modelo de consumo a todos.</div>
+  <div class="lh-band">También: expirar snapshots según retención · limpiar huérfanos · actualizar estadísticas · revisar partición y clustering</div>
+  <p class="lh-caption">El Lakehouse desacopla almacenamiento y cómputo, pero no desacopla al equipo de la física de los archivos.</p>
 </div>
 ```
 
-# Beneficios, límites y decisiones de diseño
+## Una fuente compartida comparte el radio de impacto
 
-El Lakehouse puede disminuir duplicaciones y simplificar la arquitectura, pero no elimina el trabajo de ingeniería. Para obtener valor deben diseñarse contratos de datos, pruebas de calidad, políticas de acceso, mantenimiento de archivos, optimización de tablas, observabilidad y administración de costos.
+```{=html}
+<div class="lh-diagram" role="img" aria-label="La tabla Silver transactions v18 alimenta cierre financiero, fraude y ML. Un cambio incompatible en amount puede afectar a los tres. Contratos, pruebas, transición, despliegue por etapas, linaje y rollback reducen el impacto.">
+  <div class="lh-node" data-kind="meta" style="max-width:560px;margin:0 auto;text-align:center;">
+    <i class="bi bi-table" aria-hidden="true"></i>
+    <div class="lh-title">Silver: transactions v18</div>
+    <div class="lh-meta-text">Contrato compartido por tres consumidores.</div>
+  </div>
+  <div class="lh-grid lh-grid-3" style="margin-top:.75rem;">
+    <div class="lh-node" data-kind="consume"><strong>Cierre financiero</strong></div>
+    <div class="lh-node" data-kind="consume"><strong>Features de fraude</strong></div>
+    <div class="lh-node" data-kind="consume"><strong>Entrenamiento ML</strong></div>
+  </div>
+  <div class="lh-risk-band"><strong>Cambio rompiente:</strong> <code>amount</code> cambia de moneda o significado sin una versión compatible.</div>
+  <div class="lh-grid lh-grid-auto">
+    <div class="lh-step" data-kind="meta">contrato y propietario</div>
+    <div class="lh-step" data-kind="meta">pruebas de esquema y calidad</div>
+    <div class="lh-step" data-kind="meta">vista o versión de transición</div>
+    <div class="lh-step" data-kind="meta">despliegue por etapas</div>
+    <div class="lh-step" data-kind="meta">linaje, observabilidad y rollback</div>
+  </div>
+  <p class="lh-caption">Eliminar copias reduce inconsistencias, pero concentra dependencias y exige disciplina de producto de datos.</p>
+</div>
+```
 
-Entre sus beneficios potenciales destacan:
+### Responsabilidades operativas
 
-- Una fuente compartida para BI, ciencia de datos, streaming e IA.
-- Menor movimiento de datos entre repositorios analíticos.
-- Escalamiento independiente de almacenamiento y cómputo.
-- Uso de formatos abiertos y posibilidad de combinar motores.
-- Historia, auditoría y recuperación mediante versiones de tablas.
+- compactación y dimensionamiento de archivos;
+- retención de snapshots y limpieza de archivos huérfanos;
+- calidad, contratos y evolución compatible;
+- permisos, auditoría y prevención de accesos directos no gobernados;
+- observabilidad de latencia, frescura, costo y fallas;
+- pruebas reales de interoperabilidad para cada formato y motor;
+- presupuestos, cuotas y apagado o escalamiento del cómputo;
+- continuidad: *time travel* es útil, pero no sustituye por sí solo respaldos, aislamiento y recuperación.
 
-También presenta retos:
+# Decidir, no evangelizar
 
-- La interoperabilidad real depende de qué partes del formato soporta cada motor.
-- Muchos archivos pequeños, particiones deficientes o estadísticas incompletas degradan las consultas.
-- Un catálogo sin responsables ni políticas no resuelve por sí mismo el gobierno.
-- El consumo elástico puede elevar costos si no existen presupuestos, cuotas y observabilidad.
-- Una capa Gold mal diseñada puede reproducir los mismos silos que se buscaba eliminar.
+::: {.table-responsive}
 
-# Conclusión
+| Criterio | Warehouse administrado | Lake + Warehouse separados | Lakehouse |
+|---|---|---|---|
+| Datos dominantes | Relacionales y preparados | Crudos diversos con usos separados | Diversos y compartidos entre BI, ML y streaming |
+| Prioridad | Rapidez de adopción y SQL | Aislar economías o equipos | Reducir copias con contratos comunes |
+| Cómputo | Principalmente SQL/BI | Motores y autoridades separadas | Motores distintos sobre tablas compartidas |
+| Operación | Menor carga para un equipo pequeño | Coordinación y sincronización dobles | Metadatos, compactación y gobierno rigurosos |
+| Señal económica | El servicio administrado sigue alineado | La separación tiene fronteras claras | Movimiento, copias o almacenamiento propietario dominan el costo |
+| Riesgo principal | Rigidez o costo al crecer | Dos verdades y latencia | Complejidad y radio de impacto compartido |
 
-El Data Lakehouse representa una concepción moderna de la plataforma analítica: toma al Data Lake como fundamento flexible y le añade las garantías que hicieron valioso al Data Warehouse. Su propósito no es declarar obsoletos los almacenes ni convertir todos los datos en una única tabla, sino reducir fronteras artificiales entre almacenamiento, análisis e inteligencia artificial.
+:::
 
-Google Cloud, AWS y Microsoft materializan esta idea con combinaciones distintas de almacenamiento de objetos, formatos de tabla, catálogos, motores SQL, Spark y herramientas de gobierno. Las marcas y servicios evolucionan; los principios permanecen. Un Lakehouse bien diseñado debe conservar datos diversos, administrarlos como tablas confiables, permitir motores especializados y publicar productos de datos comprensibles para el negocio.
+Para la *fintech*:
 
-La pregunta arquitectónica final no es «¿qué herramienta compraremos?», sino «¿cómo lograremos que distintos equipos utilicen datos abiertos, gobernados y consistentes sin multiplicar copias ni definiciones?».
+- **Años 0–3:** Warehouse administrado; datos relacionales, objetivo de reporting y equipo pequeño.
+- **Año 5:** Lakehouse; BI, ML y fraude reutilizan datos diversos a escala, y el movimiento ya domina parte del costo.
+- **Otra empresa:** puede seguir en Warehouse o usar una arquitectura híbrida. No hay ganador universal.
+
+Usa esta forma de argumento:
+
+> Elegimos ___ porque ___ y ___; aceptamos el costo o riesgo de ___.
+
+Ejemplo inicial: «Elegimos un Warehouse administrado porque los datos son relacionales y necesitamos reporting rápido; aceptamos menor flexibilidad futura a cambio de una operación sencilla».
+
+Ejemplo a escala: «Elegimos Lakehouse porque BI, ML y fraude necesitan reutilizar datos diversos y el movimiento de terabytes domina el costo; aceptamos operar compactación, contratos y gobierno con un equipo especializado».
+
+## Preguntas frecuentes y errores de recuperación
+
+### ¿Un bucket es una carpeta gigante?
+
+Es una aproximación inicial útil, pero incompleta. El bucket contiene objetos identificados por keys. Los prefijos pueden mostrarse como carpetas aunque el modelo base no sea un sistema de archivos tradicional.
+
+### ¿Puedo hacer SQL directamente sobre un bucket?
+
+El bucket no ejecuta SQL. Athena, BigQuery, Trino, Spark u otro motor puede leer archivos. Para tratarlos como tablas confiables necesita esquema, lista vigente de archivos, formato de tabla y catálogo.
+
+### ¿S3 es un Data Lake?
+
+S3 suele ser su base física. El Data Lake incluye también ingesta, organización, seguridad, catálogo, cómputo y operación.
+
+### ¿Entonces el Data Warehouse ya no sirve?
+
+No. En la fase inicial fue la opción más eficiente y puede seguir atendiendo productos Gold o cargas de BI. La transición se evalúa cuando el beneficio de compartir datos diversos supera la carga operativa.
+
+### ¿Guardar Parquet en S3 ya crea un Lakehouse?
+
+No. Resuelve almacenamiento y formato de archivo. Faltan commits consistentes, formato de tabla, catálogo, permisos, calidad, mantenimiento y motores compatibles.
+
+### ¿Iceberg, Delta Lake y Hudi son bases de datos?
+
+Son formatos o protocolos de tabla. Un catálogo y motores completan la experiencia; una plataforma puede empaquetarlos como servicio.
+
+### ¿El catálogo guarda todos los datos?
+
+Normalmente guarda o resuelve metadatos: nombres, ubicaciones, esquemas, propietarios, políticas y punteros. Los archivos permanecen en almacenamiento de objetos.
+
+### ¿La fuente única de verdad es una sola tabla?
+
+No. Significa autoridades y contratos coherentes. Bronze, Silver y Gold pueden coexistir, con productos adecuados a distintas decisiones.
+
+### ¿Formato abierto significa compatibilidad perfecta?
+
+No. Deben probarse operaciones, versión del formato, extensiones, escrituras concurrentes, evolución de esquema y mantenimiento en cada motor.
+
+### ¿Separar cómputo siempre abarata?
+
+No. Permite escalar por carga, pero consultas ineficientes, recursos permanentes o falta de límites pueden elevar el gasto.
+
+### ¿Time travel sustituye los respaldos?
+
+No necesariamente. Depende de retención, eliminación de objetos, aislamiento de cuentas y requisitos de recuperación. Es versionado útil, no una estrategia completa de continuidad.
+
+## Exit ticket
+
+Completa sin consultar el capítulo:
+
+1. Un bucket con Parquet no es todavía una tabla porque...
+2. El catálogo sirve para..., mientras el formato de tabla sirve para...
+3. La migración de la *fintech* se justifica cuando..., pero obliga a...
+
+<details>
+<summary>Respuestas mínimas esperadas</summary>
+
+1. Falta una lista versionada y transaccional que determine qué archivos forman la tabla.
+2. El catálogo permite encontrar y gobernar; el formato coordina snapshots, esquema y commits.
+3. Varias cargas comparten datos diversos a escala y las copias o costos se vuelven dominantes; a cambio se operan mantenimiento, gobierno y contratos.
+
+</details>
+
+### Criterio de logro
+
+El objetivo se alcanza si puedes reconstruir la cadena `silos → objetos → snapshots → catálogo/gobierno → motores especializados → operación → decisión` y, además, explicar por qué el Warehouse fue correcto en la fase inicial y por qué el Lakehouse sólo se volvió razonable al cambiar los requisitos.
+
+# Cheatsheet
+
+## Modelo mental en una página
+
+::: {.table-responsive}
+
+| Si ves o escuchas... | Piensa en... | Pregunta de verificación |
+|---|---|---|
+| `s3://`, `gs://`, ADLS, OneLake | Almacenamiento de objetos | ¿Dónde viven los bytes y quién controla la ubicación? |
+| Parquet u ORC | Formato de archivo | ¿Cómo se organizan columnas dentro de cada archivo? |
+| Iceberg, Delta o Hudi | Formato de tabla | ¿Cómo se publican commits, snapshots y evolución de esquema? |
+| Glue, Lakehouse runtime catalog, Unity Catalog, Fabric/Purview | Catálogo y gobierno | ¿Quién resuelve nombres, metadatos, permisos, linaje y propietario? |
+| BigQuery, Athena, Trino, Spark, Redshift, Databricks SQL | Motor de cómputo | ¿Qué procesa y qué operaciones soporta sobre el formato? |
+| Bronze | Evidencia recibida | ¿Puede reconstruirse el proceso y respetarse la retención? |
+| Silver | Entidades validadas | ¿Existe contrato, calidad, deduplicación y responsable? |
+| Gold | Producto de datos | ¿Qué decisión, granularidad y definición de negocio sirve? |
+| Muchos archivos pequeños | Deuda operativa | ¿Quién compacta, actualiza estadísticas y limpia huérfanos? |
+| «Una copia para cada equipo» | Impuesto de coordinación | ¿Pueden compartir tabla, catálogo y política sin compartir motor? |
+
+:::
+
+## Diagnóstico rápido
+
+**Todavía es un Data Lake consultable** si hay objetos, Parquet, catálogo básico y motor, pero no existe un protocolo transaccional que publique versiones confiables de tabla.
+
+**Hay un Lakehouse funcional** si los datos tabulares comparten formato de tabla, catálogo, gobierno y motores compatibles, con operación de calidad, mantenimiento y costo.
+
+**Conviene un Warehouse administrado** cuando domina SQL sobre datos preparados, el equipo es pequeño y la simplicidad ofrece más retorno que la flexibilidad adicional.
+
+**Conviene evaluar Lakehouse** cuando BI, ML y streaming necesitan reutilizar datos diversos; las copias, el movimiento o el almacenamiento propietario son el cuello de botella; y existe capacidad para operarlo.
+
+## Lista mínima de implementación
+
+1. Definir decisiones y SLO de frescura, calidad, costo y recuperación.
+2. Elegir almacenamiento, regiones, cifrado, retención y fronteras de red.
+3. Elegir formato de tabla y probar compatibilidad real con cada motor.
+4. Establecer catálogo, identidad, clasificación, permisos, linaje y propietarios.
+5. Diseñar contratos y estados de calidad; Medallion es una opción.
+6. Automatizar pruebas, compactación, estadísticas, retención y limpieza.
+7. Observar frescura, fallas, uso, rendimiento y costo por producto de datos.
+8. Preparar evolución compatible, rollback y continuidad.
+
+La síntesis final es:
+
+```text
+silos y copias
+→ base común en objetos
+→ archivos coordinados por snapshots
+→ catálogo y permisos
+→ motores distintos sobre contratos compartidos
+→ mantenimiento y control del radio de impacto
+→ elección condicionada por el caso
+```
+
+# Bibliografía y guías oficiales de implementación {#bibliografia-lakehouse}
+
+Las referencias siguientes son documentación primaria de los proveedores. Fueron consultadas el 30 de agosto de 2026.
+
+## Google Cloud
+
+- Google Cloud. [*How Lakehouse works*](https://docs.cloud.google.com/lakehouse/docs/lakehouse-basics). Arquitectura de almacenamiento, catálogo, gobierno y motores sobre Apache Iceberg.
+- Google Cloud. [*Quickstart: Use the Iceberg REST catalog with Lakehouse*](https://docs.cloud.google.com/lakehouse/docs/query-iceberg-tables-with-lakehouse). Implementación paso a paso del catálogo, permisos, tablas y consultas.
+- Google Cloud. [*Apache Iceberg managed tables*](https://docs.cloud.google.com/bigquery/docs/biglake-iceberg-tables-in-bigquery). Capacidades y límites de las tablas Iceberg administradas por BigQuery.
+
+## Amazon Web Services
+
+- Amazon Web Services. [*What is the lakehouse architecture of Amazon SageMaker?*](https://docs.aws.amazon.com/sagemaker-lakehouse-architecture/latest/userguide/what-is-smlh.html). Componentes y funcionamiento de la arquitectura administrada.
+- Amazon Web Services. [*Getting started with the lakehouse architecture of Amazon SageMaker*](https://docs.aws.amazon.com/sagemaker-lakehouse-architecture/latest/userguide/lakehouse-get-started.html). Recorrido inicial para proyecto, datos, consultas y publicación.
+- Garcia Garcia, D. y Sandona, S. [*Using Apache Iceberg on AWS*](https://docs.aws.amazon.com/prescriptive-guidance/latest/apache-iceberg-on-aws/introduction.html). AWS Prescriptive Guidance para servicios compatibles, costo, desempeño y operación.
+
+## Microsoft Azure y Fabric
+
+- Microsoft. [*Understand medallion architecture for Fabric with OneLake*](https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture). Diseño de capas, despliegue, Delta, archivos y mantenimiento.
+- Microsoft. [*Lakehouse end-to-end scenario: overview and architecture*](https://learn.microsoft.com/en-us/fabric/data-engineering/tutorial-lakehouse-introduction). Implementación de ingesta, transformación, endpoint SQL y consumo.
+- Microsoft. [*Design a medallion lakehouse with Azure Data Factory*](https://learn.microsoft.com/en-us/azure/architecture/databases/architecture/azure-data-factory-on-azure-landing-zones-index). Ruta desde la implementación base hasta endurecimiento empresarial y misión crítica.
