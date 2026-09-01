@@ -2,10 +2,10 @@
 set -e
 
 echo "=== Building English site ==="
-quarto render en
+quarto render en --execute
 
 echo "=== Building Spanish site ==="
-quarto render --no-clean
+quarto render --execute --no-clean
 
 echo "=== Build complete! ==="
 echo "Spanish site: docs/index.html"
