@@ -32,237 +32,391 @@ crossref:
 
 ## Introducción
 
-La heterogeneidad pregunta si una población se comporta como una sola unidad o contiene subpoblaciones con composiciones o distribuciones distintas. Conviene separar dos problemas: la diversidad de una variable categórica y las diferencias de una variable numérica entre grupos.
+La heterogeneidad pregunta si una población se comporta como una sola unidad o contiene subpoblaciones con composiciones o distribuciones distintas. En la práctica de minería de datos y análisis exploratorio, resulta esencial separar dos problemas conceptualmente distintos:
+
+1. **La diversidad de una variable categórica**: qué tan dispersa o concentrada se reparte la masa de frecuencias entre $K$ categorías posibles.
+2. **Las diferencias de una variable numérica entre grupos**: en qué medida la pertenencia a una subpoblación explica la variabilidad total de una variable respuesta.
 
 ::: {.callout-note appearance="minimal"}
-**Definición.** Hay heterogeneidad cuando la masa se reparte entre diversas categorías o cuando la distribución de una respuesta cambia de forma sistemática entre subgrupos.
+**Definición.** Hay heterogeneidad categórica cuando las probabilidades se reparten entre múltiples clases sin dominancia absoluta, y hay heterogeneidad grupal cuando la distribución de una variable respuesta (centro, dispersión o forma) cambia de manera sistemática entre subgrupos.
 :::
 
 ## Diversidad categórica
 
-Sea $p=(p_1,\ldots,p_K)$ la distribución de proporciones de $K$ categorías.
+Sea $p = (p_1, \ldots, p_K)$ la distribución de proporciones o probabilidades sobre $K$ categorías mutuamente excluyentes y exhaustivas, con $p_k \ge 0$ y $\sum_{k=1}^K p_k = 1$.
+
+Para cuantificar qué tan equilibrada o concentrada es esta masa, recurrimos a dos pilares matemáticos: la teoría de la información de Shannon y la probabilidad geométrica de Simpson.
 
 ### Entropía de Shannon
 
-$$
-H(p)=-\sum_{k=1}^{K}p_k\log(p_k). \tag{1}
-$$
-
-La entropía es cero si una categoría contiene toda la masa y alcanza $\log K$ bajo uniformidad. Para comparar variables con distinto número de niveles puede usarse
+Propuesta originalmente por Claude Shannon en su teoría matemática de la comunicación [@shannon1948mathematical], la entropía cuantifica el nivel promedio de incertidumbre o sorpresa inherente a una distribución:
 
 $$
-H_{\mathrm{norm}}=\frac{H(p)}{\log K}. \tag{2}
+H(p) = -\sum_{k=1}^{K} p_k \log(p_k) = \sum_{k=1}^{K} p_k \cdot [-\log(p_k)]. \tag{1}
 $$
 
-La base del logaritmo cambia la unidad, no el orden de las distribuciones [@shannon1948mathematical].
+El término $I(p_k) = -\log(p_k)$ representa la **información propia** o **sorpresa**. Si un evento es casi seguro ($p_k \to 1$), su ocurrencia no aporta novedad ($I(1) = 0$). En cambio, un evento sumamente improbable ($p_k \to 0$) posee una sorpresa teóricamente infinita ($I(p_k) \to \infty$). La entropía es el valor esperado de la sorpresa: $H(p) = \mathbb{E}_p[I(p)]$.
 
-### Índice de Gini–Simpson
+#### Unidades y normalización
+
+La base del logaritmo define la unidad de medida:
+
+- **Base $e$ ($\ln$)**: nats (estándar en cálculo diferencial y física).
+- **Base 2 ($\log_2$)**: bits o shannons (estándar en computación y compresión de datos).
+- **Base 10 ($\log_{10}$)**: hartleys o bans.
+
+Para comparar variables con diferente número de clases $K$, se normaliza dividiendo entre la entropía máxima teórica, alcanzada bajo uniformidad ($p_k = 1/K$):
 
 $$
-D(p)=1-\sum_{k=1}^{K}p_k^2. \tag{3}
+H_{\mathrm{norm}} = \frac{H(p)}{\ln K} \in [0, 1]. \tag{2}
 $$
 
-$D$ es la probabilidad de que dos observaciones extraídas independientemente pertenezcan a categorías diferentes [@simpson1949measurement].
+#### Análisis analítico: límite continuo y el punto crítico $1/e$
+
+Cada clase contribuye a la entropía mediante la función $f(p) = -p \ln p$. Dos propiedades matemáticas explican su comportamiento:
+
+1. **Continuidad en el origen ($\lim_{p \to 0^+} f(p) = 0$)**: Cuando una categoría es imposible ($p \to 0^+$), su sorpresa $-\ln p \to \infty$, pero su frecuencia es nula. Por la regla de L'Hôpital:
+   $$
+   \lim_{p \to 0^+} -p \ln p = \lim_{p \to 0^+} \frac{-\ln p}{1/p} = \lim_{p \to 0^+} \frac{-1/p}{-1/p^2} = \lim_{p \to 0^+} p = 0.
+   $$
+   Esto justifica rigurosamente la convención estándar en teoría de la información: $0 \ln 0 := 0$. Las clases vacías no añaden incertidumbre.
+2. **Máximo marginal en $p = 1/e \approx 0.3679$**: Derivando $f(p)$:
+   $$
+   f'(p) = \frac{d}{dp}(-p \ln p) = -\ln p - 1.
+   $$
+   Igualando a cero:
+   $$
+   -\ln p - 1 = 0 \iff \ln p = -1 \iff p = e^{-1} = \frac{1}{e} \approx 0.3679.
+   $$
+   Como $f''(p) = -1/p < 0$, existe un máximo estricto en $p = 1/e$. Una categoría con cerca del 36.8% de probabilidad aporta la máxima incertidumbre marginal individual ($1/e \approx 0.3679\text{ nats}$). Por encima de este valor, la predictibilidad disminuye la sorpresa; por debajo, la rareza mitiga su peso en el promedio.
+
+```{python}
+#| code-fold: true
+#| fig-cap: "Curva analítica de contribución individual a la entropía f(p) = -p ln(p), con su máximo crítico en p = 1/e."
+import numpy as np
+import plotly.graph_objects as go
+
+p_grid = np.linspace(1e-4, 0.9999, 400)
+f_vals = -p_grid * np.log(p_grid)
+
+fig_shannon = go.Figure()
+fig_shannon.add_trace(go.Scatter(
+    x=p_grid, y=f_vals, mode='lines',
+    line=dict(color='#2563eb', width=3),
+    name='f(p) = -p ln(p)',
+    hovertemplate='p: %{x:.4f}<br>Aporte: %{y:.4f} nats<extra></extra>'
+))
+fig_shannon.add_trace(go.Scatter(
+    x=[1/np.e], y=[1/np.e], mode='markers+text',
+    marker=dict(color='#dc2626', size=11, symbol='diamond'),
+    text=['Máximo: (1/e, 1/e) ≈ (0.368, 0.368)'],
+    textposition='top right',
+    name='Punto crítico p = 1/e'
+))
+fig_shannon.add_trace(go.Scatter(
+    x=[0], y=[0], mode='markers+text',
+    marker=dict(color='#059669', size=9, symbol='circle'),
+    text=['Límite 0 ln 0 := 0'],
+    textposition='bottom right',
+    name='Límite en 0'
+))
+fig_shannon.update_layout(
+    title='Contribución marginal individual a la entropía de Shannon',
+    xaxis_title='Probabilidad de la categoría (p)',
+    yaxis_title='Contribución individual (nats)',
+    template='plotly_white',
+    hovermode='closest',
+    margin=dict(l=40, r=40, t=50, b=40),
+    height=380
+)
+fig_shannon.show()
+```
+
+### Índice de Gini–Simpson y la geometría del cuadrado unitario
+
+El índice de diversidad de Gini–Simpson [@simpson1949measurement] se define como:
+
+$$
+D(p) = 1 - \sum_{k=1}^{K} p_k^2. \tag{3}
+$$
+
+$D$ representa la **probabilidad de que dos observaciones extraídas independientemente y con reemplazo pertenezcan a categorías distintas**.
+
+#### Geometría de áreas en el cuadrado unitario $[0, 1] \times [0, 1]$
+
+Visualicemos el espacio muestral conjunto de dos extracciones independientes $(X_1, X_2)$ como un cuadrado unitario bidimensional de dimensiones $1 \times 1$:
+
+$$
+\text{Área total} = \left(\sum_{k=1}^K p_k\right) \times \left(\sum_{j=1}^K p_j\right) = 1 \times 1 = 1.
+$$
+
+Dentro del cuadrado, el espacio se divide en dos regiones de área complementaria:
+
+1. **La diagonal de coincidencia (Homogeneidad)**: A lo largo de la diagonal principal se alinean $K$ bloques cuadrados donde ambas extracciones coinciden en la misma categoría ($X_1 = X_2 = k$). Cada bloque tiene base $p_k$ y altura $p_k$, con área $p_k^2$. La suma de las áreas de estos bloques representa la probabilidad de coincidencia o concentración:
+   $$
+   \text{Área diagonal (coincidencia)} = \sum_{k=1}^K p_k^2.
+   $$
+2. **El área complementaria fuera de la diagonal (Heterogeneidad $D$)**: Todo el espacio restante está formado por rectángulos $p_j \times p_k$ con $j \neq k$, donde las dos extracciones pertenecen a etiquetas diferentes ($X_1 \neq X_2$). El área de esta región es exactamente:
+   $$
+   D(p) = 1 - \sum_{k=1}^K p_k^2 = \sum_{j \neq k} p_j p_k.
+   $$
+
+#### Dinámica geométrica en los extremos
+
+- **Monopolio absoluto ($p_1 = 1, p_{k>1} = 0$)**: Un único bloque de $1 \times 1$ llena todo el cuadrado unitario. No queda superficie fuera de la diagonal principal: $D = 0$.
+- **Equiprobabilidad perfecta ($p_k = 1/K$)**: La diagonal se compone de $K$ pequeños cuadrados idénticos de lado $1/K$ y área $1/K^2$. El área diagonal acumulada es $K \cdot (1/K^2) = 1/K$. Por ende, el área de heterogeneidad complementaria alcanza su cota superior:
+  $$
+  D_{\max} = 1 - \frac{1}{K}.
+  $$
 
 ::: {.callout-warning appearance="minimal"}
-El índice Gini–Simpson de diversidad no es el coeficiente de Gini de desigualdad. Aunque ambos usan el apellido Gini, responden preguntas diferentes y poseen fórmulas distintas.
+**Distinción conceptual crucial.** El índice de Gini–Simpson de diversidad cualitativa no es el **coeficiente de Gini de desigualdad económica** (curva de Lorenz). Aunque ambos honran a Corrado Gini, el coeficiente de Lorenz mide la concentración de una variable numérica acumulada (salarios, riqueza), mientras que Gini–Simpson mide la probabilidad de desacuerdo entre pares de una variable cualitativa categórica.
 :::
 
-## Número efectivo de categorías
+## Familia unificada de números de Hill ($^q D$)
 
-La transformación $\exp(H)$ expresa la entropía como el número de categorías igualmente frecuentes que produciría la misma diversidad. Para Gini–Simpson, el equivalente es $1/\sum p_k^2$. Estas versiones facilitan comparaciones sustantivas.
+Las unidades abstractas de la entropía (nats, bits) o del índice de Gini–Simpson no responden linealmente a cambios reales en la cantidad de clases. Para dotar a estas medidas de un significado cuantitativo directo, Mark Hill [@hill1973diversity] y Lou Jost [@jost2006entropy] unificaron la teoría de la diversidad mediante la **familia paramétrica de números de Hill**:
+
+$$
+^q D = \left( \sum_{k=1}^{K} p_k^q \right)^{\frac{1}{1-q}}, \qquad q \ge 0, \quad q \neq 1. \tag{4}
+$$
+
+El parámetro $q$ funciona como un **selector de sensibilidad a la rareza**:
+
+1. **Orden $q = 0$ (Riqueza observada)**:
+   $$
+   ^0 D = \sum_{k=1}^K p_k^0 = \sum_{k=1}^K 1 = K.
+   $$
+   Es insensible a las proporciones relativas: se limita a contar cuántas clases están presentes.
+2. **Orden $q \to 1$ (Número efectivo de Shannon)**:
+   Tomando el límite continuo formal cuando $q \to 1$:
+   $$
+   ^1 D = \lim_{q \to 1} \ ^q D = \exp\left(-\sum_{k=1}^{K} p_k \ln p_k\right) = e^{H(p)}.
+   $$
+   Pondera cada categoría de manera proporcional a su abundancia. Equivale al **número de categorías equiprobables que produciría la misma entropía observada**.
+3. **Orden $q = 2$ (Inverso de concentración de Simpson)**:
+   $$
+   ^2 D = \left(\sum_{k=1}^K p_k^2\right)^{-1} = \frac{1}{\sum_{k=1}^{K} p_k^2} = \frac{1}{1 - D(p)}.
+   $$
+   Pondera fuertemente a las clases dominantes y descuenta a las minoritarias.
+
+### Principio de orden estricto de Hill
+
+Para cualquier distribución categórica se verifica la jerarquía:
+
+$$
+^0 D \ge \ ^1 D \ge \ ^2 D. \tag{5}
+$$
+
+La igualdad estricta $^0 D = \ ^1 D = \ ^2 D = K$ ocurre **únicamente bajo equiprobabilidad perfecta** ($p_k = 1/K$). Cuanto más asimétrica o concentrada sea una distribución, más se separan los tres valores, revelando la estructura de dominancia en los datos.
 
 ## Heterogeneidad de una respuesta entre grupos
 
-Para una respuesta numérica $Y$ y grupos $g=1,\ldots,G$, la variación total puede descomponerse en componentes dentro y entre grupos:
+Para una respuesta numérica $Y$ y grupos $g = 1, \ldots, G$, la variabilidad total se descompone de forma exacta según el teorema de descomposición de la varianza (ANOVA):
 
 $$
-SS_T=\sum_i(y_i-\bar y)^2=SS_B+SS_W. \tag{4}
+SS_T = \sum_{g=1}^{G} \sum_{i=1}^{n_g} (y_{gi} - \bar{y})^2 = SS_B + SS_W. \tag{6}
 $$
 
-Una medida descriptiva del tamaño de las diferencias es
+### Geometría euclidiana de áreas de los residuos
+
+Cada término cuadrático representa el área de un cuadrado euclidiano:
+
+- **$SS_T$ (Suma de cuadrados total)**: Cada residuo $(y_{gi} - \bar{y})$ forma un cuadrado euclidiano de área $(y_{gi} - \bar{y})^2$. $SS_T$ es la suma de las áreas de estos $N$ cuadrados respecto a la media incondicional $\bar{y}$.
+- **$SS_B$ (Suma de cuadrados entre grupos)**:
+  $$
+  SS_B = \sum_{g=1}^G n_g (\bar{y}_g - \bar{y})^2.
+  $$
+  Representa el área de los cuadrados formados por las desviaciones de los centroides locales $\bar{y}_g$ respecto a la media global $\bar{y}$, multiplicadas por la masa muestral $n_g$ de cada grupo.
+- **$SS_W$ (Suma de cuadrados dentro de grupos / residual)**:
+  $$
+  SS_W = \sum_{g=1}^G \sum_{i=1}^{n_g} (y_{gi} - \bar{y}_g)^2.
+  $$
+  Representa la suma de las áreas de los residuos internos de cada dato respecto a su centroide de grupo.
+
+### Medidas de asociación: Eta cuadrada ($\eta^2$) y Omega cuadrada ($\omega^2$)
+
+El cociente descriptivo de varianza explicada se define como:
 
 $$
-\eta^2=\frac{SS_B}{SS_T}. \tag{5}
+\eta^2 = \frac{SS_B}{SS_T} \in [0, 1]. \tag{7}
 $$
 
-Valores próximos a cero indican que las medias grupales explican poca variación; valores mayores señalan separación entre grupos.
+Valores cercanos a cero indican que las medias grupales explican poca variación; valores mayores señalan separación entre grupos.
 
 ::: {.callout-important appearance="minimal"}
-$\eta^2$ describe separación de medias, pero no reemplaza la inspección de medianas, dispersión, tamaños de grupo y forma. Tampoco establece causalidad.
+**Sesgo de muestra pequeña y precaución causal.**
+$\eta^2$ es puramente descriptivo y presenta sesgo positivo en muestras reducidas. Para corregir este sesgo en validación o inferencia se calcula la **omega cuadrada** insesgada:
+$$
+\omega^2 = \frac{SS_B - (G - 1) MS_W}{SS_T + MS_W}, \qquad \text{donde } MS_W = \frac{SS_W}{N - G}.
+$$
+Asimismo, $\eta^2$ describe separación de medias, pero no reemplaza la inspección de medianas, dispersión, tamaños muestrales y forma. Tampoco establece relación causal.
 :::
 
 ## Cálculo manual paso a paso
 
-### Entropía, Gini–Simpson y categorías efectivas
+### Ejemplo 1: Entropía, Gini–Simpson y familia de números de Hill
 
-Supongamos seis observaciones categóricas:
-
-$$
-(A,A,A,B,C,C).
-$$
-
-::: {.callout-tip appearance="minimal"}
-**Paso 1. Contar cada categoría:**
+Supongamos seis observaciones cualitativas correspondientes a tres categorías posibles ($K = 3$):
 
 $$
-f_A=3,\qquad f_B=1,\qquad f_C=2,\qquad n=6.
-$$
-
-**Paso 2. Convertir conteos a proporciones:**
-
-$$
-p_A=\frac{3}{6}=0.5,\qquad
-p_B=\frac{1}{6}=0.1667,\qquad
-p_C=\frac{2}{6}=0.3333.
-$$
-
-Comprobación:
-
-$$
-0.5+0.1667+0.3333\approx1.
-$$
-
-**Paso 3. Calcular cada término de Shannon usando logaritmo natural:**
-
-$$
-p_A\ln p_A=0.5\ln(0.5)=0.5(-0.6931)=-0.3466,
-$$
-
-$$
-p_B\ln p_B=0.1667\ln(0.1667)=0.1667(-1.7918)=-0.2986,
-$$
-
-$$
-p_C\ln p_C=0.3333\ln(0.3333)=0.3333(-1.0986)=-0.3662.
-$$
-
-**Paso 4. Sumar y cambiar el signo:**
-
-$$
-H=-[-0.3466-0.2986-0.3662]=1.0114.
-$$
-
-**Paso 5. Normalizar entre el máximo $\ln K=\ln3=1.0986$:**
-
-$$
-H_{\mathrm{norm}}=\frac{1.0114}{1.0986}=0.9206.
-$$
-:::
-
-::: {.callout-tip appearance="minimal"}
-Para Gini–Simpson elevamos cada proporción al cuadrado:
-
-$$
-p_A^2=0.5^2=0.25,
-$$
-
-$$
-p_B^2=\left(\frac16\right)^2=\frac1{36}=0.0278,
-$$
-
-$$
-p_C^2=\left(\frac13\right)^2=\frac1{9}=0.1111.
-$$
-
-Sumamos y restamos de uno:
-
-$$
-D=1-(0.25+0.0278+0.1111)=1-0.3889=0.6111.
-$$
-
-El número efectivo basado en Shannon es
-
-$$
-K_{\mathrm{ef}}=e^H=e^{1.0114}=2.75.
-$$
-
-La composición observada equivale, aproximadamente, a 2.75 categorías igualmente frecuentes.
-:::
-
-### Descomposición entre y dentro de grupos
-
-Ahora consideremos una respuesta numérica dividida en tres grupos:
-
-$$
-A=(4,5),\qquad B=(8,9),\qquad C=(5,5).
+(A, A, A, B, C, C).
 $$
 
 ::: {.callout-tip appearance="minimal"}
-**Paso 1. Calcular la media global:**
-
+**Paso 1. Conteo de frecuencias y proporciones:**
 $$
-\bar{y}=\frac{4+5+8+9+5+5}{6}=\frac{36}{6}=6.
+f_A = 3, \qquad f_B = 1, \qquad f_C = 2, \qquad n = 6.
 $$
-
-**Paso 2. Calcular las medias de grupo:**
-
 $$
-\bar{y}_A=\frac{4+5}{2}=4.5,
+p_A = \frac{3}{6} = 0.5000, \qquad p_B = \frac{1}{6} \approx 0.1667, \qquad p_C = \frac{2}{6} \approx 0.3333.
 $$
 
+**Paso 2. Contribución a la entropía de Shannon (en nats):**
 $$
-\bar{y}_B=\frac{8+9}{2}=8.5,
+p_A \ln p_A = 0.5000 \ln(0.5000) = 0.5000 (-0.6931) = -0.3466,
 $$
-
 $$
-\bar{y}_C=\frac{5+5}{2}=5.
+p_B \ln p_B = 0.1667 \ln(0.1667) = 0.1667 (-1.7918) = -0.2986,
 $$
-
-**Paso 3. Calcular la suma de cuadrados total:**
-
 $$
-SS_T=(4-6)^2+(5-6)^2+(8-6)^2+(9-6)^2+(5-6)^2+(5-6)^2,
+p_C \ln p_C = 0.3333 \ln(0.3333) = 0.3333 (-1.0986) = -0.3662.
 $$
 
+Observemos que la categoría $C$ ($p_C = 0.3333$) es la que mayor incertidumbre individual aporta ($-0.3662$), pues es la más cercana al punto crítico óptimo $1/e \approx 0.3679$.
+
+**Paso 3. Entropía total y normalización:**
 $$
-SS_T=4+1+4+9+1+1=20.
+H = -[-0.3466 - 0.2986 - 0.3662] = 1.0114 \text{ nats}.
+$$
+$$
+H_{\mathrm{norm}} = \frac{1.0114}{\ln 3} = \frac{1.0114}{1.0986} = 0.9206 \quad (92.1\% \text{ del máximo teórico}).
 $$
 
-**Paso 4. Calcular la variación entre grupos:**
-
+**Paso 4. Geometría de áreas de Gini–Simpson:**
+Elevamos cada proporción al cuadrado para obtener las áreas de los bloques diagonales de coincidencia:
 $$
-SS_B=2(4.5-6)^2+2(8.5-6)^2+2(5-6)^2,
+p_A^2 = (0.5)^2 = 0.2500, \qquad p_B^2 = \left(\frac{1}{6}\right)^2 = \frac{1}{36} \approx 0.0278, \qquad p_C^2 = \left(\frac{1}{3}\right)^2 = \frac{1}{9} \approx 0.1111.
 $$
-
+La suma de áreas diagonales de coincidencia (homogeneidad) es:
 $$
-SS_B=2(2.25)+2(6.25)+2(1)=4.5+12.5+2=19.
+\sum_{k=1}^3 p_k^2 = 0.2500 + 0.0278 + 0.1111 = 0.3889 \quad \left(\frac{7}{18}\right).
 $$
-
-El factor 2 aparece porque cada grupo contiene dos observaciones.
-
-**Paso 5. Obtener la variación dentro de grupos:**
-
+El área complementaria fuera de la diagonal (heterogeneidad de Gini–Simpson) es:
 $$
-SS_W=SS_T-SS_B=20-19=1.
+D = 1 - \frac{7}{18} = \frac{11}{18} \approx 0.6111.
 $$
 
-Se puede comprobar directamente:
+**Paso 5. Números de Hill y jerarquía de diversidad verdadera:**
+- **Orden 0 (Riqueza observada)**: $^0 D = K = 3.00$.
+- **Orden 1 (Exponencial de Shannon)**: $^1 D = e^{1.0114} = 2.75$.
+- **Orden 2 (Inverso de Simpson)**: $^2 D = \frac{1}{7/18} = \frac{18}{7} \approx 2.57$.
 
+Se verifica de forma exacta el principio de orden de Hill:
 $$
-SS_W=[(4-4.5)^2+(5-4.5)^2]
-+[(8-8.5)^2+(9-8.5)^2]
-+[(5-5)^2+(5-5)^2],
+^0 D (3.00) \ge \ ^1 D (2.75) \ge \ ^2 D (2.57).
 $$
-
-$$
-SS_W=(0.25+0.25)+(0.25+0.25)+(0+0)=1.
-$$
-
-**Paso 6. Calcular eta cuadrada:**
-
-$$
-\eta^2=\frac{SS_B}{SS_T}=\frac{19}{20}=0.95.
-$$
-
-En este ejemplo artificial, 95% de la variación total corresponde a diferencias entre las medias grupales.
+La muestra equivale a una población idealizada de 2.75 categorías igualmente frecuentes bajo Shannon, y a 2.57 bajo el criterio de Simpson.
 :::
 
-::: {.callout-important appearance="minimal"}
-**Del cálculo al programa.** Para diversidad: contar categorías, dividir entre $n$ y acumular $-p_k\log p_k$ y $p_k^2$. Para heterogeneidad grupal: calcular la media global, las medias y tamaños de cada grupo, acumular $SS_T$ y $SS_B$, y obtener $\eta^2=SS_B/SS_T$.
+### Ejemplo 2: Descomposición de varianza euclidiana en ANOVA
+
+Consideremos una respuesta continua $Y$ en tres grupos de tamaño balanceado $n_g = 2$:
+
+$$
+A = (4, 5), \qquad B = (8, 9), \qquad C = (5, 5).
+$$
+
+::: {.callout-tip appearance="minimal"}
+**Paso 1. Medias grupales y media global:**
+$$
+\bar{y} = \frac{4 + 5 + 8 + 9 + 5 + 5}{6} = \frac{36}{6} = 6.0,
+$$
+$$
+\bar{y}_A = \frac{4+5}{2} = 4.5, \qquad \bar{y}_B = \frac{8+9}{2} = 8.5, \qquad \bar{y}_C = \frac{5+5}{2} = 5.0.
+$$
+
+**Paso 2. Suma de áreas cuadráticas total ($SS_T$):**
+$$
+SS_T = (4-6)^2 + (5-6)^2 + (8-6)^2 + (9-6)^2 + (5-6)^2 + (5-6)^2,
+$$
+$$
+SS_T = 4 + 1 + 4 + 9 + 1 + 1 = 20.
+$$
+
+**Paso 3. Variación entre grupos ($SS_B$):**
+$$
+SS_B = 2(4.5 - 6)^2 + 2(8.5 - 6)^2 + 2(5.0 - 6)^2,
+$$
+$$
+SS_B = 2(-1.5)^2 + 2(2.5)^2 + 2(-1.0)^2 = 2(2.25) + 2(6.25) + 2(1.0) = 4.5 + 12.5 + 2.0 = 19.
+$$
+El factor 2 refleja que cada subgrupo contiene $n_g = 2$ datos.
+
+**Paso 4. Variación residual dentro de grupos ($SS_W$):**
+$$
+SS_W = SS_T - SS_B = 20 - 19 = 1.
+$$
+Comprobación directa sumando los cuadrados respecto a sus medias locales:
+$$
+SS_W = [(4-4.5)^2 + (5-4.5)^2] + [(8-8.5)^2 + (9-8.5)^2] + [(5-5)^2 + (5-5)^2]
+$$
+$$
+SS_W = (0.25 + 0.25) + (0.25 + 0.25) + (0 + 0) = 0.5 + 0.5 + 0 = 1.
+$$
+
+**Paso 5. Comparación entre $\eta^2$ y el estimador insesgado $\omega^2$:**
+- Varianza explicada descriptiva:
+  $$
+  \eta^2 = \frac{SS_B}{SS_T} = \frac{19}{20} = 0.9500 \quad (95\%).
+  $$
+- Estimador corregido por tamaño muestral:
+  $$
+  MS_W = \frac{SS_W}{N - G} = \frac{1}{6 - 3} = \frac{1}{3} \approx 0.3333.
+  $$
+  $$
+  \omega^2 = \frac{SS_B - (G - 1) MS_W}{SS_T + MS_W} = \frac{19 - (2)(0.3333)}{20 + 0.3333} = \frac{18.3333}{20.3333} \approx 0.9016 \quad (90.2\%).
+  $$
+En este tamaño muestral pequeño ($N = 6$), $\eta^2$ exhibe un ligero optimismo descriptivo (95% frente al 90.2% insesgado).
 :::
 
-## Diversidad con igual número de categorías
+## Laboratorio interactivo de heterogeneidad
+
+Para consolidar la intuición visual de estas medidas, el siguiente laboratorio interactivo permite manipular en tiempo real el espacio geométrico de probabilidades, la curva de Shannon y la balanza de varianza en ANOVA.
+
+::: {.callout-note appearance="minimal"}
+### Simulador interactivo de la clase
+
+<div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+  <a href="../../lectures/_output/03-eda/03-05-medidas-heterogeneidad-manim/interactivo.html" target="_blank" class="btn btn-outline-primary btn-sm" style="font-size: 0.85rem; border-radius: 6px; padding: 6px 14px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; font-weight: 500;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M5.828 10.172a.5.5 0 0 0 0 .707l4.096 4.096V11.5a.5.5 0 0 1 1 0v4.5a.5.5 0 0 1-.5.5h-4.5a.5.5 0 0 1 0-1h3.475L5.828 10.879a.5.5 0 0 1 0-.707z"/><path fill-rule="evenodd" d="M10.172 5.828a.5.5 0 0 0 0-.707L6.076 1.025V4.5a.5.5 0 0 1-1 0V0a.5.5 0 0 1 .5-.5h4.5a.5.5 0 0 1 0 1H6.601l4.278 4.278a.5.5 0 0 1 0 .707z"/></svg>
+    Abrir laboratorio en pantalla completa / ventana independiente
+  </a>
+</div>
+
+<div style="position: relative; width: 100%; height: 750px; border: 1px solid #d1d5db; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,0.08); background: #ffffff;">
+  <iframe src="../../lectures/_output/03-eda/03-05-medidas-heterogeneidad-manim/interactivo.html" width="100%" height="100%" style="border: none;" title="Laboratorio interactivo de medidas de heterogeneidad"></iframe>
+</div>
+:::
+
+El laboratorio interactivo incluye tres herramientas didácticas:
+
+1. **Módulo 1: Espacio de probabilidades de Gini–Simpson**: Deslice los controles de probabilidad para observar cómo la diagonal de coincidencia ($\sum p_k^2$) y el área complementaria de heterogeneidad ($D$) se transforman visualmente dentro del cuadrado unitario $[0, 1] \times [0, 1]$.
+2. **Módulo 2: Curva de sorpresa y entropía de Shannon**: Explore la función analítica $f(p) = -p\ln p$, el máximo en $p = 1/e \approx 0.368$ y la acumulación de bits, nats y categorías efectivas $^1 D = \exp(H)$.
+3. **Módulo 3: Balanza euclidiana de varianza (ANOVA)**: Mueva las observaciones numéricas de tres subgrupos a lo largo de una recta para visualizar la recomposición continua de las áreas cuadráticas $SS_T = SS_B + SS_W$ y la fluctuación de $\eta^2$.
+
+## Puentes con algoritmos de minería de datos
+
+Las medidas de heterogeneidad constituyen el núcleo algorítmico de los métodos fundamentales de minería de datos y aprendizaje automático:
+
+| Algoritmo | Medida de heterogeneidad | Función objetivo y mecanismo |
+|---|---|---|
+| **Árboles CART** | **Impureza de Gini** ($D(p)$) | En cada nodo $t$, calcula la impureza $I_G(t) = 1 - \sum p_k^2$. Selecciona la partición que maximice la reducción de impureza: $\Delta I_G = I_G(padre) - \sum \frac{N_j}{N} I_G(hijo_j)$. |
+| **Árboles ID3 / C4.5** | **Entropía de Shannon** ($H(p)$) | ID3 evalúa la Ganancia de Información: $IG = H(padre) - \sum \frac{N_j}{N} H(hijo_j)$. C4.5 normaliza por la entropía intrínseca del corte (*Gain Ratio* $= IG / SplitInfo$) para penalizar particiones con demasiadas ramas artificiales. |
+| **Clustering $k$-means** | **Inercia residual $SS_W$** | Minimiza la suma de cuadrados intra-cluster: $\sum \sum \|y_{gi} - \bar{y}_g\|^2 = SS_W$. Como $SS_T$ es constante para un dataset dado, minimizar $SS_W$ equivale exactamente a maximizar la separación inter-cluster $SS_B$. |
+| **Índice Calinski–Harabasz** | **Estadístico $F$ de ANOVA** | Criterio de validación de agrupamiento: $CH = \frac{SS_B / (k - 1)}{SS_W / (n - k)}$. Un $CH$ más alto indica clusters compactos y bien separados entre sí. |
+
+## Comparación empírica: escenarios con igual número de categorías
 
 ```{python}
 import numpy as np
@@ -274,77 +428,139 @@ escenarios = {
     "Intermedio": [0.50, 0.25, 0.15, 0.10],
     "Uniforme": [0.25, 0.25, 0.25, 0.25]
 }
+
 filas = []
 for nombre, probs in escenarios.items():
-    for categoria, p in zip(list("ABCD"), probs):
-        filas.append({"Escenario": nombre, "Categoría": categoria, "Proporción": p})
-div = pd.DataFrame(filas)
-fig = px.bar(div, x="Categoría", y="Proporción", color="Categoría",
-             animation_frame="Escenario", range_y=[0, 1],
-             title="Animación: de dominancia a diversidad categórica")
-fig.update_layout(showlegend=False)
-fig.show()
+    for cat, p in zip(list("ABCD"), probs):
+        filas.append({"Escenario": nombre, "Categoría": cat, "Proporción": p})
+
+div_df = pd.DataFrame(filas)
+fig_bar = px.bar(
+    div_df, x="Categoría", y="Proporción", color="Categoría",
+    animation_frame="Escenario", range_y=[0, 1],
+    title="Transición de dominancia a uniformidad categórica (K = 4)"
+)
+fig_bar.update_layout(showlegend=False, template="plotly_white")
+fig_bar.show()
 ```
+
+Calculamos el espectro completo de métricas de heterogeneidad y números de Hill para los tres escenarios:
 
 ```{python}
 resumen = []
 for nombre, probs in escenarios.items():
     p = np.asarray(probs)
-    h = -(p[p>0]*np.log(p[p>0])).sum()
-    resumen.append({"Escenario": nombre, "Entropía normalizada": h/np.log(len(p)),
-                    "Gini–Simpson": 1-(p**2).sum(), "Categorías efectivas": np.exp(h)})
-pd.DataFrame(resumen).round(3)
+    h = -(p[p > 0] * np.log(p[p > 0])).sum()
+    sum_p2 = (p ** 2).sum()
+    d = 1.0 - sum_p2
+    q0 = len(p)
+    q1 = np.exp(h)
+    q2 = 1.0 / sum_p2
+    resumen.append({
+        "Escenario": nombre,
+        "Entropía (H)": h,
+        "H norm": h / np.log(len(p)),
+        "Gini–Simpson (D)": d,
+        "q=0 (Riqueza)": q0,
+        "q=1 (exp H)": q1,
+        "q=2 (1/∑p²)": q2
+    })
+
+tabla_resumen = pd.DataFrame(resumen).round(3)
+tabla_resumen
 ```
 
-## Diferencias entre grupos
+Observaciones clave:
+1. En el escenario **Uniforme**, los tres números de Hill coinciden exactamente en $^0 D = \ ^1 D = \ ^2 D = 4.000$.
+2. En el escenario **Dominante**, a pesar de que existen 4 categorías nominalmente ($^0 D = 4.0$), la entropía revela que equivale apenas a $^1 D = 1.939$ clases efectivas, y la concentración penaliza la diversidad según Simpson a $^2 D = 1.462$.
+
+## Diferencias numéricas entre grupos
+
+Generamos datos sintéticos para tres subpoblaciones con diferentes parámetros de localización y escala para examinar la descomposición de varianza:
 
 ```{python}
 rng = np.random.default_rng(17)
 n = 350
 grupos = pd.DataFrame({
     "valor": np.r_[rng.normal(50, 8, n), rng.normal(62, 8, n), rng.normal(75, 14, n)],
-    "grupo": ["A"]*n + ["B"]*n + ["C"]*n
+    "grupo": ["A"] * n + ["B"] * n + ["C"] * n
 })
-fig = px.violin(grupos, x="grupo", y="valor", color="grupo", box=True, points="outliers",
-                title="Centro, dispersión y forma pueden cambiar entre grupos")
-fig.update_layout(showlegend=False)
-fig.show()
 
+fig_violin = px.violin(
+    grupos, x="grupo", y="valor", color="grupo", box=True, points="outliers",
+    title="Distribución de la respuesta continua entre subgrupos (A, B y C)"
+)
+fig_violin.update_layout(showlegend=False, template="plotly_white")
+fig_violin.show()
+
+# Descomposición ANOVA
 media_global = grupos["valor"].mean()
-ss_total = ((grupos["valor"]-media_global)**2).sum()
+ss_total = ((grupos["valor"] - media_global) ** 2).sum()
 medias = grupos.groupby("grupo")["valor"].transform("mean")
-ss_entre = ((medias-media_global)**2).sum()
-print(f"Eta cuadrada descriptiva: {ss_entre/ss_total:.3f}")
+ss_entre = ((medias - media_global) ** 2).sum()
+ss_dentro = ss_total - ss_entre
+eta2 = ss_entre / ss_total
+
+N = len(grupos)
+G = grupos["grupo"].nunique()
+ms_dentro = ss_dentro / (N - G)
+omega2 = (ss_entre - (G - 1) * ms_dentro) / (ss_total + ms_dentro)
+
+print(f"SS Total: {ss_total:.2f}")
+print(f"SS Entre grupos (SS_B): {ss_entre:.2f}")
+print(f"SS Dentro de grupos (SS_W): {ss_dentro:.2f}")
+print(f"Eta cuadrada (η²): {eta2:.4f}")
+print(f"Omega cuadrada corregida (ω²): {omega2:.4f}")
 ```
+
+Al disponer de una muestra grande ($N = 1050$), la discrepancia entre $\eta^2$ y $\omega^2$ es prácticamente imperceptible (0.5240 vs 0.5229). Aproximadamente el 52.4% de la variación cuadrática total en los datos se atribuye a diferencias sistemáticas entre los grupos.
 
 ## Heterogeneidad cruzada
 
-Cuando dos variables categóricas interactúan, una tabla de una sola dimensión puede ocultar combinaciones relevantes. Un heatmap de medianas o medias, acompañado por el conteo de cada celda, ayuda a diferenciar patrones reales de celdas pequeñas.
+Cuando interactúan dos variables categóricas, una tabla unidimensional puede ocultar concentraciones críticas. Un mapa de calor (*heatmap*) de promedios o medianas, acompañado por el conteo muestral de cada celda ($n_{ij}$), ayuda a diferenciar patrones estadísticamente confiables de artefactos producidos por celdas con baja representatividad.
 
 ::: {.callout-warning appearance="minimal"}
-Comparar únicamente medias grupales puede confundir heterogeneidad con desbalance muestral. Reporte siempre $n_g$ y revise faltantes estructurales.
+**Peligro de las celdas pequeñas.** Las combinaciones de categorías con tamaños muestrales mínimos ($n_{ij} < 10$) generan estimaciones sumamente inestables que pueden confundir heterogeneidad real con ruido muestral. Siempre reporte el soporte muestral $n_{ij}$.
 :::
 
-## Guía de decisión
+## Guía de decisión metodológica
 
-| Pregunta | Medida o gráfica |
-|---|---|
-| ¿Qué tan diversa es una categoría? | Entropía, Gini–Simpson, barras |
-| ¿Cuántas categorías efectivas hay? | $\exp(H)$ o inverso de Simpson |
-| ¿Cambian las ventas entre grupos? | Resúmenes por grupo, violin/boxplot, $\eta^2$ |
-| ¿Hay interacción entre dos grupos? | Heatmap con tamaños de celda |
+| Pregunta analítica | Métrica o herramienta gráfica | Propósito en minería de datos |
+|---|---|---|
+| ¿Qué tan dispersa está una variable categórica? | Entropía $H(p)$, Gini–Simpson $D(p)$, barras | Detección de clases dominantes, balance de etiquetas objetivo |
+| ¿Cuántas clases efectivas operan realmente? | Números de Hill: $^1 D = e^H$, $^2 D = 1/\sum p_k^2$ | Reducción de cardinalidad, evaluación de diversidad real |
+| ¿Qué criterio usar para dividir nodos en árboles? | Impureza de Gini (CART) vs Ganancia de Información (C4.5) | Partición óptima en algoritmos supervisados |
+| ¿Difiere una respuesta continua entre grupos? | ANOVA: $SS_B$, $SS_W$, $\eta^2$, $\omega^2$, violin plot | Selección de variables continuas asociadas a variables de agrupación |
+| ¿Cómo validar la calidad de clusters numéricos? | Inercia residual ($SS_W$) e índice Calinski–Harabasz | Determinación del número óptimo de agrupamientos ($k$) |
+| ¿Existe interacción entre factores cualitativos? | Heatmap cruzado con matriz de soporte muestral $n_{ij}$ | Detección de sesgos cruzados y heterogeneidad combinada |
 
 ## Puente al caso BigMart
 
-El capítulo [Medidas de heterogeneidad en Big Mart Sales](2-6-heterogeneidad_bigmart.qmd) compara ventas por tipo, tamaño y ubicación del outlet y por tipo de producto.
+El capítulo práctico [Medidas de heterogeneidad en Big Mart Sales](2-6-heterogeneidad_bigmart.qmd) aplica estos principios analíticos sobre un dataset de retail a gran escala, cuantificando:
 
-## Ejercicios
+- La diversidad de categorías de producto mediante números de Hill.
+- La heterogeneidad de ventas entre formatos de establecimiento (Supermarkets vs Grocery Stores) mediante descomposición de varianza $\eta^2$.
+- El impacto del desbalance cruzado entre ubicación del establecimiento y año de apertura.
 
-1. Construya dos distribuciones con igual número de categorías y distinta entropía.
-2. Explique por qué una entropía alta no significa automáticamente mejor desempeño comercial.
-3. Compare $\eta^2$ antes y después de fusionar dos grupos.
+## Ejercicios formativos
+
+1. **Geometría del cuadrado unitario**: Considere una variable con tres clases $p = (0.7, 0.2, 0.1)$.
+   - Calcule el área ocupada por los bloques diagonales de coincidencia ($\sum p_k^2$).
+   - Obtenga el área complementaria de heterogeneidad de Gini–Simpson ($D$).
+2. **Análisis de sensibilidad y orden de Hill**:
+   - Para la distribución $p = (0.7, 0.2, 0.1)$, calcule los números de Hill $^0 D$, $^1 D$ y $^2 D$.
+   - Verifique el cumplimiento de la jerarquía $^0 D \ge \ ^1 D \ge \ ^2 D$.
+   - Explique conceptualmente por qué $^2 D$ es significativamente menor que $^1 D$.
+3. **Punto crítico de Shannon**:
+   - ¿Por qué una categoría con $p = 0.99$ aporta menos incertidumbre marginal a la entropía que una categoría con $p = 0.368$?
+   - Apóyese en el comportamiento de la función $f(p) = -p \ln p$ y la sorpresa $I(p) = -\ln p$.
+4. **Descomposición de varianza y sesgo muestral**:
+   - Suponga dos grupos con observaciones $G_1 = (10, 12)$ y $G_2 = (20, 22)$.
+   - Calcule manualmente $SS_T$, $SS_B$ y $SS_W$.
+   - Determine $\eta^2$ y compare su valor con el estimador insesgado $\omega^2$.
 
 ## Referencias {.unnumbered}
 
 ::: {#refs}
 :::
+

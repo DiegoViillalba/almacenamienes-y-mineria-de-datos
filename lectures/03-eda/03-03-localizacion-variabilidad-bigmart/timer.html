@@ -1,0 +1,133 @@
+<div id="activity-timer" aria-live="polite" aria-label="Temporizador de la actividad">
+  <span class="timer-label">Actividad</span>
+  <span class="timer-display">00:00</span>
+  <button class="timer-toggle" type="button" title="Pausar o continuar (Alt+T)">Ⅱ</button>
+  <button class="timer-reset" type="button" title="Reiniciar (Alt+R)">↺</button>
+</div>
+
+<script>
+(() => {
+  const titleSlide = document.getElementById("title-slide");
+  const deckLogo = document.querySelector(".slide-logo");
+
+  if (titleSlide && deckLogo && !titleSlide.querySelector(".title-logo")) {
+    const titleLogo = deckLogo.cloneNode(true);
+    titleLogo.className = "title-logo";
+    titleLogo.alt = "Facultad de Ciencias";
+    titleSlide.insertBefore(titleLogo, titleSlide.querySelector(".subtitle"));
+  }
+
+  let initialSeconds = 0;
+  let remainingSeconds = 0;
+  let intervalId = null;
+  let deadline = null;
+
+  const timer = document.getElementById("activity-timer");
+  const label = timer.querySelector(".timer-label");
+  const display = timer.querySelector(".timer-display");
+  const toggle = timer.querySelector(".timer-toggle");
+  const reset = timer.querySelector(".timer-reset");
+
+  function formatTime(totalSeconds) {
+    const safe = Math.max(0, Math.ceil(totalSeconds));
+    const minutes = Math.floor(safe / 60);
+    const seconds = safe % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function paint() {
+    display.textContent = formatTime(remainingSeconds);
+    timer.classList.toggle("warning", remainingSeconds > 0 && remainingSeconds <= 30);
+    timer.classList.toggle("finished", remainingSeconds <= 0);
+    toggle.textContent = intervalId ? "Ⅱ" : "▶";
+  }
+
+  function pause() {
+    if (intervalId) {
+      window.clearInterval(intervalId);
+      intervalId = null;
+    }
+    if (deadline) {
+      remainingSeconds = Math.max(0, (deadline - Date.now()) / 1000);
+      deadline = null;
+    }
+    paint();
+  }
+
+  function tick() {
+    remainingSeconds = Math.max(0, (deadline - Date.now()) / 1000);
+    paint();
+    if (remainingSeconds <= 0) {
+      pause();
+    }
+  }
+
+  function start() {
+    if (remainingSeconds <= 0 || intervalId) return;
+    deadline = Date.now() + remainingSeconds * 1000;
+    intervalId = window.setInterval(tick, 200);
+    paint();
+  }
+
+  function restart() {
+    pause();
+    remainingSeconds = initialSeconds;
+    paint();
+    start();
+  }
+
+  function configure(slide) {
+    pause();
+    const seconds = Number(slide?.dataset?.timer || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      timer.classList.remove("visible", "warning", "finished");
+      return;
+    }
+    initialSeconds = Math.round(seconds);
+    remainingSeconds = initialSeconds;
+    label.textContent = slide.dataset.timerLabel || "Actividad";
+    timer.classList.add("visible");
+    paint();
+    start();
+  }
+
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    intervalId ? pause() : start();
+  });
+
+  reset.addEventListener("click", (event) => {
+    event.stopPropagation();
+    restart();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (!event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key === "t") {
+      event.preventDefault();
+      intervalId ? pause() : start();
+    }
+    if (key === "r") {
+      event.preventDefault();
+      restart();
+    }
+    if (key === "h") {
+      event.preventDefault();
+      timer.classList.toggle("visible");
+    }
+  });
+
+  function connectReveal() {
+    if (!window.Reveal || typeof window.Reveal.on !== "function") {
+      window.setTimeout(connectReveal, 100);
+      return;
+    }
+    Reveal.on("ready", (event) => configure(event.currentSlide));
+    Reveal.on("slidechanged", (event) => configure(event.currentSlide));
+    if (Reveal.isReady && Reveal.isReady()) configure(Reveal.getCurrentSlide());
+  }
+
+  connectReveal();
+})();
+</script>
