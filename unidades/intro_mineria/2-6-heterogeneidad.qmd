@@ -30,537 +30,731 @@ crossref:
   eq-prefix: "Ec."
 ---
 
-## Introducción
+## El problema: ¿qué significa que unos datos sean heterogéneos?
 
-La heterogeneidad pregunta si una población se comporta como una sola unidad o contiene subpoblaciones con composiciones o distribuciones distintas. En la práctica de minería de datos y análisis exploratorio, resulta esencial separar dos problemas conceptualmente distintos:
+Decir que unos datos son **heterogéneos** significa que no están concentrados en una sola posibilidad. Sin embargo, la pregunta concreta depende del tipo de variable:
 
-1. **La diversidad de una variable categórica**: qué tan dispersa o concentrada se reparte la masa de frecuencias entre $K$ categorías posibles.
-2. **Las diferencias de una variable numérica entre grupos**: en qué medida la pertenencia a una subpoblación explica la variabilidad total de una variable respuesta.
+| Tipo de datos | Pregunta de heterogeneidad | Poca heterogeneidad | Mucha heterogeneidad |
+|---|---|---|---|
+| **Categóricos** | ¿Cómo se reparte la frecuencia entre las clases? | Casi todas las observaciones pertenecen a una sola clase. | Las observaciones se reparten de forma equilibrada entre varias clases. |
+| **Numéricos agrupados** | ¿Cuánto cambia la distribución de una respuesta entre grupos? | Los grupos tienen centros y formas semejantes. | La pertenencia al grupo ayuda a anticipar el valor numérico. |
+
+Esta distinción evita un error frecuente: una variable categórica no tiene distancias numéricas naturales entre sus etiquetas, mientras que una variable numérica sí permite medir desviaciones respecto a una media. Por eso se necesitan construcciones diferentes.
+
+En la primera mitad del capítulo seguiremos un único ejemplo: una bolsa contiene seis canicas de tres clases, cada clase identificada por un color.
+
+| Clase | Color | Número de canicas | Proporción |
+|:---:|:---:|---:|---:|
+| $A$ | azul | $3$ | $p_A=3/6=1/2$ |
+| $B$ | naranja | $1$ | $p_B=1/6$ |
+| $C$ | verde | $2$ | $p_C=2/6=1/3$ |
+| **Total** |  | **6** | **1** |
+
+La variable aleatoria[^variable-aleatoria] $X$ registra la clase de una canica extraída. Sus valores posibles son $\{A,B,C\}$ y su distribución es
+
+$$
+p=(p_A,p_B,p_C)=\left(\frac12,\frac16,\frac13\right).
+$$
+
+Las clases son mutuamente excluyentes y exhaustivas:[^clases] cada extracción produce exactamente una de las tres etiquetas. La heterogeneidad categórica dependerá de estas proporciones, no del nombre ni del color asignado a cada clase.
 
 ::: {.callout-note appearance="minimal"}
-**Definición.** Hay heterogeneidad categórica cuando las probabilidades se reparten entre múltiples clases sin dominancia absoluta, y hay heterogeneidad grupal cuando la distribución de una variable respuesta (centro, dispersión o forma) cambia de manera sistemática entre subgrupos.
+### Dos casos que servirán como brújula
+
+- Si las seis canicas fueran de clase $A$, conocer la clase de una extracción sería trivial: la heterogeneidad debería valer **cero**.
+- Si hubiera dos canicas de cada clase, ninguna clase dominaría: con tres clases, la heterogeneidad debería ser **máxima**.
+
+Toda medida que usemos deberá respetar estos dos extremos.
 :::
 
-## Diversidad categórica
+## Heterogeneidad categórica I: Gini–Simpson
 
-Sea $p = (p_1, \ldots, p_K)$ la distribución de proporciones o probabilidades sobre $K$ categorías mutuamente excluyentes y exhaustivas, con $p_k \ge 0$ y $\sum_{k=1}^K p_k = 1$.
+### De una extracción a dos extracciones
 
-Para cuantificar qué tan equilibrada o concentrada es esta masa, recurrimos a dos pilares matemáticos: la teoría de la información de Shannon y la probabilidad geométrica de Simpson.
-
-### Entropía de Shannon
-
-Propuesta originalmente por Claude Shannon en su teoría matemática de la comunicación [@shannon1948mathematical], la entropía cuantifica el nivel promedio de incertidumbre o sorpresa inherente a una distribución:
+Al extraer una canica de la bolsa completa, la probabilidad[^probabilidad] de obtener cada clase es su fracción dentro del total:
 
 $$
-H(p) = -\sum_{k=1}^{K} p_k \log(p_k) = \sum_{k=1}^{K} p_k \cdot [-\log(p_k)]. \tag{1}
+P(X=A)=\frac36,\qquad P(X=B)=\frac16,\qquad P(X=C)=\frac26.
 $$
 
-El término $I(p_k) = -\log(p_k)$ representa la **información propia** o **sorpresa**. Si un evento es casi seguro ($p_k \to 1$), su ocurrencia no aporta novedad ($I(1) = 0$). En cambio, un evento sumamente improbable ($p_k \to 0$) posee una sorpresa teóricamente infinita ($I(p_k) \to \infty$). La entropía es el valor esperado de la sorpresa: $H(p) = \mathbb{E}_p[I(p)]$.
+Una sola extracción informa cuál clase apareció, pero todavía no produce una noción directa de diversidad. Para obtenerla, planteemos otro experimento:
 
-#### Unidades y normalización
+> Se extrae una canica, se registra su clase, se devuelve a la bolsa, se mezcla y se extrae una segunda canica. ¿Cuál es la probabilidad de que las dos clases sean diferentes?
 
-La base del logaritmo define la unidad de medida:
+Devolver la primera canica significa muestrear **con reemplazo**.[^reemplazo] Gracias a ello, la composición de la bolsa es la misma antes de ambas extracciones. Supondremos además que las extracciones son **independientes**:[^independencia] saber qué ocurrió en la primera no cambia las probabilidades de la segunda.
 
-- **Base $e$ ($\ln$)**: nats (estándar en cálculo diferencial y física).
-- **Base 2 ($\log_2$)**: bits o shannons (estándar en computación y compresión de datos).
-- **Base 10 ($\log_{10}$)**: hartleys o bans.
-
-Para comparar variables con diferente número de clases $K$, se normaliza dividiendo entre la entropía máxima teórica, alcanzada bajo uniformidad ($p_k = 1/K$):
+La independencia permite multiplicar probabilidades. Por ejemplo,
 
 $$
-H_{\mathrm{norm}} = \frac{H(p)}{\ln K} \in [0, 1]. \tag{2}
+P(X_1=A, X_2=A)=P(X_1=A)P(X_2=A)
+=\frac36\frac36=\frac{9}{36}.
 $$
 
-#### Análisis analítico: límite continuo y el punto crítico $1/e$
+Del mismo modo,
 
-Cada clase contribuye a la entropía mediante la función $f(p) = -p \ln p$. Dos propiedades matemáticas explican su comportamiento:
+$$
+P(B,B)=\left(\frac16\right)^2=\frac1{36},
+\qquad
+P(C,C)=\left(\frac26\right)^2=\frac4{36}.
+$$
 
-1. **Continuidad en el origen ($\lim_{p \to 0^+} f(p) = 0$)**: Cuando una categoría es imposible ($p \to 0^+$), su sorpresa $-\ln p \to \infty$, pero su frecuencia es nula. Por la regla de L'Hôpital:
-   $$
-   \lim_{p \to 0^+} -p \ln p = \lim_{p \to 0^+} \frac{-\ln p}{1/p} = \lim_{p \to 0^+} \frac{-1/p}{-1/p^2} = \lim_{p \to 0^+} p = 0.
-   $$
-   Esto justifica rigurosamente la convención estándar en teoría de la información: $0 \ln 0 := 0$. Las clases vacías no añaden incertidumbre.
-2. **Máximo marginal en $p = 1/e \approx 0.3679$**: Derivando $f(p)$:
-   $$
-   f'(p) = \frac{d}{dp}(-p \ln p) = -\ln p - 1.
-   $$
-   Igualando a cero:
-   $$
-   -\ln p - 1 = 0 \iff \ln p = -1 \iff p = e^{-1} = \frac{1}{e} \approx 0.3679.
-   $$
-   Como $f''(p) = -1/p < 0$, existe un máximo estricto en $p = 1/e$. Una categoría con cerca del 36.8% de probabilidad aporta la máxima incertidumbre marginal individual ($1/e \approx 0.3679\text{ nats}$). Por encima de este valor, la predictibilidad disminuye la sorpresa; por debajo, la rareza mitiga su peso en el promedio.
+La tabla contiene los $6\times 6=36$ pares ordenados de canicas que pueden obtenerse. Las celdas diagonales corresponden a coincidencias de clase.
 
-```{python}
-#| code-fold: true
-#| fig-cap: "Curva analítica de contribución individual a la entropía f(p) = -p ln(p), con su máximo crítico en p = 1/e."
-import numpy as np
-import plotly.graph_objects as go
+| Primera $\backslash$ segunda | $A$ | $B$ | $C$ | Total de la fila |
+|:---:|---:|---:|---:|---:|
+| $A$ | $9/36$ | $3/36$ | $6/36$ | $18/36$ |
+| $B$ | $3/36$ | $1/36$ | $2/36$ | $6/36$ |
+| $C$ | $6/36$ | $2/36$ | $4/36$ | $12/36$ |
+| **Total de la columna** | $18/36$ | $6/36$ | $12/36$ | $36/36$ |
 
-p_grid = np.linspace(1e-4, 0.9999, 400)
-f_vals = -p_grid * np.log(p_grid)
+Por tanto, la probabilidad de obtener **la misma clase** es
 
-fig_shannon = go.Figure()
-fig_shannon.add_trace(go.Scatter(
-    x=p_grid, y=f_vals, mode='lines',
-    line=dict(color='#2563eb', width=3),
-    name='f(p) = -p ln(p)',
-    hovertemplate='p: %{x:.4f}<br>Aporte: %{y:.4f} nats<extra></extra>'
-))
-fig_shannon.add_trace(go.Scatter(
-    x=[1/np.e], y=[1/np.e], mode='markers+text',
-    marker=dict(color='#dc2626', size=11, symbol='diamond'),
-    text=['Máximo: (1/e, 1/e) ≈ (0.368, 0.368)'],
-    textposition='top right',
-    name='Punto crítico p = 1/e'
-))
-fig_shannon.add_trace(go.Scatter(
-    x=[0], y=[0], mode='markers+text',
-    marker=dict(color='#059669', size=9, symbol='circle'),
-    text=['Límite 0 ln 0 := 0'],
-    textposition='bottom right',
-    name='Límite en 0'
-))
-fig_shannon.update_layout(
-    title='Contribución marginal individual a la entropía de Shannon',
-    xaxis_title='Probabilidad de la categoría (p)',
-    yaxis_title='Contribución individual (nats)',
-    template='plotly_white',
-    hovermode='closest',
-    margin=dict(l=40, r=40, t=50, b=40),
-    height=380
-)
-fig_shannon.show()
+$$
+P(X_1=X_2)=\frac{9+1+4}{36}=\frac{14}{36}=\frac7{18}.
+$$
+
+Los eventos “misma clase” y “clases diferentes” son complementarios,[^complemento] de modo que
+
+$$
+P(X_1\neq X_2)=1-P(X_1=X_2)=1-\frac7{18}=\frac{11}{18}\approx 0.6111.
+$$
+
+Ya tenemos una medida interpretable: en aproximadamente el $61.1\%$ de los pares extraídos de manera independiente y con reemplazo, las clases serán diferentes.
+
+### Definición formal
+
+Sea $p=(p_1,\ldots,p_K)$ una distribución sobre $K$ categorías. El índice de **Gini–Simpson** [@simpson1949measurement] es
+
+$$
+D(p)=1-\sum_{k=1}^{K}p_k^2. \tag{1}
+$$
+
+La fórmula se obtiene directamente del experimento anterior:
+
+$$
+\underbrace{\sum_{k=1}^{K}p_k^2}_{P(X_1=X_2)}
++\underbrace{D(p)}_{P(X_1\neq X_2)}=1.
+$$
+
+También puede escribirse como
+
+$$
+D(p)=\sum_{j\neq k}p_jp_k,
+$$
+
+que suma todos los pares ordenados de clases distintas. Esta es la razón probabilística —no solo algebraica— del cuadrado en $p_k^2$.
+
+### El cuadrado de probabilidades
+
+Imagine un cuadrado de área uno. El eje horizontal representa la segunda extracción y el vertical la primera. Al dividir ambos ejes en segmentos de longitudes $p_A$, $p_B$ y $p_C$, aparecen nueve rectángulos:
+
+- los tres bloques diagonales tienen áreas $p_A^2$, $p_B^2$ y $p_C^2$ y representan coincidencias;
+- los seis bloques restantes tienen áreas $p_jp_k$ con $j\neq k$ y representan diferencias.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div id="gini-marble-lab" class="hetero-lab" aria-labelledby="gini-lab-title">
+  <style>
+    #gini-marble-lab, #entropy-marble-lab, #anova-lab {
+      --a: #2563eb; --b: #d97706; --c: #16835f; --ink: #172033;
+      --soft: #f6f8fb; --line: #cbd5e1; color: var(--ink); margin: 1.25rem 0 1.75rem;
+    }
+    .hetero-lab .lab-shell { border: 1px solid var(--line); border-radius: 12px; padding: 1rem; background: #fff; }
+    .hetero-lab .lab-title { font-weight: 700; margin: 0 0 .25rem; }
+    .hetero-lab .lab-intro { color: #475569; margin: 0 0 1rem; }
+    .hetero-lab .lab-layout { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(300px, 1.2fr); gap: 1.25rem; align-items: start; }
+    .hetero-lab .control-row { display: grid; grid-template-columns: 5.7rem 1fr 3rem; gap: .6rem; align-items: center; margin: .65rem 0; }
+    .hetero-lab .control-row input, .hetero-lab .control-row select { width: 100%; }
+    .hetero-lab .dot { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; margin-right: .35rem; vertical-align: -.05rem; }
+    .hetero-lab .dot-a { background: var(--a); } .hetero-lab .dot-b { background: var(--b); } .hetero-lab .dot-c { background: var(--c); }
+    .hetero-lab .metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .65rem; margin-top: 1rem; }
+    .hetero-lab .metric { background: var(--soft); border-radius: 8px; padding: .65rem .75rem; }
+    .hetero-lab .metric span { display: block; color: #64748b; font-size: .83rem; }
+    .hetero-lab .metric strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+    .hetero-lab .formula-live { margin-top: .75rem; padding: .7rem .8rem; background: #f8fafc; border-left: 4px solid #64748b; font-variant-numeric: tabular-nums; }
+    .hetero-lab svg { width: 100%; height: auto; display: block; }
+    .hetero-lab button { margin-top: .75rem; border: 1px solid #94a3b8; background: #fff; color: var(--ink); border-radius: 6px; padding: .35rem .65rem; }
+    .hetero-lab .legend { display:flex; gap:1rem; flex-wrap:wrap; margin-top:.5rem; font-size:.88rem; color:#475569; }
+    .hetero-lab .legend-swatch { display:inline-block; width:.9rem; height:.9rem; margin-right:.3rem; vertical-align:-.12rem; }
+    @media (max-width:720px) { .hetero-lab .lab-layout { grid-template-columns:1fr; } }
+  </style>
+  <div class="lab-shell">
+    <p id="gini-lab-title" class="lab-title">Explorador del cuadrado de Gini–Simpson</p>
+    <p class="lab-intro">Cambie la cantidad de canicas. Los conteos se convierten en proporciones y las 9 áreas se redibujan.</p>
+    <div class="lab-layout">
+      <div>
+        <label class="control-row"><span><i class="dot dot-a"></i>Clase A</span><input data-count="A" type="range" min="0" max="12" step="1" value="3"><output data-out="A">3</output></label>
+        <label class="control-row"><span><i class="dot dot-b"></i>Clase B</span><input data-count="B" type="range" min="0" max="12" step="1" value="1"><output data-out="B">1</output></label>
+        <label class="control-row"><span><i class="dot dot-c"></i>Clase C</span><input data-count="C" type="range" min="0" max="12" step="1" value="2"><output data-out="C">2</output></label>
+        <button type="button" data-reset>Restablecer 3, 1, 2</button>
+        <div class="metrics" aria-live="polite">
+          <div class="metric"><span>Coincidencia</span><strong data-same>0.3889</strong></div>
+          <div class="metric"><span>Gini–Simpson</span><strong data-diff>0.6111</strong></div>
+        </div>
+        <div class="formula-live" data-formula></div>
+      </div>
+      <div>
+        <svg data-square viewBox="0 0 520 520" role="img" aria-label="Cuadrado de probabilidades para dos extracciones"></svg>
+        <div class="legend"><span><i class="legend-swatch" style="background:linear-gradient(90deg,#2563eb 0 33%,#d97706 33% 66%,#16835f 66%)"></i>misma clase</span><span><i class="legend-swatch" style="background:#7dd3c7"></i>clases diferentes</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const root=document.getElementById('gini-marble-lab'); if(!root)return;
+  const names=['A','B','C'], inputs=names.map(n=>root.querySelector(`[data-count="${n}"]`));
+  const svg=root.querySelector('[data-square]'), NS='http://www.w3.org/2000/svg';
+  const add=(tag,attrs,text='')=>{const e=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));e.textContent=text;svg.appendChild(e);return e;};
+  function update(){
+    const counts=inputs.map(x=>+x.value), total=counts.reduce((a,b)=>a+b,0);
+    names.forEach((n,i)=>root.querySelector(`[data-out="${n}"]`).value=counts[i]);
+    if(total===0){inputs[0].value=1;return update();}
+    const p=counts.map(x=>x/total),same=p.reduce((s,x)=>s+x*x,0),diff=1-same,diagonalColors=['#2563eb','#d97706','#16835f'];
+    root.querySelector('[data-same]').textContent=same.toFixed(4); root.querySelector('[data-diff]').textContent=diff.toFixed(4);
+    root.querySelector('[data-formula]').textContent=`D = 1 − (${p.map(x=>x.toFixed(3)+'²').join(' + ')}) = ${diff.toFixed(4)}`;
+    svg.replaceChildren(); const left=64,top=48,size=410;
+    add('rect',{x:left,y:top,width:size,height:size,fill:'#fff',stroke:'#64748b','stroke-width':'2'});
+    let y=top;
+    p.forEach((pr,i)=>{let x=left;p.forEach((pc,j)=>{const w=pc*size,h=pr*size,diagonal=i===j;add('rect',{x,y,width:w,height:h,fill:diagonal?diagonalColors[i]:'#7dd3c7',opacity:diagonal?'.82':'.62',stroke:'#fff','stroke-width':'2'});if(w>58&&h>42)add('text',{x:x+w/2,y:y+h/2+4,'text-anchor':'middle',fill:diagonal?'#fff':'#172033','font-size':'12'},`${names[i]}→${names[j]} ${(pr*pc).toFixed(3)}`);x+=w;});if(pr*size>20)add('text',{x:left-12,y:y+pr*size/2+4,'text-anchor':'end',fill:'#172033','font-size':'13'},`${names[i]} ${(100*pr).toFixed(0)}%`);y+=pr*size;});
+    let x=left;p.forEach((pc,j)=>{if(pc*size>20)add('text',{x:x+pc*size/2,y:top-14,'text-anchor':'middle',fill:'#172033','font-size':'13'},`${names[j]} ${(100*pc).toFixed(0)}%`);x+=pc*size;});
+    add('text',{x:left+size/2,y:510,'text-anchor':'middle',fill:'#475569','font-size':'13'},'Segunda extracción');const yl=add('text',{x:16,y:top+size/2,'text-anchor':'middle',fill:'#475569','font-size':'13'},'Primera extracción');yl.setAttribute('transform',`rotate(-90 16 ${top+size/2})`);
+  }
+  inputs.forEach(x=>x.addEventListener('input',update));root.querySelector('[data-reset]').addEventListener('click',()=>{[3,1,2].forEach((v,i)=>inputs[i].value=v);update();});update();
+})();
+</script>
 ```
+:::
 
-### Índice de Gini–Simpson y la geometría del cuadrado unitario
+::: {.content-visible unless-format="html"}
+El laboratorio interactivo de la versión HTML permite cambiar los conteos de $A$, $B$ y $C$. En la distribución inicial $(3,1,2)$, el área de coincidencia es $7/18$ y el área complementaria es $D=11/18$.
+:::
 
-El índice de diversidad de Gini–Simpson [@simpson1949measurement] se define como:
+### Cotas e interpretación
 
-$$
-D(p) = 1 - \sum_{k=1}^{K} p_k^2. \tag{3}
-$$
-
-$D$ representa la **probabilidad de que dos observaciones extraídas independientemente y con reemplazo pertenezcan a categorías distintas**.
-
-#### Geometría de áreas en el cuadrado unitario $[0, 1] \times [0, 1]$
-
-Visualicemos el espacio muestral conjunto de dos extracciones independientes $(X_1, X_2)$ como un cuadrado unitario bidimensional de dimensiones $1 \times 1$:
+Si una sola clase concentra toda la probabilidad, entonces $\sum p_k^2=1$ y $D=0$. Por la desigualdad de Cauchy–Schwarz, $\sum_k p_k^2\ge 1/K$, con igualdad cuando todas las probabilidades son iguales. Por tanto, si las $K$ clases son equiprobables, $p_k=1/K$, se alcanza
 
 $$
-\text{Área total} = \left(\sum_{k=1}^K p_k\right) \times \left(\sum_{j=1}^K p_j\right) = 1 \times 1 = 1.
+D_{\max}=1-K\left(\frac1K\right)^2=1-\frac1K. \tag{2}
 $$
 
-Dentro del cuadrado, el espacio se divide en dos regiones de área complementaria:
+Así, con tres clases $D\in[0,2/3]$. El valor $0.6111$ de nuestras canicas está cerca del máximo $0.6667$, pero no debe interpretarse como “61.11% del máximo”. Para esa lectura se normaliza:
 
-1. **La diagonal de coincidencia (Homogeneidad)**: A lo largo de la diagonal principal se alinean $K$ bloques cuadrados donde ambas extracciones coinciden en la misma categoría ($X_1 = X_2 = k$). Cada bloque tiene base $p_k$ y altura $p_k$, con área $p_k^2$. La suma de las áreas de estos bloques representa la probabilidad de coincidencia o concentración:
-   $$
-   \text{Área diagonal (coincidencia)} = \sum_{k=1}^K p_k^2.
-   $$
-2. **El área complementaria fuera de la diagonal (Heterogeneidad $D$)**: Todo el espacio restante está formado por rectángulos $p_j \times p_k$ con $j \neq k$, donde las dos extracciones pertenecen a etiquetas diferentes ($X_1 \neq X_2$). El área de esta región es exactamente:
-   $$
-   D(p) = 1 - \sum_{k=1}^K p_k^2 = \sum_{j \neq k} p_j p_k.
-   $$
+$$
+D_{\mathrm{norm}}=\frac{D}{1-1/K}.
+$$
 
-#### Dinámica geométrica en los extremos
-
-- **Monopolio absoluto ($p_1 = 1, p_{k>1} = 0$)**: Un único bloque de $1 \times 1$ llena todo el cuadrado unitario. No queda superficie fuera de la diagonal principal: $D = 0$.
-- **Equiprobabilidad perfecta ($p_k = 1/K$)**: La diagonal se compone de $K$ pequeños cuadrados idénticos de lado $1/K$ y área $1/K^2$. El área diagonal acumulada es $K \cdot (1/K^2) = 1/K$. Por ende, el área de heterogeneidad complementaria alcanza su cota superior:
-  $$
-  D_{\max} = 1 - \frac{1}{K}.
-  $$
+En el ejemplo, $D_{\mathrm{norm}}=(11/18)/(2/3)=11/12\approx0.9167$.
 
 ::: {.callout-warning appearance="minimal"}
-**Distinción conceptual crucial.** El índice de Gini–Simpson de diversidad cualitativa no es el **coeficiente de Gini de desigualdad económica** (curva de Lorenz). Aunque ambos honran a Corrado Gini, el coeficiente de Lorenz mide la concentración de una variable numérica acumulada (salarios, riqueza), mientras que Gini–Simpson mide la probabilidad de desacuerdo entre pares de una variable cualitativa categórica.
+### No confundir dos índices llamados Gini
+
+La diversidad de Gini–Simpson mide la probabilidad de desacuerdo entre categorías. El **coeficiente de Gini** asociado con la curva de Lorenz mide desigualdad en una variable numérica, como ingreso o riqueza. Comparten parte del nombre, pero responden preguntas diferentes.
 :::
 
-## Familia unificada de números de Hill ($^q D$)
+## Heterogeneidad categórica II: de la sorpresa a la entropía
 
-Las unidades abstractas de la entropía (nats, bits) o del índice de Gini–Simpson no responden linealmente a cambios reales en la cantidad de clases. Para dotar a estas medidas de un significado cuantitativo directo, Mark Hill [@hill1973diversity] y Lou Jost [@jost2006entropy] unificaron la teoría de la diversidad mediante la **familia paramétrica de números de Hill**:
+Gini–Simpson construye diversidad comparando dos extracciones. Shannon toma otro camino: mide cuánta información aporta observar una sola extracción.
 
-$$
-^q D = \left( \sum_{k=1}^{K} p_k^q \right)^{\frac{1}{1-q}}, \qquad q \ge 0, \quad q \neq 1. \tag{4}
-$$
+### La sorpresa de un resultado
 
-El parámetro $q$ funciona como un **selector de sensibilidad a la rareza**:
+Antes de extraer una canica, compare dos resultados:
 
-1. **Orden $q = 0$ (Riqueza observada)**:
-   $$
-   ^0 D = \sum_{k=1}^K p_k^0 = \sum_{k=1}^K 1 = K.
-   $$
-   Es insensible a las proporciones relativas: se limita a contar cuántas clases están presentes.
-2. **Orden $q \to 1$ (Número efectivo de Shannon)**:
-   Tomando el límite continuo formal cuando $q \to 1$:
-   $$
-   ^1 D = \lim_{q \to 1} \ ^q D = \exp\left(-\sum_{k=1}^{K} p_k \ln p_k\right) = e^{H(p)}.
-   $$
-   Pondera cada categoría de manera proporcional a su abundancia. Equivale al **número de categorías equiprobables que produciría la misma entropía observada**.
-3. **Orden $q = 2$ (Inverso de concentración de Simpson)**:
-   $$
-   ^2 D = \left(\sum_{k=1}^K p_k^2\right)^{-1} = \frac{1}{\sum_{k=1}^{K} p_k^2} = \frac{1}{1 - D(p)}.
-   $$
-   Pondera fuertemente a las clases dominantes y descuenta a las minoritarias.
+- obtener $A$ no sería muy sorprendente, porque ocurre con probabilidad $1/2$;
+- obtener $B$ sería más sorprendente, porque ocurre con probabilidad $1/6$.
 
-### Principio de orden estricto de Hill
-
-Para cualquier distribución categórica se verifica la jerarquía:
+La **información propia** o sorpresa de un evento con probabilidad $p$ se define como
 
 $$
-^0 D \ge \ ^1 D \ge \ ^2 D. \tag{5}
+I_b(p)=-\log_b(p), \qquad b>1. \tag{3}
 $$
 
-La igualdad estricta $^0 D = \ ^1 D = \ ^2 D = K$ ocurre **únicamente bajo equiprobabilidad perfecta** ($p_k = 1/K$). Cuanto más asimétrica o concentrada sea una distribución, más se separan los tres valores, revelando la estructura de dominancia en los datos.
+Esta elección cumple propiedades deseables: un evento seguro tiene sorpresa cero, los eventos menos probables producen mayor sorpresa y la sorpresa de dos eventos independientes se suma.[^log-producto]
 
-## Heterogeneidad de una respuesta entre grupos
-
-Para una respuesta numérica $Y$ y grupos $g = 1, \ldots, G$, la variabilidad total se descompone de forma exacta según el teorema de descomposición de la varianza (ANOVA):
+En bits, es decir, usando base $2$,
 
 $$
-SS_T = \sum_{g=1}^{G} \sum_{i=1}^{n_g} (y_{gi} - \bar{y})^2 = SS_B + SS_W. \tag{6}
+I_2(A)=1,\qquad I_2(B)=\log_2(6)\approx2.585,\qquad I_2(C)=\log_2(3)\approx1.585.
 $$
 
-### Geometría euclidiana de áreas de los residuos
+### De la sorpresa individual a la sorpresa promedio
 
-Cada término cuadrático representa el área de un cuadrado euclidiano:
-
-- **$SS_T$ (Suma de cuadrados total)**: Cada residuo $(y_{gi} - \bar{y})$ forma un cuadrado euclidiano de área $(y_{gi} - \bar{y})^2$. $SS_T$ es la suma de las áreas de estos $N$ cuadrados respecto a la media incondicional $\bar{y}$.
-- **$SS_B$ (Suma de cuadrados entre grupos)**:
-  $$
-  SS_B = \sum_{g=1}^G n_g (\bar{y}_g - \bar{y})^2.
-  $$
-  Representa el área de los cuadrados formados por las desviaciones de los centroides locales $\bar{y}_g$ respecto a la media global $\bar{y}$, multiplicadas por la masa muestral $n_g$ de cada grupo.
-- **$SS_W$ (Suma de cuadrados dentro de grupos / residual)**:
-  $$
-  SS_W = \sum_{g=1}^G \sum_{i=1}^{n_g} (y_{gi} - \bar{y}_g)^2.
-  $$
-  Representa la suma de las áreas de los residuos internos de cada dato respecto a su centroide de grupo.
-
-### Medidas de asociación: Eta cuadrada ($\eta^2$) y Omega cuadrada ($\omega^2$)
-
-El cociente descriptivo de varianza explicada se define como:
+No basta con promediar esos tres números dando el mismo peso a cada clase: $A$ aparece más veces que $B$. La sorpresa media debe ponderar cada resultado por la probabilidad con que ocurre. Ese valor esperado[^esperanza] es la **entropía de Shannon** [@shannon1948mathematical]:
 
 $$
-\eta^2 = \frac{SS_B}{SS_T} \in [0, 1]. \tag{7}
+H_b(p)=\mathbb{E}[I_b(X)]=-\sum_{k=1}^{K}p_k\log_b(p_k). \tag{4}
 $$
 
-Valores cercanos a cero indican que las medias grupales explican poca variación; valores mayores señalan separación entre grupos.
+Para las seis canicas y base $2$:
+
+| Clase | $p_k$ | Sorpresa $-\log_2p_k$ | Aporte promedio $-p_k\log_2p_k$ |
+|:---:|---:|---:|---:|
+| $A$ | $0.5000$ | $1.0000$ | $0.5000$ |
+| $B$ | $0.1667$ | $2.5850$ | $0.4308$ |
+| $C$ | $0.3333$ | $1.5850$ | $0.5283$ |
+| **Total** | $1$ |  | **$H_2=1.4591$ bits** |
+
+Observe la diferencia entre **sorpresa** y **aporte a la entropía**. $B$ es el resultado más sorprendente, pero aparece poco; $C$ aporta más al promedio porque combina sorpresa considerable con mayor frecuencia.
+
+Cuando $p_k=0$, la expresión contiene formalmente $0\log 0$. Se adopta la extensión continua
+
+$$
+0\log 0:=\lim_{p\to0^+}p\log p=0,
+$$
+
+porque una clase imposible nunca llega a aportar sorpresa al promedio.
+
+### ¿Dónde está la entropía máxima?
+
+Con $K$ fijo, la entropía satisface
+
+$$
+0\le H_b(p)\le \log_b K. \tag{5}
+$$
+
+El mínimo ocurre cuando una sola clase tiene probabilidad uno. El máximo ocurre en la distribución uniforme $p_k=1/K$. Puede verificarse con multiplicadores de Lagrange: al maximizar $-\sum p_k\ln p_k$ sujeto a $\sum p_k=1$, las condiciones de primer orden exigen que todos los $p_k$ sean iguales; la restricción obliga a que valgan $1/K$. Como la matriz hessiana tiene diagonal $-1/p_k<0$, la entropía es estrictamente cóncava en el interior del simplex y ese punto crítico es el máximo global único.
+
+Para comparar variables con distinto número de clases conviene usar
+
+$$
+H_{\mathrm{norm}}=\frac{H_b(p)}{\log_bK}\in[0,1]. \tag{6}
+$$
+
+En nuestro ejemplo,
+
+$$
+H_{\mathrm{norm}}=\frac{1.4591}{\log_2 3}=0.9206.
+$$
 
 ::: {.callout-important appearance="minimal"}
-**Sesgo de muestra pequeña y precaución causal.**
-$\eta^2$ es puramente descriptivo y presenta sesgo positivo en muestras reducidas. Para corregir este sesgo en validación o inferencia se calcula la **omega cuadrada** insesgada:
-$$
-\omega^2 = \frac{SS_B - (G - 1) MS_W}{SS_T + MS_W}, \qquad \text{donde } MS_W = \frac{SS_W}{N - G}.
-$$
-Asimismo, $\eta^2$ describe separación de medias, pero no reemplaza la inspección de medianas, dispersión, tamaños muestrales y forma. Tampoco establece relación causal.
+### Dos máximos que no deben confundirse
+
+La contribución de **una sola clase**, $f(p)=-p\ln p$, alcanza su máximo en $p=1/e\approx0.3679$. En cambio, la entropía **de toda la distribución**, sujeta a que las probabilidades sumen uno, alcanza su máximo en $p_k=1/K$. Para tres clases, el máximo global está en $(1/3,1/3,1/3)$, no en tres probabilidades iguales a $1/e$, pues estas últimas ni siquiera sumarían uno.
 :::
 
-## Cálculo manual paso a paso
-
-### Ejemplo 1: Entropía, Gini–Simpson y familia de números de Hill
-
-Supongamos seis observaciones cualitativas correspondientes a tres categorías posibles ($K = 3$):
+En efecto,
 
 $$
-(A, A, A, B, C, C).
+f'(p)=-\ln p-1=0 \iff p=1/e,
+\qquad f''(p)=-1/p<0.
 $$
+
+### Cambiar la base cambia la escala, no la conclusión
+
+Por la fórmula de cambio de base,
+
+$$
+H_b(p)=\frac{H_e(p)}{\ln b}.
+$$
+
+- base $2$: bits;
+- base $e$: nats;
+- base $10$: hartleys.
+
+La base multiplica todas las entropías por una constante positiva. Por tanto, no cambia qué distribución es más heterogénea. Tampoco cambia $H_{\mathrm{norm}}$, porque numerador y denominador se escalan por el mismo factor.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div id="entropy-marble-lab" class="hetero-lab" aria-labelledby="entropy-lab-title">
+  <div class="lab-shell">
+    <p id="entropy-lab-title" class="lab-title">Explorador de sorpresa y entropía</p>
+    <p class="lab-intro">El triángulo contiene todas las distribuciones posibles de tres clases. El centro es la distribución uniforme y, por ello, el punto de entropía máxima.</p>
+    <div class="lab-layout">
+      <div>
+        <label class="control-row"><span><i class="dot dot-a"></i>Clase A</span><input data-count="A" type="range" min="0" max="12" step="1" value="3"><output data-out="A">3</output></label>
+        <label class="control-row"><span><i class="dot dot-b"></i>Clase B</span><input data-count="B" type="range" min="0" max="12" step="1" value="1"><output data-out="B">1</output></label>
+        <label class="control-row"><span><i class="dot dot-c"></i>Clase C</span><input data-count="C" type="range" min="0" max="12" step="1" value="2"><output data-out="C">2</output></label>
+        <label class="control-row"><span>Base</span><select data-base><option value="2">2 (bits)</option><option value="2.718281828459045">e (nats)</option><option value="10">10 (hartleys)</option></select><output data-unit>bits</output></label>
+        <button type="button" data-reset>Restablecer 3, 1, 2</button>
+        <div class="metrics" aria-live="polite">
+          <div class="metric"><span>Entropía observada</span><strong data-h></strong></div>
+          <div class="metric"><span>Máximo con K=3</span><strong data-hmax></strong></div>
+        </div>
+        <div class="formula-live"><span data-hnorm></span><div style="height:.7rem;background:#e2e8f0;margin-top:.45rem;border-radius:99px;overflow:hidden"><div data-bar style="height:100%;background:#2563eb;width:0"></div></div></div>
+        <div style="overflow-x:auto;margin-top:.8rem">
+          <table style="width:100%;font-size:.9rem;border-collapse:collapse">
+            <thead><tr><th>Clase</th><th>p</th><th>Sorpresa</th><th>p × sorpresa</th></tr></thead>
+            <tbody data-body></tbody>
+          </table>
+        </div>
+      </div>
+      <div><svg data-simplex viewBox="0 0 560 500" role="img" aria-label="Mapa de entropía normalizada en el triángulo de probabilidades"></svg></div>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const root=document.getElementById('entropy-marble-lab'); if(!root)return;
+  const names=['A','B','C'],inputs=names.map(n=>root.querySelector(`[data-count="${n}"]`));
+  const svg=root.querySelector('[data-simplex]'),NS='http://www.w3.org/2000/svg',V={A:[280,38],B:[55,445],C:[505,445]};
+  const point=p=>[p[0]*V.A[0]+p[1]*V.B[0]+p[2]*V.C[0],p[0]*V.A[1]+p[1]*V.B[1]+p[2]*V.C[1]];
+  const add=(tag,attrs,text='')=>{const e=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));e.textContent=text;svg.appendChild(e);return e;};
+  function drawBackground(){
+    svg.replaceChildren();add('polygon',{points:`${V.A.join(',')} ${V.B.join(',')} ${V.C.join(',')}`,fill:'#f8fafc',stroke:'#64748b','stroke-width':'2'});
+    const steps=24;for(let i=0;i<=steps;i++)for(let j=0;j<=steps-i;j++){const p=[i/steps,j/steps,(steps-i-j)/steps],h=-p.reduce((s,x)=>s+(x>0?x*Math.log(x):0),0)/Math.log(3),[x,y]=point(p),light=92-45*h;add('circle',{cx:x,cy:y,r:'6.8',fill:`hsl(205 72% ${light}%)`,opacity:'.88'});}
+    add('polygon',{points:`${V.A.join(',')} ${V.B.join(',')} ${V.C.join(',')}`,fill:'none',stroke:'#475569','stroke-width':'2'});
+    [['A',V.A[0],22],['B',35,470],['C',525,470]].forEach(d=>add('text',{x:d[1],y:d[2],'text-anchor':'middle',fill:'#172033','font-size':'15','font-weight':'700'},d[0]));
+    const center=point([1/3,1/3,1/3]);add('text',{x:center[0],y:center[1]-18,'text-anchor':'middle',fill:'#172033','font-size':'13'},'máximo: 1/3, 1/3, 1/3');add('circle',{cx:center[0],cy:center[1],r:'7',fill:'#fff',stroke:'#172033','stroke-width':'2'});add('circle',{cx:0,cy:0,r:'11',fill:'#fff',stroke:'#dc2626','stroke-width':'4','data-marker':'true'});
+  }
+  function update(){
+    const counts=inputs.map(x=>+x.value),total=counts.reduce((a,b)=>a+b,0);names.forEach((n,i)=>root.querySelector(`[data-out="${n}"]`).value=counts[i]);if(total===0){inputs[0].value=1;return update();}
+    const p=counts.map(x=>x/total),base=+root.querySelector('[data-base]').value,logb=x=>Math.log(x)/Math.log(base),unit=base===2?'bits':base===10?'hartleys':'nats';root.querySelector('[data-unit]').value=unit;
+    const terms=p.map(x=>x>0?-x*logb(x):0),h=terms.reduce((a,b)=>a+b,0),hmax=logb(3),hn=h/hmax;
+    root.querySelector('[data-h]').textContent=`${h.toFixed(4)} ${unit}`;root.querySelector('[data-hmax]').textContent=`${hmax.toFixed(4)} ${unit}`;root.querySelector('[data-hnorm]').textContent=`H normalizada = ${hn.toFixed(4)} (${(100*hn).toFixed(1)}% del máximo)`;root.querySelector('[data-bar]').style.width=`${100*hn}%`;
+    root.querySelector('[data-body]').innerHTML=names.map((n,i)=>`<tr><td>${n}</td><td>${p[i].toFixed(4)}</td><td>${p[i]>0?(-logb(p[i])).toFixed(4):'—'}</td><td>${terms[i].toFixed(4)}</td></tr>`).join('');
+    const [x,y]=point(p),marker=svg.querySelector('[data-marker]');marker.setAttribute('cx',x);marker.setAttribute('cy',y);
+  }
+  drawBackground();inputs.forEach(x=>x.addEventListener('input',update));root.querySelector('[data-base]').addEventListener('change',update);root.querySelector('[data-reset]').addEventListener('click',()=>{[3,1,2].forEach((v,i)=>inputs[i].value=v);root.querySelector('[data-base]').value='2';update();});update();
+})();
+</script>
+```
+:::
+
+::: {.content-visible unless-format="html"}
+En la versión HTML, un diagrama ternario permite desplazar la distribución $(p_A,p_B,p_C)$ por todo el simplex. La entropía normalizada aumenta al acercarse al centro $(1/3,1/3,1/3)$ y disminuye al aproximarse a cualquiera de los vértices.
+:::
+
+## Comparar Gini–Simpson y Shannon
+
+Los dos índices miden heterogeneidad, pero observan la distribución desde experimentos distintos:
+
+| Índice | Experimento mental | Fórmula | Mayor sensibilidad relativa |
+|---|---|---|---|
+| Gini–Simpson | ¿Dos extracciones tendrán clases distintas? | $1-\sum p_k^2$ | Clases dominantes; las probabilidades se elevan al cuadrado. |
+| Shannon | ¿Cuánta sorpresa produce, en promedio, una extracción? | $-\sum p_k\log p_k$ | Clases raras; una probabilidad pequeña conserva aporte mediante $-p\log p$. |
+
+No conviene comparar directamente $D$ y $H$, porque tienen escalas y máximos diferentes. Con $K$ fijo, compare $D_{\mathrm{norm}}$ con $H_{\mathrm{norm}}$:
+
+| Distribución $(p_A,p_B,p_C)$ | $D$ | $D_{\mathrm{norm}}$ | $H$ (nats) | $H_{\mathrm{norm}}$ |
+|---|---:|---:|---:|---:|
+| $(1,0,0)$ | $0.0000$ | $0.0000$ | $0.0000$ | $0.0000$ |
+| $(0.90,0.05,0.05)$ | $0.1850$ | $0.2775$ | $0.3944$ | $0.3590$ |
+| $(0.60,0.30,0.10)$ | $0.5400$ | $0.8100$ | $0.8979$ | $0.8173$ |
+| $(0.50,0.1667,0.3333)$ | $0.6111$ | $0.9167$ | $1.0114$ | $0.9206$ |
+| $(1/3,1/3,1/3)$ | $0.6667$ | $1.0000$ | $1.0986$ | $1.0000$ |
+
+Ambos ordenan estos ejemplos de la misma manera. Sin embargo, Shannon asigna relativamente más diversidad al escenario $(0.90,0.05,0.05)$ porque reconoce la información aportada por las dos clases raras.
 
 ::: {.callout-tip appearance="minimal"}
-**Paso 1. Conteo de frecuencias y proporciones:**
-$$
-f_A = 3, \qquad f_B = 1, \qquad f_C = 2, \qquad n = 6.
-$$
-$$
-p_A = \frac{3}{6} = 0.5000, \qquad p_B = \frac{1}{6} \approx 0.1667, \qquad p_C = \frac{2}{6} \approx 0.3333.
-$$
+### Regla de elección
 
-**Paso 2. Contribución a la entropía de Shannon (en nats):**
-$$
-p_A \ln p_A = 0.5000 \ln(0.5000) = 0.5000 (-0.6931) = -0.3466,
-$$
-$$
-p_B \ln p_B = 0.1667 \ln(0.1667) = 0.1667 (-1.7918) = -0.2986,
-$$
-$$
-p_C \ln p_C = 0.3333 \ln(0.3333) = 0.3333 (-1.0986) = -0.3662.
-$$
-
-Observemos que la categoría $C$ ($p_C = 0.3333$) es la que mayor incertidumbre individual aporta ($-0.3662$), pues es la más cercana al punto crítico óptimo $1/e \approx 0.3679$.
-
-**Paso 3. Entropía total y normalización:**
-$$
-H = -[-0.3466 - 0.2986 - 0.3662] = 1.0114 \text{ nats}.
-$$
-$$
-H_{\mathrm{norm}} = \frac{1.0114}{\ln 3} = \frac{1.0114}{1.0986} = 0.9206 \quad (92.1\% \text{ del máximo teórico}).
-$$
-
-**Paso 4. Geometría de áreas de Gini–Simpson:**
-Elevamos cada proporción al cuadrado para obtener las áreas de los bloques diagonales de coincidencia:
-$$
-p_A^2 = (0.5)^2 = 0.2500, \qquad p_B^2 = \left(\frac{1}{6}\right)^2 = \frac{1}{36} \approx 0.0278, \qquad p_C^2 = \left(\frac{1}{3}\right)^2 = \frac{1}{9} \approx 0.1111.
-$$
-La suma de áreas diagonales de coincidencia (homogeneidad) es:
-$$
-\sum_{k=1}^3 p_k^2 = 0.2500 + 0.0278 + 0.1111 = 0.3889 \quad \left(\frac{7}{18}\right).
-$$
-El área complementaria fuera de la diagonal (heterogeneidad de Gini–Simpson) es:
-$$
-D = 1 - \frac{7}{18} = \frac{11}{18} \approx 0.6111.
-$$
-
-**Paso 5. Números de Hill y jerarquía de diversidad verdadera:**
-- **Orden 0 (Riqueza observada)**: $^0 D = K = 3.00$.
-- **Orden 1 (Exponencial de Shannon)**: $^1 D = e^{1.0114} = 2.75$.
-- **Orden 2 (Inverso de Simpson)**: $^2 D = \frac{1}{7/18} = \frac{18}{7} \approx 2.57$.
-
-Se verifica de forma exacta el principio de orden de Hill:
-$$
-^0 D (3.00) \ge \ ^1 D (2.75) \ge \ ^2 D (2.57).
-$$
-La muestra equivale a una población idealizada de 2.75 categorías igualmente frecuentes bajo Shannon, y a 2.57 bajo el criterio de Simpson.
+- Use **Gini–Simpson** cuando la interpretación por pares o la probabilidad de desacuerdo sea natural.
+- Use **Shannon** cuando la incertidumbre, codificación o sorpresa sea central.
+- Si necesita comunicar “cuántas categorías igualmente frecuentes equivalen a esta distribución”, transforme ambos a **números efectivos de Hill**.
 :::
 
-### Ejemplo 2: Descomposición de varianza euclidiana en ANOVA
+## Una escala común: números de Hill
 
-Consideremos una respuesta continua $Y$ en tres grupos de tamaño balanceado $n_g = 2$:
+Los índices anteriores no están expresados en “número de categorías”. La familia de Hill [@hill1973diversity; @jost2006entropy] los convierte a esa escala:
 
 $$
-A = (4, 5), \qquad B = (8, 9), \qquad C = (5, 5).
-$$
-
-::: {.callout-tip appearance="minimal"}
-**Paso 1. Medias grupales y media global:**
-$$
-\bar{y} = \frac{4 + 5 + 8 + 9 + 5 + 5}{6} = \frac{36}{6} = 6.0,
-$$
-$$
-\bar{y}_A = \frac{4+5}{2} = 4.5, \qquad \bar{y}_B = \frac{8+9}{2} = 8.5, \qquad \bar{y}_C = \frac{5+5}{2} = 5.0.
+{}^qD=\left(\sum_{k=1}^{K}p_k^q\right)^{1/(1-q)},
+\qquad q\ge0,\ q\neq1. \tag{7}
 $$
 
-**Paso 2. Suma de áreas cuadráticas total ($SS_T$):**
+El parámetro $q$ controla cuánto pesan las clases raras:
+
+1. **$q=0$, riqueza observada:** ${}^0D=K$; solo cuenta las clases presentes.
+2. **$q\to1$, diversidad de Shannon:** ${}^1D=e^{H_e}$.
+3. **$q=2$, diversidad de Simpson:** ${}^2D=1/\sum p_k^2=1/(1-D)$.
+
+Para las canicas,
+
 $$
-SS_T = (4-6)^2 + (5-6)^2 + (8-6)^2 + (9-6)^2 + (5-6)^2 + (5-6)^2,
-$$
-$$
-SS_T = 4 + 1 + 4 + 9 + 1 + 1 = 20.
+{}^0D=3,\qquad {}^1D=e^{1.0114}=2.750,
+\qquad {}^2D=\frac1{7/18}=\frac{18}{7}=2.571.
 $$
 
-**Paso 3. Variación entre grupos ($SS_B$):**
-$$
-SS_B = 2(4.5 - 6)^2 + 2(8.5 - 6)^2 + 2(5.0 - 6)^2,
-$$
-$$
-SS_B = 2(-1.5)^2 + 2(2.5)^2 + 2(-1.0)^2 = 2(2.25) + 2(6.25) + 2(1.0) = 4.5 + 12.5 + 2.0 = 19.
-$$
-El factor 2 refleja que cada subgrupo contiene $n_g = 2$ datos.
+La interpretación de ${}^1D=2.750$ es concreta: la distribución $(3,1,2)$ tiene la misma entropía que una distribución ideal con $2.750$ categorías equiprobables. En general,
 
-**Paso 4. Variación residual dentro de grupos ($SS_W$):**
 $$
-SS_W = SS_T - SS_B = 20 - 19 = 1.
-$$
-Comprobación directa sumando los cuadrados respecto a sus medias locales:
-$$
-SS_W = [(4-4.5)^2 + (5-4.5)^2] + [(8-8.5)^2 + (9-8.5)^2] + [(5-5)^2 + (5-5)^2]
-$$
-$$
-SS_W = (0.25 + 0.25) + (0.25 + 0.25) + (0 + 0) = 0.5 + 0.5 + 0 = 1.
+{}^0D\ge{}^1D\ge{}^2D, \tag{8}
 $$
 
-**Paso 5. Comparación entre $\eta^2$ y el estimador insesgado $\omega^2$:**
-- Varianza explicada descriptiva:
-  $$
-  \eta^2 = \frac{SS_B}{SS_T} = \frac{19}{20} = 0.9500 \quad (95\%).
-  $$
-- Estimador corregido por tamaño muestral:
-  $$
-  MS_W = \frac{SS_W}{N - G} = \frac{1}{6 - 3} = \frac{1}{3} \approx 0.3333.
-  $$
-  $$
-  \omega^2 = \frac{SS_B - (G - 1) MS_W}{SS_T + MS_W} = \frac{19 - (2)(0.3333)}{20 + 0.3333} = \frac{18.3333}{20.3333} \approx 0.9016 \quad (90.2\%).
-  $$
-En este tamaño muestral pequeño ($N = 6$), $\eta^2$ exhibe un ligero optimismo descriptivo (95% frente al 90.2% insesgado).
-:::
+y los tres valores coinciden con $K$ únicamente bajo uniformidad perfecta.
 
-## Laboratorio interactivo de heterogeneidad
+## Heterogeneidad de una variable numérica entre grupos
 
-Para consolidar la intuición visual de estas medidas, el siguiente laboratorio interactivo permite manipular en tiempo real el espacio geométrico de probabilidades, la curva de Shannon y la balanza de varianza en ANOVA.
+Ahora cambia la pregunta. Sea $Y$ una respuesta numérica y sea $G$ una variable categórica que identifica grupos. Ya no preguntamos si dos etiquetas son distintas, sino:
 
-::: {.callout-note appearance="minimal"}
-### Simulador interactivo de la clase
+> ¿Qué parte de la variación numérica de $Y$ se asocia con diferencias entre los grupos?
 
-<div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
-  <a href="../../lectures/_output/03-eda/03-05-medidas-heterogeneidad-manim/interactivo.html" target="_blank" class="btn btn-outline-primary btn-sm" style="font-size: 0.85rem; border-radius: 6px; padding: 6px 14px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; font-weight: 500;">
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M5.828 10.172a.5.5 0 0 0 0 .707l4.096 4.096V11.5a.5.5 0 0 1 1 0v4.5a.5.5 0 0 1-.5.5h-4.5a.5.5 0 0 1 0-1h3.475L5.828 10.879a.5.5 0 0 1 0-.707z"/><path fill-rule="evenodd" d="M10.172 5.828a.5.5 0 0 0 0-.707L6.076 1.025V4.5a.5.5 0 0 1-1 0V0a.5.5 0 0 1 .5-.5h4.5a.5.5 0 0 1 0 1H6.601l4.278 4.278a.5.5 0 0 1 0 .707z"/></svg>
-    Abrir laboratorio en pantalla completa / ventana independiente
-  </a>
+Usaremos seis observaciones:
+
+$$
+A=(4,5),\qquad B=(8,9),\qquad C=(5,5).
+$$
+
+La media global y las medias de grupo son
+
+$$
+\bar y=6,
+\qquad \bar y_A=4.5,
+\qquad \bar y_B=8.5,
+\qquad \bar y_C=5.
+$$
+
+### La identidad que separa dos fuentes de variación
+
+Para una observación $y_{gi}$ del grupo $g$,
+
+$$
+y_{gi}-\bar y
+=\underbrace{(y_{gi}-\bar y_g)}_{\text{desviación dentro del grupo}}
++\underbrace{(\bar y_g-\bar y)}_{\text{desviación entre grupos}}.
+$$
+
+Al elevar al cuadrado y sumar todas las observaciones, el término cruzado desaparece porque $\sum_i(y_{gi}-\bar y_g)=0$ dentro de cada grupo. Se obtiene la descomposición exacta de ANOVA:
+
+$$
+\underbrace{\sum_g\sum_i(y_{gi}-\bar y)^2}_{SS_T}
+=\underbrace{\sum_g n_g(\bar y_g-\bar y)^2}_{SS_B}
++\underbrace{\sum_g\sum_i(y_{gi}-\bar y_g)^2}_{SS_W}. \tag{9}
+$$
+
+- $SS_T$: variación total respecto a la media global;
+- $SS_B$: variación **entre** medias grupales (*between*);
+- $SS_W$: variación **dentro** de los grupos (*within*).
+
+### Cálculo completo
+
+La variación total es
+
+$$
+SS_T=(4-6)^2+(5-6)^2+(8-6)^2+(9-6)^2+(5-6)^2+(5-6)^2=20.
+$$
+
+La parte entre grupos es
+
+$$
+\begin{aligned}
+SS_B
+&=2(4.5-6)^2+2(8.5-6)^2+2(5-6)^2\\
+&=4.5+12.5+2=19.
+\end{aligned}
+$$
+
+La parte interna es
+
+$$
+\begin{aligned}
+SS_W
+&=[(4-4.5)^2+(5-4.5)^2]\\
+&\quad+[(8-8.5)^2+(9-8.5)^2]+[(5-5)^2+(5-5)^2]\\
+&=0.5+0.5+0=1.
+\end{aligned}
+$$
+
+La identidad se comprueba: $20=19+1$.
+
+### Eta cuadrada y omega cuadrada
+
+La proporción descriptiva de variación explicada por las diferencias de medias es
+
+$$
+\eta^2=\frac{SS_B}{SS_T}\in[0,1]. \tag{10}
+$$
+
+En el ejemplo, $\eta^2=19/20=0.95$: conocer el grupo explica el $95\%$ de la variación cuadrática observada. Esto no significa que el grupo “cause” el resultado; es una descripción de asociación en estos datos.
+
+En muestras pequeñas, $\eta^2$ tiende a sobreestimar el efecto poblacional. Una corrección habitual es
+
+$$
+\omega^2=
+\frac{SS_B-(G-1)MS_W}{SS_T+MS_W},
+\qquad
+MS_W=\frac{SS_W}{N-G}. \tag{11}
+$$
+
+Aquí, $MS_W=1/(6-3)=1/3$ y
+
+$$
+\omega^2=
+\frac{19-2(1/3)}{20+1/3}
+=0.9016.
+$$
+
+La corrección reduce el optimismo de $0.9500$ a $0.9016$. En muestras reales, $\omega^2$ puede resultar ligeramente negativa; eso se interpreta como ausencia de evidencia de variación explicada, aunque algunas implementaciones la truncan a cero para presentación.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div id="anova-lab" class="hetero-lab" aria-labelledby="anova-lab-title">
+  <div class="lab-shell">
+    <p id="anova-lab-title" class="lab-title">Explorador de heterogeneidad numérica entre grupos</p>
+    <p class="lab-intro">Cada grupo contiene dos valores: centro ± separación. Acerque o aleje los centros y cambie la dispersión interna para observar cómo se reparte SS<sub>T</sub>.</p>
+    <div class="lab-layout">
+      <div>
+        <div data-controls></div>
+        <button type="button" data-reset>Restablecer ejemplo</button>
+        <div class="metrics" aria-live="polite">
+          <div class="metric"><span>Variación entre grupos</span><strong data-ssb></strong></div>
+          <div class="metric"><span>Variación dentro de grupos</span><strong data-ssw></strong></div>
+          <div class="metric"><span>Variación total</span><strong data-sst></strong></div>
+          <div class="metric"><span>Eta cuadrada</span><strong data-eta></strong></div>
+        </div>
+        <div class="formula-live"><div style="display:flex;height:1rem;background:#e2e8f0;border-radius:99px;overflow:hidden"><div data-between style="background:#2563eb;width:50%"></div><div data-within style="background:#d97706;width:50%"></div></div><div style="display:flex;justify-content:space-between;margin-top:.3rem;font-size:.85rem"><span>entre grupos</span><span>dentro de grupos</span></div></div>
+      </div>
+      <div><svg data-plot viewBox="0 0 620 330" role="img" aria-label="Observaciones, medias grupales y media global"></svg></div>
+    </div>
+  </div>
 </div>
-
-<div style="position: relative; width: 100%; height: 750px; border: 1px solid #d1d5db; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,0.08); background: #ffffff;">
-  <iframe src="../../lectures/_output/03-eda/03-05-medidas-heterogeneidad-manim/interactivo.html" width="100%" height="100%" style="border: none;" title="Laboratorio interactivo de medidas de heterogeneidad"></iframe>
-</div>
+<script>
+(() => {
+  const root=document.getElementById('anova-lab');if(!root)return;
+  const names=['A','B','C'],colors=['#2563eb','#d97706','#16835f'],defaults={A:[4.5,.5],B:[8.5,.5],C:[5,0]},controls=root.querySelector('[data-controls]');
+  names.forEach((n,i)=>{const block=document.createElement('div');block.style.cssText='border-left:4px solid '+colors[i]+';padding-left:.65rem;margin:.75rem 0';block.innerHTML=`<strong>Grupo ${n}</strong><label class="control-row"><span>Centro</span><input data-center="${n}" type="range" min="3" max="9" step="0.5" value="${defaults[n][0]}"><output data-center-out="${n}">${defaults[n][0]}</output></label><label class="control-row"><span>Separación</span><input data-spread="${n}" type="range" min="0" max="3" step="0.5" value="${defaults[n][1]}"><output data-spread-out="${n}">${defaults[n][1]}</output></label>`;controls.appendChild(block);});
+  const svg=root.querySelector('[data-plot]'),NS='http://www.w3.org/2000/svg',sx=x=>55+(x/12)*530;
+  const add=(tag,attrs,text='')=>{const e=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));e.textContent=text;svg.appendChild(e);return e;};
+  function update(){
+    const groups=names.map(n=>{const c=+root.querySelector(`[data-center="${n}"]`).value,s=+root.querySelector(`[data-spread="${n}"]`).value;root.querySelector(`[data-center-out="${n}"]`).value=c.toFixed(1);root.querySelector(`[data-spread-out="${n}"]`).value=s.toFixed(1);return[c-s,c+s];});
+    const values=groups.flat(),mean=values.reduce((a,b)=>a+b,0)/values.length,means=groups.map(g=>(g[0]+g[1])/2),sst=values.reduce((s,x)=>s+(x-mean)**2,0),ssb=means.reduce((s,m)=>s+2*(m-mean)**2,0),ssw=sst-ssb,eta=sst>1e-12?ssb/sst:NaN;
+    root.querySelector('[data-sst]').textContent=sst.toFixed(2);root.querySelector('[data-ssb]').textContent=ssb.toFixed(2);root.querySelector('[data-ssw]').textContent=ssw.toFixed(2);root.querySelector('[data-eta]').textContent=Number.isFinite(eta)?eta.toFixed(3):'no definida';root.querySelector('[data-between]').style.width=(Number.isFinite(eta)?100*eta:0)+'%';root.querySelector('[data-within]').style.width=(Number.isFinite(eta)?100*(1-eta):0)+'%';
+    svg.replaceChildren();for(let t=0;t<=12;t+=2){add('line',{x1:sx(t),x2:sx(t),y1:42,y2:275,stroke:'#e2e8f0','stroke-width':'1'});add('text',{x:sx(t),y:302,'text-anchor':'middle',fill:'#475569','font-size':'12'},t);}add('line',{x1:sx(mean),x2:sx(mean),y1:28,y2:275,stroke:'#dc2626','stroke-width':'2','stroke-dasharray':'6 5'});add('text',{x:sx(mean),y:18,'text-anchor':'middle',fill:'#b91c1c','font-size':'12'},`media global ${mean.toFixed(2)}`);
+    groups.forEach((g,i)=>{const y=75+i*85,m=means[i];add('text',{x:25,y:y+5,'text-anchor':'middle',fill:'#172033','font-size':'14','font-weight':'700'},names[i]);add('line',{x1:sx(g[0]),x2:sx(g[1]),y1:y,y2:y,stroke:colors[i],'stroke-width':'4'});g.forEach(x=>add('circle',{cx:sx(x),cy:y,r:'9',fill:colors[i],stroke:'#fff','stroke-width':'2'}));add('path',{d:`M ${sx(m)} ${y-15} l 8 8 l -8 8 l -8 -8 z`,fill:'#fff',stroke:colors[i],'stroke-width':'3'});add('text',{x:sx(m),y:y+29,'text-anchor':'middle',fill:'#475569','font-size':'12'},`media ${m.toFixed(1)}`);});add('text',{x:320,y:326,'text-anchor':'middle',fill:'#475569','font-size':'13'},'Valor de la respuesta Y');
+  }
+  root.querySelectorAll('input').forEach(x=>x.addEventListener('input',update));root.querySelector('[data-reset]').addEventListener('click',()=>{names.forEach(n=>{root.querySelector(`[data-center="${n}"]`).value=defaults[n][0];root.querySelector(`[data-spread="${n}"]`).value=defaults[n][1];});update();});update();
+})();
+</script>
+```
 :::
 
-El laboratorio interactivo incluye tres herramientas didácticas:
+::: {.content-visible unless-format="html"}
+El laboratorio de la versión HTML representa cada grupo mediante dos observaciones, “centro $\pm$ separación”. Al alejar las medias de los grupos aumenta $SS_B$; al separar las observaciones dentro de cada grupo aumenta $SS_W$.
+:::
 
-1. **Módulo 1: Espacio de probabilidades de Gini–Simpson**: Deslice los controles de probabilidad para observar cómo la diagonal de coincidencia ($\sum p_k^2$) y el área complementaria de heterogeneidad ($D$) se transforman visualmente dentro del cuadrado unitario $[0, 1] \times [0, 1]$.
-2. **Módulo 2: Curva de sorpresa y entropía de Shannon**: Explore la función analítica $f(p) = -p\ln p$, el máximo en $p = 1/e \approx 0.368$ y la acumulación de bits, nats y categorías efectivas $^1 D = \exp(H)$.
-3. **Módulo 3: Balanza euclidiana de varianza (ANOVA)**: Mueva las observaciones numéricas de tres subgrupos a lo largo de una recta para visualizar la recomposición continua de las áreas cuadráticas $SS_T = SS_B + SS_W$ y la fluctuación de $\eta^2$.
+### Lo que $\eta^2$ sí ve y lo que no ve
+
+$\eta^2$ resume diferencias de **medias**. No detecta por sí sola todos los tipos de heterogeneidad distributiva. Dos grupos pueden tener la misma media y, aun así, diferir en:
+
+- dispersión;
+- asimetría;
+- número o severidad de valores atípicos;
+- multimodalidad.
+
+Por ello, la descomposición ANOVA debe acompañarse con tamaños muestrales y gráficos de las distribuciones: diagramas de caja, violines, densidades o funciones de distribución empírica. Una cifra alta tampoco demuestra causalidad; puede reflejar confusión, selección o diseño muestral.
+
+## Heterogeneidad cruzada entre variables categóricas
+
+Cuando se cruzan dos variables categóricas, la pregunta pasa a ser si la composición de una cambia entre niveles de la otra. Para cada grupo $g$, compare las probabilidades condicionales[^condicional]
+
+$$
+p_{k\mid g}=P(X=k\mid G=g).
+$$
+
+Una tabla de conteos responde cuánto soporte tiene cada combinación; una tabla de porcentajes por fila permite comparar composiciones. El mapa de calor debe mostrar ambas cosas o, como mínimo, acompañar cada porcentaje con su $n_{kg}$.
+
+::: {.callout-warning appearance="minimal"}
+### Celdas pequeñas
+
+Las combinaciones con pocos casos generan porcentajes inestables. No existe un umbral universal que vuelva confiable una celda; la regla práctica $n<10$ solo funciona como alerta inicial. Revise conteos, incertidumbre y mecanismo de muestreo antes de interpretar una diferencia como estructura real.
+:::
+
+Si se necesita un resumen formal de asociación, una prueba $\chi^2$ contrasta independencia y la $V$ de Cramér cuantifica intensidad. Estas herramientas responden una pregunta relacional distinta de la diversidad marginal: una variable puede ser muy diversa y, al mismo tiempo, ser independiente de la otra.
 
 ## Puentes con algoritmos de minería de datos
 
-Las medidas de heterogeneidad constituyen el núcleo algorítmico de los métodos fundamentales de minería de datos y aprendizaje automático:
-
-| Algoritmo | Medida de heterogeneidad | Función objetivo y mecanismo |
+| Algoritmo | Medida de heterogeneidad | Uso |
 |---|---|---|
-| **Árboles CART** | **Impureza de Gini** ($D(p)$) | En cada nodo $t$, calcula la impureza $I_G(t) = 1 - \sum p_k^2$. Selecciona la partición que maximice la reducción de impureza: $\Delta I_G = I_G(padre) - \sum \frac{N_j}{N} I_G(hijo_j)$. |
-| **Árboles ID3 / C4.5** | **Entropía de Shannon** ($H(p)$) | ID3 evalúa la Ganancia de Información: $IG = H(padre) - \sum \frac{N_j}{N} H(hijo_j)$. C4.5 normaliza por la entropía intrínseca del corte (*Gain Ratio* $= IG / SplitInfo$) para penalizar particiones con demasiadas ramas artificiales. |
-| **Clustering $k$-means** | **Inercia residual $SS_W$** | Minimiza la suma de cuadrados intra-cluster: $\sum \sum \|y_{gi} - \bar{y}_g\|^2 = SS_W$. Como $SS_T$ es constante para un dataset dado, minimizar $SS_W$ equivale exactamente a maximizar la separación inter-cluster $SS_B$. |
-| **Índice Calinski–Harabasz** | **Estadístico $F$ de ANOVA** | Criterio de validación de agrupamiento: $CH = \frac{SS_B / (k - 1)}{SS_W / (n - k)}$. Un $CH$ más alto indica clusters compactos y bien separados entre sí. |
+| Árboles CART | Impureza de Gini $1-\sum p_k^2$ | Elige el corte que produce nodos hijos más puros mediante la reducción ponderada de impureza. |
+| ID3 / C4.5 | Entropía de Shannon | ID3 maximiza ganancia de información; C4.5 la ajusta con *gain ratio* para evitar cortes con demasiadas ramas. |
+| $k$-means | $SS_W$ o inercia | Busca centroides que minimicen la variación dentro de los grupos. Con datos fijos, minimizar $SS_W$ equivale a maximizar $SS_B$. |
+| Calinski–Harabasz | Razón tipo ANOVA | Compara separación entre *clusters* con compactación interna: $CH=(SS_B/(k-1))/(SS_W/(n-k))$. |
 
-## Comparación empírica: escenarios con igual número de categorías
+En un árbol, “impureza de Gini” es precisamente Gini–Simpson aplicado a la distribución de clases dentro de un nodo. En *clustering*, los grupos no vienen dados: el algoritmo intenta construirlos para reducir heterogeneidad interna.
+
+## Implementación reproducible
+
+Las siguientes funciones reproducen los cálculos del capítulo y hacen explícitas las convenciones para probabilidades nulas.
 
 ```{python}
 import numpy as np
 import pandas as pd
-import plotly.express as px
 
-escenarios = {
-    "Dominante": [0.82, 0.08, 0.06, 0.04],
-    "Intermedio": [0.50, 0.25, 0.15, 0.10],
-    "Uniforme": [0.25, 0.25, 0.25, 0.25]
-}
+def indices_categoricos(conteos, base=np.e):
+    conteos = np.asarray(conteos, dtype=float)
+    if np.any(conteos < 0) or conteos.sum() == 0:
+        raise ValueError("Los conteos deben ser no negativos y sumar más de cero.")
 
-filas = []
-for nombre, probs in escenarios.items():
-    for cat, p in zip(list("ABCD"), probs):
-        filas.append({"Escenario": nombre, "Categoría": cat, "Proporción": p})
+    p = conteos / conteos.sum()
+    p_positivas = p[p > 0]
+    k = len(p_positivas)
+    h = -(p_positivas * (np.log(p_positivas) / np.log(base))).sum()
+    gini_simpson = 1 - np.square(p).sum()
 
-div_df = pd.DataFrame(filas)
-fig_bar = px.bar(
-    div_df, x="Categoría", y="Proporción", color="Categoría",
-    animation_frame="Escenario", range_y=[0, 1],
-    title="Transición de dominancia a uniformidad categórica (K = 4)"
-)
-fig_bar.update_layout(showlegend=False, template="plotly_white")
-fig_bar.show()
-```
-
-Calculamos el espectro completo de métricas de heterogeneidad y números de Hill para los tres escenarios:
-
-```{python}
-resumen = []
-for nombre, probs in escenarios.items():
-    p = np.asarray(probs)
-    h = -(p[p > 0] * np.log(p[p > 0])).sum()
-    sum_p2 = (p ** 2).sum()
-    d = 1.0 - sum_p2
-    q0 = len(p)
-    q1 = np.exp(h)
-    q2 = 1.0 / sum_p2
-    resumen.append({
-        "Escenario": nombre,
-        "Entropía (H)": h,
-        "H norm": h / np.log(len(p)),
-        "Gini–Simpson (D)": d,
-        "q=0 (Riqueza)": q0,
-        "q=1 (exp H)": q1,
-        "q=2 (1/∑p²)": q2
+    return pd.Series({
+        "K observado": k,
+        "Gini–Simpson": gini_simpson,
+        "Gini–Simpson normalizado": gini_simpson / (1 - 1 / k) if k > 1 else 0,
+        "Entropía": h,
+        "Entropía normalizada": h / (np.log(k) / np.log(base)) if k > 1 else 0,
+        "Hill q=1": base ** h,
+        "Hill q=2": 1 / np.square(p).sum(),
     })
 
-tabla_resumen = pd.DataFrame(resumen).round(3)
-tabla_resumen
+indices_categoricos([3, 1, 2], base=np.e).round(4)
 ```
-
-Observaciones clave:
-1. En el escenario **Uniforme**, los tres números de Hill coinciden exactamente en $^0 D = \ ^1 D = \ ^2 D = 4.000$.
-2. En el escenario **Dominante**, a pesar de que existen 4 categorías nominalmente ($^0 D = 4.0$), la entropía revela que equivale apenas a $^1 D = 1.939$ clases efectivas, y la concentración penaliza la diversidad según Simpson a $^2 D = 1.462$.
-
-## Diferencias numéricas entre grupos
-
-Generamos datos sintéticos para tres subpoblaciones con diferentes parámetros de localización y escala para examinar la descomposición de varianza:
 
 ```{python}
-rng = np.random.default_rng(17)
-n = 350
-grupos = pd.DataFrame({
-    "valor": np.r_[rng.normal(50, 8, n), rng.normal(62, 8, n), rng.normal(75, 14, n)],
-    "grupo": ["A"] * n + ["B"] * n + ["C"] * n
-})
+def descomposicion_anova(valores, grupos):
+    datos = pd.DataFrame({"y": valores, "grupo": grupos})
+    media_global = datos["y"].mean()
+    medias_grupo = datos.groupby("grupo")["y"].transform("mean")
+    ss_t = np.square(datos["y"] - media_global).sum()
+    ss_w = np.square(datos["y"] - medias_grupo).sum()
+    ss_b = ss_t - ss_w
+    n, g = len(datos), datos["grupo"].nunique()
+    ms_w = ss_w / (n - g)
+    eta2 = ss_b / ss_t if ss_t > 0 else np.nan
+    omega2 = (ss_b - (g - 1) * ms_w) / (ss_t + ms_w) if ss_t + ms_w > 0 else np.nan
+    return pd.Series({"SS_T": ss_t, "SS_B": ss_b, "SS_W": ss_w,
+                      "eta²": eta2, "omega²": omega2})
 
-fig_violin = px.violin(
-    grupos, x="grupo", y="valor", color="grupo", box=True, points="outliers",
-    title="Distribución de la respuesta continua entre subgrupos (A, B y C)"
-)
-fig_violin.update_layout(showlegend=False, template="plotly_white")
-fig_violin.show()
-
-# Descomposición ANOVA
-media_global = grupos["valor"].mean()
-ss_total = ((grupos["valor"] - media_global) ** 2).sum()
-medias = grupos.groupby("grupo")["valor"].transform("mean")
-ss_entre = ((medias - media_global) ** 2).sum()
-ss_dentro = ss_total - ss_entre
-eta2 = ss_entre / ss_total
-
-N = len(grupos)
-G = grupos["grupo"].nunique()
-ms_dentro = ss_dentro / (N - G)
-omega2 = (ss_entre - (G - 1) * ms_dentro) / (ss_total + ms_dentro)
-
-print(f"SS Total: {ss_total:.2f}")
-print(f"SS Entre grupos (SS_B): {ss_entre:.2f}")
-print(f"SS Dentro de grupos (SS_W): {ss_dentro:.2f}")
-print(f"Eta cuadrada (η²): {eta2:.4f}")
-print(f"Omega cuadrada corregida (ω²): {omega2:.4f}")
+descomposicion_anova(
+    valores=[4, 5, 8, 9, 5, 5],
+    grupos=["A", "A", "B", "B", "C", "C"],
+).round(4)
 ```
 
-Al disponer de una muestra grande ($N = 1050$), la discrepancia entre $\eta^2$ y $\omega^2$ es prácticamente imperceptible (0.5240 vs 0.5229). Aproximadamente el 52.4% de la variación cuadrática total en los datos se atribuye a diferencias sistemáticas entre los grupos.
+## Guía de decisión
 
-## Heterogeneidad cruzada
-
-Cuando interactúan dos variables categóricas, una tabla unidimensional puede ocultar concentraciones críticas. Un mapa de calor (*heatmap*) de promedios o medianas, acompañado por el conteo muestral de cada celda ($n_{ij}$), ayuda a diferenciar patrones estadísticamente confiables de artefactos producidos por celdas con baja representatividad.
-
-::: {.callout-warning appearance="minimal"}
-**Peligro de las celdas pequeñas.** Las combinaciones de categorías con tamaños muestrales mínimos ($n_{ij} < 10$) generan estimaciones sumamente inestables que pueden confundir heterogeneidad real con ruido muestral. Siempre reporte el soporte muestral $n_{ij}$.
-:::
-
-## Guía de decisión metodológica
-
-| Pregunta analítica | Métrica o herramienta gráfica | Propósito en minería de datos |
+| Pregunta | Herramienta principal | Comprobación necesaria |
 |---|---|---|
-| ¿Qué tan dispersa está una variable categórica? | Entropía $H(p)$, Gini–Simpson $D(p)$, barras | Detección de clases dominantes, balance de etiquetas objetivo |
-| ¿Cuántas clases efectivas operan realmente? | Números de Hill: $^1 D = e^H$, $^2 D = 1/\sum p_k^2$ | Reducción de cardinalidad, evaluación de diversidad real |
-| ¿Qué criterio usar para dividir nodos en árboles? | Impureza de Gini (CART) vs Ganancia de Información (C4.5) | Partición óptima en algoritmos supervisados |
-| ¿Difiere una respuesta continua entre grupos? | ANOVA: $SS_B$, $SS_W$, $\eta^2$, $\omega^2$, violin plot | Selección de variables continuas asociadas a variables de agrupación |
-| ¿Cómo validar la calidad de clusters numéricos? | Inercia residual ($SS_W$) e índice Calinski–Harabasz | Determinación del número óptimo de agrupamientos ($k$) |
-| ¿Existe interacción entre factores cualitativos? | Heatmap cruzado con matriz de soporte muestral $n_{ij}$ | Detección de sesgos cruzados y heterogeneidad combinada |
+| ¿Qué tan repartida está una variable categórica? | Barras, Gini–Simpson, Shannon | Reportar $K$, conteos y versión normalizada si se comparan cardinalidades. |
+| ¿Cuántas clases efectivas hay? | Números de Hill | Indicar el orden $q$ y su sensibilidad a clases raras. |
+| ¿Cambian las medias numéricas entre grupos? | $SS_B$, $SS_W$, $\eta^2$, $\omega^2$ | Inspeccionar tamaños, dispersión y forma de cada grupo. |
+| ¿Cambia una composición categórica entre grupos? | Proporciones condicionales, mapa de calor, $\chi^2$, $V$ de Cramér | Mostrar soporte de cada celda. |
+| ¿Hay heterogeneidad causal? | Ningún índice descriptivo basta | Se requiere diseño causal y control de variables de confusión. |
 
 ## Puente al caso BigMart
 
-El capítulo práctico [Medidas de heterogeneidad en Big Mart Sales](2-6-heterogeneidad_bigmart.qmd) aplica estos principios analíticos sobre un dataset de retail a gran escala, cuantificando:
+El capítulo práctico [Medidas de heterogeneidad en Big Mart Sales](2-6-heterogeneidad_bigmart.qmd) traslada estas ideas a datos de *retail*:
 
-- La diversidad de categorías de producto mediante números de Hill.
-- La heterogeneidad de ventas entre formatos de establecimiento (Supermarkets vs Grocery Stores) mediante descomposición de varianza $\eta^2$.
-- El impacto del desbalance cruzado entre ubicación del establecimiento y año de apertura.
+- diversidad de categorías de producto mediante Shannon, Gini–Simpson y números de Hill;
+- heterogeneidad de ventas entre formatos de establecimiento mediante $\eta^2$ y $\omega^2$;
+- composiciones cruzadas entre ubicación, tipo y antigüedad del establecimiento.
+
+La secuencia recomendada es siempre la misma: **ver los conteos o distribuciones, formular el experimento que da significado al índice, calcularlo y finalmente interpretar su escala**.
 
 ## Ejercicios formativos
 
-1. **Geometría del cuadrado unitario**: Considere una variable con tres clases $p = (0.7, 0.2, 0.1)$.
-   - Calcule el área ocupada por los bloques diagonales de coincidencia ($\sum p_k^2$).
-   - Obtenga el área complementaria de heterogeneidad de Gini–Simpson ($D$).
-2. **Análisis de sensibilidad y orden de Hill**:
-   - Para la distribución $p = (0.7, 0.2, 0.1)$, calcule los números de Hill $^0 D$, $^1 D$ y $^2 D$.
-   - Verifique el cumplimiento de la jerarquía $^0 D \ge \ ^1 D \ge \ ^2 D$.
-   - Explique conceptualmente por qué $^2 D$ es significativamente menor que $^1 D$.
-3. **Punto crítico de Shannon**:
-   - ¿Por qué una categoría con $p = 0.99$ aporta menos incertidumbre marginal a la entropía que una categoría con $p = 0.368$?
-   - Apóyese en el comportamiento de la función $f(p) = -p \ln p$ y la sorpresa $I(p) = -\ln p$.
-4. **Descomposición de varianza y sesgo muestral**:
-   - Suponga dos grupos con observaciones $G_1 = (10, 12)$ y $G_2 = (20, 22)$.
-   - Calcule manualmente $SS_T$, $SS_B$ y $SS_W$.
-   - Determine $\eta^2$ y compare su valor con el estimador insesgado $\omega^2$.
+1. **Recupere el significado probabilístico.** Para $p=(0.7,0.2,0.1)$, construya la matriz de probabilidades $p_jp_k$. Sume la diagonal y su complemento. Explique el resultado como frecuencia esperada de desacuerdos en 100 pares.
+2. **Sorpresa frente a aporte.** Para las mismas probabilidades, calcule $I_2(p_k)$ y $p_kI_2(p_k)$. Identifique qué clase sorprende más y cuál aporta más a la entropía. ¿Son necesariamente la misma?
+3. **Escala y base.** Calcule $H$ en bits y nats. Compruebe que $H_{\mathrm{norm}}$ es el mismo en ambas bases.
+4. **Números efectivos.** Calcule ${}^0D$, ${}^1D$ y ${}^2D$ para $p=(0.7,0.2,0.1)$ y verifique ${}^0D\ge{}^1D\ge{}^2D$.
+5. **Descomposición numérica.** Para $G_1=(10,12)$ y $G_2=(20,22)$, calcule $SS_T$, $SS_B$, $SS_W$, $\eta^2$ y $\omega^2$.
+6. **Límite de $\eta^2$.** Construya dos grupos con la misma media y dispersiones muy distintas. Muestre que $\eta^2=0$ y explique por qué eso no demuestra que las distribuciones sean iguales.
 
 ## Referencias {.unnumbered}
 
 ::: {#refs}
 :::
 
+[^variable-aleatoria]: Una **variable aleatoria** es una regla que asigna un valor a cada resultado de un experimento. Aquí no significa que las etiquetas sean números: $X$ asigna la etiqueta $A$, $B$ o $C$ a la canica observada.
+[^clases]: **Mutuamente excluyentes** significa que una canica no puede pertenecer simultáneamente a dos clases. **Exhaustivas** significa que las tres clases cubren todos los resultados posibles.
+[^probabilidad]: En este ejemplo equiprobable a nivel de canica, la probabilidad de una clase es el número de canicas de esa clase dividido entre el total. En una interpretación frecuentista, es también la proporción a la que tendería la frecuencia de esa clase al repetir muchas veces el experimento bajo las mismas condiciones.
+[^reemplazo]: Muestrear **con reemplazo** consiste en devolver cada unidad antes de la siguiente selección. Así, las probabilidades permanecen constantes. Sin reemplazo, después de extraer una canica quedarían cinco y la segunda probabilidad dependería de la primera extracción.
+[^independencia]: Dos variables aleatorias $X_1$ y $X_2$ son **independientes** si conocer el valor de una no modifica la distribución de la otra. Formalmente, $P(X_1=j,X_2=k)=P(X_1=j)P(X_2=k)$ para todo par $(j,k)$.
+[^complemento]: Si $E$ es un evento, su complemento $E^c$ reúne todos los resultados en los que $E$ no ocurre. Como son mutuamente excluyentes y cubren todo el espacio, $P(E^c)=1-P(E)$.
+[^log-producto]: Para eventos independientes con probabilidades $p$ y $q$, $I_b(pq)=-\log_b(pq)=-\log_b p-\log_b q=I_b(p)+I_b(q)$.
+[^esperanza]: El **valor esperado** de una variable discreta es su promedio teórico ponderado: $\mathbb{E}[Z]=\sum_z zP(Z=z)$. No asigna el mismo peso a resultados frecuentes y raros.
+[^condicional]: La probabilidad condicional $P(X=k\mid G=g)$ restringe el universo a los casos del grupo $g$ y calcula dentro de él la proporción que pertenece a la clase $k$.
