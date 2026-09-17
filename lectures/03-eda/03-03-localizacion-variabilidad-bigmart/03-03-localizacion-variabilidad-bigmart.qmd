@@ -1,0 +1,811 @@
+---
+title: "Misión BigMart"
+subtitle: "Del cálculo a una decisión defendible · localización y variabilidad"
+author: "Diego Villalba"
+date: today
+lang: es
+format:
+  revealjs:
+    theme: default
+    css: clase-interactiva.css
+    logo: ../../assets/Logo_FC_Color.png
+    logo-alt: Facultad de Ciencias
+    slide-number: c/t
+    controls: true
+    progress: true
+    transition: slide
+    background-transition: fade
+    center: false
+    width: 1280
+    height: 720
+    margin: 0.03
+    code-overflow: wrap
+    code-line-numbers: false
+    preview-links: auto
+    embed-resources: true
+    include-after-body: timer.html
+    footer: ""
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+resources:
+  - notebook-alumnos.ipynb
+---
+
+```{python}
+#| include: false
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly
+import plotly.express as px
+from IPython.display import display
+
+pd.set_option("display.max_columns", 12)
+pd.set_option("display.width", 110)
+
+
+def encontrar_bigmart():
+    inicio = Path.cwd().resolve()
+    candidatos = [inicio / "bigmart_sales.csv"]
+    candidatos.extend(base / "data" / "bigmart_sales.csv" for base in [inicio, *inicio.parents])
+    for candidato in candidatos:
+        if candidato.exists():
+            return candidato
+    raise FileNotFoundError("No se encontró data/bigmart_sales.csv dentro del repositorio.")
+
+
+DATA_PATH = encontrar_bigmart()
+df = pd.read_csv(DATA_PATH)
+ventas = df["Item_Outlet_Sales"].dropna()
+
+AZUL = "#0b4a6f"
+ACENTO = "#4fb6d6"
+NARANJA = "#b45309"
+VERDE = "#15803d"
+GRIS = "#64748b"
+
+
+def resumen_variabilidad(serie):
+    q1, q3 = serie.quantile([0.25, 0.75])
+    return pd.Series({
+        "n": serie.size,
+        "media": serie.mean(),
+        "mediana": serie.median(),
+        "rango": serie.max() - serie.min(),
+        "desv_est": serie.std(),
+        "IQR": q3 - q1,
+    })
+```
+
+# La misión {.title-section}
+
+## BigMart publica mañana
+
+::: {.mission-card}
+La dirección quiere informar una cifra de **venta típica**, describir la
+**variabilidad** y decidir si conviene eliminar registros con peso faltante.
+:::
+
+> Nuestro trabajo no es producir números: es defender una decisión con evidencia.
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 2).
+
+Plantee el encargo antes de mencionar fórmulas. Diga: “Hoy somos el equipo que debe firmar el reporte. Si elegimos una medida inadecuada, la cifra puede ser correcta y aun así contar una historia equivocada”.
+:::
+
+## Resultado observable
+
+Al finalizar, cada pareja entregará un dictamen de cuatro líneas:
+
+1. **Decisión:** qué medida usaría.
+2. **Evidencia numérica:** valor y unidades.
+3. **Evidencia visual:** qué patrón muestra la gráfica.
+4. **Precaución:** qué no puede concluirse todavía.
+
+<span class="checkpoint">Regla de la sesión</span>
+
+**Primero predecimos; después ejecutamos.**
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 3).
+
+Organice parejas. Una persona será piloto y escribirá; la otra será analista y deberá explicar el resultado. Los roles cambian después del segundo reto.
+:::
+
+# Herramientas en cinco minutos {.title-section}
+
+## Pandas: una tabla y cuatro verbos
+
+:::: {.columns}
+::: {.column width="47%"}
+**Objetos**
+
+- `DataFrame`: una tabla.
+- `Series`: una columna.
+
+**Verbos**
+
+- seleccionar;
+- filtrar;
+- resumir;
+- agrupar.
+:::
+
+::: {.column width="53%"}
+```{python}
+#| eval: false
+#| code-line-numbers: "1-2|4-5|7-8"
+# Una columna → Series
+ventas = df["Item_Outlet_Sales"]
+
+# Varios resúmenes
+ventas.agg(["mean", "median", "std"])
+
+# El mismo análisis por grupo
+df.groupby("Outlet_Type")["Item_Outlet_Sales"].median()
+```
+:::
+::::
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 5).
+
+No explique toda la API. Señale la secuencia: elegir columna, aplicar operación, interpretar. `groupby` significa “separa, aplica y combina”.
+:::
+
+## Pregunta rápida {data-timer="45" data-timer-label="Votación"}
+
+¿Qué devuelve este código?
+
+```{python}
+#| eval: false
+df.groupby("Outlet_Type")["Item_Outlet_Sales"].median()
+```
+
+::: {.answer-grid}
+::: {.answer-option}
+**A.** Una sola mediana global.
+:::
+::: {.answer-option}
+**B.** Una mediana por tipo de outlet.
+:::
+::: {.answer-option}
+**C.** Una fila por producto.
+:::
+::: {.answer-option}
+**D.** Una gráfica automática.
+:::
+:::
+
+::: {.fragment}
+**Respuesta: B.** Separa las filas por tipo de outlet y calcula una mediana en cada grupo.
+:::
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 6).
+
+Pida votar con dedos A–D. Solicite a alguien descartar una opción incorrecta. El temporizador se inicia al entrar a la diapositiva.
+:::
+
+## Plotly: datos → gráfica → exploración
+
+```{python}
+#| eval: false
+#| code-line-numbers: "1-6|7|8"
+fig = px.histogram(
+    df,
+    x="Item_Outlet_Sales",
+    nbins=35,
+    title="Distribución de ventas",
+)
+fig.add_vline(x=ventas.median())
+fig.show()
+```
+
+`fig` contiene la gráfica completa. Podemos recorrerla con *hover*, acercarnos y seleccionar regiones.
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 8).
+
+Repaso deliberadamente corto. Muestre el *hover* y el zoom. Insista en que la interactividad no sustituye título, unidades ni una referencia interpretable.
+:::
+
+## Semáforo técnico
+
+```{python}
+#| code-line-numbers: "1-3|4-5"
+print("pandas:", pd.__version__)
+print("NumPy:", np.__version__)
+print("Plotly:", plotly.__version__)
+print("Datos:", df.shape)
+print("Archivo:", DATA_PATH.name)
+```
+
+::: {.expected}
+**Esperamos:** 8,523 filas, 12 columnas y las tres bibliotecas disponibles.
+:::
+
+[Descargar el notebook de alumnos](notebook-alumnos.ipynb){download="notebook-alumnos.ipynb"}
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 10).
+
+Todos ejecutan la primera sección del notebook. Use semáforo con manos: verde si ven `(8523, 12)`, amarillo si carga pero cambia la forma, rojo si hay error. Agrupe inmediatamente a quien tenga rojo con una pareja verde.
+:::
+
+# Calentamiento {.title-section}
+
+## Dos rutas, el mismo promedio {data-timer="60" data-timer-label="Predicción"}
+
+Un estudiante midió el tiempo de traslado durante seis días:
+
+```{python}
+#| eval: false
+#| code-line-numbers: "1|2"
+ruta_a = np.array([38, 39, 40, 40, 41, 42])
+ruta_b = np.array([25, 30, 38, 42, 50, 55])
+```
+
+Ambas rutas promedian 40 minutos.
+
+::: {.prediction}
+**Sin calcular:** ¿cuál recomendarías a alguien que no puede llegar tarde? ¿Qué número falta para justificarlo?
+:::
+
+::: {.notes}
+**Tiempo:** 1 minuto de predicción (acumulado: 11).
+
+No acepte “A” sin evidencia. Pida nombrar la propiedad: consistencia, dispersión o variabilidad.
+:::
+
+## Comprobación: el centro no basta
+
+```{python}
+#| code-line-numbers: "1-2|4-8|9"
+ruta_a = pd.Series([38, 39, 40, 40, 41, 42], name="Ruta A")
+ruta_b = pd.Series([25, 30, 38, 42, 50, 55], name="Ruta B")
+
+comparacion_rutas = pd.DataFrame({
+    "media": [ruta_a.mean(), ruta_b.mean()],
+    "desv_est": [ruta_a.std(), ruta_b.std()],
+    "rango": [ruta_a.max() - ruta_a.min(), ruta_b.max() - ruta_b.min()],
+}, index=["Ruta A", "Ruta B"])
+comparacion_rutas.round(2)
+```
+
+::: {.fragment .expected}
+La ruta A conserva el mismo centro, pero tiene mucha menor dispersión: `s ≈ 1.41` frente a `s ≈ 11.47`.
+:::
+
+::: {.notes}
+**Tiempo:** 3 minutos de discusión (acumulado: 14).
+
+Conecte explícitamente con la teoría: centro responde “¿dónde?” y variabilidad responde “¿qué tan estable?”. Aclare que pandas usa desviación estándar muestral (`ddof=1`).
+:::
+
+# Reto 1 {.title-section}
+
+## ¿Cuál es la venta típica? {data-timer="300" data-timer-label="Reto 1"}
+
+Completa la sección **Reto 1** del notebook.
+
+```{python}
+#| eval: false
+#| code-line-numbers: "1|3-4|6|7-8|9"
+ventas = df["Item_Outlet_Sales"].dropna()
+
+media = ventas.____()
+mediana = ventas.____()
+
+fig = px.histogram(df, x="Item_Outlet_Sales", nbins=35)
+fig.add_vline(x=____, annotation_text="Media")
+fig.add_vline(x=____, annotation_text="Mediana")
+fig.show()
+```
+
+::: {.prediction}
+Antes de ejecutar: ¿cuál esperas que esté más a la derecha y por qué?
+:::
+
+**Producto:** una elección entre media y mediana, apoyada por el histograma.
+
+::: {.notes}
+**Tiempo:** 5 minutos de trabajo (acumulado: 19).
+
+Circule y pregunte “¿qué representa una fila?” y “¿la cola atrae la media o la mediana?”. No corrija sintaxis desde el frente; use errores individuales como microtutoría.
+:::
+
+## Reto 1 · código completo {.small-code}
+
+```{python}
+#| code-line-numbers: "1-2|4-5|7-10|11-14|15-18"
+media = ventas.mean()
+mediana = ventas.median()
+
+print(f"Media:   {media:,.2f} u.m.")
+print(f"Mediana: {mediana:,.2f} u.m.")
+
+fig_ventas = px.histogram(
+    df, x="Item_Outlet_Sales", nbins=45,
+    labels={"Item_Outlet_Sales": "Ventas (u.m.)"},
+)
+fig_ventas.add_vline(
+    x=media, line_color=NARANJA, line_width=3,
+    annotation_text=f"Media: {media:,.0f}",
+)
+fig_ventas.add_vline(
+    x=mediana, line_color=AZUL, line_width=3, line_dash="dash",
+    annotation_text=f"Mediana: {mediana:,.0f}",
+)
+_ = fig_ventas
+```
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 20).
+
+Lea el código sin ejecutarlo línea por línea. Pregunte qué agregan las dos líneas verticales antes de mostrar la gráfica.
+:::
+
+## Explora la distribución {.plot-slide}
+
+```{python}
+#| echo: false
+fig_ventas.update_layout(
+    template="plotly_white", height=590,
+    margin=dict(l=45, r=20, t=15, b=45),
+    bargap=0.04, showlegend=False,
+    yaxis_title="Frecuencia",
+)
+fig_ventas.show(config={"displayModeBar": True, "scrollZoom": True})
+```
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 21).
+
+Pida usar *hover* sobre la cola y acercarse a la zona central. Lea primero la forma, después las líneas. La cola derecha desplaza la media.
+:::
+
+## Reto 1 · decisión
+
+::: {.answer-grid}
+::: {.answer-option}
+**A. Media: 2,181.29 u.m.**  
+Usa todos los montos y sirve para reconstruir el total.
+:::
+::: {.answer-option}
+**B. Mediana: 1,794.33 u.m.**  
+Describe mejor una observación típica ante la cola derecha.
+:::
+:::
+
+::: {.fragment .expected}
+**Ambas pueden ser correctas si cambia la pregunta.** Para “venta típica”, la mediana es más defendible; para estimar el total a partir de `n`, la media conserva una interpretación útil.
+:::
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 22).
+
+Rechace la falsa dicotomía “media mala, mediana buena”. La elección depende del propósito. Una fila es un producto observado en un outlet, no una tienda completa ni un periodo temporal.
+:::
+
+# Reto 2 {.title-section}
+
+## Llega una venta de 100,000 u.m. {data-timer="360" data-timer-label="Reto 2"}
+
+Trabaja sobre una **copia** y completa la sección **Reto 2**.
+
+```{python}
+#| eval: false
+#| code-line-numbers: "1-4|6-7"
+con_extremo = pd.concat(
+    [ventas, pd.Series([100_000.0])],
+    ignore_index=True,
+)
+
+# Completa media, mediana, rango, s e IQR.
+comparacion = ...
+```
+
+::: {.prediction}
+Ordena las cinco medidas de la más sensible a la más resistente. Después comprueba.
+:::
+
+**Producto:** explicar por qué “extremo” no significa automáticamente “error”.
+
+::: {.notes}
+**Tiempo:** 6 minutos de trabajo (acumulado: 28).
+
+Cambie los roles: ahora escribe quien antes explicaba. Si alguien modifica `df`, pida reiniciar el kernel o volver a cargar; el experimento debe operar sobre una copia.
+:::
+
+## Reto 2 · medimos el impacto {.small-code}
+
+```{python}
+#| code-line-numbers: "1-4|6-9|10-12|13"
+con_extremo = pd.concat(
+    [ventas, pd.Series([100_000.0])],
+    ignore_index=True,
+)
+
+comparacion = pd.DataFrame({
+    "original": resumen_variabilidad(ventas),
+    "con_extremo": resumen_variabilidad(con_extremo),
+})
+comparacion["cambio_pct"] = (
+    100 * (comparacion["con_extremo"] / comparacion["original"] - 1)
+)
+comparacion.round(2)
+```
+
+::: {.expected}
+El rango aumenta cerca de **666%** y `s` cerca de **17.7%**; la mediana no cambia y el IQR cambia menos de **0.02%**.
+:::
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 29).
+
+La media cambia poco porque hay 8,523 observaciones; eso no la convierte en robusta. La magnitud del efecto también depende del tamaño muestral.
+:::
+
+## Reto 2 · código para comparar visualmente {.small-code}
+
+```{python}
+#| code-line-numbers: "1-5|6-7|9-15|16"
+impacto = (
+    comparacion.drop(index="n")
+    .rename_axis("medida")
+    .reset_index()
+)
+impacto["factor"] = impacto["con_extremo"] / impacto["original"]
+impacto["etiqueta"] = impacto["factor"].map(lambda x: f"{x:.2f}×")
+
+fig_impacto = px.bar(
+    impacto, x="medida", y="factor", color="cambio_pct",
+    text="etiqueta", hover_data={"cambio_pct": ":.2f"},
+    labels={"factor": "Valor con extremo / valor original",
+            "medida": "Medida", "cambio_pct": "Cambio %"},
+    color_continuous_scale="Blues",
+)
+fig_impacto.add_hline(y=1, line_dash="dash", line_color=GRIS)
+_ = fig_impacto
+```
+
+::: {.notes}
+**Tiempo:** 30 segundos. Señale que `1×` significa “prácticamente sin cambio” y `7.66×` representa el crecimiento del rango.
+:::
+
+## Explora la sensibilidad {.plot-slide}
+
+```{python}
+#| echo: false
+fig_impacto.update_layout(
+    template="plotly_white", height=590,
+    margin=dict(l=60, r=25, t=15, b=45),
+    coloraxis_colorbar_title="Cambio %",
+)
+fig_impacto.update_traces(textposition="outside")
+fig_impacto.show(config={"displayModeBar": True})
+```
+
+::: {.notes}
+**Tiempo:** 30 segundos (acumulado: 30).
+
+Use *hover* en media e IQR: aunque sus barras parecen iguales a `1×`, la información emergente muestra la diferencia exacta.
+:::
+
+## Regla de Tukey: señalar no es condenar
+
+```{python}
+#| code-line-numbers: "1-4|6-8|10-11"
+q1, q3 = ventas.quantile([0.25, 0.75])
+iqr = q3 - q1
+limite_inferior = q1 - 1.5 * iqr
+limite_superior = q3 + 1.5 * iqr
+
+candidatos = ventas[
+    (ventas < limite_inferior) | (ventas > limite_superior)
+]
+
+print(f"Límites: [{limite_inferior:,.2f}, {limite_superior:,.2f}]")
+print(f"Candidatos: {len(candidatos)} ({len(candidatos)/len(ventas):.2%})")
+```
+
+::: {.fragment .expected}
+**186 observaciones (2.18%)** son candidatas a revisión. La regla no demuestra que sean errores.
+:::
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 31).
+
+Pregunte qué evidencia adicional pedirían: origen, ticket, reglas de negocio, duplicados o comparación con productos similares.
+:::
+
+# Reto 3 {.title-section}
+
+## La media global oculta grupos {data-timer="360" data-timer-label="Reto 3"}
+
+Completa la sección **Reto 3** del notebook.
+
+```{python}
+#| eval: false
+#| code-line-numbers: "1|3-8"
+grupos = df.groupby("________")["________"]
+
+resumen_grupos = grupos.agg(
+    n="size",
+    media="mean",
+    mediana="median",
+    desv_est="std",
+)
+```
+
+Después añade `Q1`, `Q3` e `IQR` y construye un boxplot.
+
+::: {.prediction}
+¿Esperas que los cuatro tipos tengan el mismo centro y la misma dispersión?
+:::
+
+::: {.notes}
+**Tiempo:** 6 minutos de trabajo (acumulado: 37).
+
+Pida que cada pareja escriba una pregunta antes de agrupar. El grupo no es un adorno: responde una comparación concreta.
+:::
+
+## Reto 3 · resumen por tipo {.small-code}
+
+```{python}
+#| code-line-numbers: "1|3-5|6-8|10"
+grupos = df.groupby("Outlet_Type")["Item_Outlet_Sales"]
+
+resumen_grupos = grupos.agg(
+    n="size", media="mean", mediana="median", desv_est="std"
+)
+resumen_grupos["q1"] = grupos.quantile(0.25)
+resumen_grupos["q3"] = grupos.quantile(0.75)
+resumen_grupos["IQR"] = resumen_grupos["q3"] - resumen_grupos["q1"]
+
+resumen_grupos.round(2)
+```
+
+::: {.expected}
+`Supermarket Type3` tiene la mayor mediana (**3,364.95 u.m.**) y también el mayor IQR absoluto (**2,931.18 u.m.**).
+:::
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 39).
+
+Haga que dos personas lean la tabla con una oración completa. “Mayor venta típica” y “mayor dispersión” no son sinónimos.
+:::
+
+## Reto 3 · gráfica interactiva {.small-code}
+
+```{python}
+#| code-line-numbers: "1|3-14|15"
+orden = resumen_grupos.sort_values("mediana").index
+
+fig_grupos = px.box(
+    df,
+    x="Outlet_Type",
+    y="Item_Outlet_Sales",
+    color="Outlet_Type",
+    points="outliers",
+    category_orders={"Outlet_Type": list(orden)},
+    labels={
+        "Outlet_Type": "Tipo de outlet",
+        "Item_Outlet_Sales": "Ventas (u.m.)",
+    },
+)
+fig_grupos.update_layout(showlegend=False)
+_ = fig_grupos
+```
+
+::: {.warning-card}
+La unidad de observación es **producto–outlet**. Esto no mide estabilidad temporal y `Supermarket Type3` representa una sola tienda física.
+:::
+
+::: {.notes}
+**Tiempo:** 30 segundos.
+
+Introduzca la granularidad como protección contra una interpretación excesiva. Muestre, si preguntan, `df.groupby("Outlet_Type")["Outlet_Identifier"].nunique()`.
+:::
+
+## Explora los grupos {.plot-slide}
+
+```{python}
+#| echo: false
+fig_grupos.update_layout(
+    template="plotly_white", height=590,
+    margin=dict(l=55, r=20, t=15, b=55),
+)
+fig_grupos.show(config={"displayModeBar": True, "scrollZoom": True})
+```
+
+::: {.notes}
+**Tiempo:** 30 segundos (acumulado: 40).
+
+Use *hover* sobre una caja y sobre un punto extremo. Pida distinguir “mayor centro” de “mayor dispersión”.
+:::
+
+# Giro de auditoría {.title-section}
+
+## ¿Es seguro aplicar `dropna()`? {data-timer="240" data-timer-label="Auditoría"}
+
+Completa la sección **Auditoría final**.
+
+```{python}
+#| eval: false
+#| code-line-numbers: "1-6|8"
+pct_faltante = (
+    df["Item_Weight"].isna()
+      .groupby(df["________"])
+      .mean()
+      .mul(100)
+)
+
+completos = df.dropna(subset=["Item_Weight"])
+```
+
+::: {.prediction}
+Si media y mediana globales cambian poco, ¿queda demostrado que eliminar faltantes es seguro?
+:::
+
+**Producto:** decisión sí/no y una evidencia sobre composición.
+
+::: {.notes}
+**Tiempo:** 4 minutos de trabajo (acumulado: 44).
+
+No revele todavía los nombres de las tiendas. Si un equipo termina, pídale agrupar también por `Outlet_Establishment_Year`.
+:::
+
+## El patrón faltante no es aleatorio {.small-code}
+
+```{python}
+#| code-line-numbers: "1-7|9-11|13-16|17-24"
+pct_faltante = (
+    df["Item_Weight"].isna()
+      .groupby(df["Outlet_Type"])
+      .mean()
+      .mul(100)
+      .sort_values(ascending=False)
+)
+
+print(pct_faltante.round(2))
+print("\nFilas eliminadas:", df["Item_Weight"].isna().sum())
+print("Porcentaje eliminado:", f"{df['Item_Weight'].isna().mean():.2%}")
+
+tabla_faltantes = (
+    pct_faltante.rename_axis("Outlet_Type")
+    .reset_index(name="pct_faltante")
+)
+fig_faltantes = px.bar(
+    tabla_faltantes, x="Outlet_Type", y="pct_faltante",
+    color="pct_faltante", text_auto=".1f",
+    labels={"Outlet_Type": "Tipo de outlet",
+            "pct_faltante": "% faltante en Item_Weight"},
+    color_continuous_scale="Blues",
+)
+_ = fig_faltantes
+```
+
+::: {.expected}
+`Supermarket Type3` tiene **100%** de peso faltante y `Grocery Store`, **48.75%**. Se eliminarían **1,463 filas (17.17%)**.
+:::
+
+::: {.notes}
+**Tiempo:** 30 segundos.
+
+Pida comparar la predicción con el resultado. Enfatice que el patrón de ausencia importa más que un porcentaje aislado.
+:::
+
+## Explora el patrón faltante {.plot-slide}
+
+```{python}
+#| echo: false
+fig_faltantes.update_layout(
+    template="plotly_white", height=590,
+    margin=dict(l=60, r=25, t=15, b=55),
+    coloraxis_showscale=False,
+)
+fig_faltantes.update_traces(texttemplate="%{text}%", textposition="outside")
+fig_faltantes.show(config={"displayModeBar": True})
+```
+
+::: {.notes}
+**Tiempo:** 30 segundos (acumulado: 45).
+
+Use *hover* para comparar Type3 con Type1. La diferencia de 100% frente a 0% hace visible que la ausencia depende del grupo.
+:::
+
+## Lo que desaparece al filtrar
+
+```{python}
+#| code-line-numbers: "1|3-4|6-10"
+completos = df.dropna(subset=["Item_Weight"])
+
+tiendas_originales = set(df["Outlet_Identifier"].unique())
+tiendas_completas = set(completos["Outlet_Identifier"].unique())
+
+print("Tiendas eliminadas:", sorted(tiendas_originales - tiendas_completas))
+print(
+    "Años eliminados:",
+    sorted(set(df["Outlet_Establishment_Year"]) - set(completos["Outlet_Establishment_Year"]))
+)
+```
+
+::: {.fragment .warning-card}
+Desaparecen `OUT019`, `OUT027`, todos los registros de 1985 y todo `Supermarket Type3`. La estabilidad de promedios globales **no prueba** ausencia de sesgo de selección.
+:::
+
+::: {.notes}
+**Tiempo:** 1 minuto (acumulado: 46).
+
+Éste es el giro de la clase. Pregunte: “¿Qué reporte por tipo de outlet ya no podríamos producir?”. Respuesta: cualquiera que incluya Type3 usando los casos completos de peso.
+:::
+
+# Cierre {.title-section}
+
+## Defensa en pareja {data-timer="120" data-timer-label="Dictamen"}
+
+Completen y léanse mutuamente el dictamen:
+
+> Para comunicar __________ usaríamos __________, cuyo valor es __________.  
+> La gráfica muestra __________.  
+> Al comparar __________ observamos __________.  
+> Antes de eliminar __________ revisaríamos __________ porque __________.
+
+La persona analista debe poder defender cada espacio sin leer código.
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 48).
+
+Cada integrante lee el dictamen de la otra persona y pide una precisión. Si hay tiempo, escuche dos versiones contrastantes.
+:::
+
+## Exit ticket {data-timer="120" data-timer-label="Salida"}
+
+Selecciona la conclusión más defendible:
+
+::: {.answer-grid}
+::: {.answer-option}
+**A.** La media siempre debe sustituirse por la mediana.
+:::
+::: {.answer-option}
+**B.** Todo punto fuera del boxplot es un error.
+:::
+::: {.answer-option}
+**C.** Si el promedio cambia poco, `dropna()` es seguro.
+:::
+::: {.answer-option}
+**D.** Medida, gráfica, granularidad y patrón de ausencia deben interpretarse juntas.
+:::
+:::
+
+::: {.fragment .expected}
+**Respuesta: D.** Un resultado reproducible todavía necesita contexto para convertirse en evidencia.
+:::
+
+::: {.notes}
+**Tiempo:** 2 minutos (acumulado: 50).
+
+Recoja la respuesta y una justificación de una oración. Cierre exactamente al terminar el temporizador.
+:::
+
+## Lo que debe quedar
+
+- **Media y mediana** responden preguntas distintas.
+- **Rango y desviación estándar** reaccionan a extremos; **IQR y mediana** son más resistentes.
+- `groupby` permite comparar, pero no corrige una mala interpretación del grano.
+- Un candidato atípico requiere investigación.
+- Un patrón de faltantes puede borrar grupos completos aunque el promedio global parezca estable.
+
+> Código correcto + pregunta equivocada = conclusión equivocada.
+
+::: {.notes}
+Diapositiva de respaldo; no requiere tiempo adicional. Úsela solo si el grupo termina el exit ticket antes de los 50 minutos.
+:::

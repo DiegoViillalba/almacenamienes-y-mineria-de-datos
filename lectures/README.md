@@ -4,10 +4,17 @@ Los fuentes están ordenados con la misma numeración y secuencia temática de
 `../_quarto.yml`. La configuración común de Reveal.js vive en `_quarto.yml`;
 el tema y los logos están en `assets/`.
 
+Para presentaciones animadas, consulta el
+**[manual de Manim Slides](MANIM-SLIDES.md)**. Incluye el flujo completo para
+agentes y personas: diseño didáctico, identidad UNAM, implementación,
+renderizado Full HD, publicación y control de calidad.
+
 ## Estructura
 
 ```text
 lectures/
+├── AGENTS.md             # dirige a los agentes a la guía apropiada
+├── MANIM-SLIDES.md       # guía para presentaciones animadas
 ├── 03-eda/               # análisis exploratorio
 ├── 04-preprocesamiento/  # faltantes, PCA y chi cuadrado
 ├── 05-patrones/          # reglas de asociación
