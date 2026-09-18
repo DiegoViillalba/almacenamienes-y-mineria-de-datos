@@ -97,7 +97,8 @@ Los partials más probables de querer tocar:
 ## Probar cambios localmente
 
 ```bash
-quarto render --to pdf --no-clean
+./build-pdf.sh
+# equivalente a: quarto render --to pdf --no-clean
 ```
 
 Genera `docs/Almacenes-y-Minería-de-Datos.pdf`. El libro completo (~1550
@@ -115,6 +116,52 @@ instalación del sistema, instálalo en tu árbol de usuario (no necesita
 tlmgr --usermode install <paquete-faltante>
 ```
 
+## El PDF ya no se compila en cada push (CI)
+
+Compilar el PDF es lo mas lento del proceso (TinyTeX + paquetes LaTeX +
+tipografiar ~1550 paginas), y el contenido del libro no cambia en cada
+commit. Por eso el PDF **no** se genera en GitHub Actions: `publish.yml`
+solo renderiza HTML (rapido, sin TinyTeX) y publica lo que ya este dentro
+de `docs/` — PDF incluido, si lo commiteaste.
+
+Flujo para actualizar el PDF publicado:
+
+```bash
+./build.sh           # HTML, rapido, para revisar contenido mientras editas
+./build-pdf.sh        # cuando el contenido este listo, recompila el PDF
+git add docs/*.pdf *.tex
+git commit -m "Actualiza PDF del libro"
+git push
+```
+
+El link de "Download PDF" del navbar (`downloads: [pdf]` en `_quarto.yml`)
+apunta a este archivo fijo en `docs/`; si no lo recompilas y commiteas tras
+un cambio de contenido, el PDF publicado queda desactualizado respecto al
+HTML (el HTML si se regenera solo, via CI, en cada push).
+
+## Editar el `.tex` a mano
+
+`keep-tex: true` en `_quarto.yml` hace que, ademas del PDF, `quarto render
+--to pdf` deje el archivo `.tex` intermedio. A diferencia del PDF, este
+**no** queda en `docs/` sino en la **raiz del repo**
+(`Almacenes-y-Minería-de-Datos.tex`) — es donde Quarto arma el documento
+combinado antes de invocar LaTeX, y las rutas `\includegraphics{...}` que
+contiene son relativas a esa raiz (p. ej. `images/Logo_FC_Color.png`), asi
+que hay que recompilarlo desde ahi tambien:
+
+```bash
+./build-pdf.sh                                # genera/actualiza el .tex
+# ... editar Almacenes-y-Minería-de-Datos.tex a mano ...
+lualatex Almacenes-y-Minería-de-Datos.tex      # recompila solo ese archivo
+cp Almacenes-y-Minería-de-Datos.pdf docs/      # y copia el resultado a docs/
+```
+
+Ojo: un `.tex` editado a mano se **pisa** la proxima vez que corras
+`./build-pdf.sh`, porque Quarto lo regenera desde los `.qmd` cada vez. Si
+el cambio es algo que quieres conservar permanentemente, hazlo en la
+plantilla (`pdf-template/*.tex`) o en el `.qmd` fuente, no solo en el
+`.tex` generado.
+
 ## Limitaciones conocidas de esta primera versión
 
 Estas son cosas que **no** se resolvieron todavía, para que no sea
@@ -131,9 +178,6 @@ sorpresa si las ves en el PDF:
   `::: {.content-visible when-format="pdf"}` / `when-format="html"`. Ese
   mismo patrón sirve para excluir cualquier otro contenido HTML-only del
   PDF.
-- Hay **~80 citas** (`[@algo]`) sin entrada correspondiente en
-  `references.bib`; aparecen como texto tipo `(autor2020?)` en vez de una
-  cita real. Es un problema de la bibliografía, no de la plantilla.
 - Al menos una tabla (capítulo del Lakehouse, "Vocabulario mínimo") tiene
   una columna con texto monoespaciado (`s3://...`, nombres de catálogo)
   que se desborda sobre la columna siguiente. Es un problema de ancho de
