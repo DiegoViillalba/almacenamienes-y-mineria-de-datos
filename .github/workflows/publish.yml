@@ -14,10 +14,15 @@ concurrency:
   group: "pages"
   cancel-in-progress: false
 
+# El PDF del libro NO se compila aqui: es lento (TinyTeX + paquetes LaTeX +
+# render de ~1500 paginas) y no cambia en cada push. Se genera localmente
+# con ./build-pdf.sh y se sube ya compilado dentro de docs/, junto con el
+# HTML. Este workflow solo renderiza HTML (rapido) y publica docs/ tal cual
+# quedo en el commit, PDF incluido. Ver pdf-template/README.md.
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,33 +41,11 @@ jobs:
         with:
           version: "1.9.38"
 
-      - name: Cache TinyTeX packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.TinyTeX
-          key: tinytex-${{ runner.os }}-v1
-
-      - name: Install TinyTeX
-        timeout-minutes: 5
-        run: |
-          if [ ! -d ~/.TinyTeX ]; then
-            quarto install tinytex --no-prompt
-          fi
-          echo "$HOME/.TinyTeX/bin/x86_64-linux" >> "$GITHUB_PATH"
-
-      - name: Install LaTeX packages needed for the PDF book
-        timeout-minutes: 12
-        run: |
-          tlmgr update --self
-          tlmgr install \
-            collection-latexrecommended collection-latexextra \
-            collection-fontsextra collection-luatex
-
       - name: Render English site
-        run: quarto render en
+        run: quarto render en --to html
 
       - name: Render Spanish site
-        run: quarto render --no-clean
+        run: quarto render --to html --no-clean
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
