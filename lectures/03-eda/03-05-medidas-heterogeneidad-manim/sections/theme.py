@@ -22,19 +22,22 @@ CAT_COLORS = [BLUE, PURPLE, GREEN, ORANGE, RED]
 # ==============================================================================
 # CONFIGURACIÓN DE TIPOGRAFÍA (FUENTE)
 # ------------------------------------------------------------------------------
-# FONT = "" utiliza la tipografía por defecto de Manim (Pango system default).
-# Para cambiar la tipografía en toda la presentación, define aquí el nombre de
-# la fuente que tengas instalada en tu sistema operativo.
+# "Sans" es un alias genérico de Pango (no un nombre de fuente concreto):
+# se resuelve a la sans-serif del sistema, portable entre macOS/Linux/CI sin
+# depender de una fuente propietaria instalada. FONT = "" cae al default de
+# Pango, que en este equipo resuelve a una serif — por eso todos los títulos y
+# fórmulas se veían con serifas.
 #
 # Ejemplos:
-#   FONT = ""                   # Fuente por defecto de Manim (default)
+#   FONT = "Sans"               # Sans-serif genérica y portable (actual)
+#   FONT = ""                   # Fuente por defecto de Manim (serif en este equipo)
 #   FONT = "Helvetica"          # Sans-serif estándar en macOS
 #   FONT = "Arial"              # Sans-serif multiplataforma
 #   FONT = "Fira Sans"          # Fuente técnica moderna
 #   FONT = "CMU Serif"          # Estilo clásico LaTeX Computer Modern
 #   FONT = "Latin Modern Roman" # Tipografía académica formal
 # ==============================================================================
-FONT = ""
+FONT = "Sans"
 
 LOGO_PATH = Path(__file__).resolve().parents[3] / "assets" / "Logo_FC_Blanco.png"
 
