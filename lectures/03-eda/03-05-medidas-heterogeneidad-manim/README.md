@@ -19,17 +19,42 @@ Al terminar, el estudiante puede:
 - descomponer `SS_T = SS_B + SS_W` e interpretar `η²` sin atribuir causalidad;
 - resolver un conjunto nuevo y comunicar número, convención y sentido.
 
-## Archivos
+## Archivos y Arquitectura Modular
 
-- `heterogeneidad.py`: escena continua `MedidasHeterogeneidad` con visualizaciones geométricas continuas (curva de Shannon con vértice en 1/e y cuadrados euclidianos de ANOVA).
-- `interactivo.html`: simulador web interactivo autónomo (Canvas/SVG) para experimentación directa de proporciones categóricas y carriles ANOVA.
-- `guion-docente.md`: ruta de clase, resultados exactos, puentes a Machine Learning y guía del simulador.
-- `manim.cfg`: configuración Full HD 16:9 a 30 fps.
-- `requirements.txt`: versiones reproducibles.
-- `.gitignore`: artefactos locales de Manim y Manim Slides.
+La presentación está dividida en submódulos dentro de `sections/` para permitir editar diapositivas y fórmulas de manera ágil sin manipular un archivo monolítico:
 
-La presentación reutiliza
-`lectures/assets/Logo_FC_Blanco.png`; no contiene copias locales del logo.
+- `heterogeneidad.py`: ensamblador de la escena `MedidasHeterogeneidad` mediante herencia múltiple de las secciones.
+- `sections/`:
+  - `theme.py`: paleta de colores, **configuración central de tipografía (`FONT`)**, rutas de logos y funciones auxiliares de dibujo (`safe_text`, `distribution_chart`, `probability_grid`, etc.).
+  - `base.py`: clase base `BaseSlide` con utilidades de navegación, pausas (`pause`), limpieza (`clear_content`) y cintillo institucional (`add_branding`).
+  - `part01_opening.py`: portada, las dos preguntas de heterogeneidad y datos categóricos iniciales.
+  - `part02_gini_simpson.py`: Gini–Simpson, probabilidad de desacuerdo, geometría del cuadrado unitario y cotas.
+  - `part03_shannon.py`: entropía de Shannon, función de sorpresa, curva analítica continua $f(p) = -p\ln p$ con punto crítico en $1/e$ y normalización.
+  - `part04_comparison.py`: comparación entre escenarios dominantes/uniformes y números de Hill.
+  - `part05_anova.py`: respuesta continua en tres grupos, descomposición de áreas euclidianas $SS_T = SS_B + SS_W$, $\eta^2$ y heatmap con soporte muestral.
+  - `part06_transfer.py`: reto aplicado con datos nuevos de canales de atención y solución guiada.
+  - `part07_closing.py`: cierre metodológico, convenciones y puentes hacia minería de datos (CART, C4.5, $k$-means).
+- `interactivo.html`: simulador web interactivo autónomo (Canvas/SVG) para experimentación directa en clase.
+- `guion-docente.md`: guía paso a paso para el profesor con tiempos, notas y resultados exactos.
+- `manim.cfg`: configuración de render Full HD 1080p a 30 fps.
+- `requirements.txt`: dependencias exactas del entorno.
+
+### Cómo cambiar la tipografía (fuente)
+
+En `sections/theme.py`, edita la variable `FONT`:
+
+```python
+# sections/theme.py
+
+FONT = "Sans"                # Sans-serif genérica y portable (actual)
+# FONT = ""                  # Fuente por defecto de Manim (serif en este equipo)
+# FONT = "Helvetica"         # Sans-serif clásica en macOS
+# FONT = "Arial"             # Sans-serif estándar multiplataforma
+# FONT = "Fira Sans"         # Tipografía técnica moderna
+# FONT = "CMU Serif"         # Estilo clásico LaTeX Computer Modern
+```
+
+Cualquier cambio en `FONT` afectará inmediatamente a todos los títulos, subtítulos, etiquetas y tarjetas de todas las diapositivas.
 
 ## Entorno
 
@@ -49,15 +74,13 @@ Comprobar las herramientas:
 .venv-manim/bin/manim-slides checkhealth
 ```
 
-La falta de Qt sólo impide la interfaz nativa de `present`; no afecta el render
-ni el HTML autónomo.
-
 ## Compilar
 
 Ejecutar desde esta carpeta:
 
 ```bash
 cd lectures/03-eda/03-05-medidas-heterogeneidad-manim
+
 ```
 
 Render rápido para revisión:
