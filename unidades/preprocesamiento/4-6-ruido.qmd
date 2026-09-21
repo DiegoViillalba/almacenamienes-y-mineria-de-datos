@@ -1,6 +1,5 @@
 ---
-title: "Reducción de ruido"
-number-sections: false
+title: "Tratamiento de Ruido, Suavizado y Discretización"
 format:
   html:
     toc: true
@@ -17,62 +16,460 @@ execute:
 jupyter: python3
 ---
 
+# Introducción al Tratamiento de Ruido
 
-El ruido en los datos corresponde a variaciones aleatorias, errores de medición o inconsistencias en el registro, que pueden afectar negativamente el análisis y los modelos.
+En la ciencia de datos y la ingeniería de *machine learning*, nos enfrentamos constantemente al desafío de lidiar con datos imperfectos. Los datos provenientes del mundo real rara vez son limpios y perfectos; suelen estar contaminados por diversas fuentes de perturbación. Una de estas fuentes principales es el **ruido**.
 
-### Detección de ruido
+En este capítulo, exploraremos en profundidad qué es el ruido, cómo se diferencia de otras anomalías en los datos, cómo podemos tratarlo mediante técnicas de suavizado, y cómo la discretización puede ser una herramienta complementaria en este proceso de transformación y limpieza de variables, tomando como hilo conductor el dataset **BigMart Sales**.
 
-Algunas estrategias para identificar ruido incluyen:
+## Intuición con Ejemplo Práctico (BigMart Sales)
 
-- Análisis de rangos válidos
-- Detección de outliers
-- Visualización (histogramas, boxplots)
-- Comparación con reglas del dominio
+Para comprender cómo afecta el ruido a nuestros modelos, es fundamental distinguir entre dos conceptos que a menudo se confunden en la práctica profesional: el **ruido** y los **outliers** (valores atípicos).
 
-### Técnicas de reducción de ruido
+### Diferencia conceptual: Ruido vs. Outliers
 
-#### Binning
+*   **El Ruido (Noise):** Se refiere a la variación estocástica y aleatoria en los datos medidos que no proviene de la señal o el fenómeno subyacente que intentamos modelar. Esta variación no es explicable por nuestras variables predictoras. El ruido suele originarse por errores de medición, imprecisión inherente a los sensores, limitaciones en la resolución de los instrumentos, o interferencias ambientales [^1]. En la mayoría de los casos, el ruido es una molestia que queremos eliminar o mitigar para revelar la verdadera señal.
+*   **Los Outliers (Valores atípicos):** Son observaciones extremas que se desvían significativamente del resto de los datos, pero que **son mediciones reales y válidas**. Un outlier no es necesariamente un error. De hecho, en muchos contextos de negocio, el outlier es exactamente lo que estamos buscando (por ejemplo, tiendas flagship con ventas descomunales o fraudes). Tratar un outlier real como si fuera ruido e intentar suavizarlo podría destruir la capacidad predictiva del modelo en los casos más críticos.
 
-Consiste en agrupar datos en intervalos (bins) y reemplazar los valores por estadísticas representativas.
+### Ejemplo Motivador en BigMart: Visibilidad y Registro de Ventas
 
-El ancho del intervalo se define como:
+En el dataset **BigMart Sales**, encontramos dos manifestaciones claras de ruido:
+1. **Ceros ruidosos en `Item_Visibility`**: Existen productos que registran una visibilidad en anaquel de `0.000`. Sin embargo, esos mismos productos registran ventas significativas en esa misma tienda. Un producto físicamente invisible no puede venderse de manera recurrente; ese `0.000` es ruido de captura (sensores de inventario no calibrados o valores nulos imputados erróneamente como ceros).
+2. **Micro-fluctuaciones en ventas diarias**: Las ventas diarias o semanales de un producto (`Item_Outlet_Sales`) presentan oscilaciones erráticas debido a factores fortuitos (el clima de un martes específico, una hora de tráfico local). Si un modelo intenta memorizar cada pico estocástico, sufrirá de sobreajuste (*overfitting*)[^2]. El suavizado permite extraer la tendencia de demanda subyacente.
 
-$$
-W = \frac{B - A}{N}
-$$
+---
 
-donde:
-- $A$ = valor mínimo  
-- $B$ = valor máximo  
-- $N$ = número de bins  
+## Desarrollo Manual Paso a Paso
 
-Los valores pueden reemplazarse por:
+Para desmitificar el funcionamiento de los algoritmos computacionales de suavizado y discretización, desarrollaremos los cálculos de forma completamente manual.
 
-- La media del bin
-- El valor extremo más cercano
+Consideremos un conjunto de datos numérico unidimensional simple y ordenado que representa los pesos (**Item_Weight**) de 12 productos de BigMart:
 
-#### Regresión lineal
+$$ X = [4, 8, 9, 15, 21, 21, 24, 25, 26, 28, 29, 34] $$
 
-La regresión lineal modela la relación entre una variable predictora $X$ y una variable respuesta $Y$, ajustando una recta que captura la tendencia general:
+### 1. Discretización por Igual Ancho (Equal-Width Binning)
+Divide el rango de los datos en $k$ intervalos del mismo tamaño:
+1. Número de bins: $k = 3$.
+2. Rango: $\min(X) = 4$, $\max(X) = 34$.
+3. Ancho del bin ($W$):
+   $$ W = \frac{\max(X) - \min(X)}{k} = \frac{34 - 4}{3} = \frac{30}{3} = 10 $$
+4. Intervalos:
+   - Bin 1: $[4, 14)$
+   - Bin 2: $[14, 24)$
+   - Bin 3: $[24, 34]$
+5. Asignación de elementos:
+   - Bin 1: $\{4, 8, 9\}$ (3 elementos)
+   - Bin 2: $\{15, 21, 21\}$ (3 elementos)
+   - Bin 3: $\{24, 25, 26, 28, 29, 34\}$ (6 elementos)
 
-$$
-y = a + bx
-$$
+### 2. Discretización por Igual Frecuencia (Equal-Frequency Binning)
+Asigna el mismo número de observaciones $N/k$ a cada bin:
+1. $N = 12, k = 3 \implies 12 / 3 = 4$ elementos por bin.
+2. Asignación ordenada:
+   - Bin 1: $\{4, 8, 9, 15\}$
+   - Bin 2: $\{21, 21, 24, 25\}$
+   - Bin 3: $\{26, 28, 29, 34\}$
 
-donde:
-- $a$ es el intercepto  
-- $b$ es la pendiente  
+### 3. Suavizado de Datos Dentro de los Bins
+Tomando los bins de igual frecuencia:
 
-El modelo se obtiene minimizando la suma de los errores cuadráticos:
+#### Suavizado por Medias del Bin
+- **Bin 1 $\{4, 8, 9, 15\}$**: $\mu_1 = \frac{4+8+9+15}{4} = \frac{36}{4} = 9.0 \implies [9.0, 9.0, 9.0, 9.0]$
+- **Bin 2 $\{21, 21, 24, 25\}$**: $\mu_2 = \frac{21+21+24+25}{4} = \frac{91}{4} = 22.75 \implies [22.75, 22.75, 22.75, 22.75]$
+- **Bin 3 $\{26, 28, 29, 34\}$**: $\mu_3 = \frac{26+28+29+34}{4} = \frac{117}{4} = 29.25 \implies [29.25, 29.25, 29.25, 29.25]$
 
-$$
-\sum_{i=1}^{n} (y_i - \hat{y}_i)^2
-$$
+Señal final suavizada: $[9.0, 9.0, 9.0, 9.0, 22.75, 22.75, 22.75, 22.75, 29.25, 29.25, 29.25, 29.25]$
 
-### Interpretación
+#### Suavizado por Medianas del Bin
+- **Bin 1**: Mediana de $\{4, 8, 9, 15\} = \frac{8 + 9}{2} = 8.5 \implies [8.5, 8.5, 8.5, 8.5]$
+- **Bin 2**: Mediana de $\{21, 21, 24, 25\} = \frac{21 + 24}{2} = 22.5 \implies [22.5, 22.5, 22.5, 22.5]$
+- **Bin 3**: Mediana de $\{26, 28, 29, 34\} = \frac{28 + 29}{2} = 28.5 \implies [28.5, 28.5, 28.5, 28.5]$
 
-La regresión permite reemplazar valores ruidosos por estimaciones más estables sobre la recta ajustada, reduciendo la variabilidad aleatoria sin perder la tendencia global.
+#### Suavizado por Límites del Bin (Boundaries)
+Cada valor se reemplaza por el extremo del bin (mínimo o máximo) más cercano:
+- **Bin 1** (Límites: 4 y 15):
+  - 4 está en el límite: 4
+  - 8 está más cerca de 4 ($|8-4|=4$) que de 15 ($|8-15|=7$): 4
+  - 9 está más cerca de 4 ($|9-4|=5$) que de 15 ($|9-15|=6$): 4
+  - 15 está en el límite: 15
+  - Resultado Bin 1: $[4, 4, 4, 15]$
 
-### Conclusión
+### 4. Suavizado por Regresión Lineal Manual
+Tomemos 5 observaciones con ruido de ventas de un producto en función de la semana:
+$(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
 
-La reducción de ruido mejora la calidad de los datos al eliminar variaciones irrelevantes, permitiendo que los modelos capturen patrones reales en lugar de artefactos aleatorios.
+1. $\bar{x} = \frac{1+2+3+4+5}{5} = 3.0$
+2. $\bar{y} = \frac{2.1+3.9+6.2+7.8+10.3}{5} = \frac{30.3}{5} = 6.06$
+3. $\sum (x_i - \bar{x})^2 = (-2)^2 + (-1)^2 + 0^2 + 1^2 + 2^2 = 4 + 1 + 0 + 1 + 4 = 10.0$
+4. $\sum (x_i - \bar{x})(y_i - \bar{y})$:
+   - $(1-3)(2.1-6.06) = (-2)(-3.96) = 7.92$
+   - $(2-3)(3.9-6.06) = (-1)(-2.16) = 2.16$
+   - $(3-3)(6.2-6.06) = 0$
+   - $(4-3)(7.8-6.06) = (1)(1.74) = 1.74$
+   - $(5-3)(10.3-6.06) = (2)(4.24) = 8.48$
+   - Suma = $7.92 + 2.16 + 0 + 1.74 + 8.48 = 20.30$
+5. Pendiente $\beta_1 = \frac{20.30}{10.0} = 2.03$
+6. Intercepto $\beta_0 = \bar{y} - \beta_1 \bar{x} = 6.06 - (2.03 \times 3.0) = 6.06 - 6.09 = -0.03$
+7. Predicciones suavizadas ($\hat{y}_i = 2.03 x_i - 0.03$):
+   - $\hat{y}_1 = 2.00$ (original: 2.1)
+   - $\hat{y}_2 = 4.03$ (original: 3.9)
+   - $\hat{y}_3 = 6.06$ (original: 6.2)
+   - $\hat{y}_4 = 8.09$ (original: 7.8)
+   - $\hat{y}_5 = 10.12$ (original: 10.3)
+
+---
+
+## 3. Laboratorio Interactivo: Suavizado y Discretización (BigMart)
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="interactive-lab" style="border: 1px solid #d0d7de; border-radius: 8px; padding: 22px; background: #ffffff; margin: 25px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <h3 style="margin-top: 0; color: #1f2328; border-bottom: 2px solid #8250df; padding-bottom: 8px;">
+    🧪 Laboratorio Interactivo: Suavizado de Ruido y Discretización (BigMart)
+  </h3>
+  <p style="font-size: 0.9em; color: #57606a;">
+    Manipula los parámetros de discretización sobre los precios (<code>Item_MRP</code>) de BigMart y observa cómo los filtros de suavizado eliminan el ruido en una serie temporal simulada de ventas.
+  </p>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
+    <!-- Panel de Discretización (Binning) -->
+    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; border: 1px solid #e1e4e8;">
+      <h4 style="margin-top: 0; color: #8250df;">1. Discretización de Precios (Item_MRP)</h4>
+      <p style="font-size: 0.8em; color: #57606a;">Valores de muestra: [35, 48, 52, 98, 105, 112, 145, 160, 185, 210, 240, 250]</p>
+
+      <div style="margin-bottom: 10px;">
+        <label style="font-size: 0.85em; font-weight: bold;">Tipo de Partición:</label>
+        <div style="margin-top: 4px;">
+          <label style="margin-right: 12px; font-size: 0.85em;"><input type="radio" name="binType" value="width" checked> Equal-Width (Igual Ancho)</label>
+          <label style="font-size: 0.85em;"><input type="radio" name="binType" value="freq"> Equal-Frequency (Cuantiles)</label>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label style="font-size: 0.85em; font-weight: bold;">Número de Bins ($k$): <span id="kBinVal" style="color: #8250df;">3</span></label>
+        <input type="range" id="kBinSlider" min="2" max="5" value="3" style="width: 100%;">
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label style="font-size: 0.85em; font-weight: bold;">Método de Suavizado:</label>
+        <select id="smoothMethod" style="width: 100%; padding: 4px; font-size: 0.85em; margin-top: 4px;">
+          <option value="none">Sin suavizar (mostrar intervalos)</option>
+          <option value="mean">Por Medias del Bin</option>
+          <option value="median">Por Medianas del Bin</option>
+          <option value="boundary">Por Límites del Bin</option>
+        </select>
+      </div>
+
+      <div id="binResultContainer" style="max-height: 180px; overflow-y: auto; background: white; border: 1px solid #e1e4e8; border-radius: 4px; padding: 8px; font-size: 0.8em;"></div>
+    </div>
+
+    <!-- Panel de Suavizado Continuo -->
+    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; border: 1px solid #e1e4e8;">
+      <h4 style="margin-top: 0; color: #0969da;">2. Filtro de Ruido en Ventas Diarias</h4>
+      <div style="margin-bottom: 10px;">
+        <label style="font-size: 0.85em; font-weight: bold;">Tipo de Filtro:</label>
+        <select id="filterType" style="width: 100%; padding: 4px; font-size: 0.85em; margin-top: 4px;">
+          <option value="sma">Media Móvil Simple (SMA)</option>
+          <option value="ewma">Suavizado Exponencial (EWMA)</option>
+          <option value="sg">Aproximación Polinomial (Savitzky-Golay)</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label style="font-size: 0.85em; font-weight: bold;">Ventana / Suavidad: <span id="windowVal" style="color: #0969da;">5</span></label>
+        <input type="range" id="windowSlider" min="3" max="11" step="2" value="5" style="width: 100%;">
+      </div>
+
+      <!-- SVG Canvas interactivo -->
+      <div style="background: white; border: 1px solid #e1e4e8; border-radius: 4px; padding: 6px; text-align: center;">
+        <svg id="seriesSvg" width="100%" height="160" viewBox="0 0 300 160" style="display: block;"></svg>
+        <div style="font-size: 0.75em; color: #57606a; margin-top: 4px;">
+          <span style="color: #8c959f; font-weight: bold;">— Original Ruidosa</span> | 
+          <span style="color: #1f2328; font-weight: bold;">--- Tendencia Real</span> | 
+          <span style="color: #0969da; font-weight: bold;">— Señal Filtrada</span>
+        </div>
+      </div>
+      <div id="filterInsight" style="margin-top: 8px; font-size: 0.78em; color: #57606a; background: #ddf4ff; padding: 6px; border-radius: 4px; border-left: 3px solid #0969da;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const prices = [35, 48, 52, 98, 105, 112, 145, 160, 185, 210, 240, 250];
+
+  function updateBinning() {
+    const k = parseInt(document.getElementById('kBinSlider').value);
+    document.getElementById('kBinVal').innerText = k;
+    const type = document.querySelector('input[name="binType"]:checked').value;
+    const method = document.getElementById('smoothMethod').value;
+    const container = document.getElementById('binResultContainer');
+
+    let bins = [];
+    if (type === 'width') {
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const w = (max - min) / k;
+      for (let i = 0; i < k; i++) {
+        const bMin = min + i * w;
+        const bMax = (i === k - 1) ? max : min + (i + 1) * w;
+        const items = prices.filter(p => i === k - 1 ? (p >= bMin && p <= bMax) : (p >= bMin && p < bMax));
+        bins.push({ label: `[${bMin.toFixed(1)}, ${bMax.toFixed(1)}]`, items: items });
+      }
+    } else {
+      const nPerBin = Math.ceil(prices.length / k);
+      for (let i = 0; i < k; i++) {
+        const items = prices.slice(i * nPerBin, (i + 1) * nPerBin);
+        if (items.length > 0) {
+          bins.push({ label: `Cuantil ${i+1} (${items.length} items)`, items: items });
+        }
+      }
+    }
+
+    let html = '<table style="width: 100%; border-collapse: collapse;">';
+    bins.forEach((b, idx) => {
+      let smoothed = [];
+      if (b.items.length === 0) {
+        smoothed = [];
+      } else if (method === 'none') {
+        smoothed = b.items;
+      } else if (method === 'mean') {
+        const m = b.items.reduce((a,c)=>a+c,0) / b.items.length;
+        smoothed = b.items.map(() => m.toFixed(1));
+      } else if (method === 'median') {
+        const mid = Math.floor(b.items.length / 2);
+        const med = b.items.length % 2 !== 0 ? b.items[mid] : (b.items[mid-1] + b.items[mid]) / 2;
+        smoothed = b.items.map(() => med.toFixed(1));
+      } else if (method === 'boundary') {
+        const minVal = b.items[0];
+        const maxVal = b.items[b.items.length - 1];
+        smoothed = b.items.map(val => (Math.abs(val - minVal) < Math.abs(val - maxVal)) ? minVal : maxVal);
+      }
+
+      html += `
+        <tr style="border-bottom: 1px solid #e1e4e8;">
+          <td style="padding: 4px; font-weight: bold; color: #8250df;">${b.label}</td>
+          <td style="padding: 4px; color: #24292f;">${b.items.join(', ')}</td>
+        </tr>
+      `;
+      if (method !== 'none' && b.items.length > 0) {
+        html += `
+          <tr style="border-bottom: 2px solid #eaeef2; background: #fdf8ff;">
+            <td style="padding: 3px; font-size: 0.9em; color: #57606a;">↳ Suavizado:</td>
+            <td style="padding: 3px; font-size: 0.9em; font-weight: bold; color: #8250df;">[${smoothed.join(', ')}]</td>
+          </tr>
+        `;
+      }
+    });
+    html += '</table>';
+    container.innerHTML = html;
+  }
+
+  // Serie de tiempo simulada de ventas (25 puntos)
+  const N_POINTS = 25;
+  const trueSignal = [];
+  const noisySignal = [];
+  for (let i = 0; i < N_POINTS; i++) {
+    const t = i / (N_POINTS - 1) * Math.PI * 2;
+    const base = Math.sin(t) * 40 + 80;
+    trueSignal.push(base);
+    // Ruido pseudoaleatorio determinista
+    const noise = Math.sin(i * 3.7) * 18 + Math.cos(i * 1.9) * 8;
+    noisySignal.push(base + noise);
+  }
+
+  function updateFilter() {
+    const filter = document.getElementById('filterType').value;
+    const w = parseInt(document.getElementById('windowSlider').value);
+    document.getElementById('windowVal').innerText = w;
+
+    let filtered = [];
+    if (filter === 'sma') {
+      const half = Math.floor(w / 2);
+      for (let i = 0; i < N_POINTS; i++) {
+        let sum = 0, count = 0;
+        for (let j = -half; j <= half; j++) {
+          const idx = i + j;
+          if (idx >= 0 && idx < N_POINTS) {
+            sum += noisySignal[idx];
+            count++;
+          }
+        }
+        filtered.push(sum / count);
+      }
+      document.getElementById('filterInsight').innerText = `Media Móvil con ventana=${w}. Observa cómo suaviza el ruido pero puede atenuar (aplanar) el pico máximo.`;
+    } else if (filter === 'ewma') {
+      const alpha = 2.0 / (w + 1);
+      let s = noisySignal[0];
+      filtered.push(s);
+      for (let i = 1; i < N_POINTS; i++) {
+        s = alpha * noisySignal[i] + (1 - alpha) * s;
+        filtered.push(s);
+      }
+      document.getElementById('filterInsight').innerText = `EWMA con α=${alpha.toFixed(2)}. Da más peso al dato reciente; introduce cierto desfase temporal causal.`;
+    } else if (filter === 'sg') {
+      // Aproximación simplificada local cuadrática para la demo
+      const half = Math.floor(w / 2);
+      for (let i = 0; i < N_POINTS; i++) {
+        let sum = 0, count = 0;
+        for (let j = -half; j <= half; j++) {
+          const idx = i + j;
+          if (idx >= 0 && idx < N_POINTS) {
+            const weight = 1 - 0.5 * Math.pow(j / (half || 1), 2);
+            sum += noisySignal[idx] * weight;
+            count += weight;
+          }
+        }
+        filtered.push(sum / count);
+      }
+      document.getElementById('filterInsight').innerText = `Filtro Savitzky-Golay. Ajusta polinomios locales, preservando mejor los picos que la media simple.`;
+    }
+
+    // Dibujar SVG
+    const svg = document.getElementById('seriesSvg');
+    const width = 300, height = 150;
+    const pad = 15;
+    const minVal = 20, maxVal = 140;
+
+    function getX(i) { return pad + (i / (N_POINTS - 1)) * (width - 2 * pad); }
+    function getY(val) { return height - pad - ((val - minVal) / (maxVal - minVal)) * (height - 2 * pad); }
+
+    function makePath(data) {
+      return data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i).toFixed(1)} ${getY(d).toFixed(1)}`).join(' ');
+    }
+
+    svg.innerHTML = `
+      <path d="${makePath(noisySignal)}" fill="none" stroke="#d0d7de" stroke-width="2" stroke-linecap="round"/>
+      <path d="${makePath(trueSignal)}" fill="none" stroke="#1f2328" stroke-width="2" stroke-dasharray="4,4"/>
+      <path d="${makePath(filtered)}" fill="none" stroke="#0969da" stroke-width="2.5" stroke-linecap="round"/>
+    `;
+  }
+
+  document.getElementById('kBinSlider').addEventListener('input', updateBinning);
+  document.querySelectorAll('input[name="binType"]').forEach(r => r.addEventListener('change', updateBinning));
+  document.getElementById('smoothMethod').addEventListener('change', updateBinning);
+
+  document.getElementById('filterType').addEventListener('change', updateFilter);
+  document.getElementById('windowSlider').addEventListener('input', updateFilter);
+
+  updateBinning();
+  updateFilter();
+})();
+</script>
+```
+:::
+::: {.content-visible when-format="pdf"}
+*(Nota: Un laboratorio interactivo con controles deslizantes para experimentar con discretización de precios y filtros de suavizado en BigMart está disponible en la versión web del libro).*
+:::
+
+---
+
+## 4. Formalización Teórica y Matemática
+
+### 4.1. El Modelo Aditivo de Señal y Ruido
+En la mayoría de los escenarios analíticos, asumimos que cada observación registrada $y_i$ es una composición lineal de una señal subyacente verdadera $f(x_i)$ y un término de error aleatorio o ruido estocástico $\epsilon_i$:
+
+$$ y_i = f(x_i) + \epsilon_i $$
+
+Bajo supuestos estadísticos estándar, particularmente el de Ruido Blanco Gaussiano [^3], se asume que el ruido está centrado en cero y tiene una varianza finita y constante (homocedasticidad):
+$$ \mathbb{E}[\epsilon_i] = 0, \quad \operatorname{Var}(\epsilon_i) = \sigma^2 $$
+
+### 4.2. Relación Señal-Ruido (SNR)
+La Relación Señal-Ruido (Signal-to-Noise Ratio o SNR) nos permite cuantificar el nivel de corrupción en decibelios (dB):
+$$ \text{SNR}_{\text{dB}} = 10 \log_{10}\left(\frac{P_{\text{señal}}}{P_{\text{ruido}}}\right) $$
+
+### 4.3. Trade-off Sesgo-Varianza en el Suavizado
+*   **Alta Varianza:** Usar los datos crudos ruidosos causa una varianza alta en las predicciones del modelo.
+*   **Alto Sesgo:** Aplicar un suavizado extremo (por ejemplo, una ventana móvil gigante) destruirá el ruido pero introducirá un gran sesgo al aplanar picos de demanda legítimos.
+
+### 4.4. Filtros de Suavizado Comunes
+Al implementar filtros en señales temporales o series de demanda, es crítico considerar la tasa de muestreo adecuada para evitar fenómenos de distorsión o *aliasing*[^5]. Entre los métodos analíticos más destacados se encuentran:
+
+1. **Media Móvil Simple y Ponderada (SMA / WMA):**
+   $$ \hat{y}_t = \sum_{j=-m}^m w_j y_{t+j}, \quad \sum w_j = 1 $$
+2. **Suavizado Exponencial (EWMA):**
+   $$ \hat{y}_t = \alpha y_t + (1-\alpha) \hat{y}_{t-1}, \quad \alpha \in [0, 1] $$
+3. **Filtro de Savitzky-Golay:**
+   Ajusta polinomios locales de bajo grado mediante mínimos cuadrados, preservando picos y derivadas mucho mejor que las medias simples.
+
+---
+
+## 5. Implementación Computacional con Python
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
+
+# Configuración de gráficas
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams['figure.figsize'] = (12, 6)
+
+# 1. Simulación de Ventas con Ruido en BigMart
+np.random.seed(42)
+dias = np.linspace(0, 10, 200)
+demanda_real = np.sin(dias) + 0.5 * np.sin(3 * dias) + 3.0
+ruido = np.random.normal(0, 0.4, size=len(dias))
+ventas_ruidosas = demanda_real + ruido
+
+df_ventas = pd.DataFrame({'dia': dias, 'demanda_real': demanda_real, 'ventas_ruidosas': ventas_ruidosas})
+
+# 2. Técnicas de Suavizado
+df_ventas['sma_15'] = df_ventas['ventas_ruidosas'].rolling(window=15, center=True).mean()
+df_ventas['ewma_15'] = df_ventas['ventas_ruidosas'].ewm(span=15, adjust=False).mean()
+df_ventas['savgol'] = savgol_filter(df_ventas['ventas_ruidosas'], window_length=15, polyorder=3)
+
+# 3. Discretización de Precios con pandas
+precios_bigmart = [35, 48, 52, 98, 105, 112, 145, 160, 185, 210, 240, 250]
+df_precios = pd.DataFrame({'Item_MRP': precios_bigmart})
+df_precios['equal_width'] = pd.cut(df_precios['Item_MRP'], bins=3)
+df_precios['equal_freq'] = pd.qcut(df_precios['Item_MRP'], q=3)
+
+print("--- Discretización de Item_MRP ---")
+print(df_precios.head(6))
+```
+
+### Visualización del Suavizado de Señales
+
+```{python}
+plt.plot(df_ventas['dia'], df_ventas['ventas_ruidosas'], label='Ventas Ruidosas Diarias', color='lightgray', alpha=0.7)
+plt.plot(df_ventas['dia'], df_ventas['demanda_real'], label='Demanda Real Subyacente', color='black', linewidth=2, linestyle='--')
+plt.plot(df_ventas['dia'], df_ventas['sma_15'], label='Media Móvil Centrada (W=15)', color='red', alpha=0.8)
+plt.plot(df_ventas['dia'], df_ventas['ewma_15'], label='EWMA (Span=15)', color='green', alpha=0.8)
+plt.plot(df_ventas['dia'], df_ventas['savgol'], label='Savitzky-Golay (W=15, P=3)', color='blue', linewidth=2)
+
+plt.title('Comparativa de Técnicas de Suavizado de Ruido en Ventas BigMart')
+plt.xlabel('Día')
+plt.ylabel('Demanda / Ventas')
+plt.legend(loc='upper right')
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## 6. Mejores Prácticas en la Industria
+
+::: {.callout-important title="Regla de oro en producción: Prevención de fuga de datos"}
+Cuando aplicas discretización por frecuencia (cuantiles) o normalizaciones, los umbrales de los bins y los parámetros del filtro **DEBEN** ser calculados exclusivamente utilizando el conjunto de entrenamiento (Train set). Luego, los límites exactos de los cuantiles aprendidos en entrenamiento se aplican rígidamente al conjunto de evaluación (Test set) y a producción.
+:::
+
+::: {.callout-tip title="Mejores prácticas en la industria: Cuándo discretizar"}
+*   **Cuándo NO discretizar:** En modelos no lineales como Random Forest, XGBoost o Redes Neuronales. El binning destruye la resolución continua de variables como `Item_MRP` y limita innecesariamente la capacidad predictiva del modelo.
+*   **Cuándo SÍ discretizar:** En modelos altamente regulados (como Credit Scoring con regresión logística usando *Weight of Evidence* e *Information Value*[^4]) o cuando las reglas de negocio exigen categorizaciones contractuales explícitas (e.g. "Gama Baja, Media, Alta").
+:::
+
+---
+
+## 7. Referencias y Definiciones
+
+[^1]: **Pérdida de información por discretización (Information Loss):** Cada vez que transformamos una variable continua en intervalos discretos (binning), perdemos resolución intrínseca y varianza estructural, imponiendo un límite superior a la precisión del modelo.
+
+[^2]: **Sobreajuste al ruido estocástico (Overfitting):** Ocurre cuando un algoritmo de ML asimila las fluctuaciones aleatorias de la señal como si fueran patrones explicables del fenómeno.
+
+[^3]: **Ruido blanco gaussiano vs. Ruido Impulsivo:** El ruido blanco tiene un espectro plano y distribución normal. El ruido impulsivo (*Salt & Pepper*) consiste en picos atípicos de alta amplitud generados por fallas puntuales; para este último se prefieren filtros de mediana sobre filtros de media.
+
+[^4]: **Weight of Evidence (WOE) e Information Value (IV):** Técnica probabilística para codificar bins categóricos en riesgo crediticio basada en el logaritmo de proporciones de eventos (buenos vs malos).
+
+[^5]: **Aliasing y teorema de Nyquist-Shannon:** Para capturar y filtrar ruido de alta frecuencia correctamente, la frecuencia de muestreo debe ser mayor al doble de la frecuencia máxima presente en la señal.

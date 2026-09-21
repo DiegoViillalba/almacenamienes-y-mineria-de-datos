@@ -1,6 +1,5 @@
 ---
-title: "Conversión y Transformación de Datos"
-number-sections: false
+title: "Conversión de Datos, Codificación y Escalado"
 format:
   html:
     toc: true
@@ -17,51 +16,474 @@ execute:
 jupyter: python3
 ---
 
-La conversión de datos es una etapa fundamental en la preparación de datos, cuyo objetivo es transformar las variables a formatos adecuados para su análisis y modelado.
+## 1. Intuición con Ejemplo Práctico (BigMart Sales)
 
-En muchos casos, los algoritmos de minería de datos requieren variables numéricas y formatos consistentes, por lo que es necesario aplicar distintas transformaciones.
+La mayoría de los algoritmos de machine learning modernos (como las redes neuronales, máquinas de vectores de soporte (SVM), regresión logística y k-vecinos más cercanos (KNN)) operan bajo el paradigma de operaciones de álgebra lineal y optimización mediante descenso de gradiente. Esto significa que **exigen entradas que sean estrictamente matrices numéricas**. No comprenden texto, ni categorías como "Supermarket Type1" o "Grocery Store".
 
-### Imputación de valores faltantes
+Pero el hecho de que todo deba ser numérico presenta un desafío profundo: **la escala y la naturaleza de los números importan enormemente**.
 
-Consiste en reemplazar valores ausentes para evitar la pérdida de información. Algunas estrategias incluyen:
+### El Problema de la Escala
+Imagina que estamos construyendo un modelo predictivo de ventas para **BigMart Sales** mediante k-Vecinos Más Cercanos (KNN)[^5]. Nuestro dataset tiene dos variables numéricas principales:
+- **Item_MRP** (Precio Máximo al Por Menor): Varía de \$30 a \$250.
+- **Item_Visibility** (Visibilidad del producto en anaquel): Varía de 0.00 a 0.30.
 
-- Eliminación de registros incompletos (*listwise*)
-- Imputación con media o mediana
-- Imputación por grupo
-- Estimación mediante modelos
+El algoritmo KNN calcula la distancia euclidiana entre dos productos $A$ y $B$:
+$$d(A, B) = \sqrt{(MRP_A - MRP_B)^2 + (Visibilidad_A - Visibilidad_B)^2}$$
 
-### Estandarización de formatos
+Si el producto A tiene un Item_MRP de \$50 y una visibilidad de 0.02, y el producto B tiene un Item_MRP de \$51 y una visibilidad de 0.28:
+$$d(A, B) = \sqrt{(50 - 51)^2 + (0.02 - 0.28)^2} = \sqrt{(-1)^2 + (-0.26)^2} = \sqrt{1 + 0.0676} \approx 1.03$$
 
-Los datos pueden presentar inconsistencias en su representación. Por ejemplo:
+Como vemos, **la variable "Item_MRP" domina casi por completo el cálculo de la distancia**. Para el algoritmo, una diferencia inmensa en visibilidad (del 2% al 28%) es matemáticamente irrelevante comparada con una modesta diferencia de \$1 en el precio. Sin un escalado adecuado, nuestro modelo de machine learning se vuelve ciego a las variables numéricamente pequeñas, sin importar su poder predictivo real.
 
-- Fechas en distintos formatos
-- Unidades de medida distintas
-- Codificaciones inconsistentes
+### El Peligro de la Falsa Ordinalidad
+Ahora consideremos las variables categóricas. Supongamos que tenemos la variable categórica "Outlet_Type" (Tipo de tienda) del dataset BigMart con valores: `Grocery Store`, `Supermarket Type1`, `Supermarket Type3`. 
+Una solución ingenua sería asignarles números arbitrarios:
+- `Grocery Store` = 1
+- `Supermarket Type1` = 2
+- `Supermarket Type3` = 3
 
-La estandarización permite garantizar coherencia y comparabilidad.
+Si introducimos estos números a un modelo lineal (ej. Regresión Lineal), el algoritmo asumirá propiedades matemáticas que no existen en la realidad:
+1. **Orden falso**: Asumirá que `Supermarket Type1` > `Grocery Store` y `Supermarket Type3` > `Supermarket Type1`.
+2. **Distancia falsa**: Asumirá que la distancia entre `Grocery Store` y `Supermarket Type1` ($2-1=1$) es igual a la distancia entre `Supermarket Type1` y `Supermarket Type3` ($3-2=1$).
+3. **Proporcionalidad absurda**: Asumirá que `Grocery Store` + `Supermarket Type1` = `Supermarket Type3` ($1+2=3$).
 
-### Conversión de variables categóricas
+Codificar variables nominales con números enteros arbitrarios destruye los supuestos de la mayoría de los modelos introduciendo patrones falsos que el modelo intentará aprender. Necesitamos técnicas que conviertan categorías a números sin inyectar relaciones espurias.
 
-Muchas variables son de tipo nominal o categórico y deben convertirse a formato numérico:
+---
 
-- Variables binarias:  
-  Ejemplo: género = {M, F} → {1, 0}
+## 2. Desarrollo Manual Paso a Paso
 
-- Variables ordinales:  
-  Se asignan valores respetando el orden  
-  Ejemplo: {bajo, medio, alto} → {1, 2, 3}
+Para comprender verdaderamente lo que hacen las librerías bajo el capó, realicemos las transformaciones más importantes a mano sobre un mini-dataset simulado de 4 productos de **BigMart Sales**:
 
-- Variables nominales (one-hot encoding):  
-  Cada categoría se convierte en una variable binaria
+| ID | Item_MRP | Outlet_Size | Outlet_Type | Target (Item_Outlet_Sales) |
+|----|----------|-------------|-------------|----------------------------|
+| 1  | 45.0     | Small       | Grocery Store | 500                      |
+| 2  | 120.0    | Medium      | Supermarket Type1 | 2500                 |
+| 3  | 180.0    | High        | Supermarket Type3 | 4200                 |
+| 4  | 500.0    | Small       | Grocery Store | 800                      |
 
-$$
-\text{Color} \in \{\text{rojo, azul}\}
-\quad \Rightarrow \quad
-(1,0), (0,1)
-$$
+*Nota:* El `Item_MRP` del ID 4 (\$500.0) es un valor atípico (*outlier*) relativo a los otros tres.
 
-\textbf{Nota:} Los identificadores únicos no deben utilizarse como variables predictoras.
+### 2.1. Min-Max Scaling (Normalización)
+Queremos escalar "Item_MRP" a un rango $[0, 1]$.
+La fórmula es: $x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$
 
-### Conclusión
+1. $x_{\min} = 45.0$
+2. $x_{\max} = 500.0$
+3. Rango = $500.0 - 45.0 = 455.0$
 
-La conversión de datos permite transformar información heterogénea en una representación estructurada, facilitando su uso en algoritmos de análisis y aprendizaje automático.
+Cálculos:
+- $x'_1 = \frac{45.0 - 45.0}{455.0} = 0.0$
+- $x'_2 = \frac{120.0 - 45.0}{455.0} = \frac{75.0}{455.0} \approx 0.165$
+- $x'_3 = \frac{180.0 - 45.0}{455.0} = \frac{135.0}{455.0} \approx 0.297$
+- $x'_4 = \frac{500.0 - 45.0}{455.0} = 1.0$
+
+*Observación clave:* El outlier (500.0) comprime a los demás productos en el tercio inferior del rango ($0.0$ a $0.297$), reduciendo su separabilidad.
+
+### 2.2. StandardScaler ($z$-score)
+Escalamos "Item_MRP" para que tenga media 0 y varianza 1.
+
+1. Media ($\mu$): $\frac{45 + 120 + 180 + 500}{4} = \frac{845}{4} = 211.25$
+2. Varianza ($\sigma^2$):
+   - $(45 - 211.25)^2 = (-166.25)^2 = 27,639.06$
+   - $(120 - 211.25)^2 = (-91.25)^2 = 8,326.56$
+   - $(180 - 211.25)^2 = (-31.25)^2 = 976.56$
+   - $(500 - 211.25)^2 = (288.75)^2 = 83,376.56$
+   - Suma = $120,318.75$
+   - $\sigma^2 = \frac{120,318.75}{4} = 30,079.69 \implies \sigma = \sqrt{30,079.69} \approx 173.44$
+
+Cálculos de $z_i = \frac{x_i - \mu}{\sigma}$:
+- $z_1 = \frac{45 - 211.25}{173.44} \approx -0.959$
+- $z_2 = \frac{120 - 211.25}{173.44} \approx -0.526$
+- $z_3 = \frac{180 - 211.25}{173.44} \approx -0.180$
+- $z_4 = \frac{500 - 211.25}{173.44} \approx 1.665$
+
+### 2.3. RobustScaler (Mediana y Rango Intercuartílico)
+Escalamos usando estadísticas robustas a outliers: $x_{\text{rob}} = \frac{x - \text{mediana}}{\text{IQR}}$.
+
+1. Datos ordenados: $[45.0, 120.0, 180.0, 500.0]$
+2. Mediana = $\frac{120.0 + 180.0}{2} = 150.0$
+3. $Q_1 = \frac{45.0 + 120.0}{2} = 82.5$, $Q_3 = \frac{180.0 + 500.0}{2} = 340.0$
+4. $\text{IQR} = Q_3 - Q_1 = 340.0 - 82.5 = 257.5$
+
+Cálculos:
+- $x_{\text{rob}, 1} = \frac{45 - 150}{257.5} \approx -0.408$
+- $x_{\text{rob}, 2} = \frac{120 - 150}{257.5} \approx -0.117$
+- $x_{\text{rob}, 3} = \frac{180 - 150}{257.5} \approx 0.117$
+- $x_{\text{rob}, 4} = \frac{500 - 150}{257.5} \approx 1.359$
+
+### 2.4. One-Hot Encoding y la Trampa de la Variable Ficticia
+Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3}`. Sin embargo, si tuviéramos cientos de categorías, One-Hot Encoding induciría la *Maldición de la Dimensionalidad*[^1] y requeriría el uso de *matrices dispersas*[^2] para optimizar la memoria.
+
+| ID | Outlet_Type_Grocery | Outlet_Type_Supermarket1 | Outlet_Type_Supermarket3 |
+|----|:-------------------:|:------------------------:|:------------------------:|
+| 1  | 1                   | 0                        | 0                        |
+| 2  | 0                   | 1                        | 0                        |
+| 3  | 0                   | 0                        | 1                        |
+| 4  | 1                   | 0                        | 0                        |
+
+*La trampa de la variable ficticia:* Observe que la suma de las tres columnas es siempre igual a 1:
+$$\text{Grocery} + \text{Supermarket1} + \text{Supermarket3} = 1$$
+Si un modelo lineal incluye un intercepto $\beta_0$, existe colinealidad perfecta[^4]. Para resolverlo, en modelos lineales se descarta una columna de referencia (`drop='first'`).
+
+### 2.5. Target Encoding (Mean Encoding) Suavizado
+El *Target Encoding* reemplaza cada categoría por el promedio del target (`Item_Outlet_Sales`) en esa categoría:
+- Media global del target ($\bar{y}_{\text{global}}$) = $\frac{500 + 2500 + 4200 + 800}{4} = 2000.0$
+- **Grocery Store**: 2 ocurrencias. Ventas = $[500, 800]$. Media local $\bar{y}_c = 650.0$.
+- **Supermarket Type1**: 1 ocurrencia. Ventas = $[2500]$. Media local $\bar{y}_c = 2500.0$.
+- **Supermarket Type3**: 1 ocurrencia. Ventas = $[4200]$. Media local $\bar{y}_c = 4200.0$.
+
+Para evitar sobreajuste en categorías poco frecuentes, aplicamos **Suavizado Bayesiano** (*m-estimate*):
+$$ \hat{S}_i = \frac{n_c \cdot \bar{y}_c + m \cdot \bar{y}_{\text{global}}}{n_c + m} $$
+Con factor de regularización $m = 2$:
+- **Grocery Store**: $\frac{(2 \times 650) + (2 \times 2000)}{2 + 2} = \frac{1300 + 4000}{4} = 1325.0$
+- **Supermarket Type1**: $\frac{(1 \times 2500) + (2 \times 2000)}{1 + 2} = \frac{2500 + 4000}{3} \approx 2166.67$
+- **Supermarket Type3**: $\frac{(1 \times 4200) + (2 \times 2000)}{1 + 2} = \frac{4200 + 4000}{3} \approx 2733.33$
+
+---
+
+## 3. Laboratorio Interactivo: Banco de Pruebas de Escalado y Codificación (BigMart)
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="interactive-lab" style="border: 1px solid #d0d7de; border-radius: 8px; padding: 22px; background: #ffffff; margin: 25px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <h3 style="margin-top: 0; color: #1f2328; border-bottom: 2px solid #0969da; padding-bottom: 8px;">
+    🧪 Laboratorio Interactivo: Escalado Numérico y Codificación Categórica (BigMart)
+  </h3>
+  <p style="font-size: 0.9em; color: #57606a;">
+    Experimenta en tiempo real con cómo los métodos de escalado reaccionan ante la presencia de un producto con precio atípico (Outlier), y cómo cambia la codificación de tiendas BigMart.
+  </p>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
+    <!-- Panel de Escalado -->
+    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; border: 1px solid #e1e4e8;">
+      <h4 style="margin-top: 0; color: #0969da;">1. Módulo de Escalado Numérico (Item_MRP)</h4>
+      <label style="font-size: 0.85em; font-weight: bold;">Precio del Producto Atípico (ID 4): <span id="outlierVal" style="color: #cf222e;">$500</span></label>
+      <input type="range" id="outlierSlider" min="200" max="1000" step="25" value="500" style="width: 100%; margin: 8px 0 15px 0;">
+
+      <label style="font-size: 0.85em; font-weight: bold;">Selecciona el Escalador:</label>
+      <div style="margin: 6px 0 12px 0;">
+        <label style="margin-right: 12px; font-size: 0.85em;"><input type="radio" name="scalerChoice" value="minmax" checked> Min-Max</label>
+        <label style="margin-right: 12px; font-size: 0.85em;"><input type="radio" name="scalerChoice" value="standard"> StandardScaler</label>
+        <label style="font-size: 0.85em;"><input type="radio" name="scalerChoice" value="robust"> RobustScaler</label>
+      </div>
+
+      <table style="width: 100%; font-size: 0.82em; border-collapse: collapse; background: white;">
+        <thead>
+          <tr style="background: #eaeef2; text-align: left;">
+            <th style="padding: 5px;">ID</th>
+            <th style="padding: 5px;">Item_MRP Original</th>
+            <th style="padding: 5px;">Valor Escalado</th>
+            <th style="padding: 5px;">Visualización</th>
+          </tr>
+        </thead>
+        <tbody id="scalingTableBody"></tbody>
+      </table>
+      <div id="scalingInsight" style="margin-top: 10px; font-size: 0.8em; color: #57606a; background: #fff8c5; padding: 6px; border-radius: 4px; border-left: 3px solid #d4a72c;"></div>
+    </div>
+
+    <!-- Panel de Codificación -->
+    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; border: 1px solid #e1e4e8;">
+      <h4 style="margin-top: 0; color: #1a7f37;">2. Módulo de Codificación (Outlet_Type)</h4>
+      <label style="font-size: 0.85em; font-weight: bold;">Estrategia de Codificación:</label>
+      <div style="margin: 6px 0 12px 0;">
+        <label style="margin-right: 15px; font-size: 0.85em;"><input type="radio" name="encodingChoice" value="onehot" checked> One-Hot Encoding</label>
+        <label style="font-size: 0.85em;"><input type="radio" name="encodingChoice" value="target"> Target Encoding (Ventas)</label>
+      </div>
+
+      <div id="onehotControls" style="margin-bottom: 12px;">
+        <label style="font-size: 0.85em;">
+          <input type="checkbox" id="dropFirstToggle"> Descartar primera categoría (<code>drop='first'</code> para evitar colinealidad)
+        </label>
+      </div>
+
+      <div id="targetControls" style="display: none; margin-bottom: 12px;">
+        <label style="font-size: 0.85em; font-weight: bold;">Factor de Suavizado ($m$): <span id="mVal">2.0</span></label>
+        <input type="range" id="mSlider" min="0" max="10" step="0.5" value="2" style="width: 100%; margin: 6px 0;">
+        <span style="font-size: 0.78em; color: #57606a;">$m=0$ (sin regularizar, sobreajusta) | $m$ alto (atrae a la media global).</span>
+      </div>
+
+      <table style="width: 100%; font-size: 0.82em; border-collapse: collapse; background: white;">
+        <thead>
+          <tr style="background: #eaeef2; text-align: left;" id="encodingTableHead"></tr>
+        </thead>
+        <tbody id="encodingTableBody"></tbody>
+      </table>
+      <div id="encodingInsight" style="margin-top: 10px; font-size: 0.8em; color: #57606a; background: #dafbe1; padding: 6px; border-radius: 4px; border-left: 3px solid #1a7f37;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const basePrices = [45.0, 120.0, 180.0];
+  const outlets = ["Grocery Store", "Supermarket Type1", "Supermarket Type3", "Grocery Store"];
+  const targets = [500, 2500, 4200, 800];
+
+  function computeScaling() {
+    const outlier = parseFloat(document.getElementById('outlierSlider').value);
+    document.getElementById('outlierVal').innerText = '$' + outlier;
+    const prices = [...basePrices, outlier];
+    const scaler = document.querySelector('input[name="scalerChoice"]:checked').value;
+
+    let scaled = [];
+    let insight = "";
+
+    if (scaler === 'minmax') {
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      scaled = prices.map(p => (p - min) / (max - min));
+      insight = "Nota cómo al aumentar el outlier a $" + outlier + ", los productos 1, 2 y 3 se comprimen cerca del 0.0, perdiendo contraste.";
+    } else if (scaler === 'standard') {
+      const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
+      const variance = prices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / prices.length;
+      const std = Math.sqrt(variance);
+      scaled = prices.map(p => (p - mean) / std);
+      insight = "StandardScaler centra en 0. El outlier distorsiona la media (μ=" + mean.toFixed(1) + ") y la desviación estándar.";
+    } else if (scaler === 'robust') {
+      const sorted = [...prices].sort((a, b) => a - b);
+      const med = (sorted[1] + sorted[2]) / 2.0;
+      const q1 = (sorted[0] + sorted[1]) / 2.0;
+      const q3 = (sorted[2] + sorted[3]) / 2.0;
+      const iqr = q3 - q1;
+      scaled = prices.map(p => (p - med) / (iqr || 1));
+      insight = "RobustScaler usa la mediana ($" + med.toFixed(1) + ") y el IQR ($" + iqr.toFixed(1) + "). La escala de los productos normales se mantiene estable sin importar cuán extremo sea el outlier.";
+    }
+
+    const tbody = document.getElementById('scalingTableBody');
+    tbody.innerHTML = '';
+    prices.forEach((p, idx) => {
+      const sVal = scaled[idx];
+      const barWidth = Math.min(100, Math.max(5, (scaler === 'minmax' ? sVal * 100 : Math.abs(sVal) * 35)));
+      const barColor = idx === 3 ? '#cf222e' : '#0969da';
+      tbody.innerHTML += `
+        <tr style="border-bottom: 1px solid #e1e4e8;">
+          <td style="padding: 4px 6px;">${idx + 1}</td>
+          <td style="padding: 4px 6px;">$${p.toFixed(1)}</td>
+          <td style="padding: 4px 6px; font-weight: bold;">${sVal.toFixed(3)}</td>
+          <td style="padding: 4px 6px;">
+            <div style="background: ${barColor}; width: ${barWidth}px; height: 10px; border-radius: 2px;"></div>
+          </td>
+        </tr>
+      `;
+    });
+    document.getElementById('scalingInsight').innerText = insight;
+  }
+
+  function computeEncoding() {
+    const enc = document.querySelector('input[name="encodingChoice"]:checked').value;
+    const dropFirst = document.getElementById('dropFirstToggle').checked;
+    const m = parseFloat(document.getElementById('mSlider').value);
+    document.getElementById('mVal').innerText = m.toFixed(1);
+
+    const thead = document.getElementById('encodingTableHead');
+    const tbody = document.getElementById('encodingTableBody');
+    const insightDiv = document.getElementById('encodingInsight');
+
+    if (enc === 'onehot') {
+      document.getElementById('onehotControls').style.display = 'block';
+      document.getElementById('targetControls').style.display = 'none';
+
+      let cols = ["Grocery Store", "Supermarket Type1", "Supermarket Type3"];
+      if (dropFirst) cols = ["Supermarket Type1", "Supermarket Type3"];
+
+      thead.innerHTML = '<th style="padding: 4px;">ID</th><th style="padding: 4px;">Outlet_Type</th>' + cols.map(c => `<th style="padding: 4px;">${c.replace('Supermarket ', 'SM_')}</th>`).join('');
+      tbody.innerHTML = '';
+
+      outlets.forEach((o, idx) => {
+        let cells = cols.map(c => `<td style="padding: 4px; text-align: center; font-weight: bold;">${o === c ? 1 : 0}</td>`).join('');
+        tbody.innerHTML += `<tr style="border-bottom: 1px solid #e1e4e8;"><td style="padding: 4px;">${idx+1}</td><td style="padding: 4px;">${o}</td>${cells}</tr>`;
+      });
+
+      insightDiv.innerText = dropFirst 
+        ? "Con drop='first' evitas la colinealidad perfecta (trampa de la variable ficticia). Si ambas columnas son 0, el modelo sabe que es Grocery Store."
+        : "One-Hot completo genera 3 columnas ortogonales. La suma de cada fila es 1, causando singularidad si incluyes intercepto.";
+    } else {
+      document.getElementById('onehotControls').style.display = 'none';
+      document.getElementById('targetControls').style.display = 'block';
+
+      const globalMean = targets.reduce((a,b)=>a+b,0) / targets.length;
+      const stats = {};
+      outlets.forEach((o, idx) => {
+        if (!stats[o]) stats[o] = [];
+        stats[o].push(targets[idx]);
+      });
+
+      thead.innerHTML = '<th style="padding: 4px;">ID</th><th style="padding: 4px;">Outlet_Type</th><th style="padding: 4px;">Target Real</th><th style="padding: 4px;">Valor Codificado</th>';
+      tbody.innerHTML = '';
+
+      outlets.forEach((o, idx) => {
+        const n = stats[o].length;
+        const localMean = stats[o].reduce((a,b)=>a+b,0)/n;
+        const encoded = ((n * localMean) + (m * globalMean)) / (n + m);
+        tbody.innerHTML += `
+          <tr style="border-bottom: 1px solid #e1e4e8;">
+            <td style="padding: 4px;">${idx+1}</td>
+            <td style="padding: 4px;">${o}</td>
+            <td style="padding: 4px;">$${targets[idx]}</td>
+            <td style="padding: 4px; font-weight: bold; color: #1a7f37;">${encoded.toFixed(1)}</td>
+          </tr>
+        `;
+      });
+
+      insightDiv.innerText = `Media global: $${globalMean.toFixed(0)}. Con m=${m}, categorías con pocas muestras se contraen suavemente hacia la media global, evitando sobreajuste.`;
+    }
+  }
+
+  document.getElementById('outlierSlider').addEventListener('input', computeScaling);
+  document.querySelectorAll('input[name="scalerChoice"]').forEach(r => r.addEventListener('change', computeScaling));
+  document.querySelectorAll('input[name="encodingChoice"]').forEach(r => r.addEventListener('change', computeEncoding));
+  document.getElementById('dropFirstToggle').addEventListener('change', computeEncoding);
+  document.getElementById('mSlider').addEventListener('input', computeEncoding);
+
+  computeScaling();
+  computeEncoding();
+})();
+</script>
+```
+:::
+::: {.content-visible when-format="pdf"}
+*(Nota: Un laboratorio interactivo con controles deslizantes para experimentar con el impacto de valores atípicos y regularización Bayesiana en BigMart está disponible en la versión web del libro).*
+:::
+
+---
+
+## 4. Formalización Teórica y Matemática
+
+### 4.1. Escaladores Numéricos
+1. **Min-Max Scaler**: Mapea una variable continua al intervalo $[a, b]$ (típicamente $[0, 1]$):
+   $$ x' = a + \frac{x - x_{\min}}{x_{\max} - x_{\min}} (b - a) $$
+   Es altamente sensible a outliers, ya que un único valor extremo dilata el denominador $x_{\max} - x_{\min}$.
+
+2. **StandardScaler ($z$-score)**: Transforma la variable para que tenga media $\mu = 0$ y desviación estándar $\sigma = 1$:
+   $$ z = \frac{x - \mu}{\sigma}, \quad \mathbb{E}[Z] = 0, \quad \operatorname{Var}(Z) = 1 $$
+
+3. **RobustScaler**: Utiliza estadísticas de posición no paramétricas resistentes a valores extremos:
+   $$ x_{\text{rob}} = \frac{x - \operatorname{mediana}(X)}{\text{IQR}(X)}, \quad \text{IQR}(X) = Q_3(X) - Q_1(X) $$
+
+4. **Transformaciones de Potencia**: Diseñadas para estabilizar la varianza y aproximar normalidad en distribuciones asimétricas (sesgadas):
+   - **Box-Cox** (solo para $y > 0$):
+     $$ y^{(\lambda)} = \begin{cases} \frac{y^\lambda - 1}{\lambda} & \text{si } \lambda \neq 0 \\ \ln(y) & \text{si } \lambda = 0 \end{cases} $$
+   - **Yeo-Johnson** (soporta valores positivos, cero y negativos).
+
+### 4.2. Codificación Categórica
+1. **One-Hot Encoding**:
+   Definimos un conjunto finito de categorías $\mathcal{C} = \{c_1, c_2, \dots, c_K\}$.
+   La función de codificación es $h: \mathcal{C} \to \{0, 1\}^K$ tal que $h(c_j)$ es un vector donde la componente $j$ es 1 y el resto son 0.
+   Si se incluye la matriz de diseño $X$ con las $K$ columnas junto a una columna de unos $\mathbf{1}$ para el intercepto:
+   $$ \sum_{k=1}^K X_{i,k} = 1 \quad \forall i $$
+   Esto genera una dependencia lineal exacta, haciendo que la matriz $X^T X$ sea singular e imposible de invertir mediante mínimos cuadrados ordinarios.
+
+2. **Target Encoding Empírico Bayesiano**:
+   Sea $y_i$ el target continuo asociado a la observación $i$ con categoría $c$. La codificación para la categoría $c$ es la esperanza posterior $\mathbb{E}[y \mid c]$. Utilizando un prior conjugado basado en la distribución marginal total de $y$, llegamos a la estimación empírica suavizada:
+   $$ \hat{S}_c = \lambda(n_c) \bar{y}_c + (1 - \lambda(n_c)) \bar{y}_{\text{global}} $$
+   Donde $\lambda(n_c) = \frac{n_c}{n_c + m}$ es el factor de contracción (*shrinkage*). Cuando $n_c \to \infty$, $\lambda(n_c) \to 1$ (confianza en la media local). Cuando $n_c \to 0$, $\lambda(n_c) \to 0$ (confianza en la media global).
+
+---
+
+## 5. Implementación Computacional (Python & Pandas)
+
+A continuación, mostramos cómo implementar estas transformaciones de manera profesional sobre el caso **BigMart Sales**.
+
+::: {.callout-tip title="Mejores prácticas en la industria"}
+- **No uses `pandas.get_dummies()` en producción.** Aunque es útil para análisis exploratorio, `get_dummies` no guarda el estado de las categorías que vio durante el entrenamiento. Si en producción llega un dato con una categoría nueva, las columnas no coincidirán y tu modelo colapsará. Usa siempre `sklearn.preprocessing.OneHotEncoder`.
+- **Invarianza de escala:** Modelos basados en árboles (Decision Trees, Random Forest, XGBoost) dividen el espacio buscando umbrales ($x > \theta$). No se ven afectados por escalas dispares, por lo que escalar las numéricas para XGBoost es matemáticamente innecesario[^5].
+:::
+
+```{python}
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import (
+    StandardScaler, MinMaxScaler, RobustScaler, 
+    OneHotEncoder, TargetEncoder
+)
+
+# 1. Dataset Sintético representativo de BigMart Sales
+np.random.seed(42)
+n_samples = 100
+data = pd.DataFrame({
+    'Item_MRP': np.random.normal(140, 45, n_samples),
+    'Item_Weight': np.random.normal(12.8, 4.2, n_samples),
+    'Outlet_Type': np.random.choice(['Grocery Store', 'Supermarket Type1', 'Supermarket Type2', 'Supermarket Type3'], n_samples, p=[0.2, 0.5, 0.15, 0.15]),
+    'Item_Fat_Content': np.random.choice(['Low Fat', 'Regular'], n_samples),
+    'Outlet_Establishment_Year': np.random.choice([1985, 1997, 1999, 2004, 2009], n_samples),
+    'Item_Outlet_Sales': np.random.exponential(2000, n_samples)
+})
+
+# Inyectar un Outlier masivo en Item_MRP para probar el RobustScaler
+data.loc[99, 'Item_MRP'] = 750.0 
+
+data.head()
+```
+
+### 5.1. Escalado Numérico Comparativo
+
+```{python}
+# Instanciamos los escaladores
+std_scaler = StandardScaler()
+minmax_scaler = MinMaxScaler()
+robust_scaler = RobustScaler()
+
+# Aplicamos y concatenamos para comparar
+scaled_df = pd.DataFrame({
+    'MRP_Original': data['Item_MRP'],
+    'MRP_Standard': std_scaler.fit_transform(data[['Item_MRP']]).flatten(),
+    'MRP_MinMax': minmax_scaler.fit_transform(data[['Item_MRP']]).flatten(),
+    'MRP_Robust': robust_scaler.fit_transform(data[['Item_MRP']]).flatten(),
+})
+
+# Mostrar las últimas filas donde está el Outlier
+scaled_df.tail()
+```
+
+### 5.2. Codificación Categórica
+
+::: {.callout-important title="Regla de oro en producción"}
+Configura SIEMPRE `handle_unknown='ignore'` en `OneHotEncoder`. Esto asegura que si durante inferencia (producción) el modelo recibe una tienda no vista, simplemente codificará esa fila con ceros, en lugar de lanzar una excepción fatal y tumbar el servicio.
+:::
+
+```{python}
+# 1. One-Hot Encoding (Variables Nominales de Baja Cardinalidad)
+ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+outlet_encoded = ohe.fit_transform(data[['Outlet_Type']])
+outlet_columns = ohe.get_feature_names_out(['Outlet_Type'])
+
+df_ohe = pd.DataFrame(outlet_encoded, columns=outlet_columns)
+df_ohe.head(3)
+```
+
+```{python}
+# 2. Target Encoding con regularización automática en scikit-learn
+target_enc = TargetEncoder(smooth="auto") 
+data['Outlet_Type_TargetEncoded'] = target_enc.fit_transform(data[['Outlet_Type']], data['Item_Outlet_Sales'])
+
+# Inspección de las medias codificadas por tipo de tienda
+data[['Outlet_Type', 'Outlet_Type_TargetEncoded', 'Item_Outlet_Sales']].drop_duplicates('Outlet_Type')
+```
+
+::: {.callout-warning title="Target Leakage"}
+El Target Encoding usa la variable $Y$ (`Item_Outlet_Sales`) para transformar las $X$. Esto introduce el riesgo altísimo de **Fuga de Información (Target Leakage)**[^3]. `sklearn.preprocessing.TargetEncoder` previene el sobreajuste realizando validación cruzada interna (*out-of-fold encoding*) durante el `fit_transform`.
+:::
+
+### 5.3. Ingeniería de Fechas y Ciclos
+
+```{python}
+# Transformar año de establecimiento en Antigüedad de la tienda
+current_year = 2013 # Año de corte del dataset BigMart
+data['Outlet_Age'] = current_year - data['Outlet_Establishment_Year']
+data[['Outlet_Establishment_Year', 'Outlet_Age']].head(3)
+```
+
+---
+
+## 6. Referencias y Definiciones
+
+[^1]: **Maldición de la Dimensionalidad**: A medida que aumenta el número de características (dimensiones), el volumen del espacio de características crece exponencialmente. Los datos se vuelven dispersos, y las medidas de distancia (como la Euclidiana) pierden significado, degradando severamente modelos espaciales como KNN. Ocurre rápido si aplicamos One-Hot a campos como `Item_Identifier` (más de 1,500 códigos únicos).
+
+[^2]: **Matrices Dispersas (CSR - Compressed Sparse Row)**: Estructura de datos en memoria que no guarda los ceros. Una matriz One-Hot de alta cardinalidad tiene más del 99% de ceros. Una matriz CSR solo guarda las coordenadas y valores de las celdas no nulas, ahorrando gigabytes de memoria RAM.
+
+[^3]: **Target Leakage (Fuga de la Variable Objetivo)**: Ocurre cuando información del target se filtra en las variables predictoras durante el preprocesamiento. En Target Encoding ingenuo, promediar el target incluyendo el registro actual permite al modelo memorizar el dataset en lugar de generalizar.
+
+[^4]: **Trampa de la variable ficticia (Dummy Variable Trap)**: Colinealidad perfecta generada cuando la suma de todas las columnas binarias de una variable categórica es exactamente 1. En regresión lineal con intercepto, obliga a descartar la primera categoría (`drop='first'`).
+
+[^5]: **Invarianza de Escala en Árboles**: Algoritmos como Decision Trees, Random Forest o Gradient Boosting (XGBoost, LightGBM) realizan cortes ortogonales en las variables ($x > \theta$). No se ven afectados por la escala de las variables, por lo que escalar las numéricas no altera su desempeño. Las Redes Neuronales, SVM y KNN, al usar gradientes o distancias multivariadas combinadas, SÍ requieren escalado estricto.
