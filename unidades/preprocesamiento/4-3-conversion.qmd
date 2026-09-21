@@ -16,13 +16,11 @@ execute:
 jupyter: python3
 ---
 
-## 1. Intuición con Ejemplo Práctico (BigMart Sales)
-
 Muchos modelos, entre ellos KNN, regresión logística y redes neuronales, necesitan una representación numérica de las variables. Una etiqueta como "Grocery Store" requiere codificación; el número asignado debe respetar el significado de la categoría.
 
 Pero el hecho de que todo deba ser numérico presenta un desafío profundo: **la escala y la naturaleza de los números importan enormemente**.
 
-### El Problema de la Escala
+## El Problema de la Escala
 Imagina que estamos construyendo un modelo predictivo de ventas para **BigMart Sales** mediante k-Vecinos Más Cercanos (KNN)[^5]. Nuestro dataset tiene dos variables numéricas principales:
 - **Item_MRP** (Precio Máximo al Por Menor): Varía de \$30 a \$250.
 - **Item_Visibility** (Visibilidad del producto en anaquel): Varía de 0.00 a 0.30.
@@ -35,7 +33,7 @@ $$d(A, B) = \sqrt{(50 - 51)^2 + (0.02 - 0.28)^2} = \sqrt{(-1)^2 + (-0.26)^2} = \
 
 Como vemos, **la variable "Item_MRP" domina casi por completo el cálculo de la distancia**. Para el algoritmo, una diferencia inmensa en visibilidad (del 2% al 28%) es matemáticamente irrelevante comparada con una modesta diferencia de \$1 en el precio. Sin un escalado adecuado, nuestro modelo de machine learning se vuelve ciego a las variables numéricamente pequeñas, sin importar su poder predictivo real.
 
-### El Peligro de la Falsa Ordinalidad
+## El Peligro de la Falsa Ordinalidad
 Ahora consideremos las variables categóricas. Supongamos que tenemos la variable categórica "Outlet_Type" (Tipo de tienda) del dataset BigMart con valores: `Grocery Store`, `Supermarket Type1`, `Supermarket Type3`. 
 Una solución ingenua sería asignarles números arbitrarios:
 - `Grocery Store` = 1
@@ -51,7 +49,7 @@ Codificar variables nominales con números enteros arbitrarios destruye los supu
 
 ---
 
-## 2. Desarrollo Manual Paso a Paso
+## Desarrollo Manual Paso a Paso
 
 Para comprender verdaderamente lo que hacen las librerías bajo el capó, realicemos las transformaciones más importantes a mano sobre un mini-dataset simulado de 4 productos de **BigMart Sales**:
 
@@ -64,7 +62,7 @@ Para comprender verdaderamente lo que hacen las librerías bajo el capó, realic
 
 *Nota:* El `Item_MRP` del ID 4 (\$500.0) es un valor atípico (*outlier*) relativo a los otros tres.
 
-### 2.1. Min-Max Scaling (Normalización)
+### Min-Max Scaling (Normalización)
 Queremos escalar "Item_MRP" a un rango $[0, 1]$.
 La fórmula es: $x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$
 
@@ -80,7 +78,7 @@ Cálculos:
 
 *Observación clave:* El outlier (500.0) comprime a los demás productos en el tercio inferior del rango ($0.0$ a $0.297$), reduciendo su separabilidad.
 
-### 2.2. StandardScaler ($z$-score)
+### StandardScaler ($z$-score)
 Escalamos "Item_MRP" para que tenga media 0 y varianza 1.
 
 1. Media ($\mu$): $\frac{45 + 120 + 180 + 500}{4} = \frac{845}{4} = 211.25$
@@ -98,7 +96,7 @@ Cálculos de $z_i = \frac{x_i - \mu}{\sigma}$:
 - $z_3 = \frac{180 - 211.25}{173.44} \approx -0.180$
 - $z_4 = \frac{500 - 211.25}{173.44} \approx 1.665$
 
-### 2.3. RobustScaler (Mediana y Rango Intercuartílico)
+### RobustScaler (Mediana y Rango Intercuartílico)
 Escalamos usando estadísticas robustas a outliers: $x_{\text{rob}} = \frac{x - \text{mediana}}{\text{IQR}}$.
 
 1. Datos ordenados: $[45.0, 120.0, 180.0, 500.0]$
@@ -114,7 +112,7 @@ Cálculos:
 
 **Lectura del resultado:** la mediana cambia menos que la media ante un extremo, pero con solo cuatro datos el cuartil superior también depende del valor 500. "Robusto" no significa inmune.
 
-### 2.4. One-Hot Encoding y la Trampa de la Variable Ficticia
+### One-Hot Encoding y la Trampa de la Variable Ficticia
 Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3}`. Sin embargo, si tuviéramos cientos de categorías, One-Hot Encoding induciría la *Maldición de la Dimensionalidad*[^1] y requeriría el uso de *matrices dispersas*[^2] para optimizar la memoria.
 
 | ID | Outlet_Type_Grocery | Outlet_Type_Supermarket1 | Outlet_Type_Supermarket3 |
@@ -128,7 +126,7 @@ Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3
 $$\text{Grocery} + \text{Supermarket1} + \text{Supermarket3} = 1$$
 Si un modelo lineal sin regularización incluye un intercepto $\beta_0$, existe colinealidad perfecta[^4]. Una opción es descartar una columna de referencia (`drop='first'`); no es una regla universal para árboles ni para todo modelo regularizado.
 
-### 2.5. Target Encoding (Mean Encoding) Suavizado
+### Target Encoding (Mean Encoding) Suavizado
 El *Target Encoding* reemplaza cada categoría por el promedio del target (`Item_Outlet_Sales`) en esa categoría:
 - Media global del target ($\bar{y}_{\text{global}}$) = $\frac{500 + 2500 + 4200 + 800}{4} = 2000.0$
 - **Grocery Store**: 2 ocurrencias. Ventas = $[500, 800]$. Media local $\bar{y}_c = 650.0$.
@@ -144,9 +142,9 @@ Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse 
 
 ---
 
-## 3. Formalización Teórica y Matemática
+## Formalización Teórica y Matemática
 
-### 3.1. Escaladores Numéricos
+### Escaladores Numéricos
 1. **Min-Max Scaler**: Mapea una variable continua al intervalo $[a, b]$ (típicamente $[0, 1]$):
    $$ x' = a + \frac{x - x_{\min}}{x_{\max} - x_{\min}} (b - a) $$
    Es altamente sensible a outliers, ya que un único valor extremo dilata el denominador $x_{\max} - x_{\min}$.
@@ -162,7 +160,7 @@ Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse 
      $$ y^{(\lambda)} = \begin{cases} \frac{y^\lambda - 1}{\lambda} & \text{si } \lambda \neq 0 \\ \ln(y) & \text{si } \lambda = 0 \end{cases} $$
    - **Yeo-Johnson** (soporta valores positivos, cero y negativos).
 
-### 3.2. Codificación Categórica
+### Codificación Categórica
 1. **One-Hot Encoding**:
    Definimos un conjunto finito de categorías $\mathcal{C} = \{c_1, c_2, \dots, c_K\}$.
    La función de codificación es $h: \mathcal{C} \to \{0, 1\}^K$ tal que $h(c_j)$ es un vector donde la componente $j$ es 1 y el resto son 0.
@@ -177,13 +175,13 @@ Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse 
 
 ---
 
-## 4. Laboratorio Interactivo: Banco de Pruebas de Escalado y Codificación (BigMart)
+## Laboratorio Interactivo: Banco de Pruebas de Escalado y Codificación (BigMart)
 
 ::: {.content-visible when-format="html"}
 ```{=html}
 <div class="interactive-lab" style="border: 1px solid #d0d7de; border-radius: 8px; padding: 22px; background: #ffffff; margin: 25px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
   <h3 style="margin-top: 0; color: #1f2328; border-bottom: 2px solid #0969da; padding-bottom: 8px;">
-    🧪 Laboratorio Interactivo: Escalado Numérico y Codificación Categórica (BigMart)
+    Laboratorio Interactivo: Escalado Numérico y Codificación Categórica (BigMart)
   </h3>
   <p style="font-size: 0.9em; color: #57606a;">
     Experimenta en tiempo real con cómo los métodos de escalado reaccionan ante la presencia de un producto con precio atípico (Outlier), y cómo cambia la codificación de tiendas BigMart.
@@ -400,7 +398,7 @@ El panel usa las cuatro ventas para calcular la media de cada categoría. En un 
 
 ---
 
-## 5. Implementación Computacional (Python & Pandas)
+## Implementación Computacional (Python & Pandas)
 
 A continuación, mostramos cómo implementar estas transformaciones de manera profesional sobre el caso **BigMart Sales**.
 
@@ -435,7 +433,7 @@ data.loc[99, 'Item_MRP'] = 750.0
 data.head()
 ```
 
-### 5.1. Escalado Numérico Comparativo
+### Escalado Numérico Comparativo
 
 ```{python}
 # Instanciamos los escaladores
@@ -455,7 +453,7 @@ scaled_df = pd.DataFrame({
 scaled_df.tail()
 ```
 
-### 5.2. Codificación Categórica
+### Codificación Categórica
 
 ::: {.callout-important title="Regla de oro en producción"}
 Para categorías nuevas, decide explícitamente una política: `handle_unknown='ignore'` en `OneHotEncoder` produce ceros para una categoría desconocida. Comprueba si esa representación puede confundirse con la categoría de referencia cuando usas `drop='first'`; otra opción es agrupar categorías infrecuentes.
@@ -484,7 +482,7 @@ data[['Outlet_Type', 'Outlet_Type_TargetEncoded', 'Item_Outlet_Sales']].drop_dup
 El *target encoding* usa la variable $Y$ (`Item_Outlet_Sales`) para transformar las $X$. `TargetEncoder.fit_transform` utiliza particiones internas para codificar las filas de entrenamiento fuera del pliegue[^3]. Esta protección no sustituye la separación externa de entrenamiento, validación y prueba: ajusta todo el preprocesamiento dentro de cada pliegue externo.
 :::
 
-### 5.3. Ingeniería de Fechas y Ciclos
+### Ingeniería de Fechas y Ciclos
 
 ```{python}
 # Transformar año de establecimiento en Antigüedad de la tienda
@@ -495,7 +493,7 @@ data[['Outlet_Establishment_Year', 'Outlet_Age']].head(3)
 
 ---
 
-## 6. Referencias y Definiciones
+## Referencias y Definiciones
 
 [^1]: **Maldición de la Dimensionalidad**: A medida que aumenta el número de características (dimensiones), el volumen del espacio de características crece exponencialmente. Los datos se vuelven dispersos, y las medidas de distancia (como la Euclidiana) pierden significado, degradando severamente modelos espaciales como KNN. Ocurre rápido si aplicamos One-Hot a campos como `Item_Identifier` (más de 1,500 códigos únicos).
 
