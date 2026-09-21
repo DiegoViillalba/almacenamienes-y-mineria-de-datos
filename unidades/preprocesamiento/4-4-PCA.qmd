@@ -24,11 +24,56 @@ import warnings
 warnings.filterwarnings('ignore')
 ```
 
-El análisis exploratorio de datos (EDA) ha evolucionado significativamente en los últimos años. Mientras que el enfoque clásico se centraba en estadísticas descriptivas y visualizaciones básicas, el EDA multivariable moderno reconoce que los datos reales son intrínsecamente de alta dimensión y que su comprensión requiere integrar múltiples niveles de análisis de manera estructurada.
+# Intuición: dos medidas, una dirección
 
-# La maldición de la dimensionalidad
+Imagina dos sensores que registran casi el mismo movimiento. Si ambas lecturas suben y bajan juntas, dos columnas describen en gran parte una sola dirección. PCA gira los ejes para que el primero siga la mayor variación y el segundo recoja lo que queda. Las *puntuaciones*[^pca-scores] indican dónde queda cada observación sobre los nuevos ejes.
 
-Cuando el número de variables $p$ crece, la geometría del espacio se vuelve profundamente contraintuitiva. El fenómeno conocido como **maldición de la dimensionalidad** (*curse of dimensionality*, Bellman, 1957) describe cómo el volumen del espacio crece tan rápidamente que los datos se vuelven inevitablemente dispersos.
+**Ejemplo mínimo.** Para las lecturas $(2,3)$, $(3,4)$ y $(4,5)$, al restar las medias $(3,4)$ obtenemos $(-1,-1)$, $(0,0)$ y $(1,1)$. Todos los puntos quedan sobre la diagonal: una sola coordenada basta para reconstruirlos. Más adelante calcularemos esa coordenada y la varianza que conserva.
+
+::: {.callout-tip title="Antes de reducir dimensiones en un proyecto"}
+Define para qué usarás los componentes: visualizar, comprimir o alimentar un modelo. Si vas a evaluar predicción, separa primero entrenamiento y prueba; aprende el escalado y PCA solo en entrenamiento y mide el resultado en datos no vistos. La varianza explicada resume variación de las entradas, no rendimiento predictivo.
+:::
+
+[^pca-scores]: **Puntuación (*score*)**: coordenada de una observación tras proyectarla sobre una componente principal. Los *loadings* son los pesos de las variables originales que definen esa dirección.
+
+[^pca-eigen]: **Autovalor o eigenvalor**: número que indica cuánto estira una matriz una dirección propia. En PCA de la matriz de covarianza, equivale a la varianza capturada por la componente correspondiente.
+
+# Ejemplo: dos sensores paso a paso
+
+A continuación, calculamos el caso de los dos sensores de la intuición. Aquí **solo centramos**: ambas columnas tienen las mismas unidades y varianza. Así la matriz de covarianza y los autovalores de este ejemplo corresponden a los datos centrados; en el caso Iris posterior sí estandarizamos.
+
+1.  **Definición de la matriz de datos original:**
+    Supongamos $n=3$ observaciones (ej. mediciones de dos sensores) representados como filas y $p=2$ variables representadas como columnas:
+    $$X = \begin{pmatrix} 2 & 3 \\ 3 & 4 \\ 4 & 5 \end{pmatrix}$$
+
+2.  **Centrado de los datos:**
+    Calculamos la media de cada columna: $\bar{x}_1 = 3$ y $\bar{x}_2 = 4$. Restamos la media a cada fila para obtener $\tilde{X}$:
+    $$\tilde{X} = \begin{pmatrix} 2-3 & 3-4 \\ 3-3 & 4-4 \\ 4-3 & 5-4 \end{pmatrix} = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix}$$
+
+3.  **Cálculo de la matriz de covarianza ($S$):**
+    Aplicamos $S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$ con $n-1 = 2$:
+    $$S = \frac{1}{2} \begin{pmatrix} -1 & 0 & 1 \\ -1 & 0 & 1 \end{pmatrix} \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} = \frac{1}{2} \begin{pmatrix} 2 & 2 \\ 2 & 2 \end{pmatrix} = \begin{pmatrix} 1 & 1 \\ 1 & 1 \end{pmatrix}$$
+
+4.  **Obtención de eigenvalores[^pca-eigen] ($\lambda$):**
+    Resolvemos el determinante $\det(S - \lambda I) = 0$:
+    $$\det \begin{pmatrix} 1-\lambda & 1 \\ 1 & 1-\lambda \end{pmatrix} = (1-\lambda)^2 - 1 = 0 \implies \lambda^2 - 2\lambda = 0$$
+    Los resultados son **$\lambda_1 = 2$** y **$\lambda_2 = 0$**. La varianza total es $2+0=2$. El primer componente explica el $100\%$ de la varianza.
+
+5.  **Obtención de eigenvectores ($\mathbf{v}$):**
+    Para $\lambda_1 = 2$, resolvemos $(S - 2I)\mathbf{v}_1 = 0$:
+    $$\begin{pmatrix} -1 & 1 \\ 1 & -1 \end{pmatrix} \begin{pmatrix} v_{11} \\ v_{21} \end{pmatrix} = 0 \implies v_{11} = v_{21}$$
+    Normalizando para que $\|v\|=1$: **$v_1 = \begin{pmatrix} 1/\sqrt{2} \\ 1/\sqrt{2} \end{pmatrix} \approx \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix}$**.
+
+6.  **Proyección de los datos ($k=1$):**
+    Transformamos los datos centrados a la nueva dimensión $Z = \tilde{X} v_1$:
+    $$Z = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix} = \begin{pmatrix} -1.414 \\ 0 \\ 1.414 \end{pmatrix}$$
+
+7.  **Conclusión:**
+    Dado que los datos originales estaban perfectamente alineados ($x_2 = x_1 + 1$), el PCA ha logrado reducir la dimensionalidad de 2 a 1 sin ninguna pérdida de información, capturando toda la estructura de los datos en un solo eje.
+
+# Motivación: la maldición de la dimensionalidad
+
+Cuando el número de variables $p$ crece y mantenemos fija la cantidad de observaciones, la geometría del espacio puede volverse contraintuitiva. La **maldición de la dimensionalidad** describe varios efectos de la alta dimensión, entre ellos la dispersión relativa de las observaciones al crecer el espacio disponible.
 
 Consideremos una hiperesfera de radio $r$ inscrita en un hipercubo de lado $2r$ en $\mathbb{R}^d$. La proporción del volumen de la esfera respecto al cubo es:
 
@@ -193,7 +238,7 @@ fig.show()
 
 
 
-Esto implica que para el **análisis de datos en alta dimensión**, mantener una densidad de muestreo fija $\rho$ en $\mathbb{R}^d$, el número de observaciones necesario escala como:
+Como ejemplo geométrico, si dividimos cada eje en $L$ intervalos y queremos conservar la misma cantidad de observaciones por celda, el número de celdas crece como $L^d$. No implica que todo problema real requiera exactamente esa cantidad de observaciones.
 
 $$
 n \sim \rho \cdot L^d
@@ -204,7 +249,9 @@ Con $p = 20$ variables, el número de correlaciones posibles es $\binom{20}{2} =
 
 # Fundamentos matemáticos del PCA
 
-El Análisis de Componentes Principales es una técnica de reducción de dimensionalidad que transforma un conjunto de datos con variables correlacionadas en un nuevo sistema de variables no correlacionadas llamadas **componentes principales**. Cada componente es una combinación lineal de las variables originales y representa una dirección de máxima varianza, preservando así la mayor cantidad de información posible de los datos.
+El Análisis de Componentes Principales transforma variables numéricas centradas en componentes ortogonales[^pca-orthogonal] ordenadas por varianza. Entre todas las proyecciones lineales de dimensión $k$, PCA maximiza la varianza proyectada y minimiza el error cuadrático de reconstrucción. Esa varianza puede incluir ruido y no garantiza conservar lo más útil para una tarea predictiva.
+
+[^pca-orthogonal]: **Ortogonal**: dos direcciones perpendiculares cuyo producto interno es cero. En PCA, esto hace que las puntuaciones de componentes distintos no estén correlacionadas en el conjunto usado para ajustarlo.
 
 ## Formulación Matemática y Procedimiento
 
@@ -212,12 +259,12 @@ Dado un conjunto de datos $X \in \mathbb{R}^{n \times p}$, donde $n$ es el núme
 
 1. **Estandarización y Centrado**
 
-    Para evitar que las unidades de medida distorsionen el análisis, los datos deben transformarse a una escala común. Esto se realiza en dos pasos:
+    Primero se centra cada variable. Se estandariza además cuando las unidades o dispersiones de las columnas harían que una domine por escala y el objetivo requiere tratarlas de forma comparable. Esto se realiza en dos pasos:
 
     - **Centrado:** restar la media de cada variable  
     - **Escalado:** dividir entre su desviación estándar  
 
-    De esta forma, cada variable tiene media cero y varianza unitaria.
+    De esta forma, cada variable transformada tiene media cero y varianza unitaria con la convención de varianza usada para escalarla. Si todas las medidas comparten unidades y la magnitud de la varianza es relevante, puede bastar el centrado.
 
     $$
     \tilde{X}_{ij} = \frac{X_{ij} - \mu_j}{\sigma_j}
@@ -234,7 +281,7 @@ Dado un conjunto de datos $X \in \mathbb{R}^{n \times p}$, donde $n$ es el núme
 
     De forma elemento a elemento:
 
-    $$s_{jk} = \frac{1}{n-1} \sum_{i=1}^n (x_{ij} - \mu_j)(x_{ik} - \mu_k)$$
+    $$s_{jk} = \frac{1}{n-1} \sum_{i=1}^n \tilde{x}_{ij}\tilde{x}_{ik}$$
 
     donde:
     - $s_{jj}$ representa la **varianza** de la variable $j$
@@ -257,41 +304,8 @@ Cada componente captura una parte de la variabilidad total de los datos, la cual
 
 $$\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}$$
 
-Esto permite reducir la dimensionalidad manteniendo, por ejemplo, el 95% de la varianza acumulada original.
+Esto permite elegir una dimensión que conserve, por ejemplo, el 95% de la varianza **de la matriz transformada usada en el ajuste**. El umbral es una decisión de análisis, no una garantía de calidad del modelo.
 
-
-## Ejemplo Práctico: Cálculo Manual Paso a Paso
-
-A continuación, se desarrolla el proceso completo partiendo de una matriz de datos crudos de dos variables ($p=2$):
-
-1.  **Definición de la matriz de datos original:**
-    Supongamos $n=3$ observaciones (ej. mediciones de dos sensores) representados como filas y $p=2$ variables representadas como columnas:
-    $$X = \begin{pmatrix} 2 & 3 \\ 3 & 4 \\ 4 & 5 \end{pmatrix}$$
-
-2.  **Centrado de los datos:**
-    Calculamos la media de cada columna: $\bar{x}_1 = 3$ y $\bar{x}_2 = 4$. Restamos la media a cada fila para obtener $\tilde{X}$:
-    $$\tilde{X} = \begin{pmatrix} 2-3 & 3-4 \\ 3-3 & 4-4 \\ 4-3 & 5-4 \end{pmatrix} = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix}$$
-
-3.  **Cálculo de la matriz de covarianza ($S$):**
-    Aplicamos $S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$ con $n-1 = 2$:
-    $$S = \frac{1}{2} \begin{pmatrix} -1 & 0 & 1 \\ -1 & 0 & 1 \end{pmatrix} \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} = \frac{1}{2} \begin{pmatrix} 2 & 2 \\ 2 & 2 \end{pmatrix} = \begin{pmatrix} 1 & 1 \\ 1 & 1 \end{pmatrix}$$
-
-4.  **Obtención de eigenvalores ($\lambda$):**
-    Resolvemos el determinante $\det(S - \lambda I) = 0$:
-    $$\det \begin{pmatrix} 1-\lambda & 1 \\ 1 & 1-\lambda \end{pmatrix} = (1-\lambda)^2 - 1 = 0 \implies \lambda^2 - 2\lambda = 0$$
-    Los resultados son **$\lambda_1 = 2$** y **$\lambda_2 = 0$**. La varianza total es $2+0=2$. El primer componente explica el $100\%$ de la varianza.
-
-5.  **Obtención de eigenvectores ($\mathbf{v}$):**
-    Para $\lambda_1 = 2$, resolvemos $(S - 2I)\mathbf{v}_1 = 0$:
-    $$\begin{pmatrix} -1 & 1 \\ 1 & -1 \end{pmatrix} \begin{pmatrix} v_{11} \\ v_{21} \end{pmatrix} = 0 \implies v_{11} = v_{21}$$
-    Normalizando para que $\|v\|=1$: **$v_1 = \begin{pmatrix} 1/\sqrt{2} \\ 1/\sqrt{2} \end{pmatrix} \approx \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix}$**.
-
-6.  **Proyección de los datos ($k=1$):**
-    Transformamos los datos centrados a la nueva dimensión $Z = \tilde{X} v_1$:
-    $$Z = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 0.707 \\ 0.707 \end{pmatrix} = \begin{pmatrix} -1.414 \\ 0 \\ 1.414 \end{pmatrix}$$
-
-7.  **Conclusión:**
-    Dado que los datos originales estaban perfectamente alineados ($x_2 = x_1 + 1$), el PCA ha logrado reducir la dimensionalidad de 2 a 1 sin ninguna pérdida de información, capturando toda la estructura de los datos en un solo eje.
 
 ## Ejemplo Práctico: Visualización paso a paso
 
@@ -555,7 +569,7 @@ df_iris.describe().round(3)
 
 ## Paso 1: Estandarización {.unnumbered}
 
-La estandarización es **obligatoria** cuando las variables tienen escalas distintas. Sin ella, las variables con mayor varianza absoluta dominarían el PCA independientemente de su relevancia.
+En Iris elegimos estandarizar para dar el mismo peso inicial a las cuatro medidas. Sin este paso, la variable con mayor varianza numérica influye más en las primeras componentes. La decisión depende de las unidades y de qué diferencias físicas interesa conservar.
 
 $$
 z_{ij} = \frac{x_{ij} - \bar{x}_j}{s_j}
@@ -596,14 +610,14 @@ fig = go.Figure(data=go.Heatmap(
     colorbar=dict(title='Covarianza')
 ))
 fig.update_layout(
-    title="Matriz de covarianza — datos estandarizados (= matriz de correlación)",
+    title="Matriz de covarianza de datos estandarizados",
     height=420
 )
 fig.show()
 ```
 
 ::: {.callout-note}
-Cuando los datos están estandarizados, la matriz de covarianza es idéntica a la **matriz de correlación de Pearson**. Por eso PCA sobre datos estandarizados equivale a hacer PCA sobre correlaciones.
+Con `StandardScaler`, cada columna tiene varianza 1 calculada con divisor $n$; `np.cov` usa $n-1$. Por eso la diagonal aquí vale $n/(n-1)$ y esta matriz es $n/(n-1)$ veces la matriz de correlación de Pearson. El factor común conserva las direcciones principales.
 :::
 
 ## Paso 3: Eigendescomposición vía SVD {.unnumbered}
@@ -651,7 +665,7 @@ fig.add_hline(y=80, line_dash="dash", line_color="gray",
 fig.update_yaxes(title_text="% Varianza por componente", secondary_y=False)
 fig.update_yaxes(title_text="% Varianza acumulada", range=[0, 110], secondary_y=True)
 fig.update_layout(
-    title="Scree Plot — Regla de Kaiser: retener componentes con λ > 1",
+    title="Varianza explicada y acumulada por componente",
     height=380
 )
 fig.show()
@@ -660,8 +674,8 @@ fig.show()
 ::: {.callout-tip}
 **Criterios para elegir $k$:**
 
-- **Regla de Kaiser**: retener componentes con $\lambda_k > 1$ (solo aplica con datos estandarizados)
-- **Varianza acumulada**: retener los primeros $k$ que superen el 80% (o 90%)
+- **Regla de Kaiser**: heurística de $\lambda_k > 1$ para PCA sobre la matriz de correlaciones; la escala $n/(n-1)$ del ejemplo exige cautela al usar el umbral literal.
+- **Varianza acumulada**: fija un umbral según el costo de perder información y comprueba su impacto en la tarea; 80% o 90% son ejemplos, no reglas universales.
 - **Scree plot**: buscar el "codo" donde la pendiente cae abruptamente
 - **Interpretabilidad de dominio**: ¿los componentes tienen sentido en el problema?
 :::
@@ -836,8 +850,7 @@ acceso a **sensores**, y cada sensor introduce su propio ruido de medición.
 El desafío central es: dado un conjunto de lecturas ruidosas de múltiples
 sensores, ¿podemos recuperar la trayectoria original?
 
-PCA responde exactamente a esa pregunta. Pero antes de aplicarlo,
-construyamos el experimento desde cero.
+PCA puede resumir la variación compartida de las lecturas, pero no garantiza recuperar la trayectoria física exacta. Antes de aplicarlo, construyamos el experimento desde cero.
 
 
 ## Paso 1 — La trayectoria real y el ruido de medición {.unnumbered}
@@ -1480,20 +1493,20 @@ fig.update_layout(height=400,
 fig.show()
 ```
 
-## Asunción de normalidad (implícita)
+## Normalidad: cuándo entra en juego
 
-PCA es óptimo en el sentido de máxima varianza bajo **cualquier distribución**. Sin embargo, su interpretación probabilística (PCA probabilístico, Tipping & Bishop 1999) asume normalidad:
+PCA clásico no requiere normalidad para maximizar la varianza proyectada. Un modelo distinto, el PCA probabilístico, sí añade supuestos gaussianos para las variables latentes y el ruido:
 
 $$
 x = W z + \mu + \varepsilon, \quad z \sim \mathcal{N}(0, I), \quad \varepsilon \sim \mathcal{N}(0, \sigma^2 I)
 $$
 
-Para datos con distribuciones muy asimétricas o discretas, otras técnicas pueden ser más apropiadas.
+En datos muy asimétricos o discretos, revisa si la distancia euclidiana y la reconstrucción lineal responden a la pregunta del análisis; la falta de normalidad por sí sola no invalida PCA clásico.
 
 
 # Más allá del PCA: técnicas no lineales
 
-Cuando los datos tienen estructuras no lineales, PCA falla. Las siguientes técnicas abordan esta limitación. Analizaremos dos de las más populares: **t-SNE** y **UMAP**. 
+Cuando la estructura de interés no cabe bien en una proyección lineal, PCA puede perderla. t-SNE y UMAP producen representaciones útiles para explorar vecindarios; sus ejes y distancias entre grupos requieren interpretación cautelosa.
 
 Para esta sección emplearemos el MNIST dataset, un dataset de imágenes de dígitos escritos a mano que tiene una estructura no lineal compleja con las siguientes caracteristicas:
 
@@ -1835,10 +1848,10 @@ fig.show()
 
 | Situación | Método recomendado |
 |---|---|
-| Preprocesamiento antes de modelado | **PCA** |
-| Visualización exploratoria | **t-SNE** o **UMAP** |
-| Dataset grande (>50k puntos) | **UMAP** |
-| Necesito transformar nuevos datos | **PCA** o **UMAP** |
+| Compresión lineal antes de modelado | **PCA**, validando el efecto en la métrica de la tarea |
+| Visualización exploratoria de vecindarios | **t-SNE** o **UMAP**, comparando parámetros y semillas |
+| Muchos puntos | Probar **PCA** o **UMAP** según memoria, tiempo y objetivo |
+| Necesito transformar nuevos datos | **PCA**; **UMAP** si el modelo ajustado y la implementación ofrecen `transform` adecuado |
 | Interpretabilidad de componentes | **PCA** (o Sparse PCA) |
 | Estructura no lineal compleja | **UMAP** |
 | Análisis supervisado + reducción | **LDA** |
@@ -1847,7 +1860,7 @@ La elección del método de reducción de dimensionalidad depende del objetivo d
 
 PCA es adecuado cuando se busca una representación lineal, interpretable y reutilizable, especialmente en contextos de preprocesamiento para modelos. En contraste, t-SNE y UMAP están diseñados principalmente para exploración visual, priorizando la preservación de relaciones locales, aunque sacrifican interpretabilidad y capacidad de generalización.
 
-UMAP ofrece un equilibrio interesante entre estructura local y global, además de escalar mejor a datasets grandes. Finalmente, métodos como LDA incorporan información de clases, siendo más apropiados cuando el objetivo es discriminación supervisada.
+UMAP puede preservar vecindarios y resultar útil con conjuntos grandes, pero el resultado depende de parámetros y recursos. LDA incorpora etiquetas y puede servir cuando el objetivo es discriminación supervisada.
 
 En conjunto, la elección del método debe responder a la pregunta central del análisis:  
 ¿buscamos interpretar, visualizar o modelar?
@@ -1860,11 +1873,65 @@ El PCA es el punto de partida del análisis multivariante moderno. Sus conexione
 - **Estadística**: modelo probabilístico gaussiano, máxima verosimilitud
 - **Optimización**: problema de Rayleigh quotient, multiplicadores de Lagrange
 - **Aprendizaje automático**: preprocesamiento, regularización, autoencoders lineales
-- **Geometría diferencial**: UMAP extiende PCA al caso de variedades Riemannianas
+- **Métodos de variedades**: UMAP y t-SNE usan objetivos distintos de la reconstrucción lineal de PCA
 
 La familia de métodos de reducción de dimensionalidad puede verse como un espectro continuo desde lo lineal (PCA) hasta lo fuertemente no lineal (t-SNE, UMAP), con un trade-off entre interpretabilidad, preservación de estructura global y escalabilidad.
 
 ---
+
+# Laboratorio aplicado: ¿conviene PCA para clasificar Iris?
+
+**Objetivo.** Separar la pregunta "¿cuánta varianza conserva PCA?" de "¿mejora un clasificador en datos no vistos?". Usaremos una partición estratificada[^pca-stratified] y ajustaremos todo el preprocesamiento dentro de cada pipeline.
+
+1. Ejecuta el código y anota la varianza explicada por dos componentes, la exactitud balanceada del modelo con PCA y la del modelo con las cuatro medidas.
+2. Cambia `n_components=2` por `1` y después por `3`. Antes de ejecutar cada variante, predice qué ocurrirá con la varianza acumulada y el error de reconstrucción.
+3. Repite con otra semilla en `train_test_split`. Explica qué conclusiones son estables y cuáles dependen de una partición pequeña.
+
+```{python}
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import balanced_accuracy_score
+
+X_train, X_test, y_train, y_test = train_test_split(
+    iris.data, iris.target, test_size=0.3, stratify=iris.target, random_state=42
+)
+
+modelo_pca = make_pipeline(
+    StandardScaler(), PCA(n_components=2), LogisticRegression(max_iter=1000)
+)
+modelo_base = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+modelo_pca.fit(X_train, y_train)
+modelo_base.fit(X_train, y_train)
+
+transformador = modelo_pca.named_steps['pca']
+X_test_escalado = modelo_pca.named_steps['standardscaler'].transform(X_test)
+X_test_reconstruido = transformador.inverse_transform(
+    transformador.transform(X_test_escalado)
+)
+
+resultado_laboratorio = pd.DataFrame({
+    'Medida': ['Varianza explicada en entrenamiento',
+               'Error medio de reconstrucción en prueba',
+               'Exactitud balanceada con PCA en prueba',
+               'Exactitud balanceada sin PCA en prueba'],
+    'Valor': [transformador.explained_variance_ratio_.sum(),
+              np.mean((X_test_escalado - X_test_reconstruido) ** 2),
+              balanced_accuracy_score(y_test, modelo_pca.predict(X_test)),
+              balanced_accuracy_score(y_test, modelo_base.predict(X_test))]
+})
+resultado_laboratorio
+```
+
+**Comprobación.** Verifica que `modelo_pca.named_steps['pca'].n_components_ == 2`, que la varianza explicada queda entre 0 y 1 y que ninguna medición de prueba interviene en `.fit`. Al aumentar $k$, la varianza acumulada no puede disminuir y el error de reconstrucción de los mismos datos transformados no puede aumentar, salvo redondeo numérico.
+
+**Interpretación y entrega.** Redacta una recomendación de tres frases para alguien que deba desplegar el clasificador: incluye la diferencia observada en exactitud balanceada, el costo de pasar de cuatro variables a $k$ componentes y una limitación de decidir con una sola partición. Si la exactitud es similar, no concluyas que PCA es siempre necesario.
+
+::: {.callout-tip title="Práctica de trabajo reproducible"}
+Guarda el pipeline completo para inferencia y registra la partición, la semilla, $k$, la métrica y las versiones de dependencias. Para elegir $k$, usa validación cruzada dentro de entrenamiento; reserva la prueba final para estimar el rendimiento después de elegirlo.
+:::
+
+[^pca-stratified]: **Partición estratificada**: divide los datos manteniendo aproximadamente la proporción de cada clase en entrenamiento y prueba.
 
 # Ejercicios propuestos
 
@@ -1922,4 +1989,3 @@ A continuación se listan libros y recursos clave para profundizar en análisis 
 - **Distill.pub (artículos interactivos)**  
   https://distill.pub/  
   → Explicaciones visuales de t-SNE, embeddings y ML. (Libre)
-

@@ -22,11 +22,11 @@ En la etapa de preprocesamiento y selección de características (*feature selec
 
 El problema de la redundancia en variables categóricas es crítico: si dos variables categóricas transmiten exactamente la misma información, o si una variable predictora no tiene ninguna relación con la variable objetivo (*target*), conservarlas infla innecesariamente la dimensionalidad del modelo. Esto es especialmente perjudicial cuando se aplican técnicas como *One-Hot Encoding*, donde la dimensionalidad explota sin aportar nueva señal predictiva.
 
-Para ilustrarlo, utilizaremos el caso de **BigMart Sales**. Imaginemos que analizamos la relación entre el tipo de tienda (`Outlet_Type`: Supermarket Type1, Grocery Store) y su tamaño (`Outlet_Size`: Medium, Small). ¿Están estas dos variables asociadas en el conjunto de datos de BigMart, o son completamente independientes? Para responder a esta pregunta con rigor estadístico y matemático, recurrimos a la prueba de independencia χ² (Chi-cuadrado).
+Para ilustrarlo, utilizaremos un **ejemplo didáctico inspirado en BigMart Sales**. Imaginemos que analizamos la relación entre el tipo de tienda (`Outlet_Type`: Supermarket Type1, Grocery Store) y su tamaño (`Outlet_Size`: Medium, Small). ¿Están estas dos variables asociadas en la muestra imaginaria, o son independientes? La prueba de independencia χ² compara lo que observamos con lo que esperaríamos si no hubiera asociación. Los conteos siguientes son inventados para aprender el método; no describen el conjunto de datos original.
 
 ## Desarrollo Manual Paso a Paso
 
-Consideremos una pequeña muestra de 100 observaciones de nuestras tiendas BigMart. Podemos organizar los datos en una **tabla de contingencia** de $2 \times 2$:
+Consideremos 100 registros ficticios de tiendas BigMart. Podemos organizar los datos en una **tabla de contingencia**[^contingencia] de $2 \times 2$:
 
 | Outlet_Type | Medium | Small | Total Fila ($R_i$) |
 | :--- | :---: | :---: | :---: |
@@ -63,25 +63,94 @@ Donde $O_{ij}$ es la frecuencia observada.
 Sumamos las contribuciones para obtener el valor del estadístico:
 $$ \chi^2_{\text{calc}} = 5.0 + 5.0 + 3.333 + 3.333 = 16.666 $$
 
-Los grados de libertad ($\text{df}$) se calculan como $(r - 1)(c - 1) = (2 - 1)(2 - 1) = 1$.
+Los grados de libertad[^gl] ($\text{df}$) se calculan como $(r - 1)(c - 1) = (2 - 1)(2 - 1) = 1$.
 Para un nivel de significancia $\alpha = 0.05$ con $1$ grado de libertad, el valor crítico en la tabla χ² es aproximadamente $3.841$.
-Como $16.666 > 3.841$, rechazamos la hipótesis nula: existe una asociación significativa entre el `Outlet_Type` y el `Outlet_Size`.
+Como $16.666 > 3.841$, rechazamos la hipótesis nula de independencia en esta muestra ficticia. Esto aporta evidencia de asociación; no demuestra causalidad ni garantiza utilidad predictiva.
 
 ### 5. Fuerza de Asociación: V de Cramér
-El valor $p$ nos dice si hay asociación[^3], pero no su magnitud. Para ello usamos la V de Cramér:
+El valor $p$ cuantifica qué tan inusual sería una discrepancia como la observada bajo la hipótesis de independencia[^3]; no mide la fuerza de asociación. Para ello usamos la V de Cramér:
 $$ V = \sqrt{\frac{\chi^2}{N \cdot \min(r - 1, c - 1)}} $$
 
 Sustituyendo nuestros valores:
 $$ V = \sqrt{\frac{16.666}{100 \cdot \min(1, 1)}} = \sqrt{\frac{16.666}{100}} = \sqrt{0.16666} \approx 0.408 $$
-Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las variables de las tiendas.
+Un valor de $0.408$ indica una asociación apreciable en esta tabla. Etiquetas como «moderada» dependen del contexto y no sustituyen la evaluación del modelo.
+
+### Ver la discrepancia antes de interpretar el resultado
+
+Comparamos la tabla observada con la esperada en dos mapas de calor interactivos. Ambas usan el mismo rango numérico de color para facilitar la comparación entre celdas.
+
+```{python}
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+observadas = np.array([[30, 10], [20, 40]])
+esperadas = np.array([[20., 20.], [30., 30.]])
+filas = ["Supermarket Type1", "Grocery Store"]
+columnas = ["Medium", "Small"]
+
+fig = make_subplots(rows=1, cols=2, subplot_titles=("Observadas", "Esperadas si fueran independientes"))
+for posicion, (tabla, escala) in enumerate(((observadas, "Blues"), (esperadas, "Oranges")), start=1):
+    fig.add_trace(go.Heatmap(z=tabla, x=columnas, y=filas, zmin=0, zmax=40,
+                             colorscale=escala, showscale=False, text=tabla,
+                             texttemplate="%{text}"), row=1, col=posicion)
+fig.update_layout(title="Tipo y tamaño de tienda: datos didácticos", template="plotly_white", height=370)
+fig.show()
+```
+
+La celda *Supermarket Type1–Medium* contiene 30 registros frente a 20 esperados. El contraste ocurre también en las otras tres celdas; ninguna por sí sola explica toda la decisión.
+
+```{python}
+residuos = (observadas - esperadas) / np.sqrt(esperadas)
+fig = go.Figure(go.Heatmap(z=residuos, x=columnas, y=filas,
+                           colorscale="RdBu_r", zmid=0, zmin=-2.5, zmax=2.5,
+                           text=np.round(residuos, 2), texttemplate="%{text}",
+                           colorbar=dict(title="Residuo")))
+fig.update_layout(title="Residuos de Pearson: (observado − esperado) / √esperado",
+                  template="plotly_white", height=370)
+fig.show()
+```
+
+El signo muestra la dirección de la diferencia. El cuadrado de cada residuo es la contribución de esa celda al χ². No interpretes cada residuo como una prueba independiente sin ajustar por las comparaciones múltiples.
+
+## Formalización Teórica y Matemática
+
+La base formal de esta prueba radica en la definición de **independencia estadística** para variables aleatorias categóricas $X$ e $Y$:
+$$ P(X = x_i, Y = y_j) = P(X = x_i) \cdot P(Y = y_j) \quad \forall i, j $$
+
+El **estadístico χ² de Pearson** mide la discrepancia entre las frecuencias observadas y las esperadas bajo este supuesto de independencia:
+$$ \chi^2 = \sum_{i=1}^r \sum_{j=1}^c \frac{(O_{ij} - E_{ij})^2}{E_{ij}} $$
+Si se cumplen los supuestos y la muestra es suficientemente grande, su distribución bajo $H_0$ se aproxima a una χ² con $(r-1)(c-1)$ grados de libertad.
+
+### Supuestos de Validez
+Las observaciones deben ser independientes: no se debe contar repetidamente la misma tienda como si fueran tiendas distintas. Como regla orientativa para la aproximación asintótica, revisa los **criterios de Cochran**[^5]: ninguna celda esperada menor que 1 y, como máximo, el 20% de las celdas esperadas menor que 5. En una tabla 2 × 2 esto suele implicar revisar con especial cuidado cualquier frecuencia esperada menor que 5.
+
+### Corrección por Continuidad de Yates
+En tablas de $2 \times 2$ puede utilizarse la **corrección de Yates**[^1]. Ajusta la diferencia absoluta entre los conteos; algunas implementaciones usan $\max(0, |O_{ij}-E_{ij}|-0.5)$ para evitar valores negativos. No es obligatoria por el solo hecho de tener una tabla 2 × 2: informa si se aplicó y usa el mismo criterio al comparar resultados.
+
+### Prueba Exacta de Fisher
+Cuando la aproximación χ² es dudosa en una tabla 2 × 2, la **prueba exacta de Fisher**[^2] es una alternativa. También debemos ser cautos con conclusiones basadas en datos agregados debido a la **paradoja de Simpson**[^4].
 
 ## Laboratorio Interactivo: Calculadora Dinámica de χ² y V de Cramér (BigMart)
+
+**Objetivo.** Decidir cuándo una tabla 2 × 2 permite interpretar la prueba χ² y distinguir significación estadística de fuerza de asociación.
+
+1. Reproduce los cuatro conteos del ejemplo. Comprueba que $N=100$, $\chi^2\approx16.67$ y $V\approx0.408$.
+2. Cambia los conteos a `25, 15, 25, 35` en orden de lectura. Predice qué ocurre con χ² y V antes de mirar el resultado.
+3. Introduce `2, 0, 1, 3`. Comprueba por qué la calculadora advierte sobre frecuencias esperadas pequeñas y anota qué prueba considerarías para esta tabla.
+
+**Interpretación para entregar.** Escribe dos frases: una sobre la evidencia de asociación y otra sobre su magnitud. Si la tabla queda vacía o alguna fila o columna no tiene registros, explica por qué la prueba no está definida.
 
 ::: {.content-visible when-format="html"}
 ```{=html}
 <div class="interactive-lab" style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background: #fafafa; margin: 20px 0; font-family: sans-serif;">
   <h3 style="margin-top: 0; color: #333;">Calculadora Dinámica (Outlet_Type vs Outlet_Size)</h3>
-  <p>Modifica las frecuencias observadas ($O_{ij}$) y observa cómo se recalculan todos los valores en tiempo real.</p>
+  <p>Modifica las frecuencias observadas (Oij) y observa cómo se recalculan los resultados. Usa conteos enteros no negativos.</p>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+    <button type="button" onclick="setChi2Counts([30,10,20,40])">Ejemplo inicial</button>
+    <button type="button" onclick="setChi2Counts([25,15,25,35])">Comparar asociación</button>
+    <button type="button" onclick="setChi2Counts([2,0,1,3])">Celdas escasas</button>
+  </div>
   
   <div style="display: flex; flex-wrap: wrap; gap: 20px;">
     <div style="flex: 1; min-width: 300px;">
@@ -133,14 +202,14 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
         </tbody>
       </table>
       <div id="cochran-alert" style="color: #842029; background-color: #f8d7da; border: 1px solid #f5c2c7; border-radius: 4px; padding: 10px; margin-top: 15px; display: none;">
-        <strong>⚠️ Alerta de Cochran:</strong> Al menos una celda esperada es menor a 5. La aproximación $\chi^2$ podría no ser válida (considera la Prueba Exacta de Fisher).
+        <strong>Advertencia:</strong> Una celda esperada es menor que 5. En una tabla 2 × 2 considera la prueba exacta de Fisher antes de interpretar el valor crítico de χ².
       </div>
     </div>
     
     <div style="flex: 1; min-width: 300px; padding-left: 20px; border-left: 1px solid #e0e0e0;">
       <h4 style="margin-top: 0; color: #555;">Resultados Estadísticos</h4>
       <p style="margin-bottom: 5px;"><b>Estadístico $\chi^2_{\text{calc}}$:</b> <span id="chi2-val" style="font-size: 1.3em; font-weight: bold; color: #0d6efd;">16.67</span></p>
-      <p style="margin-bottom: 5px; font-size: 0.9em; color: #666;">Grados de libertad (df): 1 | Valor Crítico (95%): 3.841</p>
+      <p style="margin-bottom: 5px; font-size: 0.9em; color: #666;">Grados de libertad: 1 | Valor crítico para α = 0.05: 3.841 (si se cumplen los supuestos)</p>
       <div style="margin-top: 10px;">
         <span id="significance-badge" style="display: inline-block; padding: 6px 12px; border-radius: 4px; color: white; background-color: #198754; font-weight: bold; font-size: 0.9em;">Asociación Significativa</span>
       </div>
@@ -163,11 +232,22 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
   </div>
 </div>
 <script>
+  function setChi2Counts(values) {
+    ['o11', 'o12', 'o21', 'o22'].forEach((id, i) => {
+      document.getElementById(id).value = values[i];
+    });
+    calcChi2();
+  }
   function calcChi2() {
-    let o11 = parseInt(document.getElementById('o11').value) || 0;
-    let o12 = parseInt(document.getElementById('o12').value) || 0;
-    let o21 = parseInt(document.getElementById('o21').value) || 0;
-    let o22 = parseInt(document.getElementById('o22').value) || 0;
+    const ids = ['o11', 'o12', 'o21', 'o22'];
+    const counts = ids.map(id => {
+      const field = document.getElementById(id);
+      const value = Number(field.value);
+      const valid = Number.isInteger(value) && value >= 0;
+      field.setCustomValidity(valid ? '' : 'Escribe un entero no negativo');
+      return valid ? value : 0;
+    });
+    let [o11, o12, o21, o22] = counts;
     
     let r1 = o11 + o12;
     let r2 = o21 + o22;
@@ -181,10 +261,14 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
     document.getElementById('c2').innerText = c2;
     document.getElementById('ntot').innerText = n;
     
-    if (n === 0) {
-      document.getElementById('chi2-val').innerText = "0.00";
-      document.getElementById('cramer-val').innerText = "0.000";
+    if (n === 0 || r1 === 0 || r2 === 0 || c1 === 0 || c2 === 0 || ids.some(id => !document.getElementById(id).checkValidity())) {
+      ['e11', 'e12', 'e21', 'e22', 'cc11', 'cc12', 'cc21', 'cc22', 'chi2-val', 'cramer-val'].forEach(id => document.getElementById(id).innerText = '—');
       document.getElementById('cramer-bar').style.width = "0%";
+      document.getElementById('cramer-label').innerText = 'Tabla no válida';
+      document.getElementById('significance-badge').innerText = 'Prueba no definida';
+      document.getElementById('significance-badge').style.backgroundColor = '#6c757d';
+      document.getElementById('cochran-alert').style.display = 'block';
+      document.getElementById('cochran-alert').innerText = 'La tabla debe tener conteos enteros no negativos y ambas filas y columnas con observaciones.';
       return;
     }
     
@@ -200,6 +284,7 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
     
     let cochranViolation = (e11 < 5 || e12 < 5 || e21 < 5 || e22 < 5);
     document.getElementById('cochran-alert').style.display = cochranViolation ? 'block' : 'none';
+    document.getElementById('cochran-alert').innerText = 'Una celda esperada es menor que 5. Considera la prueba exacta de Fisher antes de interpretar χ².';
     
     let cc11 = e11 > 0 ? Math.pow(o11 - e11, 2) / e11 : 0;
     let cc12 = e12 > 0 ? Math.pow(o12 - e12, 2) / e12 : 0;
@@ -215,11 +300,14 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
     document.getElementById('chi2-val').innerText = chi2.toFixed(2);
     
     let badge = document.getElementById('significance-badge');
-    if (chi2 > 3.841) {
-      badge.innerText = "Asociación Significativa";
+    if (cochranViolation) {
+      badge.innerText = "Aproximación χ² poco fiable";
+      badge.style.backgroundColor = "#b45309";
+    } else if (chi2 > 3.841) {
+      badge.innerText = "Evidencia de asociación (α = 0.05)";
       badge.style.backgroundColor = "#198754"; // Bootstrap success
     } else {
-      badge.innerText = "No Significativa (Independientes)";
+      badge.innerText = "Sin evidencia suficiente de asociación";
       badge.style.backgroundColor = "#6c757d"; // Bootstrap secondary
     }
     
@@ -232,16 +320,16 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
     let cramerLabel = document.getElementById('cramer-label');
     let barColor = "";
     if (cramer < 0.1) {
-      cramerLabel.innerText = "Asociación Muy Débil o Nula";
+      cramerLabel.innerText = "V pequeña en esta tabla";
       barColor = "#dc3545"; // danger
     } else if (cramer < 0.3) {
-      cramerLabel.innerText = "Asociación Débil";
+      cramerLabel.innerText = "V = " + cramer.toFixed(3);
       barColor = "#fd7e14"; // orange
     } else if (cramer < 0.5) {
-      cramerLabel.innerText = "Asociación Moderada";
+      cramerLabel.innerText = "V = " + cramer.toFixed(3);
       barColor = "#0dcaf0"; // info
     } else {
-      cramerLabel.innerText = "Asociación Fuerte";
+      cramerLabel.innerText = "V grande en esta tabla";
       barColor = "#198754"; // success
     }
     document.getElementById('cramer-bar').style.backgroundColor = barColor;
@@ -256,136 +344,90 @@ Un valor de $0.408$ sugiere una asociación **moderada a fuerte** entre las vari
 *(Nota: Este laboratorio interactivo con controles dinámicos está disponible en la versión web del libro).*
 :::
 
-## Formalización Teórica y Matemática
-
-La base formal de esta prueba radica en la definición de **independencia estadística** para variables aleatorias categóricas $X$ e $Y$:
-$$ P(X = x_i, Y = y_j) = P(X = x_i) \cdot P(Y = y_j) \quad \forall i, j $$
-
-El **estadístico χ² de Pearson** mide la divergencia entre las frecuencias observadas y las esperadas bajo este supuesto de independencia:
-$$ \chi^2 = \sum_{i=1}^r \sum_{j=1}^c \frac{(O_{ij} - E_{ij})^2}{E_{ij}} \sim \chi^2_{(r-1)(c-1)} $$
-
-### Supuestos de Validez
-Para que la aproximación a la distribución χ² sea válida, deben cumplirse los **criterios de Cochran**[^5]:
-1. Las observaciones deben ser independientes (muestreo aleatorio).
-2. Ninguna celda esperada debe ser menor a 1 ($E_{ij} \ge 1$).
-3. No más del 20% de las celdas esperadas deben ser menores a 5 ($E_{ij} < 5$).
-
-### Corrección por Continuidad de Yates
-Cuando trabajamos con tablas de contingencia de $2 \times 2$, la distribución discreta de las frecuencias puede no aproximarse bien a la distribución continua χ². La **corrección de Yates**[^1] ajusta la fórmula restando $0.5$ a la diferencia absoluta:
-$$ \chi^2_{\text{Yates}} = \sum \frac{(|O_{ij} - E_{ij}| - 0.5)^2}{E_{ij}} $$
-
-### Prueba Exacta de Fisher
-Si fallan los supuestos de tamaño de muestra (muchas frecuencias esperadas muy pequeñas), la alternativa no paramétrica es la **Prueba Exacta de Fisher**[^2], que calcula la probabilidad exacta de observar la tabla dada (o una más extrema) utilizando la distribución hipergeométrica. Además, debemos ser cautos con conclusiones basadas en datos agregados debido a la **Paradoja de Simpson**[^4].
-
 ## Mejores Prácticas en la Industria
 
 ::: {.callout-tip title="Mejores prácticas en la industria"}
-**Manejo de Alta Cardinalidad y Alternativas**
-¿Qué hacer cuando una variable (ej. Código Postal) tiene decenas de categorías? La prueba χ² sufrirá porque muchas celdas tendrán $E_{ij} < 5$. La estrategia típica es **colapsar categorías infrecuentes** en una única categoría agrupadora ("Otros") antes de aplicar el test.
-
-Por otro lado, a la hora de seleccionar variables, evalúa **χ² vs Información Mutua (Mutual Information)**. Mientras que χ² evalúa divergencias lineales en las frecuencias esperadas, la Información Mutua captura dependencias no lineales arbitrarias basadas en entropía, manejando a menudo mejor la alta cardinalidad.
+**Cardinalidad y tamaño del efecto.** Una variable con muchas categorías puede producir celdas escasas. Agrupa categorías infrecuentes solo si existe una justificación semántica y define la regla con los datos de entrenamiento. Compara el valor $p$ con V de Cramér y el rendimiento del modelo: una muestra grande puede detectar asociaciones de poca utilidad práctica. La información mutua[^mi] es otra medida posible, pero también requiere controlar el sesgo que introduce la cardinalidad.
 :::
 
 ::: {.callout-important title="Regla de oro en producción"}
-**Prevención de Fuga de Datos (Data Leakage)**
-En entornos MLOps, es absolutamente fundamental que **cualquier** reducción de variables supervisada (cálculo de χ², V de Cramér) se realice **única y exclusivamente sobre el conjunto de entrenamiento (`X_train`, `y_train`)**. Nunca utilices el dataset completo antes del *split* para decidir qué variables descartar, ya que esto introduciría información del conjunto de prueba en tu proceso de modelado, invalidando tus métricas de evaluación de desempeño.
+**Prevención de fuga de datos.** Si usas la relación con la variable objetivo para seleccionar predictores, aprende la selección dentro de cada partición de entrenamiento y evalúala en datos separados. Si solo exploras asociación entre dos columnas, registra igualmente la procedencia de los datos y evita convertir un hallazgo exploratorio en una regla de producción sin validación.
 :::
 
-## Implementación Computacional (Python & Pandas)
+## Implementación computacional y selección de variables
 
-A continuación, implementamos el análisis usando Python, validando los resultados manuales y demostrando la selección de características supervisada. *(Nota: El código a continuación utiliza un ejemplo clásico de aerolínea, el cual es equivalente matemáticamente al caso de BigMart planteado anteriormente).*
+Comprobamos los cuatro conteos ficticios de BigMart. `scipy.stats.chi2_contingency` usa por defecto una corrección en tablas 2 × 2; la desactivamos para reproducir el cálculo manual.
 
 ```{python}
 import pandas as pd
-import numpy as np
 import scipy.stats as stats
-import plotly.express as px
-from sklearn.feature_selection import SelectKBest, chi2
 
-# 1. Recrear los datos del ejemplo
-datos = {
-    'Tipo_Pasajero': ['Negocios']*40 + ['Turista']*60,
-    'Satisfaccion': ['Satisfecho']*30 + ['Insatisfecho']*10 + ['Satisfecho']*20 + ['Insatisfecho']*40
-}
-df = pd.DataFrame(datos)
-
-# 2. Crear Tabla de Contingencia
-tabla_cont = pd.crosstab(df['Tipo_Pasajero'], df['Satisfaccion'])
-print("Tabla de Contingencia Observada:\n", tabla_cont)
-
-# 3. Prueba Chi-Cuadrado (sin corrección de Yates para empatar cálculo manual)
+tabla_cont = pd.DataFrame(
+    [[30, 10], [20, 40]],
+    index=["Supermarket Type1", "Grocery Store"],
+    columns=["Medium", "Small"]
+)
 chi2_stat, p_val, dof, ex = stats.chi2_contingency(tabla_cont, correction=False)
-print(f"\nEstadístico Chi2: {chi2_stat:.3f}")
-print(f"P-value: {p_val:.3e}")
-print(f"Grados de libertad: {dof}")
-print("Frecuencias Esperadas:\n", ex)
-
-# 4. Función Idiomática para V de Cramér
-def cramers_v(confusion_matrix):
-    """Calcula la V de Cramér para una tabla de contingencia."""
-    chi2_val = stats.chi2_contingency(confusion_matrix, correction=False)[0]
-    n = confusion_matrix.to_numpy().sum()
-    phi2 = chi2_val / n
-    r, c = confusion_matrix.shape
-    return np.sqrt(phi2 / min((r-1), (c-1)))
-
-v_cramer = cramers_v(tabla_cont)
-print(f"\nV de Cramér: {v_cramer:.3f}")
+v_cramer = (chi2_stat / (tabla_cont.to_numpy().sum() * min(
+    tabla_cont.shape[0] - 1, tabla_cont.shape[1] - 1
+))) ** 0.5
+print(tabla_cont)
+print(f"χ² = {chi2_stat:.3f}; p = {p_val:.6f}; gl = {dof}; V = {v_cramer:.3f}")
+print("Esperadas:", ex)
+assert abs(chi2_stat - 16.6666667) < 1e-5
+assert abs(v_cramer - 0.4082483) < 1e-5
 ```
 
-### Reducción Supervisada y Visualización
-Para ilustrar la reducción en *pipelines* de `scikit-learn` y la visualización de redundancias, podemos simular un dataset con más variables:
+La tabla describe asociación entre **dos predictores**; por sí sola no indica cuál mejorará las predicciones de ventas. Para seleccionar variables con un objetivo `y`, se necesita un procedimiento supervisado dentro de las particiones de entrenamiento. Además, `sklearn.feature_selection.chi2` calcula una prueba de puntuación para características no negativas frente a clases; su resultado no equivale automáticamente a la prueba de independencia sobre una tabla de contingencia ni a V de Cramér.
+
+### Visualizar redundancia entre predictores
+
+En este ejemplo pequeño añadimos una categoría `Outlet_Region` inventada para ilustrar una tercera variable; los valores no representan datos reales.
 
 ```{python}
-# Simular dataset con características categóricas (codificadas numéricamente)
-np.random.seed(42)
-N = 500
-X = pd.DataFrame({
-    'Caracteristica_Fuerte': np.random.choice([0, 1], size=N),
-    'Caracteristica_Ruido': np.random.choice([0, 1, 2], size=N),
-    'Caracteristica_Redundante': np.zeros(N)
-})
-# Forzar redundancia y relación
-X['Caracteristica_Redundante'] = X['Caracteristica_Fuerte'] 
-y = X['Caracteristica_Fuerte'] # Target idéntico a una de las variables
+import numpy as np
+import plotly.express as px
 
-# Selección usando scikit-learn
-selector = SelectKBest(score_func=chi2, k=1)
-selector.fit(X, y)
-print("\nPuntajes Chi2 por variable (scikit-learn):")
-for col, score in zip(X.columns, selector.scores_):
-    print(f"{col}: {score:.2f}")
-
-# Heatmap de V de Cramér para detectar variables redundantes entre sí
-def cramers_v_matrix(df):
-    cols = df.columns
-    n = len(cols)
-    matrix = np.zeros((n, n))
+registros = []
+for (tipo, tamano), n in tabla_cont.stack().items():
     for i in range(n):
-        for j in range(n):
-            if i == j:
-                matrix[i, j] = 1.0
-            else:
-                matrix[i, j] = cramers_v(pd.crosstab(df[cols[i]], df[cols[j]]))
-    return pd.DataFrame(matrix, index=cols, columns=cols)
+        registros.append((tipo, tamano, "Norte" if i % 3 else "Sur"))
+muestra = pd.DataFrame(registros, columns=["Outlet_Type", "Outlet_Size", "Outlet_Region"])
 
-matriz_v = cramers_v_matrix(X)
+def cramer_v(tabla):
+    if min(tabla.shape) < 2:
+        return float("nan")
+    estadistico = stats.chi2_contingency(tabla, correction=False)[0]
+    return np.sqrt(estadistico / (tabla.to_numpy().sum() * min(
+        tabla.shape[0] - 1, tabla.shape[1] - 1
+    )))
 
-# Visualizar Heatmap
-fig = px.imshow(matriz_v, 
-                text_auto=".2f", 
-                color_continuous_scale='Blues',
-                title="Heatmap de Asociación (V de Cramér) entre Variables Predictoras")
-# fig.show() # Descomentar para ver en un entorno interactivo
+variables = muestra.columns.tolist()
+matriz_v = pd.DataFrame(index=variables, columns=variables, dtype=float)
+for a in variables:
+    for b in variables:
+        matriz_v.loc[a, b] = 1.0 if a == b else cramer_v(pd.crosstab(muestra[a], muestra[b]))
+
+fig = px.imshow(matriz_v, text_auto=".2f", zmin=0, zmax=1,
+                color_continuous_scale="Blues",
+                title="V de Cramér entre predictores (ejemplo ficticio)")
+fig.update_layout(template="plotly_white", height=430)
+fig.show()
 ```
 
----
+**Comprobación.** El valor para `Outlet_Type` y `Outlet_Size` debe ser 0.408. Las asociaciones entre predictores sugieren redundancia posible; decídela mediante validación del modelo, costo de captura y estabilidad temporal.
 
-[^1]: **Corrección de continuidad de Yates**: Es una modificación de la fórmula de Pearson para tablas de contingencia $2 \times 2$. Se utiliza porque se está aproximando una distribución discreta (frecuencias) mediante una distribución continua (χ²). Es especialmente necesaria en muestras pequeñas, ya que reduce el estadístico de prueba y, por tanto, previene el rechazo incorrecto de la hipótesis nula (errores de Tipo I).
+[^contingencia]: **Tabla de contingencia:** matriz de conteos en la que cada celda combina una categoría de la primera variable con otra de la segunda.
 
-[^2]: **Prueba exacta de Fisher**: Una alternativa no paramétrica cuando las frecuencias esperadas son demasiado bajas (menores a 5). Calcula la probabilidad de obtener los conteos observados utilizando la distribución hipergeométrica, garantizando precisión exacta sin depender de aproximaciones asintóticas.
+[^gl]: **Grados de libertad:** número de conteos que pueden variar una vez fijados los totales de filas y columnas. En una tabla 2 × 2 queda uno.
 
-[^3]: **Sensibilidad al tamaño de muestra ($N$)**: El estadístico χ² es directamente proporcional al tamaño de muestra. Con un $N$ muy grande, incluso diferencias triviales sin importancia práctica generarán un $p\text{-value} < 0.05$. Por ello es indispensable acompañar el test con una medida de tamaño del efecto como la V de Cramér.
+[^mi]: **Información mutua:** medida de dependencia basada en cuánto reduce conocer una variable la incertidumbre sobre otra.
+
+[^1]: **Corrección de continuidad de Yates:** ajuste conservador para la aproximación de conteos discretos por una distribución continua en tablas 2 × 2. Puede reducir potencia; no reemplaza automáticamente una prueba exacta en tablas pequeñas.
+
+[^2]: **Prueba exacta de Fisher:** prueba para tablas 2 × 2 que calcula probabilidades condicionadas a los márgenes mediante la distribución hipergeométrica, sin depender de la aproximación χ².
+
+[^3]: **Sensibilidad al tamaño de muestra ($N$):** con muestras grandes, diferencias pequeñas pueden producir valores $p$ bajos. Por eso conviene acompañar la prueba con un tamaño del efecto como V de Cramér.
 
 [^4]: **Paradoja de Simpson**: Ocurre cuando una tendencia aparece en diferentes grupos de datos pero desaparece o se invierte cuando estos grupos se combinan. Es un riesgo al analizar tablas de contingencia agregadas sin controlar por variables de confusión subyacentes.
 

@@ -1,5 +1,5 @@
 ---
-title: "Introducción al Preprocesamiento de Datos y Calidad de Datos"
+title: "Introducción al preprocesamiento y la calidad de datos"
 format:
   html:
     toc: true
@@ -16,498 +16,264 @@ execute:
 jupyter: python3
 ---
 
-# Introducción al Preprocesamiento de Datos y Calidad de Datos
+## Intuición: ¿qué problema resuelve el preprocesamiento?
 
-En la disciplina de la ciencia de datos y la ingeniería de *machine learning*, el modelado algorítmico (entrenamiento de redes neuronales, ensambles de árboles, etc.) suele acaparar la mayor parte de la atención mediática, académica y de los recién llegados al campo. Sin embargo, en el mundo real e industrial, los profesionales y equipos de datos invierten abrumadoramente entre el 70% y el 80% de su tiempo, esfuerzo y presupuesto en tareas de recolección, limpieza, integración, transformación y validación de datos. 
+Preprocesar datos es convertir registros capturados para operar un negocio en entradas coherentes para una pregunta analítica. Antes de transformar una columna, preguntamos qué representa, cómo se obtuvo y qué información estará disponible cuando se use el modelo. La limpieza ayuda a evitar errores conocidos; no garantiza buenas predicciones.
 
-Esta etapa fundamental, densa y en ocasiones tediosa, se conoce formalmente como **Preprocesamiento de Datos**. Sin ella, ningún sistema de IA es viable en producción.
+En BigMart, `LF` y `Low Fat` pueden significar lo mismo, un peso negativo requiere revisión y un precio extraordinario podría ser un error o un producto especial. Una regla automática no puede decidir lo último sin contexto. Tampoco todos los modelos necesitan el mismo tratamiento: algunos aceptan valores ausentes o categorías directamente, mientras que otros requieren imputación o codificación.[^modelos]
 
-## 1. La Intuición: "Garbage In, Garbage Out"
+::: {.callout-note title="Antes de limpiar"}
+Conserva una copia del valor original y registra la regla aplicada. Convierte en ausente un valor imposible según una regla de negocio documentada; investiga un valor atípico plausible antes de eliminarlo.
+:::
 
-El principio empírico más antiguo, persistente y vigente de las ciencias de la computación dicta: *"Garbage In, Garbage Out"* (Basura entra, basura sale). Un modelo predictivo, sin importar cuán sofisticado sea teóricamente (desde una sencilla regresión lineal OLS hasta un *Large Language Model* con cientos de billones de parámetros), es en el fondo un estimador y optimizador matemático que opera sobre matrices numéricas y tensores. 
+## Ejemplo: de una tabla cruda a variables utilizables
 
-Como tal, la formulación matemática subyacente requiere, por definición de sus axiomas de diseño, que las entradas ($\mathcal{X}$) pertenezcan a espacios vectoriales bien definidos, posean valores numéricos válidos en el campo de los reales ($\mathbb{R}$), presenten distribuciones probabilísticas manejables o estables, y estén libres de ruidos destructivos o inconsistencias estructurales.
+Esta muestra **inventada para aprender** contiene problemas de completitud, validez y consistencia. Los límites de peso y precio que usaremos son supuestos del ejercicio, no reglas generales de BigMart.
 
-### El Caso Práctico: El Desastre Cotidiano (BigMart Sales)
-
-Imaginemos un escenario extremadamente habitual utilizando nuestro marco conductor del dataset **BigMart Sales**. Extraemos una pequeña muestra de datos operacionales de los productos en diversas tiendas. Debido a errores humanos, migraciones de bases de datos heredadas o fallas de software en las interfaces de captura, el *DataFrame* crudo podría tener el siguiente aspecto:
-
-| Item_Identifier | Item_Weight | Item_MRP | Outlet_Establishment_Year | Item_Fat_Content |
-|:---:|:---:|:---:|:---:|:---:|
+| Producto | `Item_Weight` | `Item_MRP` | `Outlet_Establishment_Year` | `Item_Fat_Content` |
+|---|---:|---:|---|---|
 | FDA15 | 9.30 | 249.80 | 1999 | Low Fat |
 | DRC01 | -5.00 | 0.00 | 09-Jan-2009 | low fat |
-| FDN15 | NaN | 1200000.0 | 1998 | LF |
-| FDX07 | 19.20 | NaN | 14/02/1998 | Regular |
+| FDN15 | NA | 1200000.00 | 1998 | LF |
+| FDX07 | 19.20 | NA | 14/02/1998 | Regular |
 | NCD19 | 200.00 | 53.86 | 1985-01-20 | reg |
 
-Analicemos detenidamente, desde un prisma algorítmico, los problemas estructurales que colapsarían inmediatamente cualquier motor de Machine Learning si intentáramos alimentar esta matriz tabular directamente, sin un pipeline de curación intermedio:
+El orden de trabajo es: definir qué valores violan reglas del dominio; unificar etiquetas y formatos; separar entrenamiento y prueba; **ajustar** las estadísticas y categorías con entrenamiento; **aplicar** esas mismas transformaciones a ambos conjuntos. El identificador del producto no es una medida continua: aquí lo conservamos para auditoría, pero no lo enviamos al modelo.
 
-1. **Valores Física y Lógicamente Imposibles**: Encontramos pesos negativos (`-5.00`) o biológicamente irreales para un producto de supermercado (`200.00` kg). Un árbol de decisión creará divisiones (*splits*) en nodos absurdos, y un modelo lineal intentará usar esos coeficientes de manera desastrosa.
-2. **Formatos Inconsistentes y Polimórficos**: Los años de establecimiento coexisten en una plétora de formatos de cadena de texto incompatibles (`YYYY`, `DD-Mon-YYYY`, `DD/MM/YYYY`). Para el motor matemático, no tienen valor temporal ni jerarquía secuencial; son sólo tokens léxicos heterogéneos.
-3. **Categorías Sucias y Duplicadas Semánticamente**: Entradas como "Low Fat", "low fat", y "LF" representan exactamente la misma clase abstracta desde el punto de vista del dominio de negocio, al igual que "Regular" y "reg". Sin embargo, para un modelo que codifique estas representaciones (por ejemplo, mediante una matriz dispersa con *One-Hot Encoding*), cada una de estas variaciones léxicas mínimas será tratada algorítmicamente como una categoría ortogonal independiente, inflando artificialmente la dimensionalidad del espacio (maldición de la dimensionalidad) y destruyendo la señal estadística al diluir la frecuencia de las muestras en las clases correctas.
-4. **Valores Atípicos Extremos (*Outliers* Estructurales)**: Un precio MRP de `1,200,000` (posiblemente un error de tipado con ceros extra, o un dato atípico) comparado con una media poblacional normal puede sesgar dramática e irremediablemente las funciones empíricas de costo basadas en errores cuadráticos (como el MSE). Esto fuerza iterativamente a los gradientes en el descenso estocástico a explotar (*exploding gradients*), o fuerza a que los coeficientes de los hiperplanos se hiper-ajusten para acomodar e "intentar explicar" un único punto anómalo, descuidando el 99% restante de la distribución general (pérdida masiva de generalización).
-5. **Valores Ausentes o Vacíos (*Missing Values / NaN*)**: En el espacio informático y en punto flotante (IEEE 754), `NaN` (Not a Number) es un estado especial. La inmensa mayoría de las implementaciones algebraicas matriciales devolverán y propagarán infinitamente `NaN` si un solo elemento de la operación cruzada es `NaN`.
+### Una transformación a mano
 
-Si pasamos este dataset directamente a un motor estadístico de regresión, el sistema simplemente se estrellará lanzando una excepción de tipo (*Type Error / Value Error*).
+Consideremos tres pesos de entrenamiento: $10$, ausente y $20$. Si elegimos imputación por media, calculamos $(10+20)/2=15$ con los dos pesos observados. La columna resultante es $(10,15,20)$. Su media es $15$ y su desviación estándar poblacional es $\sqrt{50/3}\approx4.082$. Al estandarizarla obtenemos aproximadamente $(-1.225,0,1.225)$.
 
-## 2. Desarrollo Manual Paso a Paso: Abriendo la Caja Negra
+Si las categorías son `Low Fat`, `LF` y `Regular`, primero unificamos `LF` con `Low Fat`. Después, una codificación *one hot*[^onehot] da las columnas `Fat_Low` y `Fat_Regular`:
 
-Para desmitificar lo que hacen las librerías de software bajo su moderna y opaca abstracción, vamos a tomar un micro-dataset reducido y aplicaremos las transformaciones lógicas y aritméticas requeridas estrictamente a mano, paso a paso.
+| Peso estandarizado | `Fat_Low` | `Fat_Regular` |
+|---:|---:|---:|
+| -1.225 | 1 | 0 |
+| 0 | 1 | 0 |
+| 1.225 | 0 | 1 |
 
-Consideremos esta matriz inicial $\mathbf{X}_{\text{crudo}}$ compuesta por solo 3 registros (instancias $x^{(i)}$) y 2 características:
+Esta matriz solo ilustra un posible preprocesador. El escalado es útil para muchos modelos sensibles a magnitudes o distancias, pero no es un requisito universal.[^escalado]
 
-| Observación ($x^{(i)}$) | Item_Weight (Variable Numérica) | Item_Fat_Content (Variable Textual Categórica) |
+## Formalización: reglas, parámetros y calidad
+
+Un pipeline es una composición ordenada $T=T_k\circ\cdots\circ T_1$. Algunas etapas aplican reglas establecidas por el dominio; otras aprenden parámetros $\theta$ a partir de datos. Para evaluar un modelo, ajustamos $\hat\theta=\operatorname{fit}(X_{\mathrm{train}})$ y usamos el mismo estado en $T_{\hat\theta}(X_{\mathrm{train}})$ y $T_{\hat\theta}(X_{\mathrm{test}})$. Ajustar con $X_{\mathrm{test}}$ incorpora información de evaluación al entrenamiento, una forma de *fuga de datos*.[^fuga]
+
+Un preprocesador suele combinar comprobaciones de calidad distintas:
+
+| Dimensión | Pregunta práctica | Ejemplo de control |
 |---|---|---|
-| $x^{(1)}$ | 10.0 | "Low Fat" |
-| $x^{(2)}$ | NaN | "LF" |
-| $x^{(3)}$ | 20.0 | "Regular" |
+| Completitud | ¿Faltan valores requeridos? | Proporción de `Item_Weight` ausente |
+| Validez | ¿Respeta tipos y rangos acordados? | Peso positivo dentro de un rango de negocio |
+| Consistencia | ¿Coinciden representaciones equivalentes? | `LF` y `Low Fat` |
+| Unicidad | ¿Hay registros duplicados de una entidad? | Producto y tienda repetidos sin justificación |
+| Exactitud | ¿Se aproxima el registro a la realidad? | Contrastar un precio con la fuente original |
+| Oportunidad | ¿Llegó a tiempo para la decisión? | Retraso entre venta y captura |
 
-Nuestro objetivo cardinal es transformar esta tabla heterogénea en un espacio numérico denso estructurado $\mathbb{R}^{3 \times 3}$.
+Para una columna requerida, una medida simple de completitud es $C=1-\frac{n_{\mathrm{ausentes}}}{n}$. Las demás dimensiones necesitan reglas y fuentes de referencia propias; una sola puntuación no las resume.
 
-### Paso 2.1: Estandarización Textual (Corrección, Mapeo y Normalización)
+::: {.callout-tip title="Práctica en equipos de datos"}
+Documenta el esquema y las reglas de calidad que afectan al modelo, valida los lotes nuevos y observa cómo cambian faltantes, rangos y categorías con el tiempo. Una alerta debe conducir a investigar la causa; una variación de distribución por sí sola no demuestra pérdida de rendimiento.[^drift]
+:::
 
-Lo primero que debe afrontarse es unificar las diversas representaciones semánticas existentes en el vector categórico `Item_Fat_Content`. Definimos matemáticamente una función discreta de mapeo categórico $f_{\text{map}}(x)$:
+## Laboratorio: ¿qué cambia si ajustamos con datos de prueba?
 
-$$
-f_{\text{map}}(x) = 
-\begin{cases} 
-\text{"Low Fat"} & \text{si } x \in \{\text{"Low Fat"}, \text{"low fat"}, \text{"LF"}\} \\
-\text{"Regular"} & \text{si } x \in \{\text{"Regular"}, \text{"reg"}\} \\
-\end{cases}
-$$
+**Objetivo.** Identificar qué estadísticas pertenecen al entrenamiento y observar cómo se altera una imputación cuando se usan datos de prueba para calcularlas.
 
-Aplicando iterativamente el operador $f_{\text{map}}$:
-- $x^{(1)}_{\text{Fat}} = \text{"Low Fat"} \longrightarrow \text{"Low Fat"}$
-- $x^{(2)}_{\text{Fat}} = \text{"LF"} \longrightarrow \text{"Low Fat"}$
-- $x^{(3)}_{\text{Fat}} = \text{"Regular"} \longrightarrow \text{"Regular"}$
+**Hipótesis.** Con pesos observados de entrenamiento $10$ y $20$, la media para imputar debe ser $15$. Si se incorpora el peso $40$ de prueba al ajuste, la media cambia.
 
-### Paso 2.2: Imputación Manual de Valores Ausentes
-
-Al observar nuestra matriz actualizada, encontramos que el valor correspondiente a $x^{(2)}_{\text{Weight}}$ sigue siendo computacionalmente inmanejable: `NaN`. Imputamos utilizando el estimador de tendencia central ($\mu$) sobre el soporte de valores presentes:
-
-$$ \mu_{\text{Weight}} = \frac{1}{N_{\text{validos}}} \sum_{i \in \text{validos}} \text{Weight}_{i} = \frac{10.0 + 20.0}{2} = 15.0 $$
-
-Sustituimos entonces operativamente el valor ausente: $x^{(2)}_{\text{Weight}} \leftarrow 15.0$.
-
-### Paso 2.3: Codificación de Variables Categóricas (Vectorización / Discretización)
-
-Dado que las matemáticas operan en $\mathbb{R}^n$, mapeamos a sub-vectores binarios ortogonales mediante *One-Hot Encoding*. En nuestro caso, el vocabulario semántico finito es $V = \{\text{"Low Fat"}, \text{"Regular"}\}$.
-
-Proyectamos dimensionalmente creando dos columnas booleanas numéricas: `Fat_Low` y `Fat_Reg`.
-- Codificación para $\text{"Low Fat"} \rightarrow [1, 0]$
-- Codificación para $\text{"Regular"} \rightarrow [0, 1]$
-
-Nuestra matriz tabular intermedia evoluciona así:
-
-| Weight_imputada | Fat_Low | Fat_Reg |
-|---|---|---|
-| 10.0 | 1 | 0 |
-| 15.0 | 1 | 0 |
-| 20.0 | 0 | 1 |
-
-### Paso 2.4: Escalado Numérico de Características (*Feature Standardization*)
-
-Para que un algoritmo converja isométricamente, debemos estandarizar numéricamente las columnas continuas (Z-score normalisation):
-
-$$ z_i = \frac{x_i - \mu}{\sigma} $$
-
-Calculamos rigurosamente la media empírica ($\mu$) y la desviación estándar poblacional ($\sigma$) del vector `Weight_imputada`:
-- $\mu = \frac{10.0 + 15.0 + 20.0}{3} = 15.0$
-- $\sigma = \sqrt{\frac{(10.0-15.0)^2 + (15.0-15.0)^2 + (20.0-15.0)^2}{3}} = \sqrt{\frac{(-5)^2 + 0 + 5^2}{3}} \approx 4.08248$
-
-Aplicando uniformemente la normalización $z$:
-- $z^{(1)} = \frac{10.0 - 15.0}{4.082} \approx -1.2247$
-- $z^{(2)} = \frac{15.0 - 15.0}{4.082} = 0.0000$
-- $z^{(3)} = \frac{20.0 - 15.0}{4.082} \approx 1.2247$
-
-### Resultado Final y Conclusión del Flujo Manual
-
-Nuestra matriz final resultante:
-
-$$
-\mathbf{X}_{\text{modelo}} =
-\begin{bmatrix}
--1.2247 & 1 & 0 \\
- 0.0000 & 1 & 0 \\
- 1.2247 & 0 & 1
-\end{bmatrix}
-$$
-
-## Laboratorio Interactivo: Simulador de Pipeline y Fuga de Datos (BigMart)
-
-A continuación, experimenta interactivamente con el impacto del Data Leakage y los pasos del pipeline de preprocesamiento sobre una muestra simplificada de datos.
+**Pasos.** Activa «Imputar peso»; compara ambos modos de ajuste; activa «Escalar precio» y observa la media y desviación usadas. Después normaliza las etiquetas y codifica el tipo de tienda para separar las transformaciones que aprenden parámetros de las que aplican reglas fijas.
 
 ::: {.content-visible when-format="html"}
 ```{=html}
-<div class="interactive-lab" style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background: #fafafa; margin: 20px 0; font-family: sans-serif;">
-  <h3 style="margin-top: 0;">Simulador de Pipeline y Fuga de Datos (BigMart)</h3>
-  
-  <div style="display: flex; gap: 20px; flex-wrap: wrap;">
-    <div style="flex: 1; min-width: 250px;">
-      <h4>Controles del Pipeline</h4>
-      <label style="display: block; margin-bottom: 8px;">
-        <input type="checkbox" id="chkCleanFat" onchange="updatePipeline()"> 1. Limpieza de `Item_Fat_Content` ('LF' -> 'Low Fat')
-      </label>
-      <label style="display: block; margin-bottom: 8px;">
-        <input type="checkbox" id="chkImputeWeight" onchange="updatePipeline()"> 2. Imputación de `Item_Weight` (Media)
-      </label>
-      <label style="display: block; margin-bottom: 8px;">
-        <input type="checkbox" id="chkScaleMRP" onchange="updatePipeline()"> 3. Escalado de `Item_MRP` (Z-Score)
-      </label>
-      <label style="display: block; margin-bottom: 8px;">
-        <input type="checkbox" id="chkOHE" onchange="updatePipeline()"> 4. One-Hot Encoding de `Outlet_Type`
-      </label>
-      
-      <hr style="margin: 15px 0; border: 0; border-top: 1px solid #ccc;">
-      <h4>Modo de Ajuste (Fit)</h4>
-      <label style="display: block; margin-bottom: 8px; color: #2e7d32; font-weight: bold;">
-        <input type="radio" name="fitMode" value="train" checked onchange="updatePipeline()"> Ajustar en Train (Correcto)
-      </label>
-      <label style="display: block; margin-bottom: 8px; color: #c62828; font-weight: bold;">
-        <input type="radio" name="fitMode" value="leak" onchange="updatePipeline()"> Ajustar en Train+Test (Data Leakage!)
-      </label>
-    </div>
-    
-    <div style="flex: 2; min-width: 300px;">
-      <h4>Datos Resultantes en Tiempo Real</h4>
-      <div style="background: #fff; border: 1px solid #ddd; padding: 10px; border-radius: 4px; overflow-x: auto;">
-        <table id="pipelineTable" style="width: 100%; border-collapse: collapse; text-align: right;">
-          <thead>
-            <tr style="border-bottom: 2px solid #ccc;">
-              <th style="padding: 5px; text-align: left;">Set</th>
-              <th style="padding: 5px;">Item_Weight</th>
-              <th style="padding: 5px;">Item_Fat_Content</th>
-              <th style="padding: 5px;">Item_MRP</th>
-              <th style="padding: 5px;">Outlet_Type</th>
-            </tr>
-          </thead>
-          <tbody id="pipelineTbody">
-          </tbody>
-        </table>
-      </div>
-      <div id="leakWarning" style="margin-top: 15px; padding: 10px; background: #ffebee; color: #c62828; border-left: 4px solid #c62828; display: none;">
-        <strong>¡Advertencia de Data Leakage!</strong> Estás calculando la media poblacional usando información del Test Set. La media verdadera del Train era <span id="trueMean"></span>, pero ahora usas <span id="leakedMean"></span>. ¡Tu modelo creerá erróneamente que conoce la distribución del futuro!
-      </div>
-    </div>
+<div id="intro-lab" style="border:1px solid #d2d9df;border-radius:8px;padding:1rem;margin:1rem 0;">
+  <h3>Simulador de entrenamiento y prueba</h3>
+  <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+    <fieldset style="flex:1;min-width:230px;">
+      <legend>Transformaciones</legend>
+      <label><input type="checkbox" id="lab-clean" checked> Unificar <code>Item_Fat_Content</code></label><br>
+      <label><input type="checkbox" id="lab-impute" checked> Imputar <code>Item_Weight</code></label><br>
+      <label><input type="checkbox" id="lab-scale"> Estandarizar <code>Item_MRP</code></label><br>
+      <label><input type="checkbox" id="lab-ohe"> Codificar <code>Outlet_Type</code></label>
+    </fieldset>
+    <fieldset style="flex:1;min-width:230px;">
+      <legend>Datos usados para ajustar</legend>
+      <label><input type="radio" name="intro-fit" value="train" checked> Solo entrenamiento</label><br>
+      <label><input type="radio" name="intro-fit" value="all"> Entrenamiento + prueba</label>
+      <p id="lab-parameters" aria-live="polite"></p>
+    </fieldset>
   </div>
+  <div id="lab-table" style="overflow-x:auto;"></div>
+  <p id="lab-feedback" aria-live="polite"></p>
+  <button type="button" id="lab-check">Comprobar hipótesis</button>
+  <p id="lab-check-result" aria-live="polite"></p>
 </div>
-
 <script>
-  // Datos iniciales simulados
-  const rawData = [
-    { set: 'Train', weight: 10.0, fat: 'Low Fat', mrp: 150.0, outlet: 'Supermarket' },
-    { set: 'Train', weight: 20.0, fat: 'LF', mrp: 200.0, outlet: 'Grocery' },
-    { set: 'Train', weight: null, fat: 'reg', mrp: 100.0, outlet: 'Supermarket' },
-    { set: 'Test', weight: 40.0, fat: 'Regular', mrp: 250.0, outlet: 'Supermarket' } // Outlier en Test
+(() => {
+  const root = document.getElementById('intro-lab');
+  const data = [
+    {set:'Entrenamiento',weight:10,fat:'Low Fat',mrp:100,outlet:'Supermarket'},
+    {set:'Entrenamiento',weight:20,fat:'LF',mrp:150,outlet:'Grocery'},
+    {set:'Entrenamiento',weight:null,fat:'reg',mrp:200,outlet:'Supermarket'},
+    {set:'Prueba',weight:40,fat:'Regular',mrp:250,outlet:'Supermarket'}
   ];
-
-  function updatePipeline() {
-    const chkCleanFat = document.getElementById('chkCleanFat').checked;
-    const chkImputeWeight = document.getElementById('chkImputeWeight').checked;
-    const chkScaleMRP = document.getElementById('chkScaleMRP').checked;
-    const chkOHE = document.getElementById('chkOHE').checked;
-    const fitMode = document.querySelector('input[name="fitMode"]:checked').value;
-    
-    let processedData = JSON.parse(JSON.stringify(rawData));
-    
-    // 1. Limpieza Fat
-    if (chkCleanFat) {
-      processedData.forEach(d => {
-        if (d.fat === 'LF' || d.fat === 'low fat') d.fat = 'Low Fat';
-        if (d.fat === 'reg') d.fat = 'Regular';
-      });
-    }
-    
-    // Cálculos de ajuste (Fit)
-    let fitData = fitMode === 'train' ? processedData.filter(d => d.set === 'Train') : processedData;
-    
-    // Parámetros Weight
-    let validWeights = fitData.filter(d => d.weight !== null).map(d => d.weight);
-    let meanWeight = validWeights.reduce((a, b) => a + b, 0) / validWeights.length;
-    let trueTrainMean = processedData.filter(d => d.set === 'Train' && d.weight !== null).map(d => d.weight).reduce((a, b) => a + b, 0) / 2;
-    
-    // Parámetros MRP
-    let validMRPs = fitData.map(d => d.mrp);
-    let meanMRP = validMRPs.reduce((a, b) => a + b, 0) / validMRPs.length;
-    let stdMRP = Math.sqrt(validMRPs.map(x => Math.pow(x - meanMRP, 2)).reduce((a, b) => a + b, 0) / validMRPs.length);
-    
-    // Warning UI
-    const leakWarning = document.getElementById('leakWarning');
-    if (fitMode === 'leak' && chkImputeWeight) {
-      leakWarning.style.display = 'block';
-      document.getElementById('trueMean').innerText = trueTrainMean.toFixed(2);
-      document.getElementById('leakedMean').innerText = meanWeight.toFixed(2);
-    } else {
-      leakWarning.style.display = 'none';
-    }
-    
-    // 2. Imputar Weight
-    if (chkImputeWeight) {
-      processedData.forEach(d => {
-        if (d.weight === null) d.weight = meanWeight;
-      });
-    }
-    
-    // 3. Escalar MRP
-    if (chkScaleMRP) {
-      processedData.forEach(d => {
-        d.mrp = (d.mrp - meanMRP) / stdMRP;
-      });
-    }
-    
-    // Renderizado HTML
-    let theadHtml = `
-      <tr style="border-bottom: 2px solid #ccc;">
-        <th style="padding: 5px; text-align: left;">Set</th>
-        <th style="padding: 5px;">Item_Weight</th>
-        <th style="padding: 5px;">Item_Fat_Content</th>
-        <th style="padding: 5px;">Item_MRP</th>`;
-    
-    if (chkOHE) {
-      theadHtml += `<th style="padding: 5px;">Outlet_Supermarket</th><th style="padding: 5px;">Outlet_Grocery</th>`;
-    } else {
-      theadHtml += `<th style="padding: 5px;">Outlet_Type</th>`;
-    }
-    theadHtml += `</tr>`;
-    document.querySelector('#pipelineTable thead').innerHTML = theadHtml;
-    
-    let tbodyHtml = '';
-    processedData.forEach(d => {
-      let weightStr = d.weight === null ? '<span style="color:red">NaN</span>' : d.weight.toFixed(2);
-      let mrpStr = chkScaleMRP ? d.mrp.toFixed(4) : d.mrp.toFixed(2);
-      let rowStyle = d.set === 'Test' ? 'background: #f0f8ff;' : '';
-      
-      tbodyHtml += `<tr style="border-bottom: 1px solid #eee; ${rowStyle}">
-        <td style="padding: 5px; text-align: left;"><strong>${d.set}</strong></td>
-        <td style="padding: 5px;">${weightStr}</td>
-        <td style="padding: 5px;">${d.fat}</td>
-        <td style="padding: 5px;">${mrpStr}</td>`;
-        
-      if (chkOHE) {
-        let isSuper = d.outlet === 'Supermarket' ? 1 : 0;
-        let isGroC = d.outlet === 'Grocery' ? 1 : 0;
-        tbodyHtml += `<td style="padding: 5px;">${isSuper}</td><td style="padding: 5px;">${isGroC}</td>`;
-      } else {
-        tbodyHtml += `<td style="padding: 5px;">${d.outlet}</td>`;
-      }
-      tbodyHtml += `</tr>`;
-    });
-    
-    document.getElementById('pipelineTbody').innerHTML = tbodyHtml;
+  const checked = id => root.querySelector(id).checked;
+  const mean = values => values.reduce((a,b) => a+b,0)/values.length;
+  const fmt = n => n === null ? 'NA' : n.toFixed(2);
+  function update() {
+    const all = root.querySelector('input[name="intro-fit"]:checked').value === 'all';
+    const fit = all ? data : data.filter(d => d.set === 'Entrenamiento');
+    const weights = fit.filter(d => d.weight !== null).map(d => d.weight);
+    const weightMean = mean(weights);
+    const prices = fit.map(d => d.mrp);
+    const priceMean = mean(prices);
+    const priceSd = Math.sqrt(mean(prices.map(x => (x-priceMean)**2)));
+    const clean = checked('#lab-clean'), impute = checked('#lab-impute');
+    const scale = checked('#lab-scale'), ohe = checked('#lab-ohe');
+    root.querySelector('#lab-parameters').textContent =
+      `Media del peso: ${fmt(weightMean)}; media del precio: ${fmt(priceMean)}; desviación del precio: ${fmt(priceSd)}.`;
+    const head = '<tr><th>Conjunto</th><th>Peso</th><th>Grasa</th><th>Precio</th>' +
+      (ohe ? '<th>Supermarket</th><th>Grocery</th>' : '<th>Tienda</th>') + '</tr>';
+    const body = data.map(d => {
+      const fat = clean ? ({'LF':'Low Fat','reg':'Regular'}[d.fat] || d.fat) : d.fat;
+      const weight = d.weight === null && impute ? weightMean : d.weight;
+      const price = scale ? (d.mrp-priceMean)/priceSd : d.mrp;
+      const outlet = ohe ? `<td>${Number(d.outlet==='Supermarket')}</td><td>${Number(d.outlet==='Grocery')}</td>` : `<td>${d.outlet}</td>`;
+      return `<tr><td>${d.set}</td><td>${fmt(weight)}</td><td>${fat}</td><td>${fmt(price)}</td>${outlet}</tr>`;
+    }).join('');
+    root.querySelector('#lab-table').innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    root.querySelector('#lab-feedback').textContent = all
+      ? 'Los parámetros incorporan la fila de prueba: esta comparación ya no representa una evaluación independiente.'
+      : 'Los parámetros se aprendieron en entrenamiento y se aplicaron sin reajuste a la fila de prueba.';
   }
-  
-  // Init
-  updatePipeline();
+  root.querySelectorAll('input').forEach(input => input.addEventListener('change', update));
+  root.querySelector('#lab-check').addEventListener('click', () => {
+    const trainMean = mean(data.filter(d => d.set==='Entrenamiento' && d.weight!==null).map(d => d.weight));
+    const contaminated = mean(data.filter(d => d.weight!==null).map(d => d.weight));
+    root.querySelector('#lab-check-result').textContent =
+      `Comprobación: solo entrenamiento = ${fmt(trainMean)}; con prueba = ${fmt(contaminated)}. La hipótesis se cumple: el valor imputado cambia, aunque el peso faltante está en entrenamiento.`;
+  });
+  update();
+})();
 </script>
 ```
 :::
 ::: {.content-visible when-format="pdf"}
-*(Nota: Este laboratorio interactivo con controles dinámicos está disponible en la versión web del libro).*
+En el simulador web se comparan las medias $15$ y $(10+20+40)/3\approx23.33$. Con la primera se imputa el peso faltante sin usar la fila de prueba.
 :::
 
-## 3. Formalización Teórica y Analítica
+**Comprobación.** La media con prueba es $23.33$; la media de entrenamiento es $15$. El simulador muestra además que el precio de prueba también altera los parámetros del escalado si se incluye en `.fit()`.
 
-### 3.1. Las 6 Dimensiones Fundamentales de la Calidad de Datos
+**Reflexión.** ¿Por qué una transformación que usa reglas fijas para `LF` puede aplicarse a prueba, mientras que la media de imputación debe aprenderse en entrenamiento? ¿Cambiaría la conclusión si el conjunto de prueba tuviera cientos de filas?
 
-De acuerdo a organismos internacionales rectores y estándares metodológicos y normativos industriales globales como ISO/IEC 25012 y el exhaustivo marco conceptual DAMA-DMBOK, la "calidad de los datos" no puede evaluarse como un atributo escalar abstracto, dicotómico o monolítico. La calidad se perfila, diagnostica y mide en un prisma de seis dimensiones ortogonales e interrelacionadas:
+## Implementación con `pandas` y `scikit-learn`
 
-1. **Completitud (*Completeness*)**: Proporción probabilística de los elementos de datos obligatorios o esperados que, de hecho, se encuentran presentes o poblados (no nulos) respecto a la cardinalidad total de datos registrados en el esquema objetivo.
-   $$ C = 1 - \frac{\sum_{i=1}^{N} \mathbb{I}(x_i \text{ es un objeto nulo})}{N} $$
-   Donde $\mathbb{I}$ es la conocida función matemática indicatriz o característica (toma valor 1 si se cumple la condición argumental, 0 en caso contrario).
-
-2. **Validez (*Validity*)**: Métrica estricta de cumplimiento estructural y semántico. Define el grado en que los conjuntos de datos respetan a cabalidad las reglas de sintaxis subyacentes, tales como formatos definidos por expresiones regulares, tipología estricta de base de datos (`float64`, `datetime`, `VARCHAR`), pertenencia a dominios enumerados fijos y acotación temporal o espacial (rangos admisibles preestablecidos).
-   $$ V = \frac{| \{ x \in D \mid f_{\text{validador\_sintaxis}}(x) = \text{True} \} |}{|D|} $$
-
-3. **Precisión o Exactitud (*Accuracy*)**: Dimensiona el grado subyacente en el cual la representación informática captura, simula o refleja con fidelidad métrica el "mundo real" ontológico o la entidad veraz objetiva que pretende describir.
-
-4. **Consistencia Lógica (*Consistency*)**: Mide la mitigación o la ausencia rigurosa de paradojas y contradicciones axiomáticas, ya sea intrínsecas (dentro de una misma fila tabular) o inter-relacionales. Si los axiomas de negocio estipulan reglas, los datos no deben infringirlas.
-
-5. **Unicidad y Singularidad (*Uniqueness*)**: Garantía fundamental matemática de inyectividad en los identificadores de llave primaria (*Primary Keys* o identificadores unívocos). Asegura formalmente que ninguna entidad, objeto o instancia de la vida física real o del mundo abstracto de negocio se encuentre insertada, modelada o registrada más de una vez en el conjunto matriz o tabla dimensional principal.
-
-6. **Oportunidad o Actualidad (*Timeliness*)**: Representa paramétricamente la vida media funcional o la vigencia de los datos para el proceso decisional estadístico. 
-
-::: {.callout-note title="Data Contracts en Plataformas Modernas"}
-En la arquitectura de la ingeniería de datos escalable moderna de alto volumen, estas dimensiones ya no se validan asíncronamente o "después de que el modelo falle". Se garantizan a priori, de forma proactiva y declarativa mediante el paradigma de *Data Contracts*[^1], protegiendo el perímetro del data lake, integrándose con esquemas estrictos (Protobuf/Avro) y asegurando que los dominios productivos asuman responsabilidad programática total sobre sus *SLA* (Acuerdos de Nivel de Servicio) de calidad antes de exponerlos analíticamente.
-:::
-
-### 3.2. Formulación Algebraica del Pipeline Computacional
-
-A un nivel topológico y funcional formal, podemos conceptualizar y definir axiomáticamente todo el pipeline y orquestación del proceso complejo de transformación como un macro-operador matemático compuesto direccionalmente, al cual denominamos formalmente simplemente *Pipeline* y denotamos mediante $\mathcal{T}$.
-
-Sea, bajo este rigor, $\mathcal{X}_{\text{crudo}}$ el hiper-espacio multidimensional heterogéneo original de variables de entrada dispares. Definimos correlativamente $\mathcal{X}_{\text{modelo}}$ como el espacio métrico vectorial denso objetivo estrictamente euclidiano. Así, el pipeline se enuncia de la siguiente manera, como una composición anidada determinista de $k$ transformaciones modulares y discretas secuenciales $f_i$:
-
-$$ \mathcal{T} = f_k \circ f_{k-1} \circ \dots \circ f_2 \circ f_1: \mathcal{X}_{\text{crudo}} \to \mathcal{X}_{\text{modelo}} $$
-
-#### Propiedades Matemáticas y Limitaciones Estructurales Deseables
-
-1. **Idempotencia**[^2] del Operador Funcional: La propiedad exige que $\mathcal{T}(\mathcal{T}(\mathbf{X})) = \mathcal{T}(\mathbf{X})$.
-2. **Coherencia y Consistencia Semántica de Esquema de Ingesta (Schema Consistency)**: Cada función y operador subyacente $f_i$ modular del Pipeline instanciado debe exponer e implementar rigurosamente firmas tipadas paramétricas y contratos formales de entrada y salida enteramente deterministas, predictibles y blindados.
-3. **Desacoplamiento Estructural Profundo y Principio de Inmutabilidad**[^4] entre Fase de Ajuste y Estimación Paramétrica (Fit) vs Aplicación (Transform): 
-   - El estado de la función paramétrica se ancla: $\Theta_i = \text{Fit}( \mathbf{X}_{\text{train\_subset}}, f_i )$
-   - Se ajusta uniformemente el *batch* o cohorte original interno: $\mathbf{X}'_{\text{train\_subset}} = \text{Transform}( \mathbf{X}_{\text{train\_subset}}, \Theta_i )$
-   - Se procesan *batches* estocásticos nuevos no observados usando el estado histórico heredado inmutable: $\mathbf{X}'_{\text{eval\_test}} = \text{Transform}( \mathbf{X}_{\text{eval\_test}}, \Theta_i )$
-
-::: {.callout-important title="Regla de oro absoluta en producción y auditoría"}
-**NUNCA**, bajo ninguna circunstancia, justificación apresurada de plazos límite de entrega comercial, ni en experimentación descuidada en cuadernos interactivos, se debe invocar a la baja o activar el ciclo de vida del método mutador de estado iterativo y optimizador profundo `.fit()` o de aprendizaje implícito de un ensamblador de pipelines modulares o subrutina de transformador estadístico en un esquema iterativo, sobre un espacio de particiones validativo u observacional inexplorado (usualmente el conjunto de *Test* o *Validation Holdout split*). Infringir y violar deliberadamente (o accidentalmente) esta premisa arquitectónica de asilamiento inocula, inyecta e introduce directamente el defecto estocástico latente, metodológico, persistente, sistemático, e insidioso más letal y ruinosamente costoso, silencioso y destructivo documentado en toda la disciplina moderna formal y matemática pura en *Machine Learning*: el letal e invisible fenómeno denominado formalmente en la academia como *Data Leakage*[^3].
-:::
-
-## 4. Implementación Computacional Industrial usando el Ecosistema Python (Pandas y Scikit-Learn)
-
-En los ecosistemas pragmáticos modernos y en el estándar del stack open source maduro industrial impulsado por el pujante ecosistema integrador basado fundamentalmente en el lenguaje Python productivo, la venerable y rápida librería subyacente `pandas` asume valientemente y provee eficientemente las complejas estructuras semánticas e inmutables densas de datos, mientras que, concurrentemente, el macro framework `scikit-learn` nos facilita toda una robusta y testeada capa de abstracción composicional jerárquica estrictamente orientada e instanciada a objetos fuertemente acoplados (Estimadores) para arquitectar, empaquetar, componer y construir los formales pipelines matemáticos entrelazados.
-
-En este instante, procedamos con cautela y rigor formal a escribir e implementar directamente un pipeline sistémico unificado, exhaustivo, metodológicamente íntegro y arquitecturalmente moderno.
+El ejemplo aplica reglas del ejercicio a peso y precio, luego imputa, escala y codifica categorías. Separamos filas antes de ajustar el `ColumnTransformer`. Usamos pocas filas para poder inspeccionar el resultado, no para estimar rendimiento predictivo.
 
 ```{python}
-import pandas as pd
 import numpy as np
-from sklearn.pipeline import Pipeline
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, RobustScaler
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, RobustScaler, StandardScaler
 
-# 1. Instanciamos y replicamos pragmáticamente los datos crudos anómalos del ejemplo ilustrativo de BigMart
-data_dict = {
-    'Item_Identifier': ['FDA15', 'DRC01', 'FDN15', 'FDX07', 'NCD19'],
-    'Item_Weight': [9.30, -5.00, np.nan, 19.20, 200.00],
-    'Item_MRP': [249.80, 0.00, 1200000.0, np.nan, 53.86],
-    'Outlet_Establishment_Year': ['1999', '09-Jan-2009', '1998', '14/02/1998', '1985-01-20'],
-    'Item_Fat_Content': ['Low Fat', 'low fat', 'LF', 'Regular', 'reg']
-}
+X_raw = pd.DataFrame({
+    'Item_Identifier': ['FDA15', 'DRC01', 'FDN15', 'FDX07', 'NCD19', 'FDP10', 'FDZ20'],
+    'Item_Weight': [9.30, -5.00, np.nan, 19.20, 200.00, 12.0, 10.5],
+    'Item_MRP': [249.80, 0.00, 1200000.0, np.nan, 53.86, 180.0, 190.0],
+    'Item_Fat_Content': ['Low Fat', 'low fat', 'LF', 'Regular', 'reg', 'LF', 'Unknown'],
+})
 
-X_raw = pd.DataFrame(data_dict)
-print("================== [ DIAGNÓSTICO INICIAL ] ==================\n")
-print("-> Visualización sin filtros algorítmicos del DataFrame Crudo Original Subyacente en bruto:\n")
+# División ilustrativa explícita: las dos últimas filas simulan datos futuros.
+X_train = X_raw.iloc[:5].copy()
+X_test = X_raw.iloc[5:].copy()
 display(X_raw)
 ```
 
-### 4.1. Ingeniería y Programación de Transformadores Híbridos Personalizados (*Custom Transformers* OOP)
-
-Frecuentemente en la inmensa mayoría de interacciones y despliegues productivos cotidianos, las operaciones asimétricas estocásticas y lógicas de validación curativa, limpieza profunda paramétrica e ingeniería deductiva de preprocesamiento avanzado basadas fundamentalmente en semántica, reglas abstractas de dominio empírico específico anclado a negocio no se hallan disponibles trivialmente por defecto o de manera canónica dentro de la biblioteca central de `scikit-learn`. Frente a esto, la solución arquitectónica paradigmática en OOP consiste indudablemente y obligatoriamente en instanciar y derivar objetos que extiendan y hereden estandarizada y funcionalmente de la super-clase matriz `BaseEstimator` simultáneamente integrando conjuntamente el potente interfaz o mixin compositivo estandarizado de la librería matriz fundamental `TransformerMixin`.
+Estas clases conservan el formato tabular que recibe `ColumnTransformer` y no modifican el original. Las reglas de rango son decisiones del ejemplo; en un proyecto real requieren revisión con especialistas del dominio.
 
 ```{python}
-class RangoLogicoWeightCleaner(BaseEstimator, TransformerMixin):
-    """
-    Transformador algorítmico lógico paramétrico orientado a limpiar anomalías (Outliers) evidentes en pesos de items.
-    Obliga a que los pesos converjan al intervalo [1.0, 50.0]. Valores fuera de rango 
-    se fuerzan al estado 'NaN' (Missing Value) habilitando a futuros eslabones (imputadores)
-    para que recojan la anomalía.
-    """
-    
-    def __init__(self, umbral_inferior=1.0, umbral_superior=50.0):
-        self.umbral_inferior = umbral_inferior
-        self.umbral_superior = umbral_superior
+class RangeToMissing(BaseEstimator, TransformerMixin):
+    def __init__(self, lower, upper):
+        self.lower = lower
+        self.upper = upper
 
-    def fit(self, X_param, y_etiquetas=None):
-        return self
-    
-    def transform(self, X_param, y_etiquetas=None):
-        # Salvaguardamos iterativamente el estado base forzando un deep clone
-        X_buffer = X_param.copy()
-        
-        # Validamos que la columna exista
-        if 'Item_Weight' in X_buffer.columns:
-            mascara_logica_outliers = (X_buffer['Item_Weight'] < self.umbral_inferior) | (X_buffer['Item_Weight'] > self.umbral_superior)
-            X_buffer.loc[mascara_logica_outliers, 'Item_Weight'] = np.nan
-            
-        return X_buffer
-
-class CategoryStandardizer(BaseEstimator, TransformerMixin):
-    """
-    Estandariza categorías semánticas dispares utilizando un diccionario provisto.
-    """
-    def __init__(self, mapping_dict):
-        self.mapping_dict = mapping_dict
-        
     def fit(self, X, y=None):
         return self
-    
-    def transform(self, X, y=None):
-        X_ = X.copy()
-        col = X_.columns[0]
-        # Reemplazar y poner en minúsculas para seguridad
-        X_[col] = X_[col].astype(str).str.lower().replace(self.mapping_dict)
-        return X_
-```
 
-### 4.2. Orquestación del Grafo Composicional de Limpieza con `ColumnTransformer`
+    def transform(self, X):
+        result = X.copy()
+        column = result.columns[0]
+        values = pd.to_numeric(result[column], errors='coerce')
+        result[column] = values.where(values.between(self.lower, self.upper))
+        return result
 
-Utilizando el versátil componente `ColumnTransformer`, implementaremos un enrutador o multiplexador de flujos tabulares. Este objeto enrutará condicionalmente los diferentes subconjuntos de columnas a diferentes pipelines paralelos especializados (con comportamientos distintos según tipos numéricos, heurísticos o discretos), para ulteriormente condensar, fusionar lateralmente y colapsar todos los tensores devueltos en una única matriz.
+    def get_feature_names_out(self, input_features=None):
+        return np.asarray(input_features, dtype=object)
 
-```{python}
-# -------------------------------------------------------------------------
-# DEFINICIÓN ARQUITECTÓNICA DE RAMAS PARALELAS (BRANCHES)
-# -------------------------------------------------------------------------
 
-# Rama Especializada A (Peso): Limpieza Heurística Rango -> Imputación Mediana -> Escalado
+class FatContentStandardizer(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        result = X.copy()
+        column = result.columns[0]
+        normalized = result[column].astype('string').str.strip().str.lower()
+        result[column] = normalized.map({
+            'lf': 'Low Fat', 'low fat': 'Low Fat',
+            'reg': 'Regular', 'regular': 'Regular',
+        }).fillna('Unknown').astype(str)
+        return result
+
+    def get_feature_names_out(self, input_features=None):
+        return np.asarray(input_features, dtype=object)
+
+
 weight_pipeline = Pipeline([
-    ('weight_cleaner', RangoLogicoWeightCleaner()),
+    ('range', RangeToMissing(1, 50)),
     ('imputer', SimpleImputer(strategy='median')),
-    ('scaler', StandardScaler())
+    ('scaler', StandardScaler()),
+])
+price_pipeline = Pipeline([
+    ('range', RangeToMissing(1, 1000)),
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', RobustScaler()),
+])
+fat_pipeline = Pipeline([
+    ('normalize', FatContentStandardizer()),
+    ('encode', OneHotEncoder(handle_unknown='ignore', sparse_output=False)),
+])
+preprocessor = ColumnTransformer([
+    ('weight', weight_pipeline, ['Item_Weight']),
+    ('price', price_pipeline, ['Item_MRP']),
+    ('fat', fat_pipeline, ['Item_Fat_Content']),
 ])
 
-# Rama Especializada B (Precios MRP): Imputación Media -> Escalado Robusto
-# NOTA: Para mitigar matemáticamente el impacto generado por el outlier severo de "1.2 millones",
-# empleamos deliberadamente el 'RobustScaler', que re-centra usando la mediana y comprime
-# usando el Rango Intercuartílico (IQR).
-mrp_pipeline = Pipeline([
-    ('imputer', SimpleImputer(strategy='mean')),
-    ('scaler', RobustScaler())
-])
-
-# Rama Especializada C (Semántica y Categórica Nominal): Estandarización -> Imputación Moda -> Discretización One Hot
-diccionario_mapeo_semantico = {
-    'low fat': 'low fat', 'lf': 'low fat',
-    'regular': 'regular', 'reg': 'regular'
-}
-cat_pipeline = Pipeline([
-    ('standardizer', CategoryStandardizer(mapping_dict=diccionario_mapeo_semantico)),
-    ('imputer', SimpleImputer(strategy='most_frequent')),
-    ('onehot', OneHotEncoder(sparse_output=False, handle_unknown='ignore'))
-])
-
-# Ensamblado Macro-Arquitectónico en el Objeto global ColumnTransformer 
-preprocessor = ColumnTransformer(
-    transformers=[
-        ('weight_proc', weight_pipeline, ['Item_Weight']), 
-        ('mrp_proc', mrp_pipeline, ['Item_MRP']),
-        ('cat_proc', cat_pipeline, ['Item_Fat_Content'])
-    ],
-    remainder='drop' # Eliminamos temporalmente variables Fechas e Identificadores ruidosos
-)
-
-# --- Flujo de Trabajo Simulado ---
-# En un escenario productivo dividiríamos con `train_test_split`.
-X_processed = preprocessor.fit_transform(X_raw)
-
-print("\n================== [ MATRIZ NUMÉRICA TRANSFORMADA FINAL ] ==================\n")
-print("-> Visualización matricial densa lista para el modelo ML:\n")
-display(pd.DataFrame(X_processed))
+train_matrix = preprocessor.fit_transform(X_train)
+test_matrix = preprocessor.transform(X_test)
+columns = preprocessor.get_feature_names_out()
+display(pd.DataFrame(train_matrix, columns=columns, index=X_train['Item_Identifier']))
+display(pd.DataFrame(test_matrix, columns=columns, index=X_test['Item_Identifier']))
 ```
 
-## 5. Prácticas Críticas y Riesgos Inherentes Globales en Entornos de Producción (MLOps)
+El precio de $1{,}200{,}000$ se convierte en ausente por la regla **supuestamente válida en este ejercicio** y se imputa antes de escalar. `RobustScaler` usa mediana y rango intercuartílico; no corrige por sí mismo un valor erróneo.[^robust] La categoría `Unknown` de prueba se codifica según las categorías aprendidas en entrenamiento; `handle_unknown='ignore'` evita un error si aparece una categoría nueva, aunque requiere seguimiento.[^onehot]
 
-### 5.1. Degradaciones Latentes Dinámicas: Feature Drift y Concept Drift
-Una vez que el modelo estocástico subyacente predictivo e algorítmico iterativo final se encuentra desplegado, la inmaculada distribución analítica probabilística teórica de los datos cambia de forma insidiosa con el tiempo. 
-
-Esta deriva se conoce canónicamente como ***Feature drift* (o *Covariate Shift*)**[^5]. 
-Por ejemplo, si la media de precios sube debido a una hiperinflación, nuestro `StandardScaler` (el cual congeló la media del set de entrenamiento en el objeto `.fit()`) fallará y estandarizará incorrectamente todos los nuevos *batches* masivos de datos. En consecuencia, el modelo perderá drásticamente toda generalización. Por ello, el monitoreo continuo de la observabilidad y la comparativa de los flujos de datos en producción es una obligatoriedad absoluta.
-
-::: {.callout-tip title="Mejores prácticas y mitigaciones de oro irrenunciables en la industria"}
-Para blindar la robustez y escalabilidad de los pipelines macro paramétricos en MLOps, se postulan las siguientes implementaciones:
-
-1. **Serialización Múltiple Heurística Unificada**: Como dogma, encapsula e integra el predictor y todo tu Pipeline de preprocesamiento en un estado inmutable y persiste ambos eslabones como un único artefacto binario usando la liberaría `joblib` o herramientas de gestión MLOps como `MLflow`.
-2. **Validación Preventiva Defensiva Perimetral (Run-time Validation)**: Resulta neurálgico incorporar y utilizar proactivamente barreras defensivas, validadores sintácticos y guardianes como *Pandera* o *Great Expectations* justo antes de que los datos ingresen al método `.transform()`. Si una anomalía de tipo ocurre, el flujo debe detenerse de emergencia, emitiendo una aserción y alerta antes de que el motor corrompa e inyecte basura numérica a los modelos.
+::: {.callout-important title="Evaluación sin fuga de datos"}
+Separa entrenamiento y prueba antes de aprender medias, medianas, escalas o categorías. En validación cruzada, coloca preprocesador y estimador en un mismo `Pipeline` para que cada pliegue ajuste solo con sus filas de entrenamiento.[^fuga]
 :::
 
-## Resumen de Pilares Axiomáticos
-- **La Maldición Operacional "Garbage In, Garbage Out"**: El estado inicial cualitativo del crudo dato dicta irremediablemente el límite superior de rendimiento de cualquier IA.
-- **Principio Fundamental de Aislamiento (Fit vs Transform Split)**: Mantener segregados los universos de datos de *Train* y *Hold-Out Validation* durante toda etapa de preprocesamiento es una máxima científica innegociable en *machine learning* iterativo. 
+## Para recordar
 
----
+- Define el significado y las reglas de calidad antes de modificar valores.
+- Comprueba las transformaciones con un ejemplo pequeño y conserva trazabilidad.
+- Ajusta parámetros con entrenamiento; aplica el resultado a prueba y a datos nuevos.
+- Vigila cambios de esquema y distribución después del despliegue, y comprueba su efecto con métricas del caso de uso.
 
-[^1]: **Data Contracts (Contratos de Datos)**: Son compromisos técnicos declarativos formales inmutables (especificados en YAML o JSON Schemas) entre equipos productores de *datasets* y consumidores algorítmicos. Fuerzan expectativas unívocas y Service Level Agreements paramétricos estocásticos lógicos.
-[^2]: **Idempotencia Transaccional Computacional**: Propiedad algorítmica axiomática en la cual el resultado tras aplicar una transformación u operación sobre un objeto múltiples veces es estrictamente idéntico al obtenido tras aplicarlo una única primera vez.
-[^3]: **Data Leakage (Fuga de Datos Analítica)**: Defecto fatídico algorítmico que ocurre trágicamente cuando información de los datos de evaluación (test) se derrama, cruza o influye las métricas (como la media poblacional calculada) durante la fase de modelado algorítmico o preprocesamiento formativo.
-[^4]: **Principio de Inmutabilidad en Pipelines**: Patrón rector arquitectural donde las tablas matrices orígenes (como DataFrames o Tensores) provistos por el usuario jamás deben ser sobrescritos, mutados o alterados asimétricamente *in situ* durante la ejecución.
-[^5]: **Feature drift vs Concept drift**: El *Feature drift* emerge cuando la distribución probabilística basal de las variables de entrada fluctúa ($P(\mathcal{X})$ cambia) sostenidamente (e.g., Inflación). El *Concept drift* se materializa abruptamente cuando la relación causal subyacente que mapea $X$ a $Y$ ($P(\mathcal{Y}|\mathcal{X})$) se rompe (e.g., Cambios masivos de comportamiento poblacional tras una pandemia).
+[^modelos]: La necesidad de codificar o imputar depende del estimador y de su implementación; esta unidad muestra un flujo tabular general, no una obligación para todo modelo.
+[^onehot]: *One hot encoding* crea una columna indicadora por categoría. [Documentación de `OneHotEncoder`](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html).
+[^escalado]: `StandardScaler` calcula parámetros con el conjunto usado en `fit`; los modelos basados en árboles suelen ser menos sensibles a la escala. [Documentación de preprocesamiento de scikit-learn](https://scikit-learn.org/stable/modules/preprocessing.html).
+[^fuga]: Fuga de datos: información que no estaría disponible al entrenar influye en alguna etapa del ajuste o de la selección del modelo. [Errores comunes y prácticas recomendadas de scikit-learn](https://scikit-learn.org/stable/common_pitfalls.html#data-leakage).
+[^drift]: Un cambio en $P(X)$ describe deriva de las variables de entrada; una variación en $P(Y\mid X)$ describe cambio de la relación con la respuesta. La relevancia depende de la tarea y de la evidencia disponible.
+[^robust]: [Documentación de `RobustScaler`](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.RobustScaler.html).
