@@ -18,7 +18,7 @@ jupyter: python3
 
 ## 1. Intuición con Ejemplo Práctico (BigMart Sales)
 
-La mayoría de los algoritmos de machine learning modernos (como las redes neuronales, máquinas de vectores de soporte (SVM), regresión logística y k-vecinos más cercanos (KNN)) operan bajo el paradigma de operaciones de álgebra lineal y optimización mediante descenso de gradiente. Esto significa que **exigen entradas que sean estrictamente matrices numéricas**. No comprenden texto, ni categorías como "Supermarket Type1" o "Grocery Store".
+Muchos modelos, entre ellos KNN, regresión logística y redes neuronales, necesitan una representación numérica de las variables. Una etiqueta como "Grocery Store" requiere codificación; el número asignado debe respetar el significado de la categoría.
 
 Pero el hecho de que todo deba ser numérico presenta un desafío profundo: **la escala y la naturaleza de los números importan enormemente**.
 
@@ -42,10 +42,10 @@ Una solución ingenua sería asignarles números arbitrarios:
 - `Supermarket Type1` = 2
 - `Supermarket Type3` = 3
 
-Si introducimos estos números a un modelo lineal (ej. Regresión Lineal), el algoritmo asumirá propiedades matemáticas que no existen en la realidad:
+Si introducimos estos números a un modelo lineal (por ejemplo, regresión lineal), el algoritmo tratará sus diferencias como distancias numéricas que no justifican las categorías:
 1. **Orden falso**: Asumirá que `Supermarket Type1` > `Grocery Store` y `Supermarket Type3` > `Supermarket Type1`.
 2. **Distancia falsa**: Asumirá que la distancia entre `Grocery Store` y `Supermarket Type1` ($2-1=1$) es igual a la distancia entre `Supermarket Type1` y `Supermarket Type3` ($3-2=1$).
-3. **Proporcionalidad absurda**: Asumirá que `Grocery Store` + `Supermarket Type1` = `Supermarket Type3` ($1+2=3$).
+3. **Efecto lineal impuesto**: Un incremento de 1 en el código tendrá el mismo efecto estimado entre las categorías 1 y 2 que entre 2 y 3.
 
 Codificar variables nominales con números enteros arbitrarios destruye los supuestos de la mayoría de los modelos introduciendo patrones falsos que el modelo intentará aprender. Necesitamos técnicas que conviertan categorías a números sin inyectar relaciones espurias.
 
@@ -103,14 +103,16 @@ Escalamos usando estadísticas robustas a outliers: $x_{\text{rob}} = \frac{x - 
 
 1. Datos ordenados: $[45.0, 120.0, 180.0, 500.0]$
 2. Mediana = $\frac{120.0 + 180.0}{2} = 150.0$
-3. $Q_1 = \frac{45.0 + 120.0}{2} = 82.5$, $Q_3 = \frac{180.0 + 500.0}{2} = 340.0$
-4. $\text{IQR} = Q_3 - Q_1 = 340.0 - 82.5 = 257.5$
+3. Con el percentil interpolado que usa `RobustScaler` de scikit-learn por defecto: $Q_1 = 101.25$ y $Q_3 = 260.0$[^6].
+4. $\text{IQR} = Q_3 - Q_1 = 260.0 - 101.25 = 158.75$.
 
 Cálculos:
-- $x_{\text{rob}, 1} = \frac{45 - 150}{257.5} \approx -0.408$
-- $x_{\text{rob}, 2} = \frac{120 - 150}{257.5} \approx -0.117$
-- $x_{\text{rob}, 3} = \frac{180 - 150}{257.5} \approx 0.117$
-- $x_{\text{rob}, 4} = \frac{500 - 150}{257.5} \approx 1.359$
+- $x_{\text{rob}, 1} = \frac{45 - 150}{158.75} \approx -0.661$
+- $x_{\text{rob}, 2} = \frac{120 - 150}{158.75} \approx -0.189$
+- $x_{\text{rob}, 3} = \frac{180 - 150}{158.75} \approx 0.189$
+- $x_{\text{rob}, 4} = \frac{500 - 150}{158.75} \approx 2.205$
+
+**Lectura del resultado:** la mediana cambia menos que la media ante un extremo, pero con solo cuatro datos el cuartil superior también depende del valor 500. "Robusto" no significa inmune.
 
 ### 2.4. One-Hot Encoding y la Trampa de la Variable Ficticia
 Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3}`. Sin embargo, si tuviéramos cientos de categorías, One-Hot Encoding induciría la *Maldición de la Dimensionalidad*[^1] y requeriría el uso de *matrices dispersas*[^2] para optimizar la memoria.
@@ -124,7 +126,7 @@ Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3
 
 *La trampa de la variable ficticia:* Observe que la suma de las tres columnas es siempre igual a 1:
 $$\text{Grocery} + \text{Supermarket1} + \text{Supermarket3} = 1$$
-Si un modelo lineal incluye un intercepto $\beta_0$, existe colinealidad perfecta[^4]. Para resolverlo, en modelos lineales se descarta una columna de referencia (`drop='first'`).
+Si un modelo lineal sin regularización incluye un intercepto $\beta_0$, existe colinealidad perfecta[^4]. Una opción es descartar una columna de referencia (`drop='first'`); no es una regla universal para árboles ni para todo modelo regularizado.
 
 ### 2.5. Target Encoding (Mean Encoding) Suavizado
 El *Target Encoding* reemplaza cada categoría por el promedio del target (`Item_Outlet_Sales`) en esa categoría:
@@ -135,14 +137,47 @@ El *Target Encoding* reemplaza cada categoría por el promedio del target (`Item
 
 Para evitar sobreajuste en categorías poco frecuentes, aplicamos **Suavizado Bayesiano** (*m-estimate*):
 $$ \hat{S}_i = \frac{n_c \cdot \bar{y}_c + m \cdot \bar{y}_{\text{global}}}{n_c + m} $$
-Con factor de regularización $m = 2$:
+Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse directamente a las mismas filas de entrenamiento):
 - **Grocery Store**: $\frac{(2 \times 650) + (2 \times 2000)}{2 + 2} = \frac{1300 + 4000}{4} = 1325.0$
 - **Supermarket Type1**: $\frac{(1 \times 2500) + (2 \times 2000)}{1 + 2} = \frac{2500 + 4000}{3} \approx 2166.67$
 - **Supermarket Type3**: $\frac{(1 \times 4200) + (2 \times 2000)}{1 + 2} = \frac{4200 + 4000}{3} \approx 2733.33$
 
 ---
 
-## 3. Laboratorio Interactivo: Banco de Pruebas de Escalado y Codificación (BigMart)
+## 3. Formalización Teórica y Matemática
+
+### 3.1. Escaladores Numéricos
+1. **Min-Max Scaler**: Mapea una variable continua al intervalo $[a, b]$ (típicamente $[0, 1]$):
+   $$ x' = a + \frac{x - x_{\min}}{x_{\max} - x_{\min}} (b - a) $$
+   Es altamente sensible a outliers, ya que un único valor extremo dilata el denominador $x_{\max} - x_{\min}$.
+
+2. **StandardScaler ($z$-score)**: Transforma la variable para que tenga media $\mu = 0$ y desviación estándar $\sigma = 1$:
+   $$ z = \frac{x - \mu}{\sigma}, \quad \mathbb{E}[Z] = 0, \quad \operatorname{Var}(Z) = 1 $$
+
+3. **RobustScaler**: Utiliza estadísticas de posición no paramétricas resistentes a valores extremos:
+   $$ x_{\text{rob}} = \frac{x - \operatorname{mediana}(X)}{\text{IQR}(X)}, \quad \text{IQR}(X) = Q_3(X) - Q_1(X) $$
+
+4. **Transformaciones de Potencia**: Diseñadas para estabilizar la varianza y aproximar normalidad en distribuciones asimétricas (sesgadas):
+   - **Box-Cox** (solo para $y > 0$):
+     $$ y^{(\lambda)} = \begin{cases} \frac{y^\lambda - 1}{\lambda} & \text{si } \lambda \neq 0 \\ \ln(y) & \text{si } \lambda = 0 \end{cases} $$
+   - **Yeo-Johnson** (soporta valores positivos, cero y negativos).
+
+### 3.2. Codificación Categórica
+1. **One-Hot Encoding**:
+   Definimos un conjunto finito de categorías $\mathcal{C} = \{c_1, c_2, \dots, c_K\}$.
+   La función de codificación es $h: \mathcal{C} \to \{0, 1\}^K$ tal que $h(c_j)$ es un vector donde la componente $j$ es 1 y el resto son 0.
+   Si se incluye la matriz de diseño $X$ con las $K$ columnas junto a una columna de unos $\mathbf{1}$ para el intercepto:
+   $$ \sum_{k=1}^K X_{i,k} = 1 \quad \forall i $$
+   Esto genera una dependencia lineal exacta, haciendo que la matriz $X^T X$ sea singular e imposible de invertir mediante mínimos cuadrados ordinarios.
+
+2. **Target encoding con suavizado**:
+   Sea $y_i$ el objetivo continuo asociado a la observación $i$ con categoría $c$. Combinamos la media local con la global mediante la siguiente fórmula ilustrativa de suavizado:
+   $$ \hat{S}_c = \lambda(n_c) \bar{y}_c + (1 - \lambda(n_c)) \bar{y}_{\text{global}} $$
+   Donde $\lambda(n_c) = \frac{n_c}{n_c + m}$ es el factor de contracción (*shrinkage*). Cuando $n_c \to \infty$, $\lambda(n_c) \to 1$ (confianza en la media local). Cuando $n_c \to 0$, $\lambda(n_c) \to 0$ (confianza en la media global).
+
+---
+
+## 4. Laboratorio Interactivo: Banco de Pruebas de Escalado y Codificación (BigMart)
 
 ::: {.content-visible when-format="html"}
 ```{=html}
@@ -200,7 +235,7 @@ Con factor de regularización $m = 2$:
       <div id="targetControls" style="display: none; margin-bottom: 12px;">
         <label style="font-size: 0.85em; font-weight: bold;">Factor de Suavizado ($m$): <span id="mVal">2.0</span></label>
         <input type="range" id="mSlider" min="0" max="10" step="0.5" value="2" style="width: 100%; margin: 6px 0;">
-        <span style="font-size: 0.78em; color: #57606a;">$m=0$ (sin regularizar, sobreajusta) | $m$ alto (atrae a la media global).</span>
+        <span style="font-size: 0.78em; color: #57606a;">$m=0$ usa la media local sin suavizar; puede sobreajustar categorías raras. Un $m$ alto acerca el valor a la media global.</span>
       </div>
 
       <table style="width: 100%; font-size: 0.82em; border-collapse: collapse; background: white;">
@@ -243,11 +278,12 @@ Con factor de regularización $m = 2$:
     } else if (scaler === 'robust') {
       const sorted = [...prices].sort((a, b) => a - b);
       const med = (sorted[1] + sorted[2]) / 2.0;
-      const q1 = (sorted[0] + sorted[1]) / 2.0;
-      const q3 = (sorted[2] + sorted[3]) / 2.0;
+      // Percentiles 25 y 75 con interpolación lineal, como np.percentile.
+      const q1 = sorted[0] + 0.75 * (sorted[1] - sorted[0]);
+      const q3 = sorted[2] + 0.25 * (sorted[3] - sorted[2]);
       const iqr = q3 - q1;
       scaled = prices.map(p => (p - med) / (iqr || 1));
-      insight = "RobustScaler usa la mediana ($" + med.toFixed(1) + ") y el IQR ($" + iqr.toFixed(1) + "). La escala de los productos normales se mantiene estable sin importar cuán extremo sea el outlier.";
+      insight = "RobustScaler usa la mediana ($" + med.toFixed(1) + ") y el IQR ($" + iqr.toFixed(1) + "). Con solo cuatro observaciones, el cuartil superior también cambia al mover el extremo: compara los valores y compruébalo.";
     }
 
     const tbody = document.getElementById('scalingTableBody');
@@ -296,8 +332,8 @@ Con factor de regularización $m = 2$:
       });
 
       insightDiv.innerText = dropFirst 
-        ? "Con drop='first' evitas la colinealidad perfecta (trampa de la variable ficticia). Si ambas columnas son 0, el modelo sabe que es Grocery Store."
-        : "One-Hot completo genera 3 columnas ortogonales. La suma de cada fila es 1, causando singularidad si incluyes intercepto.";
+        ? "Con drop='first' eliminas la dependencia lineal en una regresión con intercepto. En estas categorías conocidas, dos ceros representan Grocery Store; una categoría nueva también podría producir dos ceros con handle_unknown='ignore'."
+        : "One-Hot completo genera 3 columnas binarias. La suma de cada fila es 1, causando singularidad en mínimos cuadrados si incluyes intercepto.";
     } else {
       document.getElementById('onehotControls').style.display = 'none';
       document.getElementById('targetControls').style.display = 'block';
@@ -326,7 +362,7 @@ Con factor de regularización $m = 2$:
         `;
       });
 
-      insightDiv.innerText = `Media global: $${globalMean.toFixed(0)}. Con m=${m}, categorías con pocas muestras se contraen suavemente hacia la media global, evitando sobreajuste.`;
+      insightDiv.innerText = `Media global: $${globalMean.toFixed(0)}. Con m=${m}, las categorías con pocas muestras se acercan a la media global. El suavizado por sí solo no evita la fuga de información de la propia fila.`;
     }
   }
 
@@ -346,38 +382,21 @@ Con factor de regularización $m = 2$:
 *(Nota: Un laboratorio interactivo con controles deslizantes para experimentar con el impacto de valores atípicos y regularización Bayesiana en BigMart está disponible en la versión web del libro).*
 :::
 
----
+### Guía del laboratorio
 
-## 4. Formalización Teórica y Matemática
+**Objetivo.** Distinguir entre el efecto de un valor extremo sobre tres escaladores y el efecto de la frecuencia de una categoría sobre su codificación.
 
-### 4.1. Escaladores Numéricos
-1. **Min-Max Scaler**: Mapea una variable continua al intervalo $[a, b]$ (típicamente $[0, 1]$):
-   $$ x' = a + \frac{x - x_{\min}}{x_{\max} - x_{\min}} (b - a) $$
-   Es altamente sensible a outliers, ya que un único valor extremo dilata el denominador $x_{\max} - x_{\min}$.
+1. Fija el precio atípico en 500 y anota el valor escalado del producto 2 con Min-Max, StandardScaler y RobustScaler. Contrasta RobustScaler con el cálculo manual anterior.
+2. Mueve el precio a 1000 sin cambiar los otros tres. Registra qué estadísticas cambian y si alguno de los tres escaladores es completamente inmune.
+3. En codificación, activa y desactiva `drop='first'`; identifica la categoría representada por dos ceros. Después cambia a *target encoding* y compara `m=0` con `m=10` para una categoría con una sola fila.
 
-2. **StandardScaler ($z$-score)**: Transforma la variable para que tenga media $\mu = 0$ y desviación estándar $\sigma = 1$:
-   $$ z = \frac{x - \mu}{\sigma}, \quad \mathbb{E}[Z] = 0, \quad \operatorname{Var}(Z) = 1 $$
+**Comprobación.** Para 500, Min-Max asigna al producto 2 aproximadamente 0.165 y RobustScaler aproximadamente −0.189. Si no coinciden, revisa el percentil usado para los cuartiles. En *target encoding*, al aumentar $m$ las categorías con una observación se acercan más a la media global.
 
-3. **RobustScaler**: Utiliza estadísticas de posición no paramétricas resistentes a valores extremos:
-   $$ x_{\text{rob}} = \frac{x - \operatorname{mediana}(X)}{\text{IQR}(X)}, \quad \text{IQR}(X) = Q_3(X) - Q_1(X) $$
+**Interpretación y entrega.** Escribe dos frases: cuál escalador elegirías para un modelo de distancias con precios extremos y qué información adicional necesitas antes de decidirlo; explica por qué las medias de ventas mostradas en este panel no deben calcularse con el objetivo de la propia fila al entrenar.
 
-4. **Transformaciones de Potencia**: Diseñadas para estabilizar la varianza y aproximar normalidad en distribuciones asimétricas (sesgadas):
-   - **Box-Cox** (solo para $y > 0$):
-     $$ y^{(\lambda)} = \begin{cases} \frac{y^\lambda - 1}{\lambda} & \text{si } \lambda \neq 0 \\ \ln(y) & \text{si } \lambda = 0 \end{cases} $$
-   - **Yeo-Johnson** (soporta valores positivos, cero y negativos).
-
-### 4.2. Codificación Categórica
-1. **One-Hot Encoding**:
-   Definimos un conjunto finito de categorías $\mathcal{C} = \{c_1, c_2, \dots, c_K\}$.
-   La función de codificación es $h: \mathcal{C} \to \{0, 1\}^K$ tal que $h(c_j)$ es un vector donde la componente $j$ es 1 y el resto son 0.
-   Si se incluye la matriz de diseño $X$ con las $K$ columnas junto a una columna de unos $\mathbf{1}$ para el intercepto:
-   $$ \sum_{k=1}^K X_{i,k} = 1 \quad \forall i $$
-   Esto genera una dependencia lineal exacta, haciendo que la matriz $X^T X$ sea singular e imposible de invertir mediante mínimos cuadrados ordinarios.
-
-2. **Target Encoding Empírico Bayesiano**:
-   Sea $y_i$ el target continuo asociado a la observación $i$ con categoría $c$. La codificación para la categoría $c$ es la esperanza posterior $\mathbb{E}[y \mid c]$. Utilizando un prior conjugado basado en la distribución marginal total de $y$, llegamos a la estimación empírica suavizada:
-   $$ \hat{S}_c = \lambda(n_c) \bar{y}_c + (1 - \lambda(n_c)) \bar{y}_{\text{global}} $$
-   Donde $\lambda(n_c) = \frac{n_c}{n_c + m}$ es el factor de contracción (*shrinkage*). Cuando $n_c \to \infty$, $\lambda(n_c) \to 1$ (confianza en la media local). Cuando $n_c \to 0$, $\lambda(n_c) \to 0$ (confianza en la media global).
+::: {.callout-warning title="El panel enseña la fórmula, no un pipeline de entrenamiento"}
+El panel usa las cuatro ventas para calcular la media de cada categoría. En un modelo real, ajusta el codificador solo con el conjunto de entrenamiento y utiliza codificación fuera de pliegue para las filas de entrenamiento; transforma validación y prueba con el codificador ya ajustado. Así evitas que una fila reciba información de su propio objetivo[^3].
+:::
 
 ---
 
@@ -386,8 +405,8 @@ Con factor de regularización $m = 2$:
 A continuación, mostramos cómo implementar estas transformaciones de manera profesional sobre el caso **BigMart Sales**.
 
 ::: {.callout-tip title="Mejores prácticas en la industria"}
-- **No uses `pandas.get_dummies()` en producción.** Aunque es útil para análisis exploratorio, `get_dummies` no guarda el estado de las categorías que vio durante el entrenamiento. Si en producción llega un dato con una categoría nueva, las columnas no coincidirán y tu modelo colapsará. Usa siempre `sklearn.preprocessing.OneHotEncoder`.
-- **Invarianza de escala:** Modelos basados en árboles (Decision Trees, Random Forest, XGBoost) dividen el espacio buscando umbrales ($x > \theta$). No se ven afectados por escalas dispares, por lo que escalar las numéricas para XGBoost es matemáticamente innecesario[^5].
+- **Conserva el esquema de categorías:** `pandas.get_dummies()` sirve para explorar, pero exige alinear columnas entre entrenamiento e inferencia. Un `OneHotEncoder` ajustado en entrenamiento conserva ese esquema y facilita integrarlo en un `Pipeline`[^7].
+- **Escala según el modelo:** los árboles de decisión que hacen cortes por umbral suelen ser invariantes a transformaciones monótonas de una variable; los modelos de distancias y los penalizados suelen ser sensibles a la escala[^5].
 :::
 
 ```{python}
@@ -439,7 +458,7 @@ scaled_df.tail()
 ### 5.2. Codificación Categórica
 
 ::: {.callout-important title="Regla de oro en producción"}
-Configura SIEMPRE `handle_unknown='ignore'` en `OneHotEncoder`. Esto asegura que si durante inferencia (producción) el modelo recibe una tienda no vista, simplemente codificará esa fila con ceros, en lugar de lanzar una excepción fatal y tumbar el servicio.
+Para categorías nuevas, decide explícitamente una política: `handle_unknown='ignore'` en `OneHotEncoder` produce ceros para una categoría desconocida. Comprueba si esa representación puede confundirse con la categoría de referencia cuando usas `drop='first'`; otra opción es agrupar categorías infrecuentes.
 :::
 
 ```{python}
@@ -462,7 +481,7 @@ data[['Outlet_Type', 'Outlet_Type_TargetEncoded', 'Item_Outlet_Sales']].drop_dup
 ```
 
 ::: {.callout-warning title="Target Leakage"}
-El Target Encoding usa la variable $Y$ (`Item_Outlet_Sales`) para transformar las $X$. Esto introduce el riesgo altísimo de **Fuga de Información (Target Leakage)**[^3]. `sklearn.preprocessing.TargetEncoder` previene el sobreajuste realizando validación cruzada interna (*out-of-fold encoding*) durante el `fit_transform`.
+El *target encoding* usa la variable $Y$ (`Item_Outlet_Sales`) para transformar las $X$. `TargetEncoder.fit_transform` utiliza particiones internas para codificar las filas de entrenamiento fuera del pliegue[^3]. Esta protección no sustituye la separación externa de entrenamiento, validación y prueba: ajusta todo el preprocesamiento dentro de cada pliegue externo.
 :::
 
 ### 5.3. Ingeniería de Fechas y Ciclos
@@ -484,6 +503,10 @@ data[['Outlet_Establishment_Year', 'Outlet_Age']].head(3)
 
 [^3]: **Target Leakage (Fuga de la Variable Objetivo)**: Ocurre cuando información del target se filtra en las variables predictoras durante el preprocesamiento. En Target Encoding ingenuo, promediar el target incluyendo el registro actual permite al modelo memorizar el dataset en lugar de generalizar.
 
-[^4]: **Trampa de la variable ficticia (Dummy Variable Trap)**: Colinealidad perfecta generada cuando la suma de todas las columnas binarias de una variable categórica es exactamente 1. En regresión lineal con intercepto, obliga a descartar la primera categoría (`drop='first'`).
+[^4]: **Trampa de la variable ficticia (Dummy Variable Trap)**: Dependencia lineal exacta entre intercepto y todas las columnas binarias de una categoría exhaustiva. En mínimos cuadrados ordinarios puede eliminarse una columna o el intercepto; otros estimadores requieren una evaluación distinta.
 
-[^5]: **Invarianza de Escala en Árboles**: Algoritmos como Decision Trees, Random Forest o Gradient Boosting (XGBoost, LightGBM) realizan cortes ortogonales en las variables ($x > \theta$). No se ven afectados por la escala de las variables, por lo que escalar las numéricas no altera su desempeño. Las Redes Neuronales, SVM y KNN, al usar gradientes o distancias multivariadas combinadas, SÍ requieren escalado estricto.
+[^5]: **Escala y modelos**: KNN usa distancias entre observaciones. Un árbol que separa con umbrales sobre una sola variable conserva, en general, el orden de los valores bajo una transformación monótona; detalles numéricos e implementaciones pueden producir diferencias. Escalar redes neuronales y modelos penalizados suele facilitar la optimización o comparación de coeficientes, pero debe comprobarse en validación.
+
+[^6]: **Percentil interpolado**: Para cuatro datos ordenados, el percentil 25 queda a 0.75 del tramo entre el primero y el segundo; el 75 queda a 0.25 del tramo entre el tercero y el cuarto. Hay otras convenciones de cuartiles, por lo que conviene declarar la usada.
+
+[^7]: **Pipeline**: Secuencia que ajusta transformaciones y estimador juntos. En validación cruzada, cada ajuste aprende estadísticas solo de la parte de entrenamiento del pliegue.

@@ -16,34 +16,32 @@ execute:
 jupyter: python3
 ---
 
-# Introducción al Tratamiento de Ruido
+## Intuición: cuándo un dato parece ruidoso
 
 En la ciencia de datos y la ingeniería de *machine learning*, nos enfrentamos constantemente al desafío de lidiar con datos imperfectos. Los datos provenientes del mundo real rara vez son limpios y perfectos; suelen estar contaminados por diversas fuentes de perturbación. Una de estas fuentes principales es el **ruido**.
 
-En este capítulo, exploraremos en profundidad qué es el ruido, cómo se diferencia de otras anomalías en los datos, cómo podemos tratarlo mediante técnicas de suavizado, y cómo la discretización puede ser una herramienta complementaria en este proceso de transformación y limpieza de variables, tomando como hilo conductor el dataset **BigMart Sales**.
+En este capítulo distinguimos ruido, errores de captura y valores atípicos; después usamos ejemplos pequeños para entender suavizado y discretización. BigMart Sales sirve como contexto de variables, mientras que la serie diaria que aparece más adelante es **simulada**: el conjunto de datos utilizado aquí no proporciona una secuencia temporal diaria de ventas.
 
-## Intuición con Ejemplo Práctico (BigMart Sales)
+### Contexto del ejemplo BigMart Sales
 
 Para comprender cómo afecta el ruido a nuestros modelos, es fundamental distinguir entre dos conceptos que a menudo se confunden en la práctica profesional: el **ruido** y los **outliers** (valores atípicos).
 
-### Diferencia conceptual: Ruido vs. Outliers
+### Ruido y valores atípicos
 
-*   **El Ruido (Noise):** Se refiere a la variación estocástica y aleatoria en los datos medidos que no proviene de la señal o el fenómeno subyacente que intentamos modelar. Esta variación no es explicable por nuestras variables predictoras. El ruido suele originarse por errores de medición, imprecisión inherente a los sensores, limitaciones en la resolución de los instrumentos, o interferencias ambientales [^1]. En la mayoría de los casos, el ruido es una molestia que queremos eliminar o mitigar para revelar la verdadera señal.
-*   **Los Outliers (Valores atípicos):** Son observaciones extremas que se desvían significativamente del resto de los datos, pero que **son mediciones reales y válidas**. Un outlier no es necesariamente un error. De hecho, en muchos contextos de negocio, el outlier es exactamente lo que estamos buscando (por ejemplo, tiendas flagship con ventas descomunales o fraudes). Tratar un outlier real como si fuera ruido e intentar suavizarlo podría destruir la capacidad predictiva del modelo en los casos más críticos.
+*   **Ruido:** variación que dificulta reconocer el patrón que interesa. Puede surgir de mediciones imprecisas, variabilidad natural o variables explicativas que aún no hemos observado. No siempre se puede ni conviene eliminar.
+*   **Valor atípico[^atipico]:** observación inusual respecto de la mayoría. Puede ser válida o indicar un error; hay que investigar su origen antes de corregirla.
 
-### Ejemplo Motivador en BigMart: Visibilidad y Registro de Ventas
+### Visibilidad de productos y una serie simulada
 
-En el dataset **BigMart Sales**, encontramos dos manifestaciones claras de ruido:
-1. **Ceros ruidosos en `Item_Visibility`**: Existen productos que registran una visibilidad en anaquel de `0.000`. Sin embargo, esos mismos productos registran ventas significativas en esa misma tienda. Un producto físicamente invisible no puede venderse de manera recurrente; ese `0.000` es ruido de captura (sensores de inventario no calibrados o valores nulos imputados erróneamente como ceros).
-2. **Micro-fluctuaciones en ventas diarias**: Las ventas diarias o semanales de un producto (`Item_Outlet_Sales`) presentan oscilaciones erráticas debido a factores fortuitos (el clima de un martes específico, una hora de tráfico local). Si un modelo intenta memorizar cada pico estocástico, sufrirá de sobreajuste (*overfitting*)[^2]. El suavizado permite extraer la tendencia de demanda subyacente.
+En **BigMart Sales**, los registros con `Item_Visibility = 0` merecen una revisión: un cero podría ser legítimo, una convención de captura o un dato faltante codificado. No podemos deducir su causa sin documentación del proceso de medición. Para practicar con ventas diarias usaremos una serie **sintética** con tendencia conocida y perturbaciones añadidas; así podremos ver cuándo un filtro mejora la lectura de la señal y cuándo borra picos reales. Un modelo que memoriza fluctuaciones accidentales puede sufrir sobreajuste[^2].
 
 ---
 
-## Desarrollo Manual Paso a Paso
+## Ejemplo trabajado: discretización y suavizado a mano
 
 Para desmitificar el funcionamiento de los algoritmos computacionales de suavizado y discretización, desarrollaremos los cálculos de forma completamente manual.
 
-Consideremos un conjunto de datos numérico unidimensional simple y ordenado que representa los pesos (**Item_Weight**) de 12 productos de BigMart:
+Consideremos un conjunto numérico ordenado de 12 pesos ficticios de productos (**Item_Weight**). Es un ejemplo didáctico, no una muestra extraída del archivo BigMart:
 
 $$ X = [4, 8, 9, 15, 21, 21, 24, 25, 26, 28, 29, 34] $$
 
@@ -119,16 +117,53 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
 
 ---
 
-## 3. Laboratorio Interactivo: Suavizado y Discretización (BigMart)
+## Formalización: modelos y filtros
+
+### Modelo aditivo de señal y ruido
+Un modelo posible representa cada observación $y_i$ como señal subyacente $f(x_i)$ más un error $\epsilon_i$:
+
+$$ y_i = f(x_i) + \epsilon_i $$
+
+Bajo un supuesto simplificador, los errores tienen media cero y varianza constante[^homocedasticidad]:
+$$ \mathbb{E}[\epsilon_i] = 0, \quad \operatorname{Var}(\epsilon_i) = \sigma^2 $$
+
+### Relación señal-ruido (SNR)
+Si conocemos o estimamos por separado la potencia de la señal y la del error, la relación señal-ruido puede expresarse en decibelios:
+$$ \text{SNR}_{\text{dB}} = 10 \log_{10}\left(\frac{P_{\text{señal}}}{P_{\text{ruido}}}\right) $$
+
+### Compromiso entre suavidad y detalle
+Una ventana pequeña conserva variaciones rápidas, incluido el ruido. Una ventana grande puede reducir fluctuaciones, pero también retrasar o aplanar cambios reales. Hay que elegirla según el uso previsto y medir su efecto en datos de validación.
+
+### Filtros de suavizado comunes
+Si una serie fue muestreada con poca frecuencia, algunos cambios rápidos pueden confundirse con patrones lentos (*aliasing*)[^5]. Los filtros siguientes responden a preguntas distintas:
+
+1. **Media móvil centrada (SMA):**
+   $$ \hat{y}_t = \frac{1}{2m+1}\sum_{j=-m}^m y_{t+j} $$
+   Usa observaciones futuras; sirve para exploración retrospectiva, pero no para predecir en tiempo real.
+2. **Suavizado Exponencial (EWMA):**
+   $$ \hat{y}_t = \alpha y_t + (1-\alpha) \hat{y}_{t-1}, \quad \alpha \in [0, 1] $$
+3. **Filtro de Savitzky-Golay:** ajusta un polinomio local por mínimos cuadrados. Puede conservar mejor algunos rasgos de la curva que una media móvil, según la ventana y el orden del polinomio; la versión centrada también usa observaciones futuras.
+
+---
+
+## Laboratorio interactivo: suavizado y discretización
+
+**Objetivo.** Comparar cómo cambian los grupos al modificar el número de intervalos y cómo responde una señal simulada a filtros con distintas ventanas.
+
+1. Con tres intervalos, compara ancho igual y frecuencia aproximadamente igual. Comprueba que los 12 precios quedan asignados una sola vez y describe qué método produce grupos más equilibrados.
+2. Aplica media, mediana y límites del intervalo. Identifica un precio que cambie mucho y explica qué información se pierde al sustituirlo.
+3. Compara la media móvil centrada con la media exponencial. Aumenta la ventana de 3 a 11 y observa el pico de la serie. ¿Cuál usa valores futuros y cuál podría calcularse conforme llegan las observaciones?
+
+**Entrega breve.** Anota una decisión de transformación con su propósito y un riesgo. La línea negra es la señal verdadera solo porque **simulamos** los datos; en un caso real no la conoceríamos.
 
 ::: {.content-visible when-format="html"}
 ```{=html}
 <div class="interactive-lab" style="border: 1px solid #d0d7de; border-radius: 8px; padding: 22px; background: #ffffff; margin: 25px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
   <h3 style="margin-top: 0; color: #1f2328; border-bottom: 2px solid #8250df; padding-bottom: 8px;">
-    🧪 Laboratorio Interactivo: Suavizado de Ruido y Discretización (BigMart)
+    🧪 Laboratorio: suavizado y discretización con datos simulados
   </h3>
   <p style="font-size: 0.9em; color: #57606a;">
-    Manipula los parámetros de discretización sobre los precios (<code>Item_MRP</code>) de BigMart y observa cómo los filtros de suavizado eliminan el ruido en una serie temporal simulada de ventas.
+    Manipula parámetros sobre precios ficticios (<code>Item_MRP</code>) y observa cómo los filtros cambian una serie temporal simulada. Los filtros pueden borrar señal útil además de variación accidental.
   </p>
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
@@ -161,6 +196,7 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
       </div>
 
       <div id="binResultContainer" style="max-height: 180px; overflow-y: auto; background: white; border: 1px solid #e1e4e8; border-radius: 4px; padding: 8px; font-size: 0.8em;"></div>
+      <p id="binCheck" role="status" aria-live="polite" style="font-size: 0.8em; margin-bottom: 0;"></p>
     </div>
 
     <!-- Panel de Suavizado Continuo -->
@@ -171,7 +207,6 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
         <select id="filterType" style="width: 100%; padding: 4px; font-size: 0.85em; margin-top: 4px;">
           <option value="sma">Media Móvil Simple (SMA)</option>
           <option value="ewma">Suavizado Exponencial (EWMA)</option>
-          <option value="sg">Aproximación Polinomial (Savitzky-Golay)</option>
         </select>
       </div>
 
@@ -189,7 +224,8 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
           <span style="color: #0969da; font-weight: bold;">— Señal Filtrada</span>
         </div>
       </div>
-      <div id="filterInsight" style="margin-top: 8px; font-size: 0.78em; color: #57606a; background: #ddf4ff; padding: 6px; border-radius: 4px; border-left: 3px solid #0969da;"></div>
+      <div id="filterInsight" role="status" aria-live="polite" style="margin-top: 8px; font-size: 0.78em; color: #57606a; background: #ddf4ff; padding: 6px; border-radius: 4px; border-left: 3px solid #0969da;"></div>
+      <p id="filterCheck" role="status" aria-live="polite" style="font-size: 0.8em; margin-bottom: 0;"></p>
     </div>
   </div>
 </div>
@@ -217,9 +253,13 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
         bins.push({ label: `[${bMin.toFixed(1)}, ${bMax.toFixed(1)}]`, items: items });
       }
     } else {
-      const nPerBin = Math.ceil(prices.length / k);
+      const base = Math.floor(prices.length / k);
+      const extra = prices.length % k;
+      let offset = 0;
       for (let i = 0; i < k; i++) {
-        const items = prices.slice(i * nPerBin, (i + 1) * nPerBin);
+        const size = base + (i < extra ? 1 : 0);
+        const items = prices.slice(offset, offset + size);
+        offset += size;
         if (items.length > 0) {
           bins.push({ label: `Cuantil ${i+1} (${items.length} items)`, items: items });
         }
@@ -263,6 +303,10 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
     });
     html += '</table>';
     container.innerHTML = html;
+    const counts = bins.map(b => b.items.length);
+    const total = counts.reduce((a, b) => a + b, 0);
+    document.getElementById('binCheck').innerText =
+      `Comprobación: ${total} de ${prices.length} precios asignados; tamaños de grupo: ${counts.join(', ')}.`;
   }
 
   // Serie de tiempo simulada de ventas (25 puntos)
@@ -307,22 +351,6 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
         filtered.push(s);
       }
       document.getElementById('filterInsight').innerText = `EWMA con α=${alpha.toFixed(2)}. Da más peso al dato reciente; introduce cierto desfase temporal causal.`;
-    } else if (filter === 'sg') {
-      // Aproximación simplificada local cuadrática para la demo
-      const half = Math.floor(w / 2);
-      for (let i = 0; i < N_POINTS; i++) {
-        let sum = 0, count = 0;
-        for (let j = -half; j <= half; j++) {
-          const idx = i + j;
-          if (idx >= 0 && idx < N_POINTS) {
-            const weight = 1 - 0.5 * Math.pow(j / (half || 1), 2);
-            sum += noisySignal[idx] * weight;
-            count += weight;
-          }
-        }
-        filtered.push(sum / count);
-      }
-      document.getElementById('filterInsight').innerText = `Filtro Savitzky-Golay. Ajusta polinomios locales, preservando mejor los picos que la media simple.`;
     }
 
     // Dibujar SVG
@@ -343,6 +371,10 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
       <path d="${makePath(trueSignal)}" fill="none" stroke="#1f2328" stroke-width="2" stroke-dasharray="4,4"/>
       <path d="${makePath(filtered)}" fill="none" stroke="#0969da" stroke-width="2.5" stroke-linecap="round"/>
     `;
+    const rmse = values => Math.sqrt(values.reduce((sum, value, i) =>
+      sum + Math.pow(value - trueSignal[i], 2), 0) / N_POINTS);
+    document.getElementById('filterCheck').innerText =
+      `Error frente a la señal simulada (RMSE): sin filtro ${rmse(noisySignal).toFixed(1)}; con filtro ${rmse(filtered).toFixed(1)}. Una ventana no siempre mejora este valor.`;
   }
 
   document.getElementById('kBinSlider').addEventListener('input', updateBinning);
@@ -359,64 +391,30 @@ $(1, 2.1), (2, 3.9), (3, 6.2), (4, 7.8), (5, 10.3)$
 ```
 :::
 ::: {.content-visible when-format="pdf"}
-*(Nota: Un laboratorio interactivo con controles deslizantes para experimentar con discretización de precios y filtros de suavizado en BigMart está disponible en la versión web del libro).*
+*(El laboratorio interactivo con precios y ventas simuladas está disponible en la versión web del libro. Las preguntas y los datos de ejemplo anteriores también pueden resolverse sin los controles.)*
 :::
 
 ---
 
-## 4. Formalización Teórica y Matemática
-
-### 4.1. El Modelo Aditivo de Señal y Ruido
-En la mayoría de los escenarios analíticos, asumimos que cada observación registrada $y_i$ es una composición lineal de una señal subyacente verdadera $f(x_i)$ y un término de error aleatorio o ruido estocástico $\epsilon_i$:
-
-$$ y_i = f(x_i) + \epsilon_i $$
-
-Bajo supuestos estadísticos estándar, particularmente el de Ruido Blanco Gaussiano [^3], se asume que el ruido está centrado en cero y tiene una varianza finita y constante (homocedasticidad):
-$$ \mathbb{E}[\epsilon_i] = 0, \quad \operatorname{Var}(\epsilon_i) = \sigma^2 $$
-
-### 4.2. Relación Señal-Ruido (SNR)
-La Relación Señal-Ruido (Signal-to-Noise Ratio o SNR) nos permite cuantificar el nivel de corrupción en decibelios (dB):
-$$ \text{SNR}_{\text{dB}} = 10 \log_{10}\left(\frac{P_{\text{señal}}}{P_{\text{ruido}}}\right) $$
-
-### 4.3. Trade-off Sesgo-Varianza en el Suavizado
-*   **Alta Varianza:** Usar los datos crudos ruidosos causa una varianza alta en las predicciones del modelo.
-*   **Alto Sesgo:** Aplicar un suavizado extremo (por ejemplo, una ventana móvil gigante) destruirá el ruido pero introducirá un gran sesgo al aplanar picos de demanda legítimos.
-
-### 4.4. Filtros de Suavizado Comunes
-Al implementar filtros en señales temporales o series de demanda, es crítico considerar la tasa de muestreo adecuada para evitar fenómenos de distorsión o *aliasing*[^5]. Entre los métodos analíticos más destacados se encuentran:
-
-1. **Media Móvil Simple y Ponderada (SMA / WMA):**
-   $$ \hat{y}_t = \sum_{j=-m}^m w_j y_{t+j}, \quad \sum w_j = 1 $$
-2. **Suavizado Exponencial (EWMA):**
-   $$ \hat{y}_t = \alpha y_t + (1-\alpha) \hat{y}_{t-1}, \quad \alpha \in [0, 1] $$
-3. **Filtro de Savitzky-Golay:**
-   Ajusta polinomios locales de bajo grado mediante mínimos cuadrados, preservando picos y derivadas mucho mejor que las medias simples.
-
----
-
-## 5. Implementación Computacional con Python
+## Implementación computacional con Python
 
 ```{python}
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from scipy.signal import savgol_filter
 
-# Configuración de gráficas
-plt.style.use('seaborn-v0_8-whitegrid')
-plt.rcParams['figure.figsize'] = (12, 6)
-
-# 1. Simulación de Ventas con Ruido en BigMart
-np.random.seed(42)
+# 1. Serie sintética de demanda; no son ventas observadas de BigMart
+rng = np.random.default_rng(42)
 dias = np.linspace(0, 10, 200)
 demanda_real = np.sin(dias) + 0.5 * np.sin(3 * dias) + 3.0
-ruido = np.random.normal(0, 0.4, size=len(dias))
+ruido = rng.normal(0, 0.4, size=len(dias))
 ventas_ruidosas = demanda_real + ruido
 
 df_ventas = pd.DataFrame({'dia': dias, 'demanda_real': demanda_real, 'ventas_ruidosas': ventas_ruidosas})
 
 # 2. Técnicas de Suavizado
-df_ventas['sma_15'] = df_ventas['ventas_ruidosas'].rolling(window=15, center=True).mean()
+df_ventas['sma_15'] = df_ventas['ventas_ruidosas'].rolling(window=15, center=True, min_periods=1).mean()
 df_ventas['ewma_15'] = df_ventas['ventas_ruidosas'].ewm(span=15, adjust=False).mean()
 df_ventas['savgol'] = savgol_filter(df_ventas['ventas_ruidosas'], window_length=15, polyorder=3)
 
@@ -430,46 +428,51 @@ print("--- Discretización de Item_MRP ---")
 print(df_precios.head(6))
 ```
 
-### Visualización del Suavizado de Señales
+### Visualización Plotly del suavizado
 
 ```{python}
-plt.plot(df_ventas['dia'], df_ventas['ventas_ruidosas'], label='Ventas Ruidosas Diarias', color='lightgray', alpha=0.7)
-plt.plot(df_ventas['dia'], df_ventas['demanda_real'], label='Demanda Real Subyacente', color='black', linewidth=2, linestyle='--')
-plt.plot(df_ventas['dia'], df_ventas['sma_15'], label='Media Móvil Centrada (W=15)', color='red', alpha=0.8)
-plt.plot(df_ventas['dia'], df_ventas['ewma_15'], label='EWMA (Span=15)', color='green', alpha=0.8)
-plt.plot(df_ventas['dia'], df_ventas['savgol'], label='Savitzky-Golay (W=15, P=3)', color='blue', linewidth=2)
-
-plt.title('Comparativa de Técnicas de Suavizado de Ruido en Ventas BigMart')
-plt.xlabel('Día')
-plt.ylabel('Demanda / Ventas')
-plt.legend(loc='upper right')
-plt.tight_layout()
-plt.show()
+fig = go.Figure()
+for columna, etiqueta, color, estilo in [
+    ('ventas_ruidosas', 'Observaciones ruidosas', '#a6a6a6', 'solid'),
+    ('demanda_real', 'Señal conocida (simulación)', '#222222', 'dash'),
+    ('sma_15', 'Media móvil centrada', '#d62728', 'solid'),
+    ('ewma_15', 'Media exponencial causal', '#2ca02c', 'solid'),
+    ('savgol', 'Savitzky-Golay centrado', '#1f77b4', 'solid'),
+]:
+    fig.add_trace(go.Scatter(x=df_ventas['dia'], y=df_ventas[columna],
+                             mode='lines', name=etiqueta,
+                             line=dict(color=color, dash=estilo)))
+fig.update_layout(title='Comparación de filtros sobre una serie sintética',
+                  xaxis_title='Tiempo simulado', yaxis_title='Demanda simulada',
+                  template='plotly_white', height=460)
+fig.show()
 ```
 
 ---
 
-## 6. Mejores Prácticas en la Industria
+## Prácticas para usar en proyectos reales
 
 ::: {.callout-important title="Regla de oro en producción: Prevención de fuga de datos"}
-Cuando aplicas discretización por frecuencia (cuantiles) o normalizaciones, los umbrales de los bins y los parámetros del filtro **DEBEN** ser calculados exclusivamente utilizando el conjunto de entrenamiento (Train set). Luego, los límites exactos de los cuantiles aprendidos en entrenamiento se aplican rígidamente al conjunto de evaluación (Test set) y a producción.
+Aprende los límites de discretización con datos de entrenamiento y aplícalos después a validación, prueba y producción. Registra cómo se tratan valores fuera del rango aprendido. Para series temporales, valida respetando el orden cronológico y evita filtros centrados cuando la aplicación exige decisiones en tiempo real.
 :::
 
 ::: {.callout-tip title="Mejores prácticas en la industria: Cuándo discretizar"}
-*   **Cuándo NO discretizar:** En modelos no lineales como Random Forest, XGBoost o Redes Neuronales. El binning destruye la resolución continua de variables como `Item_MRP` y limita innecesariamente la capacidad predictiva del modelo.
-*   **Cuándo SÍ discretizar:** En modelos altamente regulados (como Credit Scoring con regresión logística usando *Weight of Evidence* e *Information Value*[^4]) o cuando las reglas de negocio exigen categorizaciones contractuales explícitas (e.g. "Gama Baja, Media, Alta").
+*   **Conservar el valor continuo** suele ser una referencia razonable: discretizar pierde resolución[^1]. Comprueba con validación si los intervalos añaden valor al modelo y al uso de negocio.
+*   **Discretizar** puede facilitar reglas interpretables o niveles contractuales. En algunos modelos de riesgo se usan transformaciones como *Weight of Evidence*[^4]; deben aprenderse y validarse sin fuga de la variable objetivo.
 :::
 
 ---
 
-## 7. Referencias y Definiciones
+## Notas de términos
 
-[^1]: **Pérdida de información por discretización (Information Loss):** Cada vez que transformamos una variable continua en intervalos discretos (binning), perdemos resolución intrínseca y varianza estructural, imponiendo un límite superior a la precisión del modelo.
+[^1]: **Pérdida de resolución por discretización:** valores distintos pasan a compartir una categoría. Esto puede reducir detalle útil, aunque en algunos problemas mejore robustez o interpretabilidad.
 
 [^2]: **Sobreajuste al ruido estocástico (Overfitting):** Ocurre cuando un algoritmo de ML asimila las fluctuaciones aleatorias de la señal como si fueran patrones explicables del fenómeno.
 
-[^3]: **Ruido blanco gaussiano vs. Ruido Impulsivo:** El ruido blanco tiene un espectro plano y distribución normal. El ruido impulsivo (*Salt & Pepper*) consiste en picos atípicos de alta amplitud generados por fallas puntuales; para este último se prefieren filtros de mediana sobre filtros de media.
+[^atipico]: **Valor atípico:** observación distante de la mayoría según una referencia explícita (por ejemplo, un rango intercuartílico). Ser atípico no implica ser incorrecto.
 
-[^4]: **Weight of Evidence (WOE) e Information Value (IV):** Técnica probabilística para codificar bins categóricos en riesgo crediticio basada en el logaritmo de proporciones de eventos (buenos vs malos).
+[^homocedasticidad]: **Homocedasticidad:** varianza del error aproximadamente constante en los distintos valores de la variable explicativa.
 
-[^5]: **Aliasing y teorema de Nyquist-Shannon:** Para capturar y filtrar ruido de alta frecuencia correctamente, la frecuencia de muestreo debe ser mayor al doble de la frecuencia máxima presente en la señal.
+[^4]: **Weight of Evidence (WOE):** codificación de categorías mediante el logaritmo de la razón entre proporciones de dos clases. Requiere reglas para categorías sin observaciones de alguna clase.
+
+[^5]: **Aliasing:** efecto por el cual una señal muestreada con frecuencia insuficiente puede aparentar una frecuencia distinta. El criterio de Nyquist se aplica a señales con banda de frecuencias limitada y muestreo regular.
