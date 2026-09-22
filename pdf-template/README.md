@@ -13,32 +13,47 @@ Quarto, dividida en pedazos ("partials"):
 ```
 
 En vez de copiar y modificar la plantilla completa (que se pisaría en cada
-actualización de Quarto), solo sobreescribimos el pedazo que nos interesa.
+actualización de Quarto), solo sobreescribimos los pedazos que nos interesan.
 Eso se declara en `_quarto.yml`:
 
 ```yaml
 format:
   pdf:
+    geometry:
+      - top=2.5cm
+      - bottom=2.5cm
+      - left=2.5cm
+      - right=2.5cm
+      - headsep=0.7cm
+      - footskip=1.2cm
     template-partials:
       - pdf-template/title.tex
+      - pdf-template/before-body.tex
+    include-in-header:
+      - pdf-template/header.tex
+    filters:
+      - pdf-template/consolidate-refs.lua
 ```
 
-`pdf-template/title.tex` es una copia del partial original de Quarto
-(`.../pandoc/title.tex`) con una línea agregada: mete el logo arriba del
-título dentro del mismo `\title{...}`.
+- `pdf-template/title.tex`: Define metadatos de título y autor para Pandoc.
+- `pdf-template/before-body.tex`: Reemplaza el `\maketitle` por defecto con una
+  portada académica institucional (UNAM/FC) y la contraportada (créditos,
+  derechos Creative Commons CC BY-NC-SA 4.0, y cómo citar en APA y BibTeX).
+- `pdf-template/header.tex`: Configura encabezados vivos y foliación de libro
+  académico usando el paquete nativo `scrlayer-scrpage` de KOMA-Script.
+- `pdf-template/consolidate-refs.lua`: Consolida todas las referencias al final
+  del libro, evitando repetición de bibliografías por capítulo.
 
-## Cambiar el logo de portada
+## Cambiar el logo o portada
 
-Edita `pdf-template/title.tex`, línea del `\includegraphics`:
+Edita `pdf-template/before-body.tex`, en la sección de portada:
 
 ```latex
-\includegraphics[width=6cm]{images/Logo_FC_Color.png}\\[1.5em]
+\includegraphics[width=5.5cm]{images/Logo_FC_Color.png}\\[2.5em]
 ```
 
 - La ruta es relativa a la raíz del repo (donde vive `_quarto.yml`).
-- `width=6cm` controla el tamaño; súbelo o bájalo a gusto.
-- `\\[1.5em]` es el salto de línea + espacio antes del título; ajusta el
-  espacio cambiando `1.5em`.
+- `width=5.5cm` controla el tamaño; súbelo o bájalo a gusto.
 
 ## Cambiar los márgenes
 
@@ -46,7 +61,12 @@ En `_quarto.yml`, dentro de `format.pdf`:
 
 ```yaml
 geometry:
-  - margin=2cm
+  - top=2.5cm
+  - bottom=2.5cm
+  - left=2.5cm
+  - right=2.5cm
+  - headsep=0.7cm
+  - footskip=1.2cm
 ```
 
 Puedes usar un solo valor (como ahora) o separar por lado, por ejemplo:
@@ -94,6 +114,17 @@ Los partials más probables de querer tocar:
 - `toc.tex`: cómo se genera la tabla de contenidos.
 - `biblio.tex` / `biblio-config.tex`: formato de bibliografía.
 
+## Consolidación de bibliografía en el PDF
+
+En HTML, cada capítulo puede incluir su propia sección de referencias al final.
+Sin embargo, en PDF Quarto concatena todos los capítulos en un único documento,
+lo que provocaría que Pandoc `citeproc` duplique la bibliografía completa en cada
+capítulo que contenga `::: {#refs}`.
+
+Para evitar esto, `pdf-template/consolidate-refs.lua` intercepta los bloques
+intermedios `## Referencias` y `::: {#refs}` durante la compilación a PDF,
+dejando únicamente la bibliografía final en `references.qmd` como apéndice del libro.
+
 ## Probar cambios localmente
 
 ```bash
@@ -101,7 +132,7 @@ Los partials más probables de querer tocar:
 # equivalente a: quarto render --to pdf --no-clean
 ```
 
-Genera `docs/Almacenes-y-Minería-de-Datos.pdf`. El libro completo (~1550
+Genera `docs/Almacenes-y-Minería-de-Datos.pdf`. El libro completo (~1175
 páginas) tarda unos minutos incluso con `freeze` activado, porque LaTeX
 tiene que tipografiar todo de nuevo aunque el código Python no se
 reejecute.
