@@ -141,6 +141,31 @@ return {
                 end
             end
             return nil
+        end,
+        Para = function(para)
+            if not is_pdf_target() then return nil end
+            
+            -- Detectar si el párrafo contiene únicamente imágenes (o espacios en blanco)
+            local has_image = false
+            local only_images_and_spaces = true
+            for _, el in ipairs(para.content) do
+                if el.t == "Image" then
+                    has_image = true
+                elseif el.t ~= "Space" then
+                    only_images_and_spaces = false
+                    break
+                end
+            end
+            
+            -- Si es una imagen suelta, la envolvemos en un entorno center para el PDF
+            if has_image and only_images_and_spaces then
+                return {
+                    pandoc.RawBlock('latex', '\\begin{center}'),
+                    para,
+                    pandoc.RawBlock('latex', '\\end{center}')
+                }
+            end
+            return nil
         end
     }
 }
