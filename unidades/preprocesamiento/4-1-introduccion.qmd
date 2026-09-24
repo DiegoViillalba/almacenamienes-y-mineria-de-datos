@@ -16,6 +16,8 @@ execute:
 jupyter: python3
 ---
 
+{{< include _labkit.qmd >}}
+
 Preprocesar datos es convertir registros capturados para operar un negocio en entradas coherentes para una pregunta analítica. Antes de transformar una columna, preguntamos qué representa, cómo se obtuvo y qué información estará disponible cuando se use el modelo. La limpieza ayuda a evitar errores conocidos; no garantiza buenas predicciones.
 
 En BigMart, `LF` y `Low Fat` pueden significar lo mismo, un peso negativo requiere revisión y un precio extraordinario podría ser un error o un producto especial. Una regla automática no puede decidir lo último sin contexto. Tampoco todos los modelos necesitan el mismo tratamiento: algunos aceptan valores ausentes o categorías directamente, mientras que otros requieren imputación o codificación.[^modelos]
@@ -40,7 +42,9 @@ El orden de trabajo es: definir qué valores violan reglas del dominio; unificar
 
 ### Una transformación a mano
 
-Consideremos tres pesos de entrenamiento: $10$, ausente y $20$. Si elegimos imputación por media, calculamos $(10+20)/2=15$ con los dos pesos observados. La columna resultante es $(10,15,20)$. Su media es $15$ y su desviación estándar poblacional es $\sqrt{50/3}\approx4.082$. Al estandarizarla obtenemos aproximadamente $(-1.225,0,1.225)$.
+Consideremos tres pesos de entrenamiento: $10$, ausente y $20$. Si elegimos imputación por media, calculamos $(10+20)/2=15$ con los dos pesos observados. La columna resultante es $(10,15,20)$. Su media es $15$ y su desviación estándar poblacional[^desv] es $\sqrt{\tfrac{(10-15)^2+(15-15)^2+(20-15)^2}{3}}=\sqrt{50/3}\approx4.082$. Al estandarizarla obtenemos $\big(\tfrac{10-15}{4.082},\,0,\,\tfrac{20-15}{4.082}\big)\approx(-1.225,0,1.225)$.
+
+Ahora llega un producto nuevo de prueba con peso $40$. Si por descuido «ajustamos» con las cuatro filas, la media de imputación pasa a $(10+20+40)/3\approx23.33$: el valor que asignamos a una fila **de entrenamiento** depende de un dato que no deberíamos haber visto. Esta es la idea de fuga que formalizaremos enseguida y que el laboratorio permite manipular.
 
 Si las categorías son `Low Fat`, `LF` y `Regular`, primero unificamos `LF` con `Low Fat`. Después, una codificación *one hot*[^onehot] da las columnas `Fat_Low` y `Fat_Regular`:
 
@@ -54,7 +58,7 @@ Esta matriz solo ilustra un posible preprocesador. El escalado es útil para muc
 
 ## Formalización: reglas, parámetros y calidad
 
-Un pipeline es una composición ordenada $T=T_k\circ\cdots\circ T_1$. Algunas etapas aplican reglas establecidas por el dominio; otras aprenden parámetros $\theta$ a partir de datos. Para evaluar un modelo, ajustamos $\hat\theta=\operatorname{fit}(X_{\mathrm{train}})$ y usamos el mismo estado en $T_{\hat\theta}(X_{\mathrm{train}})$ y $T_{\hat\theta}(X_{\mathrm{test}})$. Ajustar con $X_{\mathrm{test}}$ incorpora información de evaluación al entrenamiento, una forma de *fuga de datos*.[^fuga]
+Un pipeline es una composición[^composicion] ordenada $T=T_k\circ\cdots\circ T_1$. Algunas etapas aplican reglas establecidas por el dominio; otras aprenden parámetros[^parametro] $\theta$ a partir de datos. Para evaluar un modelo, ajustamos $\hat\theta=\operatorname{fit}(X_{\mathrm{train}})$ y usamos el mismo estado en $T_{\hat\theta}(X_{\mathrm{train}})$ y $T_{\hat\theta}(X_{\mathrm{test}})$. Ajustar con $X_{\mathrm{test}}$ incorpora información de evaluación al entrenamiento, una forma de *fuga de datos*.[^fuga]
 
 Un preprocesador suele combinar comprobaciones de calidad distintas:
 
@@ -79,77 +83,78 @@ Documenta el esquema y las reglas de calidad que afectan al modelo, valida los l
 
 **Hipótesis.** Con pesos observados de entrenamiento $10$ y $20$, la media para imputar debe ser $15$. Si se incorpora el peso $40$ de prueba al ajuste, la media cambia.
 
-**Pasos.** Activa «Imputar peso»; compara ambos modos de ajuste; activa «Escalar precio» y observa la media y desviación usadas. Después normaliza las etiquetas y codifica el tipo de tienda para separar las transformaciones que aprenden parámetros de las que aplican reglas fijas.
+**Pasos.** Con «Imputar peso» activo, compara ambos modos de ajuste y observa cómo se mueve la línea naranja. Activa «Estandarizar precio» y anota μ y σ en cada modo. Por último, activa «Codificar tienda»: la fila de prueba pertenece a una tienda *Hypermarket* que no aparece en entrenamiento. ¿Qué columnas existen en cada modo y cuál de las dos matrices podría producirse realmente en producción?
 
 ::: {.content-visible when-format="html"}
 ```{=html}
-<div id="intro-lab" style="border:1px solid #d2d9df;border-radius:8px;padding:1rem;margin:1rem 0;">
-  <h3>Simulador de entrenamiento y prueba</h3>
-  <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
-    <fieldset style="flex:1;min-width:230px;">
-      <legend>Transformaciones</legend>
-      <label><input type="checkbox" id="lab-clean" checked> Unificar <code>Item_Fat_Content</code></label><br>
-      <label><input type="checkbox" id="lab-impute" checked> Imputar <code>Item_Weight</code></label><br>
-      <label><input type="checkbox" id="lab-scale"> Estandarizar <code>Item_MRP</code></label><br>
-      <label><input type="checkbox" id="lab-ohe"> Codificar <code>Outlet_Type</code></label>
-    </fieldset>
-    <fieldset style="flex:1;min-width:230px;">
-      <legend>Datos usados para ajustar</legend>
-      <label><input type="radio" name="intro-fit" value="train" checked> Solo entrenamiento</label><br>
-      <label><input type="radio" name="intro-fit" value="all"> Entrenamiento + prueba</label>
-      <p id="lab-parameters" aria-live="polite"></p>
-    </fieldset>
+<div class="plab" id="intro-lab">
+  <p class="plab-eyebrow">Laboratorio · Ajustar y aplicar</p>
+  <h3 class="plab-title">Simulador de entrenamiento y prueba</h3>
+  <p class="plab-sub">Tres filas de entrenamiento y una de prueba. Activa transformaciones y cambia qué filas se usan para <b>aprender</b> sus parámetros.</p>
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:2 1 260px">Filas usadas en <code>.fit()</code>
+      <div class="plab-seg" id="intro-fit"><button type="button" data-value="train" aria-pressed="true">Solo entrenamiento</button><button type="button" data-value="all">Entrenamiento + prueba</button></div>
+    </div>
+    <div class="plab-field" style="flex:3 1 320px">Transformaciones
+      <div style="display:flex;flex-wrap:wrap;gap:.3rem 1rem;color:var(--lab-text)">
+        <label><input type="checkbox" id="lab-clean" checked> Unificar grasa (regla fija)</label>
+        <label><input type="checkbox" id="lab-impute" checked> Imputar peso (aprende media)</label>
+        <label><input type="checkbox" id="lab-scale"> Estandarizar precio (aprende μ, σ)</label>
+        <label><input type="checkbox" id="lab-ohe"> Codificar tienda (aprende categorías)</label>
+      </div>
+    </div>
   </div>
-  <div id="lab-table" style="overflow-x:auto;"></div>
-  <p id="lab-feedback" aria-live="polite"></p>
-  <button type="button" id="lab-check">Comprobar hipótesis</button>
-  <p id="lab-check-result" aria-live="polite"></p>
+  <div class="plab-grid" style="grid-template-columns:1fr">
+    <div class="plab-panel"><h4>Parámetros aprendidos</h4>
+      <svg id="intro-chart" class="wide" role="img" aria-label="Pesos y media aprendida para imputar"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>peso de entrenamiento</span><span><i class="dot" style="background:var(--lab-s5)"></i>peso de prueba</span><span><i style="background:var(--lab-s2)"></i>media usada para imputar</span></div>
+      <p id="lab-parameters" aria-live="polite" style="font-size:.85rem;margin:.5rem 0 0"></p>
+    </div>
+    <div class="plab-panel"><h4>Matriz resultante</h4><div class="plab-scroll" id="lab-table"></div></div>
+  </div>
+  <p class="plab-note" id="lab-feedback" aria-live="polite"></p>
 </div>
 <script>
 (() => {
-  const root = document.getElementById('intro-lab');
+  const K = window.LabKit, root = document.getElementById('intro-lab');
+  const $ = s => root.querySelector(s);
   const data = [
-    {set:'Entrenamiento',weight:10,fat:'Low Fat',mrp:100,outlet:'Supermarket'},
-    {set:'Entrenamiento',weight:20,fat:'LF',mrp:150,outlet:'Grocery'},
-    {set:'Entrenamiento',weight:null,fat:'reg',mrp:200,outlet:'Supermarket'},
-    {set:'Prueba',weight:40,fat:'Regular',mrp:250,outlet:'Supermarket'}
+    { set: 'Entrenamiento', weight: 10, fat: 'Low Fat', mrp: 100, outlet: 'Supermarket' },
+    { set: 'Entrenamiento', weight: 20, fat: 'LF', mrp: 150, outlet: 'Grocery' },
+    { set: 'Entrenamiento', weight: null, fat: 'reg', mrp: 200, outlet: 'Supermarket' },
+    { set: 'Prueba', weight: 40, fat: 'Regular', mrp: 250, outlet: 'Hypermarket' }
   ];
-  const checked = id => root.querySelector(id).checked;
-  const mean = values => values.reduce((a,b) => a+b,0)/values.length;
-  const fmt = n => n === null ? 'NA' : n.toFixed(2);
+  const fitMode = K.segmented($('#intro-fit'), () => update());
+  const on = id => $(id).checked;
   function update() {
-    const all = root.querySelector('input[name="intro-fit"]:checked').value === 'all';
+    const all = fitMode.get() === 'all';
     const fit = all ? data : data.filter(d => d.set === 'Entrenamiento');
-    const weights = fit.filter(d => d.weight !== null).map(d => d.weight);
-    const weightMean = mean(weights);
-    const prices = fit.map(d => d.mrp);
-    const priceMean = mean(prices);
-    const priceSd = Math.sqrt(mean(prices.map(x => (x-priceMean)**2)));
-    const clean = checked('#lab-clean'), impute = checked('#lab-impute');
-    const scale = checked('#lab-scale'), ohe = checked('#lab-ohe');
-    root.querySelector('#lab-parameters').textContent =
-      `Media del peso: ${fmt(weightMean)}; media del precio: ${fmt(priceMean)}; desviación del precio: ${fmt(priceSd)}.`;
-    const head = '<tr><th>Conjunto</th><th>Peso</th><th>Grasa</th><th>Precio</th>' +
-      (ohe ? '<th>Supermarket</th><th>Grocery</th>' : '<th>Tienda</th>') + '</tr>';
+    const wMean = K.mean(fit.filter(d => d.weight !== null).map(d => d.weight));
+    const pMean = K.mean(fit.map(d => d.mrp)), pSd = K.sd(fit.map(d => d.mrp));
+    const cats = [...new Set(fit.map(d => d.outlet))];
+    const clean = on('#lab-clean'), impute = on('#lab-impute'), scale = on('#lab-scale'), ohe = on('#lab-ohe');
+    const c = K.chart($('#intro-chart'), { width: 640, height: 150, x: [0, 45], y: [0, 1], margin: { left: 14, right: 14, top: 26, bottom: 34 } });
+    c.axes({ xTicks: 5, yTicks: 0, grid: false, xLabel: 'Item_Weight (kg)' });
+    data.filter(d => d.weight !== null).forEach(d => { c.dot(d.weight, .45, 7, (d.set === 'Prueba' ? 's5' : 's1') + ' dot'); c.text(d.weight, .45, d.set === 'Prueba' ? 'prueba' : 'train', { 'text-anchor': 'middle', dy: 20 }); });
+    c.line(wMean, 0, wMean, 1, 's2 line');
+    c.text(wMean, 1, `media = ${K.fmt(wMean, 2)}`, { 'text-anchor': 'middle', dy: -8, class: 's2' });
+    $('#lab-parameters').textContent = `Precio: μ = ${K.fmt(pMean, 2)}, σ = ${K.fmt(pSd, 2)}. Categorías de tienda aprendidas: ${cats.join(', ')}.`;
+    const head = '<tr><th>Conjunto</th><th>Peso</th><th>Grasa</th><th>Precio</th>' + (ohe ? '<th>Supermarket</th><th>Grocery</th>' + (all ? '<th>Hypermarket</th>' : '') : '<th>Tienda</th>') + '</tr>';
     const body = data.map(d => {
-      const fat = clean ? ({'LF':'Low Fat','reg':'Regular'}[d.fat] || d.fat) : d.fat;
-      const weight = d.weight === null && impute ? weightMean : d.weight;
-      const price = scale ? (d.mrp-priceMean)/priceSd : d.mrp;
-      const outlet = ohe ? `<td>${Number(d.outlet==='Supermarket')}</td><td>${Number(d.outlet==='Grocery')}</td>` : `<td>${d.outlet}</td>`;
-      return `<tr><td>${d.set}</td><td>${fmt(weight)}</td><td>${fat}</td><td>${fmt(price)}</td>${outlet}</tr>`;
+      const fat = clean ? ({ LF: 'Low Fat', reg: 'Regular' }[d.fat] || d.fat) : d.fat;
+      const w = d.weight === null && impute ? wMean : d.weight;
+      const price = scale ? (d.mrp - pMean) / pSd : d.mrp;
+      const cols = all ? ['Supermarket', 'Grocery', 'Hypermarket'] : ['Supermarket', 'Grocery'];
+      const outlet = ohe ? cols.map(k => `<td>${+(d.outlet === k)}</td>`).join('') : `<td>${d.outlet}</td>`;
+      const hl = d.weight === null && impute ? ' class="hl"' : '';
+      return `<tr><td>${d.set}</td><td${hl}>${w === null ? 'NA' : K.fmt(w, 2)}</td><td>${fat}</td><td>${K.fmt(price, 2)}</td>${outlet}</tr>`;
     }).join('');
-    root.querySelector('#lab-table').innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead>${head}</thead><tbody>${body}</tbody></table>`;
-    root.querySelector('#lab-feedback').textContent = all
-      ? 'Los parámetros incorporan la fila de prueba: esta comparación ya no representa una evaluación independiente.'
-      : 'Los parámetros se aprendieron en entrenamiento y se aplicaron sin reajuste a la fila de prueba.';
+    $('#lab-table').innerHTML = `<table class="plab-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    const fb = $('#lab-feedback');
+    if (all) { fb.className = 'plab-note bad'; fb.textContent = `Fuga de datos: la fila de prueba movió la media de imputación de 15.00 a ${K.fmt(wMean, 2)}${scale ? ', cambió μ y σ del precio' : ''}${ohe ? ' y creó la columna Hypermarket, que el modelo nunca debió conocer' : ''}. La evaluación ya no es independiente.`; }
+    else { fb.className = 'plab-note good'; fb.textContent = `Parámetros aprendidos solo con entrenamiento y aplicados sin reajuste a la prueba.${ohe ? ' La tienda «Hypermarket» de prueba es desconocida: se codifica con ceros (handle_unknown="ignore").' : ''} La regla que unifica «LF» y «reg» no aprende nada de los datos, así que no genera fuga.`; }
   }
-  root.querySelectorAll('input').forEach(input => input.addEventListener('change', update));
-  root.querySelector('#lab-check').addEventListener('click', () => {
-    const trainMean = mean(data.filter(d => d.set==='Entrenamiento' && d.weight!==null).map(d => d.weight));
-    const contaminated = mean(data.filter(d => d.weight!==null).map(d => d.weight));
-    root.querySelector('#lab-check-result').textContent =
-      `Comprobación: solo entrenamiento = ${fmt(trainMean)}; con prueba = ${fmt(contaminated)}. La hipótesis se cumple: el valor imputado cambia, aunque el peso faltante está en entrenamiento.`;
-  });
+  root.querySelectorAll('input').forEach(i => i.addEventListener('change', update));
   update();
 })();
 </script>
@@ -275,3 +280,7 @@ Separa entrenamiento y prueba antes de aprender medias, medianas, escalas o cate
 [^fuga]: Fuga de datos: información que no estaría disponible al entrenar influye en alguna etapa del ajuste o de la selección del modelo. [Errores comunes y prácticas recomendadas de scikit-learn](https://scikit-learn.org/stable/common_pitfalls.html#data-leakage).
 [^drift]: Un cambio en $P(X)$ describe deriva de las variables de entrada; una variación en $P(Y\mid X)$ describe cambio de la relación con la respuesta. La relevancia depende de la tarea y de la evidencia disponible.
 [^robust]: [Documentación de `RobustScaler`](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.RobustScaler.html).
+[^desv]: **Desviación estándar poblacional:** raíz del promedio de las desviaciones al cuadrado respecto a la media, dividiendo entre $n$. Es la convención de `StandardScaler`; la versión muestral divide entre $n-1$.
+[^composicion]: **Composición de funciones:** $(T_2\circ T_1)(X)=T_2(T_1(X))$; se aplica primero $T_1$ y su salida alimenta a $T_2$. El orden importa: imputar y luego escalar no da, en general, lo mismo que escalar y luego imputar.
+[^parametro]: **Parámetro aprendido frente a regla fija:** una media o una lista de categorías son *estadísticos* calculados con datos; si cambian las filas, cambian ellos. Una regla como «`LF` significa `Low Fat`» no depende de las filas y puede aplicarse a cualquier conjunto sin riesgo de fuga.
+

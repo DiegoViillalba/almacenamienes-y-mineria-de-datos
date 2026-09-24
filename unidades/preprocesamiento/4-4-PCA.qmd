@@ -24,6 +24,8 @@ import warnings
 warnings.filterwarnings('ignore')
 ```
 
+{{< include _labkit.qmd >}}
+
 Imagina dos sensores que registran casi el mismo movimiento. Si ambas lecturas suben y bajan juntas, dos columnas describen en gran parte una sola dirección. PCA gira los ejes para que el primero siga la mayor variación y el segundo recoja lo que queda. Las *puntuaciones*[^pca-scores] indican dónde queda cada observación sobre los nuevos ejes.
 
 **Ejemplo mínimo.** Para las lecturas $(2,3)$, $(3,4)$ y $(4,5)$, al restar las medias $(3,4)$ obtenemos $(-1,-1)$, $(0,0)$ y $(1,1)$. Todos los puntos quedan sobre la diagonal: una sola coordenada basta para reconstruirlos. Más adelante calcularemos esa coordenada y la varianza que conserva.
@@ -35,6 +37,12 @@ Define para qué usarás los componentes: visualizar, comprimir o alimentar un m
 [^pca-scores]: **Puntuación (*score*)**: coordenada de una observación tras proyectarla sobre una componente principal. Los *loadings* son los pesos de las variables originales que definen esa dirección.
 
 [^pca-eigen]: **Autovalor o eigenvalor**: número que indica cuánto estira una matriz una dirección propia. En PCA de la matriz de covarianza, equivale a la varianza capturada por la componente correspondiente.
+
+[^pca-cov]: **Covarianza muestral**: $s_{jk}=\frac{1}{n-1}\sum_i (x_{ij}-\bar x_j)(x_{ik}-\bar x_k)$. Es positiva cuando dos variables tienden a estar por encima (o por debajo) de su media a la vez. Dividir entre $n-1$ en lugar de $n$ corrige el sesgo que produce usar la media muestral en vez de la media poblacional desconocida (corrección de Bessel); para las direcciones de PCA el divisor es irrelevante, porque solo reescala todos los autovalores.
+
+[^pca-psd]: **Matriz semidefinida positiva**: matriz simétrica $S$ tal que $\mathbf{u}^T S\mathbf{u}\ge 0$ para todo vector $\mathbf{u}$. Para una covarianza, $\mathbf{u}^T S\mathbf{u}$ es la varianza de la combinación lineal $\tilde X\mathbf{u}$, y una varianza nunca es negativa. Por eso sus autovalores son reales y no negativos.
+
+[^pca-lagrange]: **Multiplicadores de Lagrange**: técnica para optimizar una función sujeta a una restricción de igualdad. Se suma la restricción multiplicada por una incógnita $\lambda$ y se iguala a cero el gradiente respecto a todas las variables. En el óptimo, el gradiente del objetivo es paralelo al de la restricción.
 
 ## Ejemplo: dos sensores paso a paso
 
@@ -48,7 +56,7 @@ A continuación, calculamos el caso de los dos sensores de la intuición. Aquí 
     Calculamos la media de cada columna: $\bar{x}_1 = 3$ y $\bar{x}_2 = 4$. Restamos la media a cada fila para obtener $\tilde{X}$:
     $$\tilde{X} = \begin{pmatrix} 2-3 & 3-4 \\ 3-3 & 4-4 \\ 4-3 & 5-4 \end{pmatrix} = \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix}$$
 
-3.  **Cálculo de la matriz de covarianza ($S$):**
+3.  **Cálculo de la matriz de covarianza[^pca-cov] ($S$):**
     Aplicamos $S = \frac{1}{n-1} \tilde{X}^T \tilde{X}$ con $n-1 = 2$:
     $$S = \frac{1}{2} \begin{pmatrix} -1 & 0 & 1 \\ -1 & 0 & 1 \end{pmatrix} \begin{pmatrix} -1 & -1 \\ 0 & 0 \\ 1 & 1 \end{pmatrix} = \frac{1}{2} \begin{pmatrix} 2 & 2 \\ 2 & 2 \end{pmatrix} = \begin{pmatrix} 1 & 1 \\ 1 & 1 \end{pmatrix}$$
 
@@ -68,6 +76,242 @@ A continuación, calculamos el caso de los dos sensores de la intuición. Aquí 
 
 7.  **Conclusión:**
     Dado que los datos originales estaban perfectamente alineados ($x_2 = x_1 + 1$), el PCA ha logrado reducir la dimensionalidad de 2 a 1 sin ninguna pérdida de información, capturando toda la estructura de los datos en un solo eje.
+
+### Laboratorio: reproduce los seis pasos y rompe la alineación
+
+Las gráficas siguientes no son imágenes precalculadas: el navegador ejecuta una implementación de PCA para dos variables (centrado, covarianza, autovalores por la fórmula cuadrática, autovectores y proyección) cada vez que cambias los datos. Empieza con los tres puntos del ejemplo y recorre los pasos; comprueba que cada número coincide con el desarrollo anterior.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="pca-steps-lab">
+  <p class="plab-eyebrow">Laboratorio 1 · PCA a mano, en el navegador</p>
+  <h3 class="plab-title">Dos sensores, seis pasos</h3>
+  <p class="plab-sub">Elige un paso. En las vistas de dispersión puedes <b>arrastrar los puntos</b>; los números y la gráfica se recalculan al instante.</p>
+  <div class="plab-steps" role="group" aria-label="Pasos de PCA">
+    <button type="button" data-step="1">1 · Datos</button>
+    <button type="button" data-step="2">2 · Centrado</button>
+    <button type="button" data-step="3">3 · Covarianza</button>
+    <button type="button" data-step="4">4 · Autovalores</button>
+    <button type="button" data-step="5">5 · Autovectores</button>
+    <button type="button" data-step="6">6 · Proyección</button>
+  </div>
+  <div class="plab-grid wide-left">
+    <div class="plab-panel">
+      <svg id="pcaS-chart" role="img" aria-label="Gráfica del paso actual de PCA"></svg>
+      <div class="plab-legend" id="pcaS-legend"></div>
+      <div class="plab-controls" style="margin:.7rem 0 0">
+        <button type="button" class="plab-btn" id="pcaS-noise">Perturbar puntos</button>
+        <button type="button" class="plab-btn" id="pcaS-add">Agregar punto</button>
+        <button type="button" class="plab-btn" id="pcaS-del">Quitar punto</button>
+        <button type="button" class="plab-btn primary" id="pcaS-reset">Volver a (2,3), (3,4), (4,5)</button>
+      </div>
+    </div>
+    <div class="plab-panel">
+      <h4 id="pcaS-title"></h4>
+      <p id="pcaS-explain" style="margin:0"></p>
+      <div class="plab-math" id="pcaS-math"></div>
+      <div class="plab-stats">
+        <div class="plab-stat"><span>Observaciones n</span><strong id="pcaS-n"></strong></div>
+        <div class="plab-stat"><span>λ₁ (varianza en PC1)</span><strong id="pcaS-l1"></strong></div>
+        <div class="plab-stat"><span>λ₂ (varianza en PC2)</span><strong id="pcaS-l2"></strong></div>
+        <div class="plab-stat"><span>Varianza explicada PC1</span><strong id="pcaS-pve"></strong></div>
+      </div>
+    </div>
+  </div>
+  <p class="plab-note" id="pcaS-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('pca-steps-lab');
+  const $ = s => root.querySelector(s);
+  const START = [[2, 3], [3, 4], [4, 5]];
+  const rand = K.rng(11);
+  let pts = START.map(p => [...p]), step = 1, drag = null;
+
+  // PCA para dos variables: forma cerrada de los autovalores de una matriz simétrica 2 × 2.
+  function pca(P) {
+    const n = P.length, mx = K.mean(P.map(p => p[0])), my = K.mean(P.map(p => p[1]));
+    const C = P.map(p => [p[0] - mx, p[1] - my]);
+    const a = K.sum(C.map(c => c[0] * c[0])) / (n - 1);
+    const b = K.sum(C.map(c => c[0] * c[1])) / (n - 1);
+    const d = K.sum(C.map(c => c[1] * c[1])) / (n - 1);
+    const tr = a + d, det = a * d - b * b, disc = Math.sqrt(((a - d) / 2) ** 2 + b * b);
+    const l1 = tr / 2 + disc, l2 = Math.max(tr / 2 - disc, 0);
+    let v = Math.abs(b) > 1e-12 ? [b, l1 - a] : (a >= d ? [1, 0] : [0, 1]);
+    const nv = Math.hypot(v[0], v[1]); v = v.map(x => x / nv);
+    if (v[0] < -1e-12 || (Math.abs(v[0]) <= 1e-12 && v[1] < 0)) v = v.map(x => -x);
+    const w = [-v[1], v[0]];
+    const z = C.map(c => c[0] * v[0] + c[1] * v[1]);
+    return { n, mean: [mx, my], C, S: [[a, b], [b, d]], tr, det, l: [l1, l2], v, w, z };
+  }
+  const clean = x => Math.abs(x) < 0.005 ? 0 : x;
+  const f = (x, d = 2) => K.fmt(clean(x), d);
+  function mat(name, M) {
+    const cells = M.map(r => r.map(x => f(x)));
+    const width = Math.max(...cells.flat().map(s => s.length));
+    const pad = ' '.repeat(name.length + 3);
+    return cells.map((r, i) => {
+      const [l, rr] = M.length === 1 ? ['[', ']'] : i === 0 ? ['⎡', '⎤'] : i === M.length - 1 ? ['⎣', '⎦'] : ['⎢', '⎥'];
+      const head = i === Math.floor((M.length - 1) / 2) ? `${name} = ` : pad;
+      return `${head}${l} ${r.map(s => s.padStart(width)).join('  ')} ${rr}`;
+    }).join('\n');
+  }
+  // Extremos de una recta por el origen con dirección u, recortada al cuadrado [-R, R]².
+  const clip = (u, R) => { const t = R / Math.max(Math.abs(u[0]), Math.abs(u[1])); return [-t * u[0], -t * u[1], t * u[0], t * u[1]]; };
+  const legend = items => { $('#pcaS-legend').innerHTML = items.map(([cls, lab, dot]) => `<span><i class="${dot ? 'dot' : ''}" style="background:var(--lab-${cls})"></i>${lab}</span>`).join(''); };
+
+  function scatter(r, centered) {
+    const R = centered ? Math.max(3.5, Math.ceil(Math.max(...r.C.flat().map(Math.abs)) * 1.2)) : 7;
+    const dom = centered ? [-R, R] : [0, R];
+    const c = K.chart($('#pcaS-chart'), { width: 400, height: 394, x: dom, y: dom, margin: { left: 44, right: 14, top: 14, bottom: 38 } });
+    c.axes({ xTicks: 6, yTicks: 6, xLabel: centered ? 'x̃₁ (sensor A centrado)' : 'x₁ (sensor A)', yLabel: centered ? 'x̃₂ (sensor B centrado)' : 'x₂ (sensor B)' });
+    if (centered) c.zeroLines();
+    c.R = R; return c;
+  }
+  function drawPoints(c, P, cls = 's1') {
+    P.forEach((p, i) => {
+      const dot = c.dot(p[0], p[1], 7, `${cls} dot drag`); dot.dataset.i = i;
+      c.text(p[0], p[1], `P${i + 1}`, { dx: 9, dy: -8, class: 'strong' });
+    });
+  }
+
+  function render() {
+    const r = pca(pts);
+    root.querySelectorAll('.plab-steps button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.step === step)));
+    const pve = r.tr > 0 ? r.l[0] / r.tr : 1;
+    $('#pcaS-n').textContent = r.n;
+    $('#pcaS-l1').textContent = f(r.l[0]);
+    $('#pcaS-l2').textContent = f(r.l[1]);
+    $('#pcaS-pve').textContent = K.fmt(100 * pve, 1) + ' %';
+    const ang = (Math.atan2(r.v[1], r.v[0]) * 180 / Math.PI + 180) % 180;
+    const corr = r.S[0][0] > 0 && r.S[1][1] > 0 ? r.S[0][1] / Math.sqrt(r.S[0][0] * r.S[1][1]) : NaN;
+    let title = '', text = '', math = '';
+
+    if (step === 1) {
+      const c = scatter(r, false);
+      c.line(r.mean[0] - .25, r.mean[1], r.mean[0] + .25, r.mean[1], 's2 line');
+      c.line(r.mean[0], r.mean[1] - .25, r.mean[0], r.mean[1] + .25, 's2 line');
+      c.text(r.mean[0], r.mean[1], 'x̄', { dx: 8, dy: 16, class: 's2' });
+      drawPoints(c, pts);
+      legend([['s1', 'lecturas (arrastrables)', 1], ['s2', 'vector de medias']]);
+      title = 'Paso 1 · La matriz de datos X';
+      text = `Cada fila es una observación y cada columna un sensor. El vector de medias es x̄ = (${f(r.mean[0])}, ${f(r.mean[1])}). Si arrastras un punto, la media se desplaza 1/n de lo que movió el punto.`;
+      math = mat('X', pts);
+    } else if (step === 2) {
+      const c = scatter(r, true);
+      drawPoints(c, r.C);
+      legend([['s1', 'datos centrados (arrastrables)', 1]]);
+      title = 'Paso 2 · Centrar: X̃ = X − 1 x̄ᵀ';
+      text = `Restamos (${f(r.mean[0])}, ${f(r.mean[1])}) a cada fila. La forma de la nube no cambia: solo trasladamos el origen a su centro. Cada columna de X̃ suma ${f(K.sum(r.C.map(p => p[0])))} y ${f(K.sum(r.C.map(p => p[1])))}.`;
+      math = mat('X̃', r.C);
+    } else if (step === 3) {
+      const c = K.chart($('#pcaS-chart'), { width: 400, height: 394, x: [0, 2], y: [0, 2], margin: { left: 44, right: 14, top: 14, bottom: 38 } });
+      const mx = Math.max(...r.S.flat().map(Math.abs), 1e-9), names = ['x₁', 'x₂'];
+      for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+        const val = r.S[i][j], rect = c.rect(j + .03, 2 - i - .03, j + .97, 1 - i + .03, val >= 0 ? 's1' : 's5');
+        rect.style.fillOpacity = (0.12 + 0.7 * Math.abs(val) / mx).toFixed(2); rect.style.strokeWidth = 0;
+        c.text(j + .5, 1.5 - i, f(val), { 'text-anchor': 'middle', dy: 6, class: 'strong', style: 'font-size:22px' });
+        c.text(j + .5, 1.5 - i, i === j ? `varianza de ${names[i]}` : 'covarianza', { 'text-anchor': 'middle', dy: 28, class: 'strong', style: 'font-weight:400' });
+      }
+      names.forEach((nm, k) => { c.text(k + .5, 0, nm, { 'text-anchor': 'middle', dy: 18, class: 'strong' }); c.text(0, 1.5 - k, nm, { 'text-anchor': 'end', dx: -8, dy: 4, class: 'strong' }); });
+      legend([['s1', 'valor positivo (más intenso = mayor)'], ['s5', 'valor negativo']]);
+      title = 'Paso 3 · Matriz de covarianza S = X̃ᵀX̃ / (n − 1)';
+      text = `La diagonal guarda las varianzas (${f(r.S[0][0])} y ${f(r.S[1][1])}); fuera de ella, la covarianza ${f(r.S[0][1])}. La correlación es r = s₁₂ / (s₁ s₂) = ${Number.isFinite(corr) ? f(corr) : '—'}: ${Math.abs(corr) > .999 ? 'relación lineal perfecta' : 'la relación ya no es perfecta'}.`;
+      math = mat('S', r.S) + `\n\ntraza(S) = ${f(r.tr)}   det(S) = ${f(r.det, 3)}`;
+    } else if (step === 4) {
+      const top = Math.max(r.l[0], 0.5) * 1.25;
+      const c = K.chart($('#pcaS-chart'), { width: 400, height: 394, x: [0, 2], y: [0, top], margin: { left: 44, right: 14, top: 14, bottom: 38 } });
+      c.axes({ xTicks: 0, yTicks: 5, yLabel: 'varianza', xCats: [[.5, 'λ₁ → PC1'], [1.5, 'λ₂ → PC2']] });
+      r.l.forEach((l, k) => {
+        c.rect(k + .2, 0, k + .8, l, k ? 's3' : 's2');
+        c.text(k + .5, l, `${f(l)}  (${K.fmt(100 * (r.tr > 0 ? l / r.tr : 0), 1)} %)`, { 'text-anchor': 'middle', dy: -7, class: 'strong' });
+      });
+      c.line(0, r.tr, 2, r.tr, 'muted line dash thin');
+      c.text(2, r.tr, 'varianza total = traza', { 'text-anchor': 'end', dy: -5 });
+      legend([['s2', 'λ₁'], ['s3', 'λ₂'], ['axis', 'traza de S']]);
+      title = 'Paso 4 · Autovalores: det(S − λI) = 0';
+      text = `Para una matriz 2 × 2 el determinante da la cuadrática λ² − traza·λ + det = 0. Sus raíces son λ = traza/2 ± √((traza/2)² − det). Observa que λ₁ + λ₂ = traza: PCA reparte la varianza total, no la crea.`;
+      math = `λ² − ${f(r.tr)}·λ + ${f(r.det, 3)} = 0\n\nλ₁ = ${f(r.tr / 2)} + ${f(r.l[0] - r.tr / 2)} = ${f(r.l[0])}\nλ₂ = ${f(r.tr / 2)} − ${f(r.l[0] - r.tr / 2)} = ${f(r.l[1])}`;
+    } else if (step === 5) {
+      const c = scatter(r, true);
+      const L1 = clip(r.v, c.R), L2 = clip(r.w, c.R);
+      c.line(L1[0], L1[1], L1[2], L1[3], 's2 line thin');
+      c.line(L2[0], L2[1], L2[2], L2[3], 's3 line thin dash');
+      const s1 = Math.sqrt(r.l[0]), s2 = Math.sqrt(r.l[1]);
+      c.arrow(0, 0, r.v[0] * Math.max(s1, .3), r.v[1] * Math.max(s1, .3), 's2');
+      if (s2 > .05) c.arrow(0, 0, r.w[0] * s2, r.w[1] * s2, 's3');
+      drawPoints(c, r.C);
+      legend([['s2', 'PC1 (v₁)'], ['s3', 'PC2 (v₂ ⟂ v₁)'], ['s1', 'datos centrados', 1]]);
+      title = 'Paso 5 · Autovectores: (S − λ₁I) v₁ = 0';
+      text = `v₁ es unitario y apunta a ${K.fmt(ang, 1)}° del eje x₁. Las flechas miden √λ: la desviación estándar de los datos en cada dirección. v₂ es perpendicular, así que v₁ · v₂ = 0.`;
+      math = `v₁ = (${f(r.v[0], 3)}, ${f(r.v[1], 3)})   ‖v₁‖ = 1\nv₂ = (${f(r.w[0], 3)}, ${f(r.w[1], 3)})\n\nS v₁ = (${f(r.S[0][0] * r.v[0] + r.S[0][1] * r.v[1], 3)}, ${f(r.S[1][0] * r.v[0] + r.S[1][1] * r.v[1], 3)})\nλ₁ v₁ = (${f(r.l[0] * r.v[0], 3)}, ${f(r.l[0] * r.v[1], 3)})`;
+    } else {
+      const c = scatter(r, true);
+      const L1 = clip(r.v, c.R);
+      c.line(L1[0], L1[1], L1[2], L1[3], 's2 line thin');
+      r.C.forEach((p, i) => {
+        const fx = r.z[i] * r.v[0], fy = r.z[i] * r.v[1];
+        c.line(p[0], p[1], fx, fy, 's4 line thin dash');
+        c.dot(fx, fy, 4.5, 's2 dot');
+        c.text(fx, fy, `z${i + 1} = ${f(r.z[i])}`, { dx: 7, dy: 14, class: 's2', style: 'font-size:10px' });
+      });
+      drawPoints(c, r.C);
+      const err = K.sum(r.C.map((p, i) => (p[0] - r.z[i] * r.v[0]) ** 2 + (p[1] - r.z[i] * r.v[1]) ** 2)) / (r.n - 1);
+      legend([['s2', 'proyección sobre PC1', 1], ['s4', 'error de reconstrucción'], ['s1', 'datos centrados', 1]]);
+      title = 'Paso 6 · Proyectar: z = X̃ v₁';
+      text = `Cada puntuación z es la coordenada del punto sobre PC1. La varianza de z es exactamente λ₁ = ${f(r.l[0])}. Los segmentos punteados son lo que se pierde al reconstruir con x̂ = z v₁ᵀ; su suma de cuadrados entre (n − 1) vale ${f(err, 3)} = λ₂.`;
+      math = mat('z', r.z.map(v => [v])) + `\n\nVar(z) = ${f(K.variance(r.z, 1))}   error = ${f(err, 3)}`;
+    }
+    $('#pcaS-title').textContent = title;
+    $('#pcaS-explain').textContent = text;
+    $('#pcaS-math').textContent = math;
+    const note = $('#pcaS-note');
+    if (r.l[1] < 1e-6) { note.className = 'plab-note good'; note.textContent = 'Los puntos son colineales: λ₂ = 0 y una sola coordenada reconstruye los datos sin pérdida, como en el desarrollo del texto.'; }
+    else { note.className = 'plab-note warn'; note.textContent = `La alineación ya no es perfecta: λ₂ = ${f(r.l[1], 3)} > 0. Si conservas solo PC1 pierdes ${K.fmt(100 * (1 - pve), 1)} % de la varianza total.`; }
+  }
+
+  const svg = $('#pcaS-chart');
+  svg.addEventListener('pointerdown', e => {
+    const i = e.target.dataset && e.target.dataset.i;
+    if (i === undefined || ![1, 2, 5, 6].includes(step)) return;
+    drag = +i; svg.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  svg.addEventListener('pointermove', e => {
+    if (drag === null) return;
+    const c = svg.__chart; if (!c) return;
+    const [px, py] = c.pointer(e), n = pts.length;
+    if (step === 1) pts[drag] = [K.clamp(px, .2, 6.8), K.clamp(py, .2, 6.8)];
+    else {
+      // En la vista centrada, el punto arrastrado sigue al cursor: resolvemos x_i a partir de x̃_i = x_i − media.
+      const others = [0, 1].map(k => K.sum(pts.filter((_, j) => j !== drag).map(p => p[k])));
+      pts[drag] = [(px + others[0] / n) / (1 - 1 / n), (py + others[1] / n) / (1 - 1 / n)].map(v => K.clamp(v, -2, 9));
+    }
+    render();
+  });
+  const stop = () => { drag = null; };
+  svg.addEventListener('pointerup', stop); svg.addEventListener('pointercancel', stop);
+
+  root.querySelectorAll('.plab-steps button').forEach(b => b.addEventListener('click', () => { step = +b.dataset.step; render(); }));
+  $('#pcaS-noise').addEventListener('click', () => { pts = pts.map(p => [K.clamp(p[0] + .35 * rand.normal(), .2, 6.8), K.clamp(p[1] + .35 * rand.normal(), .2, 6.8)]); render(); });
+  $('#pcaS-add').addEventListener('click', () => { if (pts.length < 8) { const m = pca(pts).mean; pts.push([K.clamp(m[0] + 1.2 * rand.normal(), .2, 6.8), K.clamp(m[1] + 1.2 * rand.normal(), .2, 6.8)]); render(); } });
+  $('#pcaS-del').addEventListener('click', () => { if (pts.length > 2) { pts.pop(); render(); } });
+  $('#pcaS-reset').addEventListener('click', () => { pts = START.map(p => [...p]); render(); });
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio dibuja cada paso (datos, centrado, covarianza, autovalores, autovectores y proyección) con una implementación de PCA en JavaScript y permite arrastrar los puntos. Los valores de referencia son los del desarrollo anterior: $\bar{\mathbf{x}}=(3,4)$, $S=\begin{pmatrix}1&1\\1&1\end{pmatrix}$, $\lambda=(2,0)$, $\mathbf{v}_1=(0.707,0.707)$ y $\mathbf{z}=(-1.414,0,1.414)$.
+:::
+
+**Guía del laboratorio.**
+
+1. Recorre los pasos 1 a 6 sin mover nada y comprueba cada número contra el desarrollo manual: $\bar{\mathbf x}=(3,4)$, $\operatorname{traza}(S)=2$, $\det(S)=0$, $\lambda_1=2$, $\lambda_2=0$ y $z=(-1.414,\,0,\,1.414)$.
+2. En el paso 5, arrastra P3 fuera de la diagonal. **Antes de soltarlo**, predice hacia dónde girará PC1 y si $\lambda_2$ dejará de ser cero. Comprueba en el paso 6 que el error de reconstrucción coincide con $\lambda_2$.
+3. Pulsa «Agregar punto» varias veces. Verifica en el paso 4 que $\lambda_1+\lambda_2$ sigue igual a la traza, aunque la proporción explicada por PC1 cambie.
+4. Coloca dos puntos casi encima uno del otro y el tercero lejos. Explica, con la fórmula de la covarianza, por qué un solo punto alejado puede decidir la dirección de PC1; lo retomaremos en la sección de sensibilidad a *outliers*.
 
 ## Motivación: la maldición de la dimensionalidad
 
@@ -285,7 +529,7 @@ Dado un conjunto de datos $X \in \mathbb{R}^{n \times p}$, donde $n$ es el núme
     - $s_{jj}$ representa la **varianza** de la variable $j$
     - $s_{jk}$ representa la **covarianza** entre las variables $j$ y $k$
 
-    Esta matriz es simétrica y semidefinida positiva, lo que garantiza que sus eigenvalores sean reales y no negativos.
+    Esta matriz es simétrica y semidefinida positiva[^pca-psd], lo que garantiza que sus eigenvalores sean reales y no negativos.
 
 3.  **Descomposición Espectral:** Se resuelve el problema de autovalores para encontrar las direcciones principales:
     $$S \mathbf{v} = \lambda \mathbf{v}$$
@@ -305,173 +549,130 @@ $$\text{PVE}_k = \frac{\lambda_k}{\sum_{j=1}^p \lambda_j}$$
 Esto permite elegir una dimensión que conserve, por ejemplo, el 95% de la varianza **de la matriz transformada usada en el ajuste**. El umbral es una decisión de análisis, no una garantía de calidad del modelo.
 
 
-### Ejemplo Práctico: Visualización paso a paso
+### Por qué autovectores: la formulación variacional
 
-A continuación, se desarrolla el proceso completo de nuevo incluyendo una visualización interactiva en cada paso para ilustrar cómo se transforman los datos a lo largo del proceso de PCA.
-
-
-1. **Definición de la matriz de datos original**
+El cálculo anterior usó autovalores como una receta. La razón aparece al plantear PCA como un problema de optimización. Para una dirección unitaria $\mathbf{u}$, las puntuaciones son $\mathbf{z}=\tilde X\mathbf{u}$ y su varianza es
 
 $$
-X = \begin{pmatrix} 2 & 3 \\ 3 & 4 \\ 4 & 5 \end{pmatrix}
+\operatorname{Var}(\mathbf{z})=\frac{1}{n-1}\mathbf{u}^T\tilde X^T\tilde X\mathbf{u}=\mathbf{u}^T S\,\mathbf{u}.
 $$
 
-```{python}
-import numpy as np
-import plotly.graph_objects as go
+Queremos la dirección de mayor varianza sin hacer trampa alargando el vector, así que imponemos $\mathbf{u}^T\mathbf{u}=1$. Con un multiplicador de Lagrange[^pca-lagrange]:
 
-X = np.array([[2,3],[3,4],[4,5]])
+$$
+\mathcal{L}(\mathbf{u},\lambda)=\mathbf{u}^T S\mathbf{u}-\lambda(\mathbf{u}^T\mathbf{u}-1),
+\qquad
+\nabla_{\mathbf{u}}\mathcal{L}=2S\mathbf{u}-2\lambda\mathbf{u}=\mathbf{0}
+\;\Longrightarrow\;
+S\mathbf{u}=\lambda\mathbf{u}.
+$$
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=X[:,0], y=X[:,1],
-    mode='markers+text',
-    text=['P1','P2','P3'],
-    textposition='top center'
-))
-fig.update_layout(title="Datos originales")
-fig.show()
+Los candidatos a óptimo son exactamente los autovectores de $S$. Al multiplicar por $\mathbf{u}^T$ obtenemos $\mathbf{u}^T S\mathbf{u}=\lambda$: la varianza proyectada **es** el autovalor, así que el máximo se alcanza con el autovector de $\lambda_1$. El cociente $\mathbf{u}^T S\mathbf{u}/\mathbf{u}^T\mathbf{u}$ se llama *cociente de Rayleigh*.
+
+Hay una segunda lectura. Para un punto centrado $\tilde{\mathbf{x}}_i$, el teorema de Pitágoras separa su norma en la parte proyectada y el residuo perpendicular:
+
+$$
+\|\tilde{\mathbf{x}}_i\|^2=(\mathbf{u}^T\tilde{\mathbf{x}}_i)^2+\|\tilde{\mathbf{x}}_i-(\mathbf{u}^T\tilde{\mathbf{x}}_i)\,\mathbf{u}\|^2 .
+$$
+
+Sumando sobre $i$ y dividiendo entre $n-1$: **varianza total = varianza proyectada + error de reconstrucción**. Como el lado izquierdo no depende de $\mathbf{u}$, maximizar la varianza y minimizar el error son el mismo problema.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="pca-rot-lab">
+  <p class="plab-eyebrow">Laboratorio 2 · Cociente de Rayleigh</p>
+  <h3 class="plab-title">Gira la recta y busca la máxima varianza</h3>
+  <p class="plab-sub">Para cada dirección u(θ) = (cos θ, sen θ) el navegador calcula uᵀSu (varianza proyectada) y el error cuadrático de reconstrucción. Mueve θ antes de pulsar «Saltar a PC1».</p>
+  <div class="plab-controls">
+    <label>Ángulo θ de la recta: <b id="pcaR-theta-v"></b><input type="range" id="pcaR-theta" min="0" max="179" step="1" value="120"></label>
+    <label>Correlación entre variables: <b id="pcaR-rho-v"></b><input type="range" id="pcaR-rho" min="-0.95" max="0.95" step="0.05" value="0.7"></label>
+    <label>Escala de x₂ respecto de x₁: <b id="pcaR-scale-v"></b><input type="range" id="pcaR-scale" min="0.3" max="3" step="0.1" value="1"></label>
+    <button type="button" class="plab-btn primary" id="pcaR-snap">Saltar a PC1</button>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Datos centrados y su proyección</h4><svg id="pcaR-scatter" role="img" aria-label="Nube de puntos con la recta de proyección"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>datos</span><span><i style="background:var(--lab-s2)"></i>recta u(θ)</span><span><i style="background:var(--lab-s4)"></i>residuos</span></div></div>
+    <div class="plab-panel"><h4>Varianza proyectada y error según θ</h4><svg id="pcaR-curve" role="img" aria-label="Curvas de varianza proyectada y error contra el ángulo"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s2)"></i>uᵀSu</span><span><i style="background:var(--lab-s4)"></i>error de reconstrucción</span><span><i style="background:var(--lab-axis)"></i>varianza total</span></div></div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Varianza proyectada</span><strong id="pcaR-var"></strong></div>
+    <div class="plab-stat"><span>Error de reconstrucción</span><strong id="pcaR-err"></strong></div>
+    <div class="plab-stat"><span>Suma (= traza de S)</span><strong id="pcaR-tot"></strong></div>
+    <div class="plab-stat"><span>Ángulo de PC1</span><strong id="pcaR-best"></strong></div>
+  </div>
+  <p class="plab-note" id="pcaR-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('pca-rot-lab');
+  const $ = s => root.querySelector(s);
+  const N = 70, rand = K.rng(2024);
+  const base = Array.from({ length: N }, () => [rand.normal(), rand.normal()]);
+  function data() {
+    const rho = +$('#pcaR-rho').value, sc = +$('#pcaR-scale').value;
+    const P = base.map(([a, b]) => [1.2 * a, sc * 1.2 * (rho * a + Math.sqrt(1 - rho * rho) * b)]);
+    const m = [0, 1].map(k => K.mean(P.map(p => p[k])));
+    const C = P.map(p => [p[0] - m[0], p[1] - m[1]]);
+    const s = (i, j) => K.sum(C.map(p => p[i] * p[j])) / (N - 1);
+    const S = [[s(0, 0), s(0, 1)], [s(0, 1), s(1, 1)]];
+    const tr = S[0][0] + S[1][1], disc = Math.sqrt(((S[0][0] - S[1][1]) / 2) ** 2 + S[0][1] ** 2);
+    const l1 = tr / 2 + disc;
+    const v = Math.abs(S[0][1]) > 1e-12 ? [S[0][1], l1 - S[0][0]] : (S[0][0] >= S[1][1] ? [1, 0] : [0, 1]);
+    const best = ((Math.atan2(v[1], v[0]) * 180 / Math.PI) + 180) % 180;
+    return { C, S, tr, l1, l2: tr - l1, best };
+  }
+  const q = (S, t) => { const c = Math.cos(t), s = Math.sin(t); return S[0][0] * c * c + 2 * S[0][1] * c * s + S[1][1] * s * s; };
+  function render() {
+    const d = data(), th = +$('#pcaR-theta').value, t = th * Math.PI / 180, u = [Math.cos(t), Math.sin(t)];
+    $('#pcaR-theta-v').textContent = th + '°';
+    $('#pcaR-rho-v').textContent = K.fmt(+$('#pcaR-rho').value, 2);
+    $('#pcaR-scale-v').textContent = '× ' + K.fmt(+$('#pcaR-scale').value, 1);
+    const R = Math.max(3, Math.ceil(Math.max(...d.C.flat().map(Math.abs)) * 1.1));
+    const c = K.chart($('#pcaR-scatter'), { width: 400, height: 394, x: [-R, R], y: [-R, R], margin: { left: 40, right: 14, top: 14, bottom: 42 } });
+    c.axes({ xTicks: 6, yTicks: 6, xLabel: 'x̃₁', yLabel: 'x̃₂' }).zeroLines();
+    const tt = R / Math.max(Math.abs(u[0]), Math.abs(u[1]));
+    d.C.forEach(p => { const z = p[0] * u[0] + p[1] * u[1]; c.line(p[0], p[1], z * u[0], z * u[1], 's4 line thin ghost'); });
+    c.line(-tt * u[0], -tt * u[1], tt * u[0], tt * u[1], 's2 line');
+    d.C.forEach(p => c.dot(p[0], p[1], 3.6, 's1 dot'));
+    d.C.forEach(p => { const z = p[0] * u[0] + p[1] * u[1]; c.dot(z * u[0], z * u[1], 2.4, 's2'); });
+    const top = d.tr * 1.12;
+    const k = K.chart($('#pcaR-curve'), { width: 400, height: 394, x: [0, 180], y: [0, top], margin: { left: 44, right: 14, top: 14, bottom: 42 } });
+    k.axes({ xTicks: 6, yTicks: 5, xLabel: 'ángulo θ (grados)', yLabel: 'varianza' });
+    const grid = Array.from({ length: 181 }, (_, i) => i);
+    k.line(0, d.tr, 180, d.tr, 'muted line dash thin');
+    k.path(grid.map(g => [g, q(d.S, g * Math.PI / 180)]), 's2 line');
+    k.path(grid.map(g => [g, d.tr - q(d.S, g * Math.PI / 180)]), 's4 line');
+    k.line(d.best, 0, d.best, top, 's3 line thin dash');
+    k.text(d.best, top, 'PC1', { dx: 4, dy: 12, class: 's3' });
+    const vp = q(d.S, t);
+    k.line(th, 0, th, top, 'muted line thin');
+    k.dot(th, vp, 5.5, 's2 dot'); k.dot(th, d.tr - vp, 5.5, 's4 dot');
+    $('#pcaR-var').textContent = K.fmt(vp, 3);
+    $('#pcaR-err').textContent = K.fmt(d.tr - vp, 3);
+    $('#pcaR-tot').textContent = K.fmt(d.tr, 3);
+    $('#pcaR-best').textContent = K.fmt(d.best, 1) + '°';
+    const gap = Math.min(Math.abs(th - d.best), 180 - Math.abs(th - d.best)), note = $('#pcaR-note');
+    if (gap <= 1) { note.className = 'plab-note good'; note.textContent = `Encontraste PC1: uᵀSu = ${K.fmt(vp, 3)} ≈ λ₁ = ${K.fmt(d.l1, 3)} y el error mínimo ≈ λ₂ = ${K.fmt(d.l2, 3)}. Los máximos de una curva y los mínimos de la otra ocurren en el mismo ángulo.`; }
+    else { note.className = 'plab-note'; note.textContent = `Estás a ${K.fmt(gap, 0)}° de PC1. La varianza proyectada (${K.fmt(vp, 3)}) más el error (${K.fmt(d.tr - vp, 3)}) siempre suma la traza ${K.fmt(d.tr, 3)}.`; }
+  }
+  root.querySelectorAll('input').forEach(i => i.addEventListener('input', render));
+  $('#pcaR-snap').addEventListener('click', () => { $('#pcaR-theta').value = Math.round(data().best) % 180; render(); });
+  render();
+})();
+</script>
 ```
+:::
 
-2. **Centrado de los datos**
+::: {.content-visible when-format="pdf"}
+En la versión web, un laboratorio permite girar una recta sobre una nube correlacionada y comparar, para cada ángulo, la varianza proyectada $\mathbf{u}^T S\mathbf{u}$ con el error de reconstrucción. Ambas curvas suman la traza de $S$ y alcanzan su máximo y su mínimo en la dirección de PC1.
+:::
 
-$$
-\tilde{X} =
-\begin{pmatrix}
--1 & -1 \\
-0 & 0 \\
-1 & 1
-\end{pmatrix}
-$$
+**Guía del laboratorio.**
 
-```{python}
-X_centered = X - X.mean(axis=0)
-
-fig = go.Figure()
-fig.add_hline(y=0)
-fig.add_vline(x=0)
-
-fig.add_trace(go.Scatter(
-    x=X_centered[:,0], y=X_centered[:,1],
-    mode='markers+text',
-    text=['P1','P2','P3'],
-    textposition='top center'
-))
-
-
-
-fig.update_layout(title="Datos centrados")
-fig.show()
-```
-
-3. **Cálculo de la matriz de covarianza**
-
-$$
-S =
-\begin{pmatrix}
-1 & 1 \\
-1 & 1
-\end{pmatrix}
-$$
-
-```{python}
-S = np.cov(X_centered, rowvar=False)
-
-fig = go.Figure(data=go.Heatmap(
-    z=S,
-    text=S.round(2),
-))
-
-fig.update_layout(title="Matriz de covarianza")
-fig.show()
-```
-
-4. **Obtención de eigenvalores**
-
-$$
-\lambda_1 = 2, \quad \lambda_2 = 0
-$$
-
-```{python}
-eigvals, eigvecs = np.linalg.eig(S)
-
-fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=['λ1','λ2'],
-    y=eigvals
-))
-
-fig.update_layout(title="Varianza por componente")
-fig.show()
-```
-
-5. **Obtención de eigenvectores**
-
-$$
-v_1 \approx
-\begin{pmatrix}
-0.707 \\
-0.707
-\end{pmatrix}
-$$
-
-```{python}
-v1 = eigvecs[:, np.argmax(eigvals)]
-t = np.linspace(-2,2,100)
-
-fig = go.Figure()
-
-fig.add_trace(go.Scatter(
-    x=X_centered[:,0], y=X_centered[:,1],
-    mode='markers'
-))
-
-fig.add_trace(go.Scatter(
-    x=t*v1[0],
-    y=t*v1[1],
-    mode='lines',
-    name='PC1'
-))
-
-fig.update_layout(title="Dirección principal (PC1)")
-fig.show()
-```
-
-6. **Proyección de los datos**
-
-$$
-Z =
-\begin{pmatrix}
--1.414 \\
-0 \\
-1.414
-\end{pmatrix}
-$$
-
-```{python}
-Z = X_centered @ v1
-
-fig = go.Figure()
-
-fig.add_trace(go.Scatter(
-    x=Z,
-    y=[0,0,0],
-    mode='markers+text',
-    text=['P1','P2','P3'],
-    textposition='top center'
-))
-
-fig.update_layout(title="Datos proyectados en PC1")
-fig.show()
-```
-
-7. **Conclusión**
-
-Dado que los datos están perfectamente alineados:
-
-- Toda la varianza se concentra en una dirección  
-- PCA reduce de 2D a 1D sin pérdida  
-- La interpretación es clara: la dirección de máxima varianza coincide con la línea que conecta los puntos, y el segundo componente no aporta información adicional.
+1. Con correlación $0.7$ y escala $\times 1$, gira θ lentamente y anota el ángulo donde la curva naranja ($\mathbf{u}^T S\mathbf{u}$) alcanza su máximo y la morada (error) su mínimo. Pulsa «Saltar a PC1» para verificarlo. ¿Por qué el ángulo está cerca de 45°?
+2. Lleva la correlación a $0$. Explica por qué la curva se vuelve casi plana y por qué PC1 deja de estar bien definido cuando $\lambda_1\approx\lambda_2$.
+3. Con correlación $0$, aumenta la escala de $x_2$ a $\times 3$. PC1 gira hacia el eje vertical **sin que exista relación entre las variables**: es el efecto de las unidades que motiva estandarizar antes de PCA.
 
 ## PCA y la Descomposición en Valores Singulares (SVD)
 

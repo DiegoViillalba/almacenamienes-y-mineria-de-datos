@@ -1,0 +1,229 @@
+<!--
+Kit compartido de los laboratorios interactivos de la unidad de preprocesamiento.
+Cada capítulo lo incluye con el shortcode include de Quarto, al inicio.
+Define estilos (modo claro/oscuro de Quarto) y window.LabKit: utilidades
+numéricas y un pequeño graficador SVG sin dependencias externas.
+-->
+::: {.content-visible when-format="html"}
+```{=html}
+<style>
+.plab {
+  --lab-bg: #ffffff; --lab-surface: #f6f8fa; --lab-border: #d0d7de;
+  --lab-text: #1f2328; --lab-muted: #59636e; --lab-grid: #e6e9ed; --lab-axis: #8c959f;
+  --lab-accent: #0969da; --lab-accent-soft: #ddf4ff;
+  --lab-s1: #2563eb; --lab-s2: #ea580c; --lab-s3: #16a34a; --lab-s4: #7c3aed; --lab-s5: #dc2626;
+  --lab-good: #1a7f37; --lab-good-soft: #dafbe1; --lab-warn: #9a6700; --lab-warn-soft: #fff8c5;
+  --lab-bad: #cf222e; --lab-bad-soft: #ffebe9;
+  border: 1px solid var(--lab-border); border-radius: 10px; background: var(--lab-bg);
+  color: var(--lab-text); padding: 1.1rem 1.2rem 1.2rem; margin: 1.5rem 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 0.92rem; line-height: 1.45;
+}
+body.quarto-dark .plab {
+  --lab-bg: #1b1f24; --lab-surface: #22272e; --lab-border: #3d444d;
+  --lab-text: #e6edf3; --lab-muted: #9ea7b3; --lab-grid: #2d333b; --lab-axis: #768390;
+  --lab-accent: #58a6ff; --lab-accent-soft: #1c2d41;
+  --lab-s1: #60a5fa; --lab-s2: #fb923c; --lab-s3: #4ade80; --lab-s4: #a78bfa; --lab-s5: #f87171;
+  --lab-good: #3fb950; --lab-good-soft: #1b2f23; --lab-warn: #d29922; --lab-warn-soft: #2e2716;
+  --lab-bad: #f85149; --lab-bad-soft: #3a1d1f;
+}
+.plab * { box-sizing: border-box; }
+.plab-eyebrow { font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--lab-accent); font-weight: 700; margin: 0; }
+.plab h3.plab-title, .plab .plab-title { font-size: 1.12rem; margin: .15rem 0 .35rem; border: 0; padding: 0; color: var(--lab-text); }
+.plab-sub { color: var(--lab-muted); margin: 0 0 .9rem; }
+.plab-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; align-items: start; }
+.plab-grid.wide-left { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.plab-panel { background: var(--lab-surface); border: 1px solid var(--lab-border); border-radius: 8px; padding: .8rem .9rem; min-width: 0; }
+.plab-panel h4 { font-size: .95rem; margin: 0 0 .5rem; color: var(--lab-text); }
+.plab-controls { display: flex; flex-wrap: wrap; gap: .7rem 1.2rem; align-items: flex-end; margin-bottom: .8rem; }
+.plab-controls > label, .plab-field { display: flex; flex-direction: column; gap: .2rem; font-size: .82rem; color: var(--lab-muted); min-width: 150px; flex: 1 1 150px; }
+.plab-controls b, .plab-field b { color: var(--lab-text); font-variant-numeric: tabular-nums; }
+.plab input[type=range] { width: 100%; accent-color: var(--lab-accent); }
+.plab select, .plab input[type=number] {
+  background: var(--lab-bg); color: var(--lab-text); border: 1px solid var(--lab-border);
+  border-radius: 6px; padding: .3rem .4rem; font-size: .85rem;
+}
+.plab input[type=number] { width: 4.6rem; text-align: center; }
+.plab-seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--lab-border); border-radius: 7px; overflow: hidden; }
+.plab-seg button, .plab-btn {
+  background: var(--lab-bg); color: var(--lab-text); border: 0; border-right: 1px solid var(--lab-border);
+  padding: .35rem .7rem; font-size: .82rem; cursor: pointer; font-family: inherit;
+}
+.plab-seg button:last-child { border-right: 0; }
+.plab-seg button[aria-pressed=true] { background: var(--lab-accent); color: #fff; }
+body.quarto-dark .plab-seg button[aria-pressed=true] { color: #0d1117; }
+.plab-btn { border: 1px solid var(--lab-border); border-radius: 7px; }
+.plab-btn:hover, .plab-seg button:hover { filter: brightness(0.96); }
+.plab-btn.primary { background: var(--lab-accent); color: #fff; border-color: var(--lab-accent); }
+body.quarto-dark .plab-btn.primary { color: #0d1117; }
+.plab button:focus-visible, .plab input:focus-visible, .plab select:focus-visible { outline: 2px solid var(--lab-accent); outline-offset: 2px; }
+.plab-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .5rem; margin: .7rem 0; }
+.plab-stat { background: var(--lab-bg); border: 1px solid var(--lab-border); border-radius: 7px; padding: .45rem .6rem; }
+.plab-stat span { display: block; font-size: .72rem; color: var(--lab-muted); }
+.plab-stat strong { font-size: 1.08rem; font-variant-numeric: tabular-nums; color: var(--lab-text); }
+.plab-note { border-left: 3px solid var(--lab-accent); background: var(--lab-accent-soft); padding: .5rem .7rem; border-radius: 0 6px 6px 0; margin: .7rem 0 0; font-size: .85rem; }
+.plab-note.good { border-color: var(--lab-good); background: var(--lab-good-soft); }
+.plab-note.warn { border-color: var(--lab-warn); background: var(--lab-warn-soft); }
+.plab-note.bad { border-color: var(--lab-bad); background: var(--lab-bad-soft); }
+.plab-table { width: 100%; border-collapse: collapse; font-size: .82rem; font-variant-numeric: tabular-nums; margin: 0; }
+.plab-table th, .plab-table td { border-bottom: 1px solid var(--lab-border); padding: .3rem .45rem; text-align: right; color: var(--lab-text); background: transparent; }
+.plab-table th { color: var(--lab-muted); font-weight: 600; }
+.plab-table th:first-child, .plab-table td:first-child { text-align: left; }
+.plab-table .hl { background: var(--lab-accent-soft); font-weight: 700; }
+.plab-scroll { overflow-x: auto; }
+.plab-steps { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .7rem; }
+.plab-steps button { border: 1px solid var(--lab-border); background: var(--lab-bg); color: var(--lab-text); border-radius: 999px; padding: .25rem .7rem; font-size: .8rem; cursor: pointer; font-family: inherit; }
+.plab-steps button[aria-pressed=true] { background: var(--lab-accent); border-color: var(--lab-accent); color: #fff; }
+body.quarto-dark .plab-steps button[aria-pressed=true] { color: #0d1117; }
+.plab-math { font-family: "Fira Mono", ui-monospace, monospace; font-size: .85rem; background: var(--lab-bg); border: 1px solid var(--lab-border); border-radius: 6px; padding: .5rem .7rem; overflow-x: auto; white-space: pre; margin: .5rem 0 0; }
+.plab-legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; font-size: .78rem; color: var(--lab-muted); margin-top: .35rem; }
+.plab-legend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: .3rem; }
+.plab-legend i.dot { width: 9px; height: 9px; border-radius: 50%; }
+.plab-task { margin: .9rem 0 0; padding-left: 1.2rem; color: var(--lab-text); font-size: .86rem; }
+.plab-task li { margin-bottom: .25rem; }
+@media (max-width: 480px) {
+  .plab { padding: .8rem .7rem 1rem; }
+  .plab-panel { padding: .6rem .55rem; }
+  .plab-controls > label, .plab-field { min-width: 120px; }
+}
+/* Gráficas SVG */
+.plab svg.plab-chart { width: 100%; max-width: 460px; height: auto; display: block; margin: 0 auto; overflow: visible; touch-action: none; }
+.plab svg.plab-chart.wide { max-width: 640px; }
+.plab svg text { pointer-events: none; fill: var(--lab-muted); font-size: 11px; font-family: system-ui, sans-serif; }
+.plab svg text.strong { fill: var(--lab-text); font-weight: 600; }
+.plab svg .grid { stroke: var(--lab-grid); stroke-width: 1; }
+.plab svg .axis { stroke: var(--lab-axis); stroke-width: 1; }
+.plab svg .zero { stroke: var(--lab-axis); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.plab svg .s1 { stroke: var(--lab-s1); fill: var(--lab-s1); }
+.plab svg .s2 { stroke: var(--lab-s2); fill: var(--lab-s2); }
+.plab svg .s3 { stroke: var(--lab-s3); fill: var(--lab-s3); }
+.plab svg .s4 { stroke: var(--lab-s4); fill: var(--lab-s4); }
+.plab svg .s5 { stroke: var(--lab-s5); fill: var(--lab-s5); }
+.plab svg .muted { stroke: var(--lab-axis); fill: var(--lab-axis); }
+.plab svg .line { fill: none !important; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.plab svg .dash { stroke-dasharray: 5 4; }
+.plab svg .thin { stroke-width: 1.2; }
+.plab svg .soft { fill-opacity: .18; }
+.plab svg .ghost { fill-opacity: .35; stroke-opacity: .35; }
+.plab svg .dot { stroke: var(--lab-bg); stroke-width: 1.5; }
+.plab svg .drag { cursor: grab; }
+.plab svg .drag:active { cursor: grabbing; }
+.plab svg text.s1 { fill: var(--lab-s1); stroke: none; }
+.plab svg text.s2 { fill: var(--lab-s2); stroke: none; }
+.plab svg text.s3 { fill: var(--lab-s3); stroke: none; }
+.plab svg text.s5 { fill: var(--lab-s5); stroke: none; }
+</style>
+<script>
+window.LabKit = window.LabKit || (() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const sum = a => a.reduce((s, v) => s + v, 0);
+  const mean = a => sum(a) / a.length;
+  const variance = (a, ddof = 0) => { const m = mean(a); return sum(a.map(v => (v - m) ** 2)) / (a.length - ddof); };
+  const sd = (a, ddof = 0) => Math.sqrt(variance(a, ddof));
+  // Percentil con interpolación lineal (convención de numpy.percentile por defecto).
+  const quantile = (a, q) => {
+    const s = [...a].sort((x, y) => x - y), pos = (s.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo);
+  };
+  const median = a => quantile(a, 0.5);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—'
+    : Number(v).toLocaleString('es-MX', { minimumFractionDigits: d, maximumFractionDigits: d });
+  // Generador pseudoaleatorio reproducible (mulberry32) y normal estándar (Box-Muller).
+  const rng = seed => {
+    let t = seed >>> 0;
+    const u = () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
+    u.normal = () => { let a = 0, b = 0; while (a === 0) a = u(); while (b === 0) b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); };
+    return u;
+  };
+  const niceTicks = (lo, hi, n = 5) => {
+    if (hi === lo) { hi = lo + 1; }
+    const raw = (hi - lo) / n, mag = 10 ** Math.floor(Math.log10(raw)), f = raw / mag;
+    const step = (f >= 5 ? 10 : f >= 2 ? 5 : f >= 1 ? 2 : 1) * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+    return out;
+  };
+  const el = (tag, attrs = {}, parent) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) node.setAttribute(k, v);
+    if (parent) parent.appendChild(node);
+    return node;
+  };
+  // Graficador mínimo: escala lineal, ejes, rejilla y primitivas.
+  function chart(svg, opts) {
+    const W = opts.width || 480, H = opts.height || 300;
+    const m = Object.assign({ top: 14, right: 14, bottom: 38, left: 48 }, opts.margin || {});
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.classList.add('plab-chart');
+    svg.replaceChildren();
+    const [x0, x1] = opts.x, [y0, y1] = opts.y;
+    const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
+    const X = v => m.left + (v - x0) / (x1 - x0) * iw;
+    const Y = v => m.top + ih - (v - y0) / (y1 - y0) * ih;
+    const c = {
+      svg, X, Y, W, H, m, iw, ih,
+      invX: px => x0 + (px - m.left) / iw * (x1 - x0),
+      invY: py => y0 + (m.top + ih - py) / ih * (y1 - y0),
+      g: el('g', {}, svg),
+      axes({ xTicks = 5, yTicks = 5, xLabel = '', yLabel = '', xFmt = v => fmt(v, Math.abs(v) < 10 && v % 1 ? 1 : 0), yFmt, grid = true, xCats } = {}) {
+        const ax = el('g', {}, svg); svg.insertBefore(ax, c.g);
+        const yf = yFmt || xFmt;
+        if (yTicks) niceTicks(y0, y1, yTicks).forEach(t => {
+          if (grid) el('line', { x1: m.left, x2: m.left + iw, y1: Y(t), y2: Y(t), class: 'grid' }, ax);
+          el('text', { x: m.left - 6, y: Y(t) + 3.5, 'text-anchor': 'end' }, ax).textContent = yf(t);
+        });
+        if (xCats) xCats.forEach(([v, lab]) => { el('text', { x: X(v), y: m.top + ih + 16, 'text-anchor': 'middle' }, ax).textContent = lab; });
+        else if (xTicks) niceTicks(x0, x1, xTicks).forEach(t => {
+          if (grid) el('line', { x1: X(t), x2: X(t), y1: m.top, y2: m.top + ih, class: 'grid' }, ax);
+          el('text', { x: X(t), y: m.top + ih + 16, 'text-anchor': 'middle' }, ax).textContent = xFmt(t);
+        });
+        el('line', { x1: m.left, x2: m.left + iw, y1: m.top + ih, y2: m.top + ih, class: 'axis' }, ax);
+        el('line', { x1: m.left, x2: m.left, y1: m.top, y2: m.top + ih, class: 'axis' }, ax);
+        if (xLabel) el('text', { x: m.left + iw / 2, y: H - 4, 'text-anchor': 'middle', class: 'strong' }, ax).textContent = xLabel;
+        if (yLabel) el('text', { x: 12, y: m.top + ih / 2, 'text-anchor': 'middle', transform: `rotate(-90 12 ${m.top + ih / 2})`, class: 'strong' }, ax).textContent = yLabel;
+        return c;
+      },
+      zeroLines() {
+        if (x0 < 0 && x1 > 0) el('line', { x1: X(0), x2: X(0), y1: m.top, y2: m.top + ih, class: 'zero' }, c.g);
+        if (y0 < 0 && y1 > 0) el('line', { x1: m.left, x2: m.left + iw, y1: Y(0), y2: Y(0), class: 'zero' }, c.g);
+        return c;
+      },
+      path(points, cls = 's1 line') {
+        const d = points.filter(p => p && Number.isFinite(p[1])).map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
+        return el('path', { d, class: cls }, c.g);
+      },
+      line(xa, ya, xb, yb, cls = 's1 line') { return el('line', { x1: X(xa), y1: Y(ya), x2: X(xb), y2: Y(yb), class: cls }, c.g); },
+      dot(x, y, r = 5, cls = 's1 dot') { return el('circle', { cx: X(x), cy: Y(y), r, class: cls }, c.g); },
+      rect(xa, ya, xb, yb, cls = 's1 soft') {
+        return el('rect', { x: Math.min(X(xa), X(xb)), y: Math.min(Y(ya), Y(yb)), width: Math.abs(X(xb) - X(xa)), height: Math.abs(Y(yb) - Y(ya)), class: cls }, c.g);
+      },
+      text(x, y, s, attrs = {}) { const t = el('text', Object.assign({ x: X(x), y: Y(y) }, attrs), c.g); t.textContent = s; return t; },
+      arrow(xa, ya, xb, yb, cls = 's1') {
+        const ax = X(xa), ay = Y(ya), bx = X(xb), by = Y(yb), ang = Math.atan2(by - ay, bx - ax), h = 8;
+        el('line', { x1: ax, y1: ay, x2: bx, y2: by, class: cls + ' line' }, c.g);
+        el('path', { d: `M${bx},${by}L${bx - h * Math.cos(ang - 0.4)},${by - h * Math.sin(ang - 0.4)}L${bx - h * Math.cos(ang + 0.4)},${by - h * Math.sin(ang + 0.4)}Z`, class: cls }, c.g);
+      },
+      // Convierte un evento de puntero a coordenadas de datos.
+      pointer(evt) {
+        const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+        const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+        return [c.invX(p.x), c.invY(p.y)];
+      }
+    };
+    svg.__chart = c;
+    return c;
+  }
+  // Botones segmentados: devuelve un getter del valor activo.
+  function segmented(container, onChange) {
+    const buttons = [...container.querySelectorAll('button')];
+    let value = (buttons.find(b => b.getAttribute('aria-pressed') === 'true') || buttons[0]).dataset.value;
+    const set = v => { value = v; buttons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === v))); };
+    set(value);
+    buttons.forEach(b => b.addEventListener('click', () => { set(b.dataset.value); onChange && onChange(value); }));
+    return { get: () => value, set: v => { set(v); onChange && onChange(value); } };
+  }
+  return { sum, mean, variance, sd, quantile, median, clamp, fmt, rng, niceTicks, el, chart, segmented };
+})();
+</script>
+```
+:::

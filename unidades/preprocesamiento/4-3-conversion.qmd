@@ -16,11 +16,13 @@ execute:
 jupyter: python3
 ---
 
+{{< include _labkit.qmd >}}
+
 Muchos modelos, entre ellos KNN, regresión logística y redes neuronales, necesitan una representación numérica de las variables. Una etiqueta como "Grocery Store" requiere codificación; el número asignado debe respetar el significado de la categoría.
 
 Pero el hecho de que todo deba ser numérico presenta un desafío profundo: **la escala y la naturaleza de los números importan enormemente**.
 
-## El Problema de la Escala
+## El problema de la escala
 Imagina que estamos construyendo un modelo predictivo de ventas para **BigMart Sales** mediante k-Vecinos Más Cercanos (KNN)[^5]. Nuestro dataset tiene dos variables numéricas principales:
 - **Item_MRP** (Precio Máximo al Por Menor): Varía de \$30 a \$250.
 - **Item_Visibility** (Visibilidad del producto en anaquel): Varía de 0.00 a 0.30.
@@ -33,7 +35,90 @@ $$d(A, B) = \sqrt{(50 - 51)^2 + (0.02 - 0.28)^2} = \sqrt{(-1)^2 + (-0.26)^2} = \
 
 Como vemos, **la variable "Item_MRP" domina casi por completo el cálculo de la distancia**. Para el algoritmo, una diferencia inmensa en visibilidad (del 2% al 28%) es matemáticamente irrelevante comparada con una modesta diferencia de \$1 en el precio. Sin un escalado adecuado, nuestro modelo de machine learning se vuelve ciego a las variables numéricamente pequeñas, sin importar su poder predictivo real.
 
-## El Peligro de la Falsa Ordinalidad
+### Laboratorio: el espacio que ve KNN
+
+El ejemplo anterior tenía dos productos. Aquí tenemos nueve productos de entrenamiento y uno nuevo (★) cuyo vecindario queremos encontrar. La gráfica dibuja los datos **con la misma escala en ambos ejes**, porque así es como la distancia euclidiana «ve» el espacio: si una variable tiene un rango mil veces menor, su eje queda aplastado.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="conv-knn-lab">
+  <p class="plab-eyebrow">Laboratorio · Escala y distancias</p>
+  <h3 class="plab-title">¿Quiénes son los 3 vecinos más cercanos de ★?</h3>
+  <p class="plab-sub">Los parámetros de cada escalador se aprenden con los nueve productos de entrenamiento y se aplican también a ★.</p>
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:3 1 300px">Transformación antes de medir distancias
+      <div class="plab-seg" id="knn-scaler">
+        <button type="button" data-value="none" aria-pressed="true">Sin escalar</button>
+        <button type="button" data-value="minmax">Min-Max</button>
+        <button type="button" data-value="standard">StandardScaler</button>
+        <button type="button" data-value="robust">RobustScaler</button>
+      </div>
+    </div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Espacio de distancias (ejes con igual escala)</h4>
+      <svg id="knn-chart" role="img" aria-label="Productos en el espacio transformado con los vecinos resaltados"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s2)"></i>producto nuevo ★</span><span><i class="dot" style="background:var(--lab-s1)"></i>vecino</span><span><i class="dot" style="background:var(--lab-axis)"></i>otros</span></div>
+    </div>
+    <div class="plab-panel"><h4>Distancias a ★ y peso de cada variable</h4>
+      <div class="plab-scroll"><div id="knn-table"></div></div>
+    </div>
+  </div>
+  <p class="plab-note" id="knn-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('conv-knn-lab');
+  const $ = s => root.querySelector(s);
+  const train = [
+    ['P1', 51, 0.28], ['P2', 58, 0.03], ['P3', 45, 0.25], ['P4', 120, 0.02], ['P5', 95, 0.05],
+    ['P6', 60, 0.15], ['P7', 180, 0.10], ['P8', 240, 0.22], ['P9', 70, 0.04]
+  ];
+  const query = ['★', 50, 0.02];
+  function fitScaler(kind, col) {
+    if (kind === 'minmax') { const lo = Math.min(...col), hi = Math.max(...col); return v => (v - lo) / (hi - lo); }
+    if (kind === 'standard') { const m = K.mean(col), s = K.sd(col); return v => (v - m) / s; }
+    if (kind === 'robust') { const med = K.median(col), iqr = K.quantile(col, .75) - K.quantile(col, .25); return v => (v - med) / iqr; }
+    return v => v;
+  }
+  const scaler = K.segmented($('#knn-scaler'), () => render());
+  function render() {
+    const kind = scaler.get();
+    const f = [1, 2].map(j => fitScaler(kind, train.map(r => r[j])));
+    const T = train.map(r => [r[0], f[0](r[1]), f[1](r[2]), r]);
+    const q = [f[0](query[1]), f[1](query[2])];
+    const d = T.map(t => { const dx = (t[1] - q[0]) ** 2, dy = (t[2] - q[1]) ** 2; return { name: t[0], raw: t[3], dist: Math.sqrt(dx + dy), share: dx / (dx + dy || 1), p: [t[1], t[2]] }; })
+      .sort((a, b) => a.dist - b.dist);
+    const nn = new Set(d.slice(0, 3).map(x => x.name));
+    // Ventana con igual escala en ambos ejes: el rango mayor fija el tamaño del cuadrado.
+    const xs = [...T.map(t => t[1]), q[0]], ys = [...T.map(t => t[2]), q[1]];
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const half = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * .58;
+    const c = K.chart($('#knn-chart'), { width: 400, height: 394, x: [cx - half, cx + half], y: [cy - half, cy + half], margin: { left: 46, right: 14, top: 14, bottom: 40 } });
+    const lab = kind === 'none' ? ['Item_MRP ($)', 'Item_Visibility'] : ['Item_MRP transformado', 'Item_Visibility transformada'];
+    c.axes({ xTicks: 5, yTicks: 5, xLabel: lab[0], yLabel: lab[1], xFmt: v => K.fmt(v, Math.abs(half) > 20 ? 0 : 1) });
+    d.slice(0, 3).forEach(x => c.line(q[0], q[1], x.p[0], x.p[1], 's1 line thin dash'));
+    d.forEach(x => { c.dot(x.p[0], x.p[1], 6, (nn.has(x.name) ? 's1' : 'muted') + ' dot'); c.text(x.p[0], x.p[1], x.name, { dx: 8, dy: -6, class: nn.has(x.name) ? 'strong' : '' }); });
+    c.dot(q[0], q[1], 8, 's2 dot'); c.text(q[0], q[1], '★ nuevo', { dx: 9, dy: 14, class: 's2' });
+    $('#knn-table').innerHTML = '<table class="plab-table"><thead><tr><th>Producto</th><th>MRP</th><th>Visib.</th><th>Distancia</th><th>% por MRP</th></tr></thead><tbody>' +
+      d.map((x, i) => `<tr${i < 3 ? ' class="hl"' : ''}><td>${i < 3 ? (i + 1) + '.º ' : ''}${x.name}</td><td>${x.raw[1]}</td><td>${K.fmt(x.raw[2], 2)}</td><td>${K.fmt(x.dist, kind === 'none' ? 2 : 3)}</td><td>${K.fmt(100 * x.share, 1)} %</td></tr>`).join('') + '</tbody></table>';
+    const avgShare = K.mean(d.map(x => x.share)), names = d.slice(0, 3).map(x => x.name).join(', '), note = $('#knn-note');
+    if (kind === 'none') { note.className = 'plab-note bad'; note.textContent = `Sin escalar, el precio explica en promedio el ${K.fmt(100 * avgShare, 1)} % de cada distancia al cuadrado. Los vecinos (${names}) se eligen casi solo por precio: P1 tiene visibilidad 0.28 frente a 0.02 de ★ y aun así resulta el más cercano.`; }
+    else { note.className = 'plab-note good'; note.textContent = `Con ${kind === 'minmax' ? 'Min-Max' : kind === 'standard' ? 'StandardScaler' : 'RobustScaler'} ambas variables compiten: el precio aporta en promedio el ${K.fmt(100 * avgShare, 1)} % de cada distancia al cuadrado. Vecinos: ${names}. Que cambien no dice cuál escala es «correcta»; eso se decide validando el modelo.`; }
+  }
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio muestra nueve productos en el espacio que usa la distancia euclidiana. Sin escalar, los tres vecinos del producto nuevo $(50, 0.02)$ son P1, P3 y P2, elegidos casi solo por precio; con cualquiera de los tres escaladores, P1 y P3 (visibilidad alta) salen del vecindario.
+:::
+
+**Guía del laboratorio.** Anota los tres vecinos sin escalar y con cada escalador. ¿Qué productos salen del vecindario en cuanto escalas y por qué? Observa la columna «% por MRP»: sin escalar, supera el 99 % en casi todas las filas. Con Min-Max y StandardScaler los vecinos son P2, P9 y P5; con RobustScaler el tercero pasa a ser P6. Explica esa diferencia a partir de los parámetros que usa cada escalador.
+
+## El peligro de la falsa ordinalidad
 Ahora consideremos las variables categóricas. Supongamos que tenemos la variable categórica "Outlet_Type" (Tipo de tienda) del dataset BigMart con valores: `Grocery Store`, `Supermarket Type1`, `Supermarket Type3`. 
 Una solución ingenua sería asignarles números arbitrarios:
 - `Grocery Store` = 1
@@ -49,7 +134,7 @@ Codificar variables nominales con números enteros arbitrarios destruye los supu
 
 ---
 
-## Desarrollo Manual Paso a Paso
+## Desarrollo manual paso a paso
 
 Para comprender verdaderamente lo que hacen las librerías bajo el capó, realicemos las transformaciones más importantes a mano sobre un mini-dataset simulado de 4 productos de **BigMart Sales**:
 
@@ -62,7 +147,7 @@ Para comprender verdaderamente lo que hacen las librerías bajo el capó, realic
 
 *Nota:* El `Item_MRP` del ID 4 (\$500.0) es un valor atípico (*outlier*) relativo a los otros tres.
 
-### Min-Max Scaling (Normalización)
+### Min-Max scaling (normalización)
 Queremos escalar "Item_MRP" a un rango $[0, 1]$.
 La fórmula es: $x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$
 
@@ -82,7 +167,7 @@ Cálculos:
 Escalamos "Item_MRP" para que tenga media 0 y varianza 1.
 
 1. Media ($\mu$): $\frac{45 + 120 + 180 + 500}{4} = \frac{845}{4} = 211.25$
-2. Varianza ($\sigma^2$):
+2. Varianza poblacional[^varpob] ($\sigma^2$):
    - $(45 - 211.25)^2 = (-166.25)^2 = 27,639.06$
    - $(120 - 211.25)^2 = (-91.25)^2 = 8,326.56$
    - $(180 - 211.25)^2 = (-31.25)^2 = 976.56$
@@ -96,7 +181,7 @@ Cálculos de $z_i = \frac{x_i - \mu}{\sigma}$:
 - $z_3 = \frac{180 - 211.25}{173.44} \approx -0.180$
 - $z_4 = \frac{500 - 211.25}{173.44} \approx 1.665$
 
-### RobustScaler (Mediana y Rango Intercuartílico)
+### RobustScaler (mediana y rango intercuartílico)
 Escalamos usando estadísticas robustas a outliers: $x_{\text{rob}} = \frac{x - \text{mediana}}{\text{IQR}}$.
 
 1. Datos ordenados: $[45.0, 120.0, 180.0, 500.0]$
@@ -112,7 +197,7 @@ Cálculos:
 
 **Lectura del resultado:** la mediana cambia menos que la media ante un extremo, pero con solo cuatro datos el cuartil superior también depende del valor 500. "Robusto" no significa inmune.
 
-### One-Hot Encoding y la Trampa de la Variable Ficticia
+### One-Hot Encoding y la trampa de la variable ficticia
 Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3}`. Sin embargo, si tuviéramos cientos de categorías, One-Hot Encoding induciría la *Maldición de la Dimensionalidad*[^1] y requeriría el uso de *matrices dispersas*[^2] para optimizar la memoria.
 
 | ID | Outlet_Type_Grocery | Outlet_Type_Supermarket1 | Outlet_Type_Supermarket3 |
@@ -126,14 +211,14 @@ Codificamos `Outlet_Type`: `{Grocery Store, Supermarket Type1, Supermarket Type3
 $$\text{Grocery} + \text{Supermarket1} + \text{Supermarket3} = 1$$
 Si un modelo lineal sin regularización incluye un intercepto $\beta_0$, existe colinealidad perfecta[^4]. Una opción es descartar una columna de referencia (`drop='first'`); no es una regla universal para árboles ni para todo modelo regularizado.
 
-### Target Encoding (Mean Encoding) Suavizado
+### Target encoding (mean encoding) suavizado
 El *Target Encoding* reemplaza cada categoría por el promedio del target (`Item_Outlet_Sales`) en esa categoría:
 - Media global del target ($\bar{y}_{\text{global}}$) = $\frac{500 + 2500 + 4200 + 800}{4} = 2000.0$
 - **Grocery Store**: 2 ocurrencias. Ventas = $[500, 800]$. Media local $\bar{y}_c = 650.0$.
 - **Supermarket Type1**: 1 ocurrencia. Ventas = $[2500]$. Media local $\bar{y}_c = 2500.0$.
 - **Supermarket Type3**: 1 ocurrencia. Ventas = $[4200]$. Media local $\bar{y}_c = 4200.0$.
 
-Para evitar sobreajuste en categorías poco frecuentes, aplicamos **Suavizado Bayesiano** (*m-estimate*):
+Para evitar sobreajuste en categorías poco frecuentes, aplicamos **suavizado bayesiano**[^bayes] (*m-estimate*):
 $$ \hat{S}_i = \frac{n_c \cdot \bar{y}_c + m \cdot \bar{y}_{\text{global}}}{n_c + m} $$
 Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse directamente a las mismas filas de entrenamiento):
 - **Grocery Store**: $\frac{(2 \times 650) + (2 \times 2000)}{2 + 2} = \frac{1300 + 4000}{4} = 1325.0$
@@ -142,25 +227,26 @@ Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse 
 
 ---
 
-## Formalización Teórica y Matemática
+## Formalización teórica y matemática
 
-### Escaladores Numéricos
+### Escaladores numéricos
 1. **Min-Max Scaler**: Mapea una variable continua al intervalo $[a, b]$ (típicamente $[0, 1]$):
    $$ x' = a + \frac{x - x_{\min}}{x_{\max} - x_{\min}} (b - a) $$
    Es altamente sensible a outliers, ya que un único valor extremo dilata el denominador $x_{\max} - x_{\min}$.
 
 2. **StandardScaler ($z$-score)**: Transforma la variable para que tenga media $\mu = 0$ y desviación estándar $\sigma = 1$:
    $$ z = \frac{x - \mu}{\sigma}, \quad \mathbb{E}[Z] = 0, \quad \operatorname{Var}(Z) = 1 $$
+   Ambas igualdades salen de la linealidad de la esperanza[^linealidad]: $\mathbb{E}[(X-\mu)/\sigma]=(\mathbb{E}[X]-\mu)/\sigma=0$ y $\operatorname{Var}(aX+b)=a^2\operatorname{Var}(X)$, con $a=1/\sigma$. Min-Max y StandardScaler son transformaciones afines: conservan el orden y las proporciones entre diferencias, así que **no cambian la forma** de la distribución ni reducen la influencia relativa de un valor extremo.
 
 3. **RobustScaler**: Utiliza estadísticas de posición no paramétricas resistentes a valores extremos:
    $$ x_{\text{rob}} = \frac{x - \operatorname{mediana}(X)}{\text{IQR}(X)}, \quad \text{IQR}(X) = Q_3(X) - Q_1(X) $$
 
 4. **Transformaciones de Potencia**: Diseñadas para estabilizar la varianza y aproximar normalidad en distribuciones asimétricas (sesgadas):
-   - **Box-Cox** (solo para $y > 0$):
+   - **Box-Cox**[^boxcox] (solo para $y > 0$):
      $$ y^{(\lambda)} = \begin{cases} \frac{y^\lambda - 1}{\lambda} & \text{si } \lambda \neq 0 \\ \ln(y) & \text{si } \lambda = 0 \end{cases} $$
    - **Yeo-Johnson** (soporta valores positivos, cero y negativos).
 
-### Codificación Categórica
+### Codificación categórica
 1. **One-Hot Encoding**:
    Definimos un conjunto finito de categorías $\mathcal{C} = \{c_1, c_2, \dots, c_K\}$.
    La función de codificación es $h: \mathcal{C} \to \{0, 1\}^K$ tal que $h(c_j)$ es un vector donde la componente $j$ es 1 y el resto son 0.
@@ -175,209 +261,118 @@ Con factor de suavizado $m = 2$ (cálculo ilustrativo que **no** debe aplicarse 
 
 ---
 
-## Laboratorio Interactivo: Banco de Pruebas de Escalado y Codificación (BigMart)
+## Laboratorio interactivo: banco de pruebas de escalado y codificación (BigMart)
 
 ::: {.content-visible when-format="html"}
 ```{=html}
-<div class="interactive-lab" style="border: 1px solid #d0d7de; border-radius: 8px; padding: 22px; background: #ffffff; margin: 25px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-  <h3 style="margin-top: 0; color: #1f2328; border-bottom: 2px solid #0969da; padding-bottom: 8px;">
-    Laboratorio Interactivo: Escalado Numérico y Codificación Categórica (BigMart)
-  </h3>
-  <p style="font-size: 0.9em; color: #57606a;">
-    Experimenta en tiempo real con cómo los métodos de escalado reaccionan ante la presencia de un producto con precio atípico (Outlier), y cómo cambia la codificación de tiendas BigMart.
-  </p>
-
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
-    <!-- Panel de Escalado -->
-    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; border: 1px solid #e1e4e8;">
-      <h4 style="margin-top: 0; color: #0969da;">1. Módulo de Escalado Numérico (Item_MRP)</h4>
-      <label style="font-size: 0.85em; font-weight: bold;">Precio del Producto Atípico (ID 4): <span id="outlierVal" style="color: #cf222e;">$500</span></label>
-      <input type="range" id="outlierSlider" min="200" max="1000" step="25" value="500" style="width: 100%; margin: 8px 0 15px 0;">
-
-      <label style="font-size: 0.85em; font-weight: bold;">Selecciona el Escalador:</label>
-      <div style="margin: 6px 0 12px 0;">
-        <label style="margin-right: 12px; font-size: 0.85em;"><input type="radio" name="scalerChoice" value="minmax" checked> Min-Max</label>
-        <label style="margin-right: 12px; font-size: 0.85em;"><input type="radio" name="scalerChoice" value="standard"> StandardScaler</label>
-        <label style="font-size: 0.85em;"><input type="radio" name="scalerChoice" value="robust"> RobustScaler</label>
-      </div>
-
-      <table style="width: 100%; font-size: 0.82em; border-collapse: collapse; background: white;">
-        <thead>
-          <tr style="background: #eaeef2; text-align: left;">
-            <th style="padding: 5px;">ID</th>
-            <th style="padding: 5px;">Item_MRP Original</th>
-            <th style="padding: 5px;">Valor Escalado</th>
-            <th style="padding: 5px;">Visualización</th>
-          </tr>
-        </thead>
-        <tbody id="scalingTableBody"></tbody>
-      </table>
-      <div id="scalingInsight" style="margin-top: 10px; font-size: 0.8em; color: #57606a; background: #fff8c5; padding: 6px; border-radius: 4px; border-left: 3px solid #d4a72c;"></div>
+<div class="plab" id="conv-bench-lab">
+  <p class="plab-eyebrow">Laboratorio · Escaladores y codificadores</p>
+  <h3 class="plab-title">Un precio extremo y una categoría rara</h3>
+  <p class="plab-sub">Usa los cuatro productos del desarrollo manual. Mueve el precio del producto 4 y compara los tres escaladores a la vez; después cambia la codificación de <code>Outlet_Type</code>.</p>
+  <div class="plab-panel">
+    <div class="plab-controls">
+      <label>Precio del producto 4 (atípico): <b id="bench-out-v"></b><input type="range" id="bench-out" min="200" max="1000" step="25" value="500"></label>
     </div>
-
-    <!-- Panel de Codificación -->
-    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; border: 1px solid #e1e4e8;">
-      <h4 style="margin-top: 0; color: #1a7f37;">2. Módulo de Codificación (Outlet_Type)</h4>
-      <label style="font-size: 0.85em; font-weight: bold;">Estrategia de Codificación:</label>
-      <div style="margin: 6px 0 12px 0;">
-        <label style="margin-right: 15px; font-size: 0.85em;"><input type="radio" name="encodingChoice" value="onehot" checked> One-Hot Encoding</label>
-        <label style="font-size: 0.85em;"><input type="radio" name="encodingChoice" value="target"> Target Encoding (Ventas)</label>
+    <svg id="bench-strips" class="wide" role="img" aria-label="Valores escalados por los tres escaladores"></svg>
+    <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>productos 1–3</span><span><i class="dot" style="background:var(--lab-s5)"></i>producto 4 (atípico)</span><span><i style="background:var(--lab-s3)"></i>separación entre los productos 1 y 3</span></div>
+    <div class="plab-scroll" style="margin-top:.6rem"><div id="bench-table"></div></div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem">
+    <div class="plab-controls">
+      <div class="plab-field" style="flex:2 1 260px">Codificación de <code>Outlet_Type</code>
+        <div class="plab-seg" id="bench-enc">
+          <button type="button" data-value="onehot" aria-pressed="true">One-Hot</button>
+          <button type="button" data-value="drop">One-Hot con drop='first'</button>
+          <button type="button" data-value="target">Target encoding</button>
+        </div>
       </div>
-
-      <div id="onehotControls" style="margin-bottom: 12px;">
-        <label style="font-size: 0.85em;">
-          <input type="checkbox" id="dropFirstToggle"> Descartar primera categoría (<code>drop='first'</code> para evitar colinealidad)
-        </label>
-      </div>
-
-      <div id="targetControls" style="display: none; margin-bottom: 12px;">
-        <label style="font-size: 0.85em; font-weight: bold;">Factor de Suavizado ($m$): <span id="mVal">2.0</span></label>
-        <input type="range" id="mSlider" min="0" max="10" step="0.5" value="2" style="width: 100%; margin: 6px 0;">
-        <span style="font-size: 0.78em; color: #57606a;">$m=0$ usa la media local sin suavizar; puede sobreajustar categorías raras. Un $m$ alto acerca el valor a la media global.</span>
-      </div>
-
-      <table style="width: 100%; font-size: 0.82em; border-collapse: collapse; background: white;">
-        <thead>
-          <tr style="background: #eaeef2; text-align: left;" id="encodingTableHead"></tr>
-        </thead>
-        <tbody id="encodingTableBody"></tbody>
-      </table>
-      <div id="encodingInsight" style="margin-top: 10px; font-size: 0.8em; color: #57606a; background: #dafbe1; padding: 6px; border-radius: 4px; border-left: 3px solid #1a7f37;"></div>
+      <label id="bench-m-wrap">Suavizado m: <b id="bench-m-v"></b><input type="range" id="bench-m" min="0" max="10" step="0.5" value="2"></label>
     </div>
+    <svg id="bench-target" class="wide" role="img" aria-label="Medias locales, global y codificadas por categoría"></svg>
+    <div class="plab-scroll"><div id="bench-enc-table"></div></div>
+    <p class="plab-note" id="bench-enc-note" aria-live="polite"></p>
   </div>
 </div>
-
 <script>
-(function() {
-  const basePrices = [45.0, 120.0, 180.0];
-  const outlets = ["Grocery Store", "Supermarket Type1", "Supermarket Type3", "Grocery Store"];
+(() => {
+  const K = window.LabKit, root = document.getElementById('conv-bench-lab');
+  const $ = s => root.querySelector(s);
+  const base = [45, 120, 180];
+  const outlets = ['Grocery Store', 'Supermarket Type1', 'Supermarket Type3', 'Grocery Store'];
   const targets = [500, 2500, 4200, 800];
-
-  function computeScaling() {
-    const outlier = parseFloat(document.getElementById('outlierSlider').value);
-    document.getElementById('outlierVal').innerText = '$' + outlier;
-    const prices = [...basePrices, outlier];
-    const scaler = document.querySelector('input[name="scalerChoice"]:checked').value;
-
-    let scaled = [];
-    let insight = "";
-
-    if (scaler === 'minmax') {
-      const min = Math.min(...prices);
-      const max = Math.max(...prices);
-      scaled = prices.map(p => (p - min) / (max - min));
-      insight = "Nota cómo al aumentar el outlier a $" + outlier + ", los productos 1, 2 y 3 se comprimen cerca del 0.0, perdiendo contraste.";
-    } else if (scaler === 'standard') {
-      const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
-      const variance = prices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / prices.length;
-      const std = Math.sqrt(variance);
-      scaled = prices.map(p => (p - mean) / std);
-      insight = "StandardScaler centra en 0. El outlier distorsiona la media (μ=" + mean.toFixed(1) + ") y la desviación estándar.";
-    } else if (scaler === 'robust') {
-      const sorted = [...prices].sort((a, b) => a - b);
-      const med = (sorted[1] + sorted[2]) / 2.0;
-      // Percentiles 25 y 75 con interpolación lineal, como np.percentile.
-      const q1 = sorted[0] + 0.75 * (sorted[1] - sorted[0]);
-      const q3 = sorted[2] + 0.25 * (sorted[3] - sorted[2]);
-      const iqr = q3 - q1;
-      scaled = prices.map(p => (p - med) / (iqr || 1));
-      insight = "RobustScaler usa la mediana ($" + med.toFixed(1) + ") y el IQR ($" + iqr.toFixed(1) + "). Con solo cuatro observaciones, el cuartil superior también cambia al mover el extremo: compara los valores y compruébalo.";
-    }
-
-    const tbody = document.getElementById('scalingTableBody');
-    tbody.innerHTML = '';
-    prices.forEach((p, idx) => {
-      const sVal = scaled[idx];
-      const barWidth = Math.min(100, Math.max(5, (scaler === 'minmax' ? sVal * 100 : Math.abs(sVal) * 35)));
-      const barColor = idx === 3 ? '#cf222e' : '#0969da';
-      tbody.innerHTML += `
-        <tr style="border-bottom: 1px solid #e1e4e8;">
-          <td style="padding: 4px 6px;">${idx + 1}</td>
-          <td style="padding: 4px 6px;">$${p.toFixed(1)}</td>
-          <td style="padding: 4px 6px; font-weight: bold;">${sVal.toFixed(3)}</td>
-          <td style="padding: 4px 6px;">
-            <div style="background: ${barColor}; width: ${barWidth}px; height: 10px; border-radius: 2px;"></div>
-          </td>
-        </tr>
-      `;
+  const cats = ['Grocery Store', 'Supermarket Type1', 'Supermarket Type3'];
+  function scalers(x) {
+    const lo = Math.min(...x), hi = Math.max(...x), m = K.mean(x), s = K.sd(x);
+    const med = K.median(x), q1 = K.quantile(x, .25), q3 = K.quantile(x, .75);
+    return [
+      { name: 'Min-Max', f: v => (v - lo) / (hi - lo), par: `mín ${K.fmt(lo, 0)}, máx ${K.fmt(hi, 0)}` },
+      { name: 'StandardScaler', f: v => (v - m) / s, par: `μ ${K.fmt(m, 1)}, σ ${K.fmt(s, 1)}` },
+      { name: 'RobustScaler', f: v => (v - med) / (q3 - q1), par: `mediana ${K.fmt(med, 1)}, IQR ${K.fmt(q3 - q1, 1)}` }
+    ];
+  }
+  function renderScale() {
+    const out = +$('#bench-out').value; $('#bench-out-v').textContent = '$' + out;
+    const x = [...base, out], S = scalers(x);
+    const c = K.chart($('#bench-strips'), { width: 640, height: 230, x: [-1.5, 6], y: [0, 3], margin: { left: 110, right: 16, top: 10, bottom: 34 } });
+    c.axes({ xTicks: 8, yTicks: 0, xLabel: 'valor escalado', xFmt: v => K.fmt(v, 0) });
+    S.forEach((sc, i) => {
+      const y = 2.5 - i, v = x.map(sc.f);
+      c.line(-1.5, y, 6, y, 'muted line thin').style.opacity = .35;
+      c.text(-1.5, y, sc.name, { 'text-anchor': 'end', dx: -8, dy: 4, class: 'strong' });
+      const band = c.rect(v[0], y - .16, v[2], y + .16, 's3'); band.style.fillOpacity = .22; band.style.strokeWidth = 0;
+      c.text((v[0] + v[2]) / 2, y, 'separación ' + K.fmt(v[2] - v[0], 2), { 'text-anchor': 'middle', dy: -14, class: 's3' });
+      v.forEach((z, k) => c.dot(Math.min(z, 5.9), y, 6, (k === 3 ? 's5' : 's1') + ' dot'));
+      if (v[3] > 5.9) c.text(5.9, y, `→ ${K.fmt(v[3], 2)}`, { dx: 8, dy: 4, class: 's5' });
     });
-    document.getElementById('scalingInsight').innerText = insight;
+    $('#bench-table').innerHTML = '<table class="plab-table"><thead><tr><th>Escalador</th><th>Parámetros aprendidos</th><th>ID 1</th><th>ID 2</th><th>ID 3</th><th>ID 4</th></tr></thead><tbody>' +
+      S.map(sc => `<tr><td>${sc.name}</td><td>${sc.par}</td>${x.map((v, k) => `<td${k === 3 ? ' style="color:var(--lab-s5)"' : ''}>${K.fmt(sc.f(v), 3)}</td>`).join('')}</tr>`).join('') + '</tbody></table>';
   }
-
-  function computeEncoding() {
-    const enc = document.querySelector('input[name="encodingChoice"]:checked').value;
-    const dropFirst = document.getElementById('dropFirstToggle').checked;
-    const m = parseFloat(document.getElementById('mSlider').value);
-    document.getElementById('mVal').innerText = m.toFixed(1);
-
-    const thead = document.getElementById('encodingTableHead');
-    const tbody = document.getElementById('encodingTableBody');
-    const insightDiv = document.getElementById('encodingInsight');
-
-    if (enc === 'onehot') {
-      document.getElementById('onehotControls').style.display = 'block';
-      document.getElementById('targetControls').style.display = 'none';
-
-      let cols = ["Grocery Store", "Supermarket Type1", "Supermarket Type3"];
-      if (dropFirst) cols = ["Supermarket Type1", "Supermarket Type3"];
-
-      thead.innerHTML = '<th style="padding: 4px;">ID</th><th style="padding: 4px;">Outlet_Type</th>' + cols.map(c => `<th style="padding: 4px;">${c.replace('Supermarket ', 'SM_')}</th>`).join('');
-      tbody.innerHTML = '';
-
-      outlets.forEach((o, idx) => {
-        let cells = cols.map(c => `<td style="padding: 4px; text-align: center; font-weight: bold;">${o === c ? 1 : 0}</td>`).join('');
-        tbody.innerHTML += `<tr style="border-bottom: 1px solid #e1e4e8;"><td style="padding: 4px;">${idx+1}</td><td style="padding: 4px;">${o}</td>${cells}</tr>`;
-      });
-
-      insightDiv.innerText = dropFirst 
-        ? "Con drop='first' eliminas la dependencia lineal en una regresión con intercepto. En estas categorías conocidas, dos ceros representan Grocery Store; una categoría nueva también podría producir dos ceros con handle_unknown='ignore'."
-        : "One-Hot completo genera 3 columnas binarias. La suma de cada fila es 1, causando singularidad en mínimos cuadrados si incluyes intercepto.";
-    } else {
-      document.getElementById('onehotControls').style.display = 'none';
-      document.getElementById('targetControls').style.display = 'block';
-
-      const globalMean = targets.reduce((a,b)=>a+b,0) / targets.length;
-      const stats = {};
-      outlets.forEach((o, idx) => {
-        if (!stats[o]) stats[o] = [];
-        stats[o].push(targets[idx]);
-      });
-
-      thead.innerHTML = '<th style="padding: 4px;">ID</th><th style="padding: 4px;">Outlet_Type</th><th style="padding: 4px;">Target Real</th><th style="padding: 4px;">Valor Codificado</th>';
-      tbody.innerHTML = '';
-
-      outlets.forEach((o, idx) => {
-        const n = stats[o].length;
-        const localMean = stats[o].reduce((a,b)=>a+b,0)/n;
-        const encoded = ((n * localMean) + (m * globalMean)) / (n + m);
-        tbody.innerHTML += `
-          <tr style="border-bottom: 1px solid #e1e4e8;">
-            <td style="padding: 4px;">${idx+1}</td>
-            <td style="padding: 4px;">${o}</td>
-            <td style="padding: 4px;">$${targets[idx]}</td>
-            <td style="padding: 4px; font-weight: bold; color: #1a7f37;">${encoded.toFixed(1)}</td>
-          </tr>
-        `;
-      });
-
-      insightDiv.innerText = `Media global: $${globalMean.toFixed(0)}. Con m=${m}, las categorías con pocas muestras se acercan a la media global. El suavizado por sí solo no evita la fuga de información de la propia fila.`;
+  const enc = K.segmented($('#bench-enc'), () => renderEnc());
+  function renderEnc() {
+    const mode = enc.get(), m = +$('#bench-m').value, note = $('#bench-enc-note');
+    $('#bench-m-v').textContent = K.fmt(m, 1);
+    $('#bench-m-wrap').style.visibility = mode === 'target' ? 'visible' : 'hidden';
+    const svg = $('#bench-target');
+    if (mode !== 'target') {
+      svg.style.display = 'none';
+      const cols = mode === 'drop' ? cats.slice(1) : cats;
+      $('#bench-enc-table').innerHTML = '<table class="plab-table"><thead><tr><th>ID</th><th>Outlet_Type</th>' + cols.map(c => `<th>${c.replace('Supermarket ', 'SM_').replace('Grocery Store', 'Grocery')}</th>`).join('') + '<th>suma</th></tr></thead><tbody>' +
+        outlets.map((o, i) => { const v = cols.map(c => +(o === c)); return `<tr><td>${i + 1}</td><td>${o}</td>${v.map(b => `<td${b ? ' class="hl"' : ''}>${b}</td>`).join('')}<td>${K.sum(v)}</td></tr>`; }).join('') + '</tbody></table>';
+      note.className = mode === 'drop' ? 'plab-note' : 'plab-note warn';
+      note.textContent = mode === 'drop'
+        ? 'Sin la columna Grocery, dos ceros significan «Grocery Store». Desaparece la dependencia lineal con el intercepto, pero una categoría nueva con handle_unknown="ignore" también produciría dos ceros.'
+        : 'Cada fila suma 1 (columna «suma»): junto con el intercepto de una regresión, las tres columnas son linealmente dependientes y XᵀX no se puede invertir.';
+      return;
     }
+    svg.style.display = '';
+    const g = K.mean(targets);
+    const st = cats.map(cat => { const y = targets.filter((_, i) => outlets[i] === cat); const loc = K.mean(y); return { cat, y, n: y.length, loc, enc: (y.length * loc + m * g) / (y.length + m) }; });
+    const c = K.chart(svg, { width: 640, height: 220, x: [0, 4600], y: [0, 3], margin: { left: 130, right: 16, top: 10, bottom: 36 } });
+    c.axes({ xTicks: 5, yTicks: 0, xLabel: 'Item_Outlet_Sales', xFmt: v => K.fmt(v, 0) });
+    c.line(g, 0, g, 3, 'muted line dash');
+    c.text(g, 3, `media global ${K.fmt(g, 0)}`, { 'text-anchor': 'middle', dy: 10 });
+    st.forEach((s, i) => {
+      const y = 2.35 - i * .85;
+      c.text(0, y, `${s.cat} (n=${s.n})`, { 'text-anchor': 'end', dx: -8, dy: 4, class: 'strong' });
+      s.y.forEach(v => c.dot(v, y, 4, 'muted'));
+      if (Math.abs(s.enc - s.loc) > 30) c.arrow(s.loc, y, s.enc + (s.enc > s.loc ? -60 : 60), y, 's2');
+      c.dot(s.loc, y, 6.5, 's1 dot'); c.dot(s.enc, y, 6.5, 's2 dot');
+      c.text(s.enc, y, K.fmt(s.enc, 0), { 'text-anchor': 'middle', dy: -11, class: 's2' });
+    });
+    $('#bench-enc-table').innerHTML = '<table class="plab-table"><thead><tr><th>Categoría</th><th>n</th><th>media local</th><th>peso local n/(n+m)</th><th>codificado</th></tr></thead><tbody>' +
+      st.map(s => `<tr><td>${s.cat}</td><td>${s.n}</td><td>${K.fmt(s.loc, 1)}</td><td>${K.fmt(s.n / (s.n + m), 2)}</td><td class="hl">${K.fmt(s.enc, 1)}</td></tr>`).join('') + '</tbody></table>';
+    note.className = 'plab-note';
+    note.textContent = `Puntos azules: media local; naranjas: valor codificado. Con m = ${K.fmt(m, 1)}, una categoría con una sola fila conserva solo el ${K.fmt(100 / (1 + m), 0)} % de su media local y toma el resto de la global (${K.fmt(g, 0)}). El suavizado no evita que una fila use su propio objetivo: eso lo resuelve la codificación fuera de pliegue.`;
   }
-
-  document.getElementById('outlierSlider').addEventListener('input', computeScaling);
-  document.querySelectorAll('input[name="scalerChoice"]').forEach(r => r.addEventListener('change', computeScaling));
-  document.querySelectorAll('input[name="encodingChoice"]').forEach(r => r.addEventListener('change', computeEncoding));
-  document.getElementById('dropFirstToggle').addEventListener('change', computeEncoding);
-  document.getElementById('mSlider').addEventListener('input', computeEncoding);
-
-  computeScaling();
-  computeEncoding();
+  $('#bench-out').addEventListener('input', renderScale);
+  $('#bench-m').addEventListener('input', renderEnc);
+  renderScale(); renderEnc();
 })();
 </script>
 ```
 :::
 ::: {.content-visible when-format="pdf"}
-*(Nota: Un laboratorio interactivo con controles deslizantes para experimentar con el impacto de valores atípicos y regularización Bayesiana en BigMart está disponible en la versión web del libro).*
+*(En la versión web del libro, un laboratorio interactivo compara los tres escaladores al mover el precio atípico y muestra cómo el suavizado $m$ acerca cada categoría a la media global).*
 :::
 
 ### Guía del laboratorio
@@ -398,7 +393,7 @@ El panel usa las cuatro ventas para calcular la media de cada categoría. En un 
 
 ---
 
-## Implementación Computacional (Python & Pandas)
+## Implementación computacional (Python y pandas)
 
 A continuación, mostramos cómo implementar estas transformaciones de manera profesional sobre el caso **BigMart Sales**.
 
@@ -433,7 +428,7 @@ data.loc[99, 'Item_MRP'] = 750.0
 data.head()
 ```
 
-### Escalado Numérico Comparativo
+### Escalado numérico comparativo
 
 ```{python}
 # Instanciamos los escaladores
@@ -453,7 +448,7 @@ scaled_df = pd.DataFrame({
 scaled_df.tail()
 ```
 
-### Codificación Categórica
+### Codificación categórica
 
 ::: {.callout-important title="Regla de oro en producción"}
 Para categorías nuevas, decide explícitamente una política: `handle_unknown='ignore'` en `OneHotEncoder` produce ceros para una categoría desconocida. Comprueba si esa representación puede confundirse con la categoría de referencia cuando usas `drop='first'`; otra opción es agrupar categorías infrecuentes.
@@ -482,7 +477,7 @@ data[['Outlet_Type', 'Outlet_Type_TargetEncoded', 'Item_Outlet_Sales']].drop_dup
 El *target encoding* usa la variable $Y$ (`Item_Outlet_Sales`) para transformar las $X$. `TargetEncoder.fit_transform` utiliza particiones internas para codificar las filas de entrenamiento fuera del pliegue[^3]. Esta protección no sustituye la separación externa de entrenamiento, validación y prueba: ajusta todo el preprocesamiento dentro de cada pliegue externo.
 :::
 
-### Ingeniería de Fechas y Ciclos
+### Ingeniería de fechas y ciclos
 
 ```{python}
 # Transformar año de establecimiento en Antigüedad de la tienda
@@ -493,7 +488,7 @@ data[['Outlet_Establishment_Year', 'Outlet_Age']].head(3)
 
 ---
 
-## Referencias y Definiciones
+## Referencias y definiciones
 
 [^1]: **Maldición de la Dimensionalidad**: A medida que aumenta el número de características (dimensiones), el volumen del espacio de características crece exponencialmente. Los datos se vuelven dispersos, y las medidas de distancia (como la Euclidiana) pierden significado, degradando severamente modelos espaciales como KNN. Ocurre rápido si aplicamos One-Hot a campos como `Item_Identifier` (más de 1,500 códigos únicos).
 
@@ -508,3 +503,11 @@ data[['Outlet_Establishment_Year', 'Outlet_Age']].head(3)
 [^6]: **Percentil interpolado**: Para cuatro datos ordenados, el percentil 25 queda a 0.75 del tramo entre el primero y el segundo; el 75 queda a 0.25 del tramo entre el tercero y el cuarto. Hay otras convenciones de cuartiles, por lo que conviene declarar la usada.
 
 [^7]: **Pipeline**: Secuencia que ajusta transformaciones y estimador juntos. En validación cruzada, cada ajuste aprende estadísticas solo de la parte de entrenamiento del pliegue.
+
+[^varpob]: **Varianza poblacional frente a muestral:** aquí dividimos entre $n=4$ porque `StandardScaler` usa esa convención (equivale a `numpy.std` con `ddof=0`). La varianza muestral divide entre $n-1$ y es la que usan `pandas.Series.std` y la mayoría de pruebas estadísticas. Con pocos datos la diferencia es visible: $\sqrt{120{,}318.75/3}\approx200.3$ frente a $173.4$.
+
+[^bayes]: **Suavizado bayesiano:** el valor codificado es la media *a posteriori* de la categoría si, antes de ver sus datos, suponemos que su media se parece a la global con una confianza equivalente a $m$ observaciones «imaginarias». Con pocas filas reales domina esa creencia previa; con muchas, dominan los datos.
+
+[^boxcox]: **Box-Cox:** el parámetro $\lambda$ no se elige a mano: `PowerTransformer` lo estima por máxima verosimilitud, buscando el valor con el que los datos transformados se parecen más a una distribución normal. Como todo parámetro aprendido, debe ajustarse solo con entrenamiento.
+
+[^linealidad]: **Linealidad de la esperanza:** para constantes $a$ y $b$, $\mathbb{E}[aX+b]=a\,\mathbb{E}[X]+b$. La varianza, en cambio, ignora los desplazamientos y escala con el cuadrado: $\operatorname{Var}(aX+b)=a^2\operatorname{Var}(X)$.
