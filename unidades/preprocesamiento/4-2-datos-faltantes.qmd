@@ -25,6 +25,8 @@ import plotly.express as px
 np.random.seed(42)
 ```
 
+{{< include _labkit.qmd >}}
+
 En una tabla de ventas como BigMart, `Item_Weight` puede faltar porque falló la captura del proveedor. En cambio, si `Outlet_Size` falta sobre todo en tiendas de cierto tipo, la ausencia contiene información sobre la tienda. Antes de elegir un método, pregunta **qué filas faltan, en qué grupos y desde cuándo**. `NaN`[^nan] indica que no se registró un valor; no explica la causa.
 
 ## Un primer ejemplo visual
@@ -354,6 +356,107 @@ print(f"Proporción missing: {mnar_mask.mean():.2%}")
 
 No podemos confirmar MNAR solo mirando los pesos registrados. Necesitamos conocimiento del proceso de captura, una muestra de seguimiento o un análisis de sensibilidad[^sensibilidad].
 
+### Laboratorio: tres mecanismos, un mismo promedio
+
+Las tres simulaciones anteriores usan datos distintos. Aquí los comparamos sobre **la misma población** de 1 500 productos: las tiendas *Grocery* venden productos más ligeros (media 10 kg) que los *Supermarket* (media 14 kg). Tú eliges cómo se pierden los pesos y el laboratorio compara tres estimadores de la media: casos completos, imputación por la media global e imputación por la media **de cada tipo de tienda**.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="miss-mech-lab">
+  <p class="plab-eyebrow">Laboratorio · Mecanismos de ausencia</p>
+  <h3 class="plab-title">¿Cuándo sesga la media observada y cuándo lo corrige una variable auxiliar?</h3>
+  <p class="plab-sub">La población completa es conocida porque la simulamos; en un proyecto real solo verías las barras azules.</p>
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:2 1 260px">Mecanismo
+      <div class="plab-seg" id="mm-mech">
+        <button type="button" data-value="mcar" aria-pressed="true">MCAR · al azar</button>
+        <button type="button" data-value="mar">MAR · por tipo</button>
+        <button type="button" data-value="mnar">MNAR · por peso</button>
+      </div>
+    </div>
+    <label>Proporción objetivo de faltantes: <b id="mm-rate-v"></b><input type="range" id="mm-rate" min="0.05" max="0.7" step="0.05" value="0.3"></label>
+    <label>Intensidad de la dependencia: <b id="mm-str-v"></b><input type="range" id="mm-str" min="0" max="2" step="0.1" value="1.2"></label>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Distribución completa frente a observada</h4>
+      <svg id="mm-hist" role="img" aria-label="Histograma de pesos completos y observados"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-axis)"></i>población completa</span><span><i style="background:var(--lab-s1)"></i>pesos observados</span><span><i style="background:var(--lab-text)"></i>media verdadera</span><span><i style="background:var(--lab-s5)"></i>media observada</span></div>
+    </div>
+    <div class="plab-panel"><h4>Tasa de faltantes por tipo de tienda</h4>
+      <svg id="mm-rates" role="img" aria-label="Barras de proporción de faltantes por grupo"></svg>
+      <div class="plab-scroll" style="margin-top:.6rem"><div id="mm-table"></div></div>
+    </div>
+  </div>
+  <p class="plab-note" id="mm-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('miss-mech-lab');
+  const $ = s => root.querySelector(s);
+  const N = 1500, rand = K.rng(42);
+  // Población fija: grupo (0 = Grocery, 1 = Supermarket), peso y un número uniforme para decidir la ausencia.
+  const pop = Array.from({ length: N }, () => { const g = rand() < 0.4 ? 0 : 1; return { g, w: (g ? 14 : 10) + 1.8 * rand.normal(), u: rand() }; });
+  const trueMean = K.mean(pop.map(p => p.w)), trueSd = K.sd(pop.map(p => p.w), 1);
+  const sig = x => 1 / (1 + Math.exp(-x)), logit = p => Math.log(p / (1 - p));
+  const mech = K.segmented($('#mm-mech'), () => render());
+  function render() {
+    const m = mech.get(), rate = +$('#mm-rate').value, str = +$('#mm-str').value;
+    $('#mm-rate-v').textContent = K.fmt(100 * rate, 0) + ' %';
+    $('#mm-str-v').textContent = m === 'mcar' ? 'no aplica' : K.fmt(str, 1);
+    $('#mm-str').disabled = m === 'mcar';
+    const score = p => m === 'mcar' ? 0 : m === 'mar' ? (p.g ? -1 : 1) : (p.w - 12) / 2;
+    const miss = pop.map(p => p.u < sig(logit(rate) + 2 * str * score(p)));
+    const obs = pop.filter((_, i) => !miss[i]);
+    const obsW = obs.map(p => p.w), obsMean = K.mean(obsW);
+    const groupMean = [0, 1].map(g => K.mean(obs.filter(p => p.g === g).map(p => p.w)));
+    const nG = [0, 1].map(g => pop.filter(p => p.g === g).length);
+    const byGroup = (nG[0] * groupMean[0] + nG[1] * groupMean[1]) / N;
+    const imputed = pop.map((p, i) => miss[i] ? obsMean : p.w);
+    const sdImp = K.sd(imputed, 1), realRate = miss.filter(Boolean).length / N;
+    // Histograma
+    const lo = 3, hi = 21, bins = 36, bw = (hi - lo) / bins;
+    const count = arr => { const c = new Array(bins).fill(0); arr.forEach(v => { const k = Math.floor((v - lo) / bw); if (k >= 0 && k < bins) c[k]++; }); return c; };
+    const cAll = count(pop.map(p => p.w)), cObs = count(obsW), ymax = Math.max(...cAll) * 1.12;
+    const c = K.chart($('#mm-hist'), { width: 420, height: 280, x: [lo, hi], y: [0, ymax], margin: { left: 40, right: 12, top: 12, bottom: 38 } });
+    c.axes({ xTicks: 6, yTicks: 4, xLabel: 'Item_Weight (kg)', yLabel: 'productos' });
+    cAll.forEach((v, k) => { const r = c.rect(lo + k * bw, 0, lo + (k + 1) * bw, v, 'muted'); r.style.fillOpacity = .25; });
+    cObs.forEach((v, k) => { const r = c.rect(lo + k * bw + bw * .12, 0, lo + (k + 1) * bw - bw * .12, v, 's1'); r.style.fillOpacity = .75; });
+    const lt = c.line(trueMean, 0, trueMean, ymax, 'line'); lt.style.stroke = 'var(--lab-text)';
+    c.line(obsMean, 0, obsMean, ymax, 's5 line dash');
+    // Tasas por grupo
+    const rates = [0, 1].map(g => { const idx = pop.map((p, i) => p.g === g ? i : -1).filter(i => i >= 0); return idx.filter(i => miss[i]).length / idx.length; });
+    const lowW = pop.map((p, i) => p.w < 12 ? i : -1).filter(i => i >= 0), highW = pop.map((p, i) => p.w >= 12 ? i : -1).filter(i => i >= 0);
+    const rw = [lowW, highW].map(ix => ix.filter(i => miss[i]).length / ix.length);
+    const r = K.chart($('#mm-rates'), { width: 420, height: 200, x: [0, 4], y: [0, 1], margin: { left: 40, right: 12, top: 18, bottom: 34 } });
+    r.axes({ xTicks: 0, yTicks: 4, yFmt: v => K.fmt(100 * v, 0) + ' %', xCats: [[.5, 'Grocery'], [1.5, 'Supermarket'], [2.5, 'peso < 12'], [3.5, 'peso ≥ 12']] });
+    [...rates, ...rw].forEach((v, k) => { r.rect(k + .2, 0, k + .8, v, k < 2 ? 's4' : 's2'); r.text(k + .5, v, K.fmt(100 * v, 0) + ' %', { 'text-anchor': 'middle', dy: -5, class: 'strong' }); });
+    const rows = [['Media verdadera (desconocida en la práctica)', trueMean], ['Casos completos / imputación por media global', obsMean], ['Imputación por media de cada tipo de tienda', byGroup]];
+    $('#mm-table').innerHTML = '<table class="plab-table"><thead><tr><th>Estimador de la media</th><th>kg</th><th>sesgo</th></tr></thead><tbody>' +
+      rows.map(([lab, v], i) => `<tr${i ? '' : ' class="hl"'}><td>${lab}</td><td>${K.fmt(v, 2)}</td><td>${i ? (v - trueMean >= 0 ? '+' : '') + K.fmt(v - trueMean, 2) : '—'}</td></tr>`).join('') +
+      `<tr><td>Desviación estándar verdadera / tras imputar con la media</td><td colspan="2">${K.fmt(trueSd, 2)} → ${K.fmt(sdImp, 2)}</td></tr></tbody></table>`;
+    const note = $('#mm-note'), b1 = Math.abs(obsMean - trueMean), b2 = Math.abs(byGroup - trueMean);
+    const msg = `Faltan ${K.fmt(100 * realRate, 1)} % de los pesos. `;
+    if (m === 'mcar') { note.className = 'plab-note good'; note.textContent = msg + `Bajo MCAR la media observada apenas se desvía (${K.fmt(b1, 2)} kg): perder filas cuesta precisión, no introduce sesgo sistemático. Aun así, imputar con la media reduce la desviación estándar de ${K.fmt(trueSd, 2)} a ${K.fmt(sdImp, 2)}.`; }
+    else if (m === 'mar') { note.className = b1 > .15 ? 'plab-note warn' : 'plab-note'; note.textContent = msg + `Bajo MAR la media observada se sesga ${K.fmt(b1, 2)} kg porque sobran supermercados entre los casos completos. Condicionar en el tipo de tienda lo corrige casi por completo (sesgo ${K.fmt(b2, 2)} kg).`; }
+    else { note.className = 'plab-note bad'; note.textContent = msg + `Bajo MNAR ambos estimadores fallan: sesgo ${K.fmt(b1, 2)} kg con la media global y ${K.fmt(b2, 2)} kg por grupo. La variable auxiliar no contiene la causa de la ausencia; hace falta información externa o un análisis de sensibilidad.`; }
+  }
+  root.querySelectorAll('input').forEach(i => i.addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio simula 1 500 productos y permite cambiar el mecanismo de ausencia. Resultado esperado: bajo MCAR la media observada casi no se sesga; bajo MAR se sesga, pero promediar por tipo de tienda lo corrige; bajo MNAR ninguno de los dos estimadores lo corrige.
+:::
+
+**Guía del laboratorio.**
+
+1. Con MCAR, mueve la proporción de faltantes de 5 % a 70 %. Comprueba que la media observada se mantiene cerca de la verdadera mientras la desviación estándar tras imputar con la media **disminuye**. ¿Por qué ocurre lo segundo aunque no haya sesgo?
+2. Cambia a MAR con intensidad 1.2. Identifica en el panel derecho qué grupo pierde más pesos y explica el signo del sesgo de la media observada. Verifica que el estimador por grupo lo corrige.
+3. Cambia a MNAR. Observa que las tasas por tipo de tienda casi no se distinguen, pero las tasas por peso sí. ¿Qué implica que la evidencia de MNAR esté precisamente en la columna que no observamos?
+
 ::: {.callout-note title="Antes de imputar"}
 Cuenta los faltantes por columna, por tipo de tienda y por periodo. Verifica si un código especial como `0` o `"sin dato"` representa ausencia. Documenta la definición de cada campo y el momento en que estará disponible durante la predicción.
 :::
@@ -370,6 +473,12 @@ En esta muestra pequeña conocemos `Item_Outlet_Sales` solo como **variable auxi
 | FDX07 | 19.20 | 4138.61 |
 
 **Media observada.** Para FDN15, la media de los tres pesos registrados es $(9.30+5.92+19.20)/3\approx 11.47$ kg. Es sencilla, pero todas las filas incompletas reciben el mismo número y la dispersión se contrae.
+
+**Cuánto se contrae.** La varianza muestral[^varmuestral] de los tres pesos observados es
+$$
+s^2_{\mathrm{obs}}=\frac{(9.30-11.47)^2+(5.92-11.47)^2+(19.20-11.47)^2}{3-1}\approx\frac{4.72+30.82+59.72}{2}\approx 47.63 .
+$$
+Al añadir el valor imputado $11.47$, el numerador no cambia (esa fila está exactamente en la media, así que aporta cero), pero el divisor pasa de $2$ a $3$: $s^2_{\mathrm{imp}}=95.26/3\approx31.75$. La desviación estándar cae de $6.90$ a $5.64$ kg **sin que hayamos aprendido nada nuevo** sobre los pesos. Un modelo entrenado con esa columna verá los datos más concentrados de lo que son.
 
 **Vecino más cercano.** Si comparamos únicamente las ventas disponibles, DRC01 es el más cercano a FDN15: $|1200-1098.56|=101.44$. Con $k=1$ y ese único atributo auxiliar, imputaríamos **5.92 kg**. La distancia y el resultado cambian si añadimos otras variables o las escalamos; `KNNImputer` usa por defecto vecinos con peso uniforme[^knn].
 
@@ -866,12 +975,24 @@ Las cinco nubes muestran incertidumbre entre imputaciones; ninguna recupera nece
 Sea $Y=(Y_{\mathrm{obs}},Y_{\mathrm{mis}})$ el conjunto completo, $R$ el indicador de ausencia y $X$ las variables auxiliares observadas. De manera esquemática:
 
 - **MCAR:** $P(R\mid Y,X)=P(R)$. La ausencia es independiente de los valores.
-- **MAR:** $P(R\mid Y_{\mathrm{obs}},Y_{\mathrm{mis}},X)=P(R\mid Y_{\mathrm{obs}},X)$. Una vez condicionamos en lo observado, el valor ausente no añade información sobre $R$.
+- **MAR:** $P(R\mid Y_{\mathrm{obs}},Y_{\mathrm{mis}},X)=P(R\mid Y_{\mathrm{obs}},X)$. Una vez condicionamos[^indcond] en lo observado, el valor ausente no añade información sobre $R$.
 - **MNAR:** la probabilidad de ausencia todavía depende de $Y_{\mathrm{mis}}$ después de condicionar en lo observado.
 
-La media de casos completos estima $E[Y\mid R=0]$. Coincide con $E[Y]$ si ambos grupos tienen la misma media; MCAR es una condición suficiente para ello, pero no la única. Bajo MAR, incluir las variables observadas que explican la ausencia puede ayudar a corregir sesgos, siempre que el modelo y sus supuestos sean adecuados.
+La media de casos completos estima $E[Y\mid R=0]$[^esperanza]. Por la ley de la probabilidad total,
+$$
+E[Y]=P(R=0)\,E[Y\mid R=0]+P(R=1)\,E[Y\mid R=1],
+$$
+así que el **sesgo**[^sesgo] de usar solo los casos completos es $E[Y\mid R=0]-E[Y]=P(R=1)\,\big(E[Y\mid R=0]-E[Y\mid R=1]\big)$: crece con la proporción de faltantes **y** con la diferencia entre quienes responden y quienes no. Bajo MCAR esa diferencia es cero. Bajo MAR puede no serlo, pero dentro de cada valor de $X$ sí lo es, por lo que promediar primero dentro de los grupos de $X$ y luego ponderar por su tamaño elimina el sesgo:
+$$
+\hat\mu_{\mathrm{MAR}}=\sum_{x}\hat P(X=x)\,\bar y_{\mathrm{obs}}(x).
+$$
+Es exactamente el estimador «por tipo de tienda» del laboratorio de mecanismos. Bajo MNAR no existe una corrección que use solo lo observado.
 
-Para una columna numérica, la imputación por media usa $\hat y_i=\bar y_{\mathrm{obs}}$ cuando $R_i=1$. En KNN, $\hat y_i=k^{-1}\sum_{j\in N_k(i)}y_j$, donde $N_k(i)$ reúne vecinos con el valor observado. Ambas producen **estimaciones**, no recuperaciones seguras del dato original.
+Para una columna numérica, la imputación por media usa $\hat y_i=\bar y_{\mathrm{obs}}$ cuando $R_i=1$. Con $n_{\mathrm{obs}}$ valores observados de $n$, la varianza de la columna imputada es
+$$
+s^2_{\mathrm{imp}}=\frac{n_{\mathrm{obs}}-1}{n-1}\,s^2_{\mathrm{obs}},
+$$
+porque los valores imputados no aportan desviaciones respecto a la media. En el ejemplo, $\frac{2}{3}\cdot47.63=31.75$. En KNN, $\hat y_i=k^{-1}\sum_{j\in N_k(i)}y_j$, donde $N_k(i)$ reúne vecinos con el valor observado. Ambas producen **estimaciones**, no recuperaciones seguras del dato original.
 
 ## Laboratorio: elegir y poner a prueba una imputación
 
@@ -880,61 +1001,95 @@ Para una columna numérica, la imputación por media usa $\hat y_i=\bar y_{\math
 1. Cambia el método y el número de vecinos. Anota la imputación del peso realmente ausente de FDN15.
 2. Ocultamos además el peso conocido de NCD19 **solo para validar**. Compara la predicción con su valor real y registra el error absoluto.
 3. Cambia entre moda y categoría «Faltante» para `Outlet_Size`. Comprueba qué celdas cambian y cuáles no.
-4. Explica por qué el menor error en **una sola fila** no prueba que un método sea mejor para toda la población. Propón una validación con varias filas ocultadas, repetida por grupos y periodos.
+4. Explica por qué el menor error en **una sola fila** no prueba que un método sea mejor para toda la población. Compara después el «error medio (dejar uno fuera)»[^loo], que oculta por turnos cada peso conocido. ¿Cambia el método ganador? Propón cómo repetir esta validación por grupos y periodos en un conjunto real.
 
 ::: {.content-visible when-format="html"}
 ```{=html}
-<div id="missing42-lab" style="border:1px solid #b8cad9;border-radius:8px;padding:1rem;background:#f8fbff;max-width:900px">
-  <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end">
-    <label>Método para el peso<br><select id="missing42-method"><option value="mean">Media</option><option value="median">Mediana</option><option value="knn">KNN por ventas</option></select></label>
-    <label>Vecinos (KNN)<br><input id="missing42-k" type="range" min="1" max="4" value="2"><output id="missing42-k-value">2</output></label>
-    <label><code>Outlet_Size</code><br><select id="missing42-size"><option value="mode">Moda observada</option><option value="missing">Categoría «Faltante»</option></select></label>
+<div class="plab" id="missing42-lab">
+  <p class="plab-eyebrow">Laboratorio · Imputar y validar</p>
+  <h3 class="plab-title">Media, mediana o vecinos: ¿quién estima mejor un peso oculto?</h3>
+  <p class="plab-sub">FDN15 no tiene peso. NCD19 sí lo tiene (12.40 kg), pero lo ocultamos para poder medir el error.</p>
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:2 1 240px">Método para el peso
+      <div class="plab-seg" id="missing42-method">
+        <button type="button" data-value="mean" aria-pressed="true">Media</button>
+        <button type="button" data-value="median">Mediana</button>
+        <button type="button" data-value="knn">KNN por ventas</button>
+      </div>
+    </div>
+    <label>Vecinos k (KNN): <b id="missing42-k-value">2</b><input id="missing42-k" type="range" min="1" max="4" value="2"></label>
+    <label><code>Outlet_Size</code> ausente
+      <select id="missing42-size"><option value="mode">Moda observada</option><option value="missing">Categoría «Faltante»</option></select></label>
   </div>
-  <p id="missing42-result" aria-live="polite"></p>
-  <div style="overflow-x:auto"><table class="table table-sm"><thead><tr><th>Producto</th><th>Ventas (auxiliar)</th><th>Peso (kg)</th><th>Outlet_Size</th><th>Uso</th></tr></thead><tbody id="missing42-rows"></tbody></table></div>
-  <p><small>El asterisco indica un peso estimado. Para evaluar NCD19, su valor real (12.40 kg) no participa en el cálculo.</small></p>
+  <div class="plab-grid" style="grid-template-columns:1fr">
+    <div class="plab-panel"><h4>Ventas (auxiliar) frente a peso</h4>
+      <svg id="missing42-chart" role="img" aria-label="Dispersión de ventas y peso con las estimaciones"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>donantes</span><span><i class="dot" style="background:var(--lab-s2)"></i>estimación</span><span><i class="dot" style="background:var(--lab-s3)"></i>valor real de NCD19</span><span><i style="background:var(--lab-s4)"></i>vecinos usados</span></div>
+    </div>
+    <div class="plab-panel"><h4>Tabla resultante</h4>
+      <div class="plab-scroll"><div id="missing42-rows"></div></div>
+      <div class="plab-stats">
+        <div class="plab-stat"><span>Estimación FDN15</span><strong id="missing42-fdn"></strong></div>
+        <div class="plab-stat"><span>Error en NCD19</span><strong id="missing42-err"></strong></div>
+        <div class="plab-stat"><span>Error medio (dejar uno fuera)</span><strong id="missing42-loo"></strong></div>
+      </div>
+    </div>
+  </div>
+  <p class="plab-note" id="missing42-result" aria-live="polite"></p>
 </div>
 <script>
 (() => {
+  const K = window.LabKit, root = document.getElementById('missing42-lab');
+  const $ = s => root.querySelector(s);
   const rows = [
-    {id:'FDA15',sales:3735.13,weight:9.30,size:'Medium'},
-    {id:'DRC01',sales:1200.00,weight:5.92,size:null},
-    {id:'FDN15',sales:1098.56,weight:null,size:'Small'},
-    {id:'FDX07',sales:4138.61,weight:19.20,size:null},
-    {id:'NCD19',sales:3500.00,weight:12.40,size:'High',validation:true},
-    {id:'FDP10',sales:2500.00,weight:15.00,size:'Medium'}
+    { id: 'FDA15', sales: 3735.13, weight: 9.30, size: 'Medium' },
+    { id: 'DRC01', sales: 1200.00, weight: 5.92, size: null },
+    { id: 'FDN15', sales: 1098.56, weight: null, size: 'Small' },
+    { id: 'FDX07', sales: 4138.61, weight: 19.20, size: null },
+    { id: 'NCD19', sales: 3500.00, weight: 12.40, size: 'High', validation: true },
+    { id: 'FDP10', sales: 2500.00, weight: 15.00, size: 'Medium' }
   ];
-  const root = document.getElementById('missing42-lab');
-  const method = root.querySelector('#missing42-method');
-  const kInput = root.querySelector('#missing42-k');
-  const size = root.querySelector('#missing42-size');
+  const method = K.segmented($('#missing42-method'), () => render());
+  const kInput = $('#missing42-k'), size = $('#missing42-size');
   const donors = rows.filter(r => r.weight !== null && !r.validation);
-  const values = donors.map(r => r.weight).sort((a,b) => a-b);
-  const mean = values.reduce((a,b) => a+b,0) / values.length;
-  const median = (values[1] + values[2]) / 2;
-  function estimate(row) {
-    if (method.value === 'mean') return mean;
-    if (method.value === 'median') return median;
-    const neighbors = [...donors].sort((a,b) => Math.abs(a.sales-row.sales)-Math.abs(b.sales-row.sales)).slice(0,Number(kInput.value));
-    return neighbors.reduce((sum,r) => sum+r.weight,0) / neighbors.length;
+  function estimate(row, pool) {
+    const w = pool.map(r => r.weight);
+    if (method.get() === 'mean') return { value: K.mean(w), used: pool };
+    if (method.get() === 'median') return { value: K.median(w), used: pool };
+    const used = [...pool].sort((a, b) => Math.abs(a.sales - row.sales) - Math.abs(b.sales - row.sales)).slice(0, Math.min(+kInput.value, pool.length));
+    return { value: K.mean(used.map(r => r.weight)), used };
   }
   function render() {
-    const k = Number(kInput.value);
-    root.querySelector('#missing42-k-value').textContent = String(k);
-    kInput.disabled = method.value !== 'knn';
-    const predicted = estimate(rows.find(r => r.validation));
-    const unknown = estimate(rows.find(r => r.id === 'FDN15'));
-    const error = Math.abs(predicted - 12.40);
-    root.querySelector('#missing42-result').textContent = `FDN15: ${unknown.toFixed(2)} kg estimados. Validación NCD19: ${predicted.toFixed(2)} kg frente a 12.40 kg reales; error absoluto = ${error.toFixed(2)} kg. Donantes: ${donors.length}.`;
-    root.querySelector('#missing42-rows').innerHTML = rows.map(r => {
+    $('#missing42-k-value').textContent = kInput.value;
+    kInput.disabled = method.get() !== 'knn';
+    const val = rows.find(r => r.validation), fdn = rows.find(r => r.id === 'FDN15');
+    const eVal = estimate(val, donors), eFdn = estimate(fdn, donors);
+    const err = Math.abs(eVal.value - val.weight);
+    // Validación dejando uno fuera: cada peso conocido se oculta y se estima con los demás.
+    const known = rows.filter(r => r.weight !== null);
+    const loo = K.mean(known.map(r => Math.abs(estimate(r, known.filter(q => q !== r)).value - r.weight)));
+    $('#missing42-fdn').textContent = K.fmt(eFdn.value, 2) + ' kg';
+    $('#missing42-err').textContent = K.fmt(err, 2) + ' kg';
+    $('#missing42-loo').textContent = K.fmt(loo, 2) + ' kg';
+    const c = K.chart($('#missing42-chart'), { width: 420, height: 300, x: [800, 4400], y: [0, 22], margin: { left: 40, right: 14, top: 12, bottom: 40 } });
+    c.axes({ xTicks: 5, yTicks: 5, xLabel: 'Item_Outlet_Sales (auxiliar)', yLabel: 'Item_Weight (kg)', xFmt: v => K.fmt(v, 0) });
+    [[fdn, eFdn], [val, eVal]].forEach(([r, e]) => {
+      if (method.get() === 'knn') e.used.forEach(d => c.line(r.sales, e.value, d.sales, d.weight, 's4 line thin dash'));
+      else { const l = c.line(800, e.value, 4400, e.value, 's2 line thin dash'); l.style.opacity = .5; }
+    });
+    donors.forEach(d => { c.dot(d.sales, d.weight, 6, 's1 dot'); c.text(d.sales, d.weight, d.id, { dx: 8, dy: -6 }); });
+    c.dot(val.sales, val.weight, 6, 's3 dot'); c.text(val.sales, val.weight, 'NCD19 real', { dx: 8, dy: -6, class: 's3' });
+    [[fdn, eFdn], [val, eVal]].forEach(([r, e]) => { c.dot(r.sales, e.value, 6.5, 's2 dot'); c.text(r.sales, e.value, r.id + ' *', { dx: 8, dy: 14, class: 's2' }); });
+    $('#missing42-rows').innerHTML = '<table class="plab-table"><thead><tr><th>Producto</th><th>Ventas</th><th>Peso (kg)</th><th>Outlet_Size</th><th>Uso</th></tr></thead><tbody>' + rows.map(r => {
       const hidden = r.weight === null || r.validation;
-      const weight = hidden ? `${estimate(r).toFixed(2)} *` : r.weight.toFixed(2);
+      const weight = hidden ? `${K.fmt(estimate(r, donors).value, 2)} *` : K.fmt(r.weight, 2);
       const outletSize = r.size ?? (size.value === 'mode' ? 'Medium *' : 'Faltante *');
       const use = r.validation ? 'Validación' : r.weight === null ? 'Ausente' : 'Donante';
-      return `<tr><td>${r.id}</td><td>${r.sales.toFixed(2)}</td><td>${weight}</td><td>${outletSize}</td><td>${use}</td></tr>`;
-    }).join('');
+      return `<tr${hidden ? ' class="hl"' : ''}><td>${r.id}</td><td>${K.fmt(r.sales, 0)}</td><td>${weight}</td><td>${outletSize}</td><td>${use}</td></tr>`;
+    }).join('') + '</tbody></table>';
+    $('#missing42-result').textContent = `NCD19: ${K.fmt(eVal.value, 2)} kg estimados frente a 12.40 kg reales (error ${K.fmt(err, 2)} kg). Con validación dejando uno fuera sobre los ${known.length} pesos conocidos, el error medio es ${K.fmt(loo, 2)} kg: compáralo entre métodos antes de elegir.`;
   }
-  [method,kInput,size].forEach(el => el.addEventListener('input',render));
+  [kInput, size].forEach(el => el.addEventListener('input', render));
   render();
 })();
 </script>
@@ -999,3 +1154,8 @@ Guarda el imputador junto con el modelo, vigila la tasa de faltantes por grupo y
 [^knn]: Por defecto, `KNNImputer` usa la distancia `nan_euclidean` y `weights="uniform"`; también admite ponderar vecinos por distancia. [Documentación de KNNImputer](https://scikit-learn.org/stable/modules/generated/sklearn.impute.KNNImputer.html).
 [^multiple]: La imputación múltiple considera incertidumbre entre tablas imputadas. `IterativeImputer` puede producir realizaciones con `sample_posterior=True`, pero el análisis y la combinación de estimaciones quedan a cargo del usuario. [Documentación de IterativeImputer](https://scikit-learn.org/stable/modules/generated/sklearn.impute.IterativeImputer.html).
 [^indicador]: Un indicador de ausencia es una columna binaria que registra si el valor original faltaba. `SimpleImputer(add_indicator=True)` la añade para las columnas con faltantes durante el ajuste. [Documentación de SimpleImputer](https://scikit-learn.org/stable/modules/generated/sklearn.impute.SimpleImputer.html).
+[^varmuestral]: **Varianza muestral:** $s^2=\frac{1}{n-1}\sum_i (y_i-\bar y)^2$. Se divide entre $n-1$ porque las desviaciones se miden respecto a $\bar y$, calculada con los mismos datos; así $s^2$ es un estimador insesgado de la varianza poblacional.
+[^esperanza]: **Esperanza condicional:** $E[Y\mid R=0]$ es el valor promedio de $Y$ restringido a la subpoblación donde $R=0$ (valor observado). Si las subpoblaciones $R=0$ y $R=1$ tienen promedios distintos, mirar solo una de ellas da una imagen distorsionada del total.
+[^sesgo]: **Sesgo de un estimador:** diferencia entre el valor que el estimador da en promedio, sobre muchas muestras posibles, y el parámetro que pretende estimar. Un estimador sesgado no mejora al aumentar el tamaño de muestra: converge al valor equivocado.
+[^indcond]: **Independencia condicional:** $R$ y $Y_{\mathrm{mis}}$ pueden estar relacionadas en general y, aun así, ser independientes **dentro** de cada grupo definido por las variables observadas. Es la diferencia entre «la ausencia depende del peso» y «la ausencia depende del tipo de tienda, que a su vez se relaciona con el peso».
+[^loo]: **Validación dejando uno fuera (*leave-one-out*):** se oculta una observación, se estima con las demás y se repite con cada observación. Promediar los errores reduce la dependencia de una sola fila afortunada, aunque con pocos datos la estimación sigue siendo muy variable.
