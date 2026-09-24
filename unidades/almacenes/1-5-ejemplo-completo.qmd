@@ -26,11 +26,11 @@ Se asume que el lector **ya cuenta con CSVs** provenientes de sistemas operacion
 
 ---
 
-## 1. Estructura esperada de archivos CSV
+## Estructura esperada de archivos CSV
 
 Coloque los archivos en un directorio `data/` al mismo nivel que este `.qmd`.
 
-### 1.1 Catálogos maestros (dimensiones)
+### Catálogos maestros (dimensiones)
 
 - `data/clientes.csv`
   Campos mínimos: `cliente_id`, `fecha_alta`, `tipo_cliente`, `nivel_lealtad` (u otros atributos).
@@ -44,7 +44,7 @@ Coloque los archivos en un directorio `data/` al mismo nivel que este `.qmd`.
 - (Opcional) `data/promociones.csv`
   Campos mínimos: `promo_codigo`, `campania`, `descripcion`.
 
-### 1.2 Transacciones (hechos)
+### Transacciones (hechos)
 
 Se recomienda conservar el encabezado del pedido y las líneas separadas.
 
@@ -59,7 +59,7 @@ Se recomienda conservar el encabezado del pedido y las líneas separadas.
 
 ---
 
-## 2. Carga de datos y validación de esquema
+## Carga de datos y validación de esquema
 
 En un pipeline reproducible, **la primera etapa** consiste en cargar datos y aplicar validaciones: tipos, llaves no nulas, dominios controlados y rangos.
 
@@ -92,7 +92,7 @@ promociones = read_csv(prom_path) if prom_path.exists() else None
 clientes.head(), productos.head(), sucursales.head()
 ```
 
-### 2.1 Chequeos mínimos de calidad
+### Chequeos mínimos de calidad
 
 A continuación se implementan reglas mínimas. En un DW real, estas reglas alimentan un sistema de monitoreo (por ejemplo, Great Expectations) y generan reportes de calidad.
 
@@ -154,11 +154,11 @@ print("Validaciones mínimas: OK")
 
 ---
 
-## 3. Homologación e integración de fuentes (Staging Integrado)
+## Homologación e integración de fuentes (Staging Integrado)
 
 En Kimball, la integración lógica se garantiza mediante **dimensiones conformadas** y una **bus matrix**. Antes de construir dimensiones y hechos, se unifican las fuentes POS y App.
 
-### 3.1 Integración de encabezados y líneas
+### Integración de encabezados y líneas
 
 ```{python}
 # Unificar encabezados y líneas
@@ -208,7 +208,7 @@ if stg["fecha"].isna().any():
     raise ValueError(f"Existen líneas sin encabezado de pedido asociado. Ejemplos:\n{bad}")
 ```
 
-### 3.2 Derivación de métricas transaccionales
+### Derivación de métricas transaccionales
 
 Se recomienda almacenar importes en el hecho para evitar dependencia histórica de catálogos (p. ej., cambios de precio de lista).
 
@@ -237,7 +237,7 @@ stg[["order_id","line_num","cantidad","precio_unitario","importe_bruto","descuen
 
 ---
 
-## 4. Construcción de dimensiones conformadas
+## Construcción de dimensiones conformadas
 
 En un DW tipo estrella, todas las dimensiones deben tener:
 
@@ -247,7 +247,7 @@ En un DW tipo estrella, todas las dimensiones deben tener:
 
 Para un libro y un ejemplo didáctico, se implementa SCD Tipo 1 (sobrescritura). En producción, `dim_cliente` y `dim_producto` suelen requerir SCD Tipo 2, como se vio en el capítulo anterior.
 
-### 4.1 `dim_tiempo`
+### `dim_tiempo`
 
 ```{python}
 # Rango de fechas basado en staging
@@ -266,7 +266,7 @@ dim_tiempo.insert(0, "tiempo_key", np.arange(1, len(dim_tiempo)+1, dtype=int))
 dim_tiempo.head()
 ```
 
-### 4.2 Función auxiliar para dimensiones (Tipo 1)
+### Función auxiliar para dimensiones (Tipo 1)
 
 ```{python}
 def build_dim_type1(df: pd.DataFrame, natural_key: str, attrs: list[str], sk_name: str) -> pd.DataFrame:
@@ -302,7 +302,7 @@ dim_promocion.insert(0, "promocion_key", np.arange(1, len(dim_promocion)+1, dtyp
 dim_promocion.head()
 ```
 
-### 4.3 `dim_cliente`, `dim_producto`, `dim_sucursal`
+### `dim_cliente`, `dim_producto`, `dim_sucursal`
 
 ```{python}
 # Ajustes básicos de tipos
@@ -347,7 +347,7 @@ dim_cliente.head(), dim_producto.head(), dim_sucursal.head()
 
 ---
 
-## 5. Construcción de la tabla de hechos (fact_linea_pedido)
+## Construcción de la tabla de hechos (fact_linea_pedido)
 
 El hecho se define a granularidad **línea de pedido**, con:
 
@@ -385,9 +385,9 @@ fact_linea_pedido.head()
 
 ---
 
-## 6. Data Marts y respuestas a preguntas estratégicas
+## Data Marts y respuestas a preguntas estratégicas
 
-### 6.1 Pregunta 1: Pedidos mensuales desde enero 2023, segmentado por canal
+### Pregunta 1: Pedidos mensuales desde enero 2023, segmentado por canal
 
 Se define como **número de pedidos únicos** (`COUNT DISTINCT order_id`) por mes.
 
@@ -423,7 +423,7 @@ q1_canal = (fact_time_canal.loc[mask_2023]
 q1.head(), q1_canal.head()
 ```
 
-### 6.2 Pregunta 2: Categorías con mayor demanda en el periodo post
+### Pregunta 2: Categorías con mayor demanda en el periodo post
 
 Se recomienda reportar tanto unidades (volumen) como ingreso neto.
 
@@ -440,7 +440,7 @@ q2 = (fact_prod.loc[fact_prod["fecha"] >= APP_LAUNCH]
 q2.head(10)
 ```
 
-### 6.3 Pregunta 3: Variaciones por zona y tipo de cliente (pre vs post)
+### Pregunta 3: Variaciones por zona y tipo de cliente (pre vs post)
 
 Se propone comparar **delta (post - pre)** en pedidos e ingreso neto.
 
@@ -470,7 +470,7 @@ q3_delta.columns = ["_".join([c for c in col if c]) if isinstance(col, tuple) el
 q3_delta.sort_values("ingreso_neto_delta", ascending=False).head(15)
 ```
 
-### 6.4 Pregunta 4: Cancelación y cupones (tasas) por mes
+### Pregunta 4: Cancelación y cupones (tasas) por mes
 
 Las tasas son **no aditivas**, por lo que deben calcularse como promedios o cocientes.
 
@@ -492,7 +492,7 @@ q4.tail(12)
 
 ---
 
-## 7. Exportación de tablas: Dimensiones y Hechos (Data Mart físico)
+## Exportación de tablas: Dimensiones y Hechos (Data Mart físico)
 
 En una implementación típica, estas tablas se materializan como CSV/Parquet en un *lakehouse* o como tablas físicas en un motor analítico (PostgreSQL, BigQuery, Snowflake, DuckDB, etc.). Aquí se exportan a `out/`.
 
@@ -522,7 +522,7 @@ sorted([p.name for p in OUT_DIR.glob("*.csv")])
 
 ---
 
-## 8. Discusión técnica: decisiones de diseño y extensiones
+## Discusión técnica: decisiones de diseño y extensiones
 
 1. **Dimensiones conformadas**: `dim_tiempo`, `dim_cliente`, `dim_producto`, `dim_sucursal`, `dim_canal` permiten integrar *Ventas POS* y *Pedidos App* en una misma semántica de consulta (bus architecture).
 
@@ -538,7 +538,7 @@ sorted([p.name for p in OUT_DIR.glob("*.csv")])
 
 ---
 
-## 9. Reproducibilidad y control de versiones
+## Reproducibilidad y control de versiones
 
 Para un libro académico, se recomienda:
 
