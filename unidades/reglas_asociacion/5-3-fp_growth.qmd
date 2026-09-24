@@ -38,9 +38,9 @@ crossref:
 jupyter: python3
 ---
 
-# FP-Growth y minería de patrones frecuentes
+## FP-Growth y minería de patrones frecuentes
 
-## Introducción
+### Introducción
 
 La minería de reglas de asociación busca descubrir regularidades en bases de datos transaccionales: productos que suelen comprarse juntos, páginas que suelen visitarse en una misma sesión, palabras que coaparecen en documentos o eventos que tienden a registrarse en conjunto. En este contexto, una transacción representa una observación compuesta por varios ítems; por ejemplo, una compra de supermercado puede contener `{Pan, Leche, Pañales}`. El objetivo no es predecir una etiqueta, sino identificar estructuras de coocurrencia que permitan extraer conocimiento interpretable a partir de datos discretos [@agrawal1994fast; @han2012data].
 
@@ -48,7 +48,7 @@ El algoritmo **FP-Growth** (*Frequent Pattern Growth*) fue propuesto como una al
 
 Este capítulo desarrolla FP-Growth de manera progresiva. Primero se revisan las nociones de transacción, itemset, soporte y frecuencia. Después se muestra cómo construir un FP-tree usando un ejemplo pequeño de cesta de compra. Finalmente, se explica cómo extraer patrones frecuentes mediante caminos prefijo condicionales, se compara FP-Growth con Apriori y se implementa un flujo práctico en Python.
 
-## Conceptos básicos
+### Conceptos básicos
 
 En minería de asociaciones, trabajamos con una colección de transacciones. Cada transacción contiene un subconjunto de ítems tomado de un universo finito de productos, términos o eventos posibles. Esta representación es natural en problemas donde los datos son conjuntos: una compra contiene productos, un documento contiene palabras, una sesión web contiene páginas visitadas.
 
@@ -89,7 +89,7 @@ $$ {#eq-frequent}
 
 El umbral $\text{min\_sup}$ controla la granularidad del análisis. Un valor demasiado bajo puede producir demasiados patrones, muchos de ellos triviales o difíciles de interpretar. Un valor demasiado alto puede eliminar patrones interesantes pero menos comunes. Por ello, en aplicaciones reales suele elegirse mediante exploración, conocimiento del dominio y restricciones computacionales.
 
-## De Apriori a FP-Growth
+### De Apriori a FP-Growth
 
 El algoritmo Apriori explota una propiedad fundamental: si un conjunto de ítems es frecuente, entonces todos sus subconjuntos también son frecuentes. De manera equivalente, si un itemset no es frecuente, ningún superconjunto suyo puede ser frecuente [@agrawal1994fast]. Esta propiedad permite podar el espacio de búsqueda, pero Apriori todavía necesita generar muchos candidatos y escanear la base varias veces.
 
@@ -97,7 +97,7 @@ FP-Growth sigue otra estrategia. En lugar de construir y evaluar candidatos expl
 
 La ventaja aparece especialmente cuando muchas transacciones comparten prefijos. Si los ítems se ordenan globalmente por frecuencia decreciente, transacciones parecidas tienden a compartir las primeras ramas del árbol. Así, el FP-tree almacena información agregada en lugar de repetir cada transacción completa.
 
-## Ejemplo base: transacciones de cesta de compra
+### Ejemplo base: transacciones de cesta de compra
 
 Considérese la siguiente base de transacciones y un soporte mínimo absoluto $\text{min\_sup}=3$:
 
@@ -141,7 +141,7 @@ for transaction in transactions:
 item_counts
 ```
 
-## Ordenamiento por frecuencia
+### Ordenamiento por frecuencia
 
 El FP-tree depende de un orden global de ítems. La regla usual consiste en ordenar los ítems de mayor a menor frecuencia. En caso de empates, conviene fijar un criterio determinista, por ejemplo orden alfabético. Este ordenamiento hace que transacciones con ítems frecuentes compartan prefijos y que el árbol sea más compacto.
 
@@ -176,7 +176,7 @@ for transaction in transactions:
 order, ordered_transactions
 ```
 
-## Construcción del FP-tree
+### Construcción del FP-tree
 
 Un FP-tree es un árbol con raíz nula. Cada nodo almacena un ítem, un contador y enlaces hacia sus hijos. Para insertar una transacción ordenada, se recorre la transacción de izquierda a derecha. Si el siguiente ítem ya existe como hijo del nodo actual, se incrementa su contador. Si no existe, se crea un nuevo nodo con contador inicial igual a uno.
 
@@ -237,7 +237,7 @@ print_tree(root)
 
 En este ejemplo, la rama más importante inicia con `Leche`, porque aparece en todas las transacciones. Desde `Leche`, varias transacciones continúan con `Pan`; otras continúan directamente con `Pañales`. La compresión proviene de sumar contadores en prefijos compartidos en lugar de almacenar cada transacción de forma independiente.
 
-## Caminos prefijo y base condicional
+### Caminos prefijo y base condicional
 
 Una vez construido el FP-tree, FP-Growth extrae patrones frecuentes considerando los ítems desde los menos frecuentes hacia los más frecuentes. Para cada ítem objetivo, se buscan todos los caminos que terminan en ese ítem. Al quitar el ítem objetivo de esos caminos se obtiene su **base de patrones condicional**.
 
@@ -315,7 +315,7 @@ def conditional_counts(prefix_paths):
 conditional_counts(prefix_paths_cerveza)
 ```
 
-## Árbol condicional
+### Árbol condicional
 
 Después de obtener la base condicional de un ítem, se eliminan los ítems que no alcanzan el soporte mínimo y se construye un nuevo FP-tree restringido a esa base. Ese árbol se llama **árbol condicional**. En el caso de `Cerveza`, el árbol condicional conserva la estructura:
 
@@ -362,7 +362,7 @@ conditional_root = build_fp_tree(conditional_transactions)
 print_tree(conditional_root)
 ```
 
-## Patrones frecuentes del ejemplo
+### Patrones frecuentes del ejemplo
 
 Repitiendo el procedimiento para los ítems restantes en orden ascendente de frecuencia, se obtienen los conjuntos frecuentes:
 
@@ -386,7 +386,7 @@ $$
 
 Es importante notar que FP-Growth no produce directamente reglas de asociación; primero produce itemsets frecuentes. Las reglas se construyen después a partir de esos itemsets, evaluando métricas como confianza, lift o convicción [@tan2019introduction; @han2012data].
 
-## Implementación práctica con `mlxtend`
+### Implementación práctica con `mlxtend`
 
 En Python, una forma sencilla de aplicar FP-Growth es utilizar `mlxtend`, que implementa tanto Apriori como FP-Growth para matrices transaccionales codificadas en formato one-hot [@raschka2018mlxtend].
 
@@ -463,7 +463,7 @@ rules[selected_columns].sort_values(
 
 La confianza puede ser alta aun cuando el consecuente sea muy frecuente. Por ello, conviene interpretarla junto con el lift. Un lift mayor que uno sugiere asociación positiva; un lift cercano a uno sugiere que la regla no mejora sustancialmente lo esperado por independencia; un lift menor que uno sugiere asociación negativa.
 
-## Comparación entre FP-Growth y Apriori
+### Comparación entre FP-Growth y Apriori
 
 | Característica | FP-Growth | Apriori |
 |---|---|---|
@@ -475,7 +475,7 @@ La confianza puede ser alta aun cuando el consecuente sea muy frecuente. Por ell
 
 FP-Growth suele ser preferible cuando la base es grande y contiene muchos patrones frecuentes. Apriori puede ser útil con fines didácticos o cuando se desea una implementación directa basada en candidatos. En la práctica, la elección también depende de la densidad de las transacciones, el umbral de soporte, la memoria disponible y la necesidad de interpretar pasos intermedios.
 
-## Aplicaciones
+### Aplicaciones
 
 FP-Growth es aplicable a distintos dominios donde los datos pueden representarse como conjuntos de eventos o ítems:
 
@@ -487,7 +487,7 @@ FP-Growth es aplicable a distintos dominios donde los datos pueden representarse
 
 En todos estos casos, los patrones frecuentes deben interpretarse con cuidado. La coocurrencia no implica causalidad. Una regla puede ser estadísticamente fuerte y, aun así, carecer de utilidad práctica si representa un patrón obvio, redundante o inducido por sesgos de captura de datos.
 
-## Ventajas y limitaciones
+### Ventajas y limitaciones
 
 Entre las principales ventajas de FP-Growth se encuentran:
 
@@ -506,7 +506,7 @@ Sus limitaciones principales son:
 
 Estas limitaciones no invalidan el método, pero sí obligan a seleccionar adecuadamente el umbral de soporte, revisar la calidad de los datos y evaluar la interpretabilidad de los patrones resultantes.
 
-## Buenas prácticas de análisis
+### Buenas prácticas de análisis
 
 Al aplicar FP-Growth en un proyecto real, conviene seguir una estrategia reproducible:
 
@@ -521,7 +521,7 @@ Al aplicar FP-Growth en un proyecto real, conviene seguir una estrategia reprodu
 
 La etapa más importante no es ejecutar el algoritmo, sino construir una representación transaccional coherente. Por ejemplo, en minería de texto, decidir si los ítems serán palabras, lemas, n-gramas o entidades cambia completamente el significado de los patrones. En comercio electrónico, decidir si una transacción corresponde a una compra, una sesión o un usuario también modifica la interpretación del soporte.
 
-## Conclusiones
+### Conclusiones
 
 FP-Growth es un algoritmo fundamental para la minería de patrones frecuentes. Su principal contribución es reemplazar la generación explícita de candidatos por una estructura compacta, el FP-tree, que permite almacenar prefijos compartidos y extraer patrones mediante bases condicionales. Esta estrategia reduce recorridos sobre la base de datos y suele mejorar el rendimiento frente a Apriori en escenarios grandes o densos.
 

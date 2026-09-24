@@ -61,7 +61,7 @@ SEED = 42
 np.random.seed(SEED)
 ```
 
-# Introducción
+## Introducción
 
 La clasificación supervisada es una de las tareas centrales del aprendizaje automático. Dado un conjunto de observaciones etiquetadas $\{(\mathbf{x}_i, y_i)\}_{i=1}^{n}$, donde $\mathbf{x}_i \in \mathbb{R}^d$ es el vector de características y $y_i \in \{0, 1, \ldots, K-1\}$ es la clase objetivo, el problema de clasificación consiste en aprender una función $f: \mathbb{R}^d \to \mathcal{Y}$ que generalice correctamente a nuevas observaciones no vistas durante el entrenamiento.
 
@@ -69,7 +69,7 @@ Este capítulo no busca derivar los fundamentos teóricos de cada algoritmo desd
 
 ---
 
-# Dataset: Breast Cancer Wisconsin
+## Dataset: Breast Cancer Wisconsin
 
 El dataset Breast Cancer Wisconsin [@wolberg1995breast] contiene 569 muestras de biopsias de tejido mamario, cada una descrita por 30 variables numéricas derivadas de imágenes de células. La variable objetivo indica si el tumor es maligno (0) o benigno (1). Este dataset tiene varias propiedades didácticas deseables:
 
@@ -97,7 +97,7 @@ Un aspecto importante es identificar correctamente la clase positiva. Por conven
 
 ---
 
-# Flujo general de un experimento de clasificación
+## Flujo general de un experimento de clasificación
 
 Un experimento bien diseñado sigue estos pasos:
 
@@ -116,9 +116,9 @@ Cada uno de estos pasos involucra decisiones que afectan la validez del experime
 
 ---
 
-# Preparación de datos
+## Preparación de datos
 
-## Separación entrenamiento/prueba
+### Separación entrenamiento/prueba
 
 La regla fundamental es que el conjunto de prueba no debe usarse de ninguna manera durante el diseño, el entrenamiento o el ajuste de los modelos. Usar información del test set para tomar decisiones de diseño introduce **data leakage**, que produce una evaluación optimista que no se replicará en datos reales.
 
@@ -141,7 +141,7 @@ print(f"Prueba:        {X_test.shape[0]} muestras")
 
 El parámetro `stratify=y` garantiza que la proporción de clases se mantiene tanto en train como en test, lo que es especialmente importante con datasets desbalanceados.
 
-## Pipelines para preprocesamiento sin leakage
+### Pipelines para preprocesamiento sin leakage
 
 La forma correcta de aplicar transformaciones como el escalamiento es dentro de un `Pipeline` de scikit-learn [@pedregosa2011]. Un pipeline asegura que el ajuste de cualquier transformación (por ejemplo, `StandardScaler`) se realiza únicamente sobre los datos de entrenamiento, y la misma transformación ya ajustada se aplica automáticamente a los datos de prueba.
 
@@ -170,7 +170,7 @@ X_scaled = scaler.fit_transform(X)
 X_train_s, X_test_s = train_test_split(X_scaled, ...)
 ```
 
-## Validación cruzada
+### Validación cruzada
 
 Cuando el tamaño del dataset es limitado, la evaluación con una sola partición train/test puede ser inestable. La validación cruzada $k$-fold [@kohavi1995] divide el conjunto de entrenamiento en $k$ partes (*folds*), entrena $k$ veces usando $k-1$ folds y evalúa en el fold restante, promediando los resultados.
 
@@ -193,9 +193,9 @@ La validación cruzada se usa para seleccionar hiperparámetros, no para evaluar
 
 ---
 
-# Clasificadores: intuición, sesgos y hiperparámetros
+## Clasificadores: intuición, sesgos y hiperparámetros
 
-## Regresión Logística (baseline)
+### Regresión Logística (baseline)
 
 La regresión logística modela la probabilidad de pertenencia a la clase positiva mediante una función sigmoide aplicada a una combinación lineal de las variables:
 
@@ -209,9 +209,9 @@ Hiperparámetros principales:
 - `penalty`: tipo de regularización (`l1`, `l2`, `elasticnet`)
 - `max_iter`: número máximo de iteraciones del optimizador
 
-## Árboles de decisión: CART e ID3
+### Árboles de decisión: CART e ID3
 
-### CART [@breiman1984]
+**CART [@breiman1984].**
 
 CART (*Classification and Regression Trees*) construye árboles binarios mediante particiones recursivas del espacio de características. En cada nodo, selecciona el atributo y el umbral de corte que minimizan la impureza del nodo resultante. La impureza Gini se define como:
 
@@ -219,7 +219,7 @@ $$G = 1 - \sum_{k=0}^{K-1} p_k^2$$
 
 donde $p_k$ es la proporción de muestras de la clase $k$ en el nodo.
 
-### ID3 [@quinlan1986id3]
+**ID3 [@quinlan1986id3].**
 
 ID3 (*Iterative Dichotomiser 3*) utiliza la ganancia de información para seleccionar el atributo de partición:
 
@@ -253,7 +253,7 @@ for criterion in ["gini", "entropy"]:
         print(f"criterion={criterion:7s} | max_depth={str(depth):5s} | F1={f1:.4f}")
 ```
 
-## Random Forest [@breiman2001]
+### Random Forest [@breiman2001]
 
 Random Forest es un ensamble de árboles de decisión construidos en paralelo mediante *bootstrap aggregating* (bagging). Cada árbol se entrena sobre una muestra con reemplazo del conjunto de entrenamiento, y en cada nodo solo se considera un subconjunto aleatorio de variables (`max_features`). El resultado final es la moda o el promedio de las predicciones de todos los árboles.
 
@@ -283,7 +283,7 @@ auc = roc_auc_score(y_test, pipe_rf.predict_proba(X_test)[:,1])
 print(f"Random Forest — F1={f1:.4f}  AUC={auc:.4f}")
 ```
 
-## Gradient Boosting [@friedman2001gradient]
+### Gradient Boosting [@friedman2001gradient]
 
 Gradient Boosting construye un ensamble de modelos de forma **secuencial**. Cada modelo nuevo se entrena para corregir los errores (residuales) del ensamble acumulado hasta ese momento. El algoritmo puede verse como un descenso por gradiente en el espacio de funciones, donde la función de pérdida (por ejemplo, log-loss para clasificación) guía la dirección de corrección.
 
@@ -315,7 +315,7 @@ auc = roc_auc_score(y_test, pipe_gb.predict_proba(X_test)[:,1])
 print(f"Gradient Boosting — F1={f1:.4f}  AUC={auc:.4f}")
 ```
 
-## Red neuronal multicapa (MLP)
+### Red neuronal multicapa (MLP)
 
 Una red neuronal multicapa (MLP, *Multilayer Perceptron*) aproxima funciones mediante composición de transformaciones afines y no lineales [@bishop2006; @goodfellow2016deep]:
 
@@ -365,7 +365,7 @@ print(f"MLP (sin scaler) — F1={f1_raw:.4f}  AUC={auc_raw:.4f}")
 
 ---
 
-# Recordatorio de métricas
+## Recordatorio de métricas
 
 Las métricas de clasificación se derivan de la matriz de confusión, que organiza las predicciones en cuatro categorías:
 
@@ -386,7 +386,7 @@ $$F_1 = \frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \
 
 [@powers2011; @pedregosa2011]
 
-## Curva ROC y AUC
+### Curva ROC y AUC
 
 La curva ROC (*Receiver Operating Characteristic*) [@fawcett2006] representa la tasa de verdaderos positivos (recall) en función de la tasa de falsos positivos para todos los umbrales de decisión posibles:
 
@@ -394,7 +394,7 @@ $$\text{TPR} = \frac{TP}{TP + FN} \qquad \text{FPR} = \frac{FP}{FP + TN}$$
 
 El área bajo la curva ROC (AUC, *Area Under the Curve*) resume el rendimiento del clasificador en todos los thresholds. Un clasificador perfecto tiene AUC = 1.0; un clasificador aleatorio tiene AUC = 0.5.
 
-## Curva Precision-Recall y Average Precision
+### Curva Precision-Recall y Average Precision
 
 La curva Precision-Recall [@saito2015] representa precision en función de recall para todos los thresholds. Es más informativa que la curva ROC cuando la clase positiva es rara, ya que la curva ROC puede ser engañosamente optimista en presencia de muchos verdaderos negativos.
 
@@ -404,7 +404,7 @@ $$\text{AP} = \sum_k (R_k - R_{k-1}) \cdot P_k$$
 
 donde $P_k$ y $R_k$ son la precisión y el recall para el threshold $k$.
 
-## Selección de métricas según el contexto
+### Selección de métricas según el contexto
 
 La elección de la métrica de evaluación depende del contexto del problema:
 
@@ -417,13 +417,13 @@ La elección de la métrica de evaluación depende del contexto del problema:
 
 ---
 
-# Ajuste de thresholds de decisión
+## Ajuste de thresholds de decisión
 
-## Motivación
+### Motivación
 
 Por defecto, `predict()` clasifica una observación como positiva si su probabilidad estimada supera 0.5. Sin embargo, este umbral es arbitrario y no necesariamente óptimo para el objetivo del problema. En diagnóstico médico, donde un falso negativo puede tener consecuencias graves, puede convenir bajar el threshold para aumentar el recall a costa de reducir la precision.
 
-## predict_proba y decision_function
+### predict_proba y decision_function
 
 Los clasificadores de scikit-learn exponen las probabilidades estimadas mediante `predict_proba()`. Para algunos modelos (como SVM), también está disponible `decision_function()`, que produce un *score* continuo cuyo signo determina la clase predicha.
 
@@ -436,7 +436,7 @@ print("Probabilidades para las primeras 5 observaciones:")
 print(pd.DataFrame(probs, columns=["P(maligno=0)", "P(benigno=1)"]).head())
 ```
 
-## Comparación de thresholds
+### Comparación de thresholds
 
 Para clasificar una observación como maligna usamos $P(\text{maligno}) \geq \theta$, donde $\theta$ es el threshold. Al reducir $\theta$, clasificamos más observaciones como malignas, lo que aumenta el recall pero reduce la precision.
 
@@ -478,7 +478,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Consideraciones prácticas sobre el threshold
+### Consideraciones prácticas sobre el threshold
 
 - El threshold óptimo depende del **costo relativo** de FP y FN, no de las métricas en el test set
 - El threshold debe elegirse sobre un **conjunto de validación**, no sobre el test set
@@ -486,7 +486,7 @@ plt.show()
 
 ---
 
-# Comparación entre modelos
+## Comparación entre modelos
 
 La comparación válida entre modelos requiere que todos sean evaluados sobre el **mismo conjunto de prueba**, con el **mismo preprocesamiento** y el **mismo criterio de evaluación**.
 
@@ -541,7 +541,7 @@ print(df_comp.sort_values("ROC-AUC", ascending=False).round(4).to_string())
 
 ---
 
-# Buenas prácticas para evaluación
+## Buenas prácticas para evaluación
 
 Las siguientes prácticas garantizan que los resultados del experimento sean válidos, reproducibles e interpretables:
 
@@ -558,7 +558,7 @@ Las siguientes prácticas garantizan que los resultados del experimento sean vá
 
 ---
 
-# Errores comunes en experimentos de clasificación
+## Errores comunes en experimentos de clasificación
 
 A continuación se describen los errores más frecuentes al diseñar y ejecutar experimentos de clasificación:
 
@@ -582,7 +582,7 @@ A continuación se describen los errores más frecuentes al diseñar y ejecutar 
 
 ---
 
-# Retos prácticos del flujo de clasificación
+## Retos prácticos del flujo de clasificación
 
 Más allá de los errores técnicos, existen retos conceptuales y de diseño que aparecen en cualquier proyecto de clasificación real:
 
@@ -600,7 +600,7 @@ Más allá de los errores técnicos, existen retos conceptuales y de diseño que
 
 ---
 
-# Conclusión
+## Conclusión
 
 Este capítulo ha mostrado que diseñar un experimento de clasificación correcto es más complejo que simplemente llamar `.fit()`. Las decisiones sobre la partición de datos, el preprocesamiento, la elección de métricas, la comparación entre modelos y el ajuste de thresholds tienen un impacto directo sobre la validez y la utilidad de los resultados.
 
@@ -610,7 +610,7 @@ La práctica rigurosa de clasificación supervisada combina conocimiento algorí
 
 ---
 
-# Referencias {.unnumbered}
+## Referencias {.unnumbered}
 
 ::: {#refs}
 :::
