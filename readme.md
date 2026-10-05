@@ -30,6 +30,7 @@ Este repositorio contiene los materiales del curso **Almacenes y Minería de Dat
 - **Notas de clase** — libro en formato Quarto con desarrollo completo de cada tema.
 - **Slides** — presentaciones de cada sesión en formato Quarto Reveal.js.
 - **Material de ejercicios** — notebooks y conjuntos de datos para práctica y evaluación.
+- **Laboratorios interactivos** — simuladores en HTML/JS dentro de los capítulos. Para crear los tuyos con el mismo estilo, consulta [LABORATORIOS.md](LABORATORIOS.md).
 
 El sitio del curso se encuentra en:
 **[https://diegoviillalba.github.io/almacenamienes-y-mineria-de-datos/](https://diegoviillalba.github.io/almacenamienes-y-mineria-de-datos/)**
