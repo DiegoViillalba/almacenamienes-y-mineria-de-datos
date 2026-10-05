@@ -61,6 +61,15 @@ quarto render presentaciones.qmd --no-execute
 Lee `lectures/AGENTS.md` antes de tocar presentaciones; las presentaciones de
 Manim tienen un flujo adicional obligatorio.
 
+## Laboratorios interactivos del libro
+
+Los capítulos pueden incluir laboratorios en HTML/JS incrustados (por ejemplo,
+en `unidades/preprocesamiento/`). Antes de crear o modificar uno, lee y sigue
+[`LABORATORIOS.md`](LABORATORIOS.md): define la ruta pedagógica (intuición →
+cálculo manual → formalización con notas al pie → laboratorio), el kit
+compartido `_labkit.qmd`, la plantilla, la vista previa con
+`tools/lab_preview.py` y las reglas que evitan errores de render.
+
 ## Publicación remota
 
 Un `push` a `main` dispara `.github/workflows/publish.yml`. El workflow usa

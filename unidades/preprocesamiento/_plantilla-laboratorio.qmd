@@ -1,0 +1,101 @@
+<!--
+PLANTILLA DE LABORATORIO INTERACTIVO
+Copia desde "### Laboratorio" hasta el final dentro de tu capítulo y reemplaza:
+  - el prefijo de ids "tpl-" por uno propio y único en el capítulo (p. ej. "outl-");
+  - el id del contenedor "tpl-lab";
+  - datos, cálculos, textos y la alternativa para PDF.
+Guía completa: LABORATORIOS.md en la raíz del repositorio.
+Este archivo empieza con "_" para que Quarto no lo renderice como capítulo.
+-->
+
+### Laboratorio: media frente a mediana con un valor atípico
+
+Una o dos frases que conecten con el ejemplo numérico del texto: qué se va a manipular y qué se debe observar.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="tpl-lab">
+  <p class="plab-eyebrow">Laboratorio · Tema</p>
+  <h3 class="plab-title">Pregunta que el laboratorio responde</h3>
+  <p class="plab-sub">Instrucción breve: qué mover y qué mirar.</p>
+
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:2 1 220px">Estadístico
+      <div class="plab-seg" id="tpl-stat">
+        <button type="button" data-value="mean" aria-pressed="true">Media</button>
+        <button type="button" data-value="median">Mediana</button>
+      </div>
+    </div>
+    <label>Valor del punto atípico: <b id="tpl-out-v"></b><input type="range" id="tpl-out" min="10" max="100" step="1" value="40"></label>
+  </div>
+
+  <div class="plab-panel">
+    <h4>Datos y centro estimado</h4>
+    <svg id="tpl-chart" class="wide" role="img" aria-label="Recta con los datos y el centro estimado"></svg>
+    <div class="plab-legend">
+      <span><i class="dot" style="background:var(--lab-s1)"></i>datos</span>
+      <span><i class="dot" style="background:var(--lab-s5)"></i>punto atípico</span>
+      <span><i style="background:var(--lab-s2)"></i>centro estimado</span>
+    </div>
+  </div>
+
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Media</span><strong id="tpl-mean"></strong></div>
+    <div class="plab-stat"><span>Mediana</span><strong id="tpl-median"></strong></div>
+  </div>
+  <div id="tpl-table" class="plab-scroll"></div>
+  <p class="plab-note" id="tpl-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('tpl-lab');
+  const $ = s => root.querySelector(s);
+  const base = [8, 9, 10, 11, 12];                       // datos fijos del ejemplo del texto
+  const stat = K.segmented($('#tpl-stat'), () => render());
+
+  function render() {
+    const out = +$('#tpl-out').value;
+    $('#tpl-out-v').textContent = out;
+    const x = [...base, out];
+    const mean = K.mean(x), median = K.median(x);
+    const center = stat.get() === 'mean' ? mean : median;
+
+    // Gráfica: una recta numérica.
+    const c = K.chart($('#tpl-chart'), { width: 640, height: 140, x: [0, 105], y: [0, 1],
+                                         margin: { left: 16, right: 16, top: 24, bottom: 36 } });
+    c.axes({ xTicks: 10, yTicks: 0, grid: false, xLabel: 'valor' });
+    c.line(center, 0, center, 1, 's2 line');
+    c.text(center, 1, `centro = ${K.fmt(center, 2)}`, { 'text-anchor': 'middle', dy: -8, class: 's2' });
+    x.forEach((v, i) => c.dot(v, .45, 6, (i === x.length - 1 ? 's5' : 's1') + ' dot'));
+
+    // Números y tabla (la tabla se genera completa desde JS).
+    $('#tpl-mean').textContent = K.fmt(mean, 2);
+    $('#tpl-median').textContent = K.fmt(median, 2);
+    $('#tpl-table').innerHTML = '<table class="plab-table"><thead><tr><th>Dato</th><th>Valor</th><th>Distancia al centro</th></tr></thead><tbody>' +
+      x.map((v, i) => `<tr${i === x.length - 1 ? ' class="hl"' : ''}><td>x${i + 1}</td><td>${v}</td><td>${K.fmt(Math.abs(v - center), 2)}</td></tr>`).join('') +
+      '</tbody></table>';
+
+    // Retroalimentación: explica lo que se ve con los números del momento.
+    const note = $('#tpl-note'), gap = Math.abs(mean - median);
+    note.className = gap > 5 ? 'plab-note warn' : 'plab-note good';
+    note.textContent = gap > 5
+      ? `El atípico separa la media (${K.fmt(mean, 2)}) de la mediana (${K.fmt(median, 2)}) en ${K.fmt(gap, 2)} unidades.`
+      : `Media y mediana casi coinciden (diferencia ${K.fmt(gap, 2)}): el punto aún no es muy extremo.`;
+  }
+
+  $('#tpl-out').addEventListener('input', render);
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio permite mover un valor atípico y comparar media y mediana. Resultado esperado: con el atípico en 100, la media es 25 y la mediana 10.5.
+:::
+
+**Guía del laboratorio.**
+
+1. Predice antes de mover: ¿qué estadístico cambia más cuando el atípico pasa de 40 a 100?
+2. Comprueba con los números del panel el cálculo hecho a mano en el texto.
+3. Explica en una frase qué decisión práctica tomarías a partir de lo observado.
