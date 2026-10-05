@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laboratorio PCA 3D</title>
+<style>
+  :root {
+    --bg: #07111F; --panel: #0d1e34; --card: #132a48; --ink: #F7F7F2; --muted: #9FB3C8;
+    --grid: #27435D; --blue: #58C4DD; --yellow: #F7C948; --orange: #FFB86B; --green: #6FCF97;
+    --purple: #B28DFF; --red: #FF6B6B;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font); line-height: 1.5;
+         padding: 20px 16px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  header { width: 100%; max-width: 1240px; border-bottom: 1px solid var(--grid); padding-bottom: 14px; margin-bottom: 18px; }
+  .kicker { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; color: var(--blue); text-transform: uppercase; }
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+  .subtitle { color: var(--muted); font-size: 15px; max-width: 900px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  .tab-btn { background: var(--panel); border: 1px solid var(--grid); color: var(--muted); padding: 8px 16px;
+             border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; font-family: inherit; }
+  .tab-btn:hover { color: var(--ink); border-color: var(--blue); }
+  .tab-btn.active { background: var(--blue); color: var(--bg); border-color: var(--blue); }
+  main { width: 100%; max-width: 1240px; }
+  .module { display: none; }
+  .module.active { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .module.active { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 14px; padding: 16px;
+           display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .panel h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+  label { font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  label b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--orange); }
+  .check { display: flex; justify-content: flex-start; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); cursor: pointer; }
+  .check input { accent-color: var(--orange); width: 16px; height: 16px; }
+  .btn { background: var(--card); color: var(--ink); border: 1px solid var(--grid); border-radius: 8px;
+         padding: 8px 12px; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 14px; }
+  .btn:hover { border-color: var(--orange); }
+  .stage { position: relative; background: #050D18; border: 1px solid var(--grid); border-radius: 14px; overflow: hidden; }
+  canvas { display: block; width: 100%; touch-action: none; }
+  .stage canvas.main { height: 460px; cursor: grab; }
+  .stage canvas.main:active { cursor: grabbing; }
+  .hint { position: absolute; left: 12px; top: 10px; font-size: 12px; color: var(--muted); pointer-events: none; }
+  .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .mini { background: #050D18; border: 1px solid var(--grid); border-radius: 10px; }
+  .mini canvas { height: 130px; }
+  .mini p { font-size: 12px; font-weight: 700; padding: 4px 8px 0; }
+  .result { background: var(--card); border-radius: 10px; padding: 12px; font-size: 14px; }
+  .result .big { font-size: 22px; font-weight: 800; color: var(--orange); font-variant-numeric: tabular-nums; }
+  .note { font-size: 13px; color: var(--muted); }
+  .scree canvas { height: 150px; }
+  table.loadings { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  table.loadings td, table.loadings th { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--grid); }
+  table.loadings th { color: var(--muted); font-weight: 600; }
+  .right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  footer { margin-top: 22px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="kicker">Almacenes y Minería de Datos · PCA</div>
+  <h1>Laboratorio interactivo de componentes principales</h1>
+  <p class="subtitle">Arrastra las escenas 3D para girarlas. Todos los números se recalculan en tu navegador:
+    se centra la tabla, se construye S y se obtienen sus autovalores (método de Jacobi).</p>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="spring">1 · Resorte y tres cámaras</button>
+    <button class="tab-btn" data-tab="cloud">2 · Nube 3D y plano PCA</button>
+    <button class="tab-btn" data-tab="sweep">3 · Barrido de direcciones 2D</button>
+  </div>
+</header>
+
+<main>
+  <!-- ─────────────── 1. Resorte ─────────────── -->
+  <section class="module active" id="tab-spring">
+    <div class="panel">
+      <h2>Controles</h2>
+      <label>Ruido de las cámaras <b id="sp-noise-v"></b></label>
+      <input type="range" id="sp-noise" min="0" max="0.6" step="0.01" value="0.06">
+      <label>Movimiento lateral (2.º grado de libertad) <b id="sp-lat-v"></b></label>
+      <input type="range" id="sp-lat" min="0" max="1" step="0.01" value="0">
+      <label>Velocidad <b id="sp-speed-v"></b></label>
+      <input type="range" id="sp-speed" min="0" max="2" step="0.05" value="1">
+      <label class="check"><input type="checkbox" id="sp-sight" checked> Líneas de visión</label>
+      <div class="result">
+        <div>PC1 explica</div>
+        <div class="big" id="sp-pve1">—</div>
+        <div class="note" id="sp-k"></div>
+      </div>
+      <p class="note">Predice antes de mover: ¿qué pasa con PC1 si subes el ruido? ¿Y si la masa también se mueve de lado?
+        La tabla tiene 6 columnas (x, y de cada cámara) y 160 filas.</p>
+    </div>
+    <div class="right">
+      <div class="stage"><canvas class="main" id="sp-canvas"></canvas><span class="hint">Arrastra para girar · rueda para acercar</span></div>
+      <div class="row3">
+        <div class="mini"><p style="color:var(--blue)">Cámara A</p><canvas id="sp-camA"></canvas></div>
+        <div class="mini"><p style="color:var(--green)">Cámara B</p><canvas id="sp-camB"></canvas></div>
+        <div class="mini"><p style="color:var(--purple)">Cámara C</p><canvas id="sp-camC"></canvas></div>
+      </div>
+      <div class="panel scree"><h2>Varianza explicada de las 6 componentes</h2><canvas id="sp-scree"></canvas></div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 2. Nube 3D ─────────────── -->
+  <section class="module" id="tab-cloud">
+    <div class="panel">
+      <h2>Forma de la nube</h2>
+      <label>Desv. eje largo <b id="cl-s1-v"></b></label>
+      <input type="range" id="cl-s1" min="0.1" max="3" step="0.05" value="1.9">
+      <label>Desv. eje medio <b id="cl-s2-v"></b></label>
+      <input type="range" id="cl-s2" min="0.1" max="3" step="0.05" value="0.95">
+      <label>Desv. eje corto <b id="cl-s3-v"></b></label>
+      <input type="range" id="cl-s3" min="0.02" max="3" step="0.02" value="0.22">
+      <label>Inclinación de la nube <b id="cl-tilt-v"></b></label>
+      <input type="range" id="cl-tilt" min="0" max="90" step="1" value="28">
+      <label class="check"><input type="checkbox" id="cl-arrows" checked> Flechas PC1–PC3 (2√λ)</label>
+      <label class="check"><input type="checkbox" id="cl-plane" checked> Plano PC1–PC2</label>
+      <label class="check"><input type="checkbox" id="cl-proj"> Proyectar sobre el plano</label>
+      <label class="check"><input type="checkbox" id="cl-out"> Añadir un atípico</label>
+      <button class="btn" id="cl-new">Nueva muestra</button>
+    </div>
+    <div class="right">
+      <div class="stage"><canvas class="main" id="cl-canvas"></canvas><span class="hint">Arrastra para girar · rueda para acercar</span></div>
+      <div class="panel">
+        <h2>Resultado</h2>
+        <div class="row3" style="align-items:start">
+          <div class="scree"><canvas id="cl-scree"></canvas></div>
+          <div style="grid-column: span 2">
+            <table class="loadings" id="cl-load"></table>
+            <p class="note" id="cl-msg" style="margin-top:8px"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 3. Barrido 2D ─────────────── -->
+  <section class="module" id="tab-sweep">
+    <div class="panel">
+      <h2>Dirección candidata</h2>
+      <label>Ángulo de la recta <b id="sw-ang-v"></b></label>
+      <input type="range" id="sw-ang" min="-90" max="90" step="1" value="-60">
+      <label>Correlación de la nube <b id="sw-rho-v"></b></label>
+      <input type="range" id="sw-rho" min="-0.95" max="0.95" step="0.05" value="0.7">
+      <label>Escala de x <b id="sw-sx-v"></b></label>
+      <input type="range" id="sw-sx" min="0.5" max="3" step="0.1" value="1">
+      <button class="btn" id="sw-best">Ir al máximo (PC1)</button>
+      <div class="result">
+        <div>proyectada <span id="sw-p" style="color:var(--orange);font-weight:800"></span> +
+             residual <span id="sw-r" style="color:var(--red);font-weight:800"></span> =
+             total <span id="sw-t" style="font-weight:800"></span></div>
+        <div class="note" id="sw-best-v"></div>
+      </div>
+      <p class="note">La suma no depende del ángulo (Pitágoras). Maximizar la parte naranja es minimizar la roja.</p>
+    </div>
+    <div class="right">
+      <div class="stage"><canvas class="main" id="sw-canvas"></canvas></div>
+    </div>
+  </section>
+</main>
+<footer>Diego Villalba · Facultad de Ciencias · UNAM — complemento de la clase animada de PCA.</footer>
+
+<script>
+"use strict";
+const C = { bg:"#050D18", ink:"#F7F7F2", muted:"#9FB3C8", grid:"#27435D", blue:"#58C4DD", yellow:"#F7C948",
+            orange:"#FFB86B", green:"#6FCF97", purple:"#B28DFF", red:"#FF6B6B" };
+
+// ── Álgebra mínima ─────────────────────────────────────────────
+function randn(rng) { let u = 0, v = 0; while (u === 0) u = rng(); while (v === 0) v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+function mulberry(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+  let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
+const norm = a => Math.sqrt(dot(a, a));
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const scale = (a, s) => a.map(v => v * s);
+const add = (a, b) => a.map((v, i) => v + b[i]);
+const sub = (a, b) => a.map((v, i) => v - b[i]);
+const unit = a => scale(a, 1 / norm(a));
+
+function covariance(X) {
+  const n = X.length, p = X[0].length, mean = new Array(p).fill(0);
+  X.forEach(r => r.forEach((v, j) => mean[j] += v / n));
+  const S = Array.from({ length: p }, () => new Array(p).fill(0));
+  X.forEach(r => { for (let i = 0; i < p; i++) for (let j = 0; j < p; j++)
+    S[i][j] += (r[i] - mean[i]) * (r[j] - mean[j]) / (n - 1); });
+  return { S, mean };
+}
+// Autovalores/autovectores de una matriz simétrica (Jacobi cíclico).
+function eigSym(S) {
+  const p = S.length, A = S.map(r => r.slice());
+  const V = Array.from({ length: p }, (_, i) => Array.from({ length: p }, (_, j) => +(i === j)));
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let i = 0; i < p; i++) for (let j = i + 1; j < p; j++) off += A[i][j] ** 2;
+    if (off < 1e-18) break;
+    for (let k = 0; k < p; k++) for (let l = k + 1; l < p; l++) {
+      if (Math.abs(A[k][l]) < 1e-15) continue;
+      const th = (A[l][l] - A[k][k]) / (2 * A[k][l]);
+      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let r = 0; r < p; r++) { const akr = A[k][r], alr = A[l][r];
+        A[k][r] = c * akr - s * alr; A[l][r] = s * akr + c * alr; }
+      for (let r = 0; r < p; r++) { const ark = A[r][k], arl = A[r][l];
+        A[r][k] = c * ark - s * arl; A[r][l] = s * ark + c * arl; }
+      for (let r = 0; r < p; r++) { const vrk = V[r][k], vrl = V[r][l];
+        V[r][k] = c * vrk - s * vrl; V[r][l] = s * vrk + c * vrl; }
+    }
+  }
+  const idx = [...Array(p).keys()].sort((a, b) => A[b][b] - A[a][a]);
+  const vals = idx.map(i => Math.max(0, A[i][i]));
+  const vecs = idx.map(i => { const v = V.map(r => r[i]);
+    const m = v.reduce((b, x, j) => Math.abs(x) > Math.abs(v[b]) ? j : b, 0);
+    return v[m] < 0 ? v.map(x => -x) : v; });
+  return { vals, vecs };
+}
+
+// ── Canvas y cámara 3D ────────────────────────────────────────
+function setupCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
+  cv.width = Math.max(10, r.width * dpr); cv.height = Math.max(10, r.height * dpr);
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+function makeView(cv, yaw, pitch, zoom) {
+  const view = { yaw, pitch, zoom, dragging: false };
+  cv.addEventListener("pointerdown", e => { view.dragging = true; view.x = e.clientX; view.y = e.clientY;
+    cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener("pointermove", e => { if (!view.dragging) return;
+    view.yaw -= (e.clientX - view.x) * 0.008; view.pitch += (e.clientY - view.y) * 0.008;
+    view.pitch = Math.max(-1.45, Math.min(1.45, view.pitch)); view.x = e.clientX; view.y = e.clientY; });
+  cv.addEventListener("pointerup", () => view.dragging = false);
+  cv.addEventListener("wheel", e => { e.preventDefault(); view.zoom *= Math.exp(-e.deltaY * 0.001);
+    view.zoom = Math.max(20, Math.min(160, view.zoom)); }, { passive: false });
+  return view;
+}
+// Convención: z hacia arriba. Devuelve [xs, ys, profundidad].
+function project(v, P, w, h) {
+  const [x, y, z] = P;
+  const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw), cp = Math.cos(v.pitch), sp = Math.sin(v.pitch);
+  const x1 = cy * x - sy * y, y1 = sy * x + cy * y;          // giro alrededor de z
+  const depth = cp * y1 - sp * z, up = sp * y1 + cp * z;     // inclinación
+  const f = 9 / (9 + depth);
+  return [w / 2 + x1 * v.zoom * f, h / 2 - up * v.zoom * f, depth];
+}
+function line3(ctx, v, w, h, a, b, color, width = 2, dash = null, alpha = 1) {
+  const A = project(v, a, w, h), B = project(v, b, w, h);
+  ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width;
+  if (dash) ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke();
+  ctx.restore();
+}
+function arrow3(ctx, v, w, h, a, b, color, label) {
+  line3(ctx, v, w, h, a, b, color, 4);
+  const A = project(v, a, w, h), B = project(v, b, w, h), ang = Math.atan2(B[1] - A[1], B[0] - A[0]);
+  ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(B[0], B[1]);
+  ctx.lineTo(B[0] - 12 * Math.cos(ang - 0.4), B[1] - 12 * Math.sin(ang - 0.4));
+  ctx.lineTo(B[0] - 12 * Math.cos(ang + 0.4), B[1] - 12 * Math.sin(ang + 0.4)); ctx.fill();
+  if (label) { ctx.font = "bold 14px sans-serif"; ctx.fillText(label, B[0] + 8 * Math.cos(ang) + 4, B[1] + 8 * Math.sin(ang) + 4); }
+}
+function poly3(ctx, v, w, h, pts, fill, stroke, alpha) {
+  ctx.save(); ctx.beginPath();
+  pts.forEach((p, i) => { const q = project(v, p, w, h); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+  ctx.closePath(); ctx.globalAlpha = alpha; ctx.fillStyle = fill; ctx.fill();
+  ctx.globalAlpha = Math.min(1, alpha * 4); ctx.strokeStyle = stroke; ctx.stroke(); ctx.restore();
+}
+function screeChart(cv, vals, colors) {
+  const { ctx, w, h } = setupCanvas(cv); ctx.clearRect(0, 0, w, h);
+  const tot = vals.reduce((a, b) => a + b, 0) || 1, n = vals.length, bw = Math.min(46, (w - 20) / n - 10);
+  let cum = 0;
+  vals.forEach((v, i) => {
+    const p = v / tot, x = 14 + i * ((w - 20) / n), bh = p * (h - 48);
+    cum += p;
+    ctx.fillStyle = colors[i] || C.muted; ctx.fillRect(x, h - 22 - bh, bw, bh);
+    ctx.fillStyle = C.ink; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText((100 * p).toFixed(1) + "%", x + bw / 2, h - 26 - bh);
+    ctx.fillStyle = C.muted; ctx.font = "12px sans-serif"; ctx.fillText("PC" + (i + 1), x + bw / 2, h - 6);
+  });
+  ctx.textAlign = "left";
+}
+
+// ── Pestañas ───────────────────────────────────────────────────
+document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tab-btn").forEach(x => x.classList.toggle("active", x === b));
+  document.querySelectorAll(".module").forEach(m => m.classList.toggle("active", m.id === "tab-" + b.dataset.tab));
+  active = b.dataset.tab;
+}));
+let active = "spring";
+const $ = id => document.getElementById(id);
+function bindLabel(id, fmt) { const el = $(id), out = $(id + "-v"); const f = () => out.textContent = fmt(+el.value);
+  el.addEventListener("input", f); f(); return el; }
+
+// ── 1. Resorte ─────────────────────────────────────────────────
+const SP = (() => {
+  const cams = { A: [0.35, -1, 0.25], B: [1, 0.55, 0.4], C: [-0.75, 0.9, 0.6] };
+  const camColor = { A: C.blue, B: C.green, C: C.purple };
+  const basis = {};
+  for (const k in cams) { const n = unit(cams[k]);
+    const arb = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0];
+    const u = unit(cross(arb, n)); basis[k] = [u, cross(n, u)]; }
+  const noise = bindLabel("sp-noise", v => v.toFixed(2));
+  const lat = bindLabel("sp-lat", v => v.toFixed(2));
+  const speed = bindLabel("sp-speed", v => v.toFixed(2) + "×");
+  const view = makeView($("sp-canvas"), 0.6, 0.45, 52);
+  const massPos = (ph, l) => [1.1 * Math.cos(ph), l * 0.8 * Math.sin(1.7 * ph + 0.6), 0];
+  const anchor = [-2.6, 0, 0];
+  let phase = 0, noiseSeed = 1, table = null, trails = { A: [], B: [], C: [] };
+  const rngNoise = mulberry(7);
+
+  function recompute() {
+    const rng = mulberry(3), l = +lat.value, s = +noise.value, rows = [];
+    for (let i = 0; i < 160; i++) { const ph = i / 160 * 4 * Math.PI, p = add(anchor, add([2.6, 0, 0], massPos(ph, l)));
+      const r = [];
+      for (const k of "ABC") for (const b of basis[k]) r.push(dot(p, b) + s * randn(rng));
+      rows.push(r); }
+    const { S } = covariance(rows), { vals } = eigSym(S);
+    const tot = vals.reduce((a, b) => a + b, 0);
+    $("sp-pve1").textContent = (100 * vals[0] / tot).toFixed(1) + "%";
+    let k = 0, cum = 0; while (cum < 0.95 && k < 6) { cum += vals[k] / tot; k++; }
+    $("sp-k").textContent = `Componentes para llegar a 95%: ${k}  (PC1+PC2 = ${(100 * (vals[0] + vals[1]) / tot).toFixed(1)}%)`;
+    screeChart($("sp-scree"), vals, [C.orange, C.green, C.purple]);
+  }
+  [noise, lat].forEach(el => el.addEventListener("input", recompute));
+
+  function drawSpring(ctx, w, h, massX) {
+    const coils = 9, r = 0.22, start = anchor[0], end = massX - 0.32;
+    ctx.save(); ctx.strokeStyle = C.muted; ctx.lineWidth = 2; ctx.beginPath();
+    for (let i = 0; i <= 240; i++) { const s = i / 240, taper = Math.min(1, 8 * s, 8 * (1 - s));
+      const P = [start + s * (end - start), r * taper * Math.cos(2 * Math.PI * coils * s), r * taper * Math.sin(2 * Math.PI * coils * s)];
+      const q = project(view, P, w, h); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }
+    ctx.stroke(); ctx.restore();
+  }
+  function frame(dt) {
+    phase += dt * 2.2 * +speed.value;
+    const { ctx, w, h } = setupCanvas($("sp-canvas")); ctx.clearRect(0, 0, w, h);
+    const l = +lat.value, s = +noise.value;
+    // piso y pared
+    poly3(ctx, view, w, h, [[-3.7, -2.1, -0.95], [3.7, -2.1, -0.95], [3.7, 2.1, -0.95], [-3.7, 2.1, -0.95]], C.grid, C.grid, 0.12);
+    poly3(ctx, view, w, h, [[-2.68, -0.95, -0.95], [-2.68, 0.95, -0.95], [-2.68, 0.95, 0.95], [-2.68, -0.95, 0.95]], C.grid, C.muted, 0.6);
+    line3(ctx, view, w, h, [-2.6, 0, 0], [2.2, 0, 0], C.yellow, 1.5, [6, 6], 0.8);
+    const p = add(anchor, add([2.6, 0, 0], massPos(phase, l)));
+    // cámaras
+    for (const k in cams) {
+      const n = unit(cams[k]), pos = scale(n, 3.7);
+      if ($("sp-sight").checked) line3(ctx, view, w, h, pos, p, camColor[k], 1, [4, 5], 0.6);
+      const q = project(view, pos, w, h);
+      ctx.fillStyle = camColor[k]; ctx.fillRect(q[0] - 9, q[1] - 7, 18, 14);
+      ctx.font = "bold 15px sans-serif"; ctx.fillText(k, q[0] + 12, q[1] - 8);
+    }
+    drawSpring(ctx, w, h, p[0]);
+    const m = project(view, p, w, h), rad = 0.32 * view.zoom * 9 / (9 + m[2]);
+    const g = ctx.createRadialGradient(m[0] - rad / 3, m[1] - rad / 3, rad / 6, m[0], m[1], rad);
+    g.addColorStop(0, "#FFE0B8"); g.addColorStop(1, C.orange);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(m[0], m[1], rad, 0, 2 * Math.PI); ctx.fill();
+    // pantallas de cámaras
+    for (const k of "ABC") {
+      const cv = $("sp-cam" + k), o = setupCanvas(cv), c = o.ctx; c.clearRect(0, 0, o.w, o.h);
+      const [u, vv] = basis[k];
+      const rest = add(anchor, [2.6, 0, 0]);
+      const rd = [dot(sub(p, rest), u) + s * randn(rngNoise), dot(sub(p, rest), vv) + s * randn(rngNoise)];
+      const tr = trails[k]; tr.push(rd); if (tr.length > 90) tr.shift();
+      const sc = Math.min(o.w, o.h) / 2.8;
+      c.fillStyle = camColor[k];
+      tr.forEach((q, i) => { c.globalAlpha = i / tr.length * 0.6;
+        c.beginPath(); c.arc(o.w / 2 + q[0] * sc, o.h / 2 - q[1] * sc, 2, 0, 7); c.fill(); });
+      c.globalAlpha = 1; c.fillStyle = C.orange; c.beginPath();
+      c.arc(o.w / 2 + rd[0] * sc, o.h / 2 - rd[1] * sc, 5, 0, 7); c.fill();
+    }
+  }
+  recompute();
+  return { frame, recompute };
+})();
+
+// ── 2. Nube 3D ────────────────────────────────────────────────
+const CL = (() => {
+  const s1 = bindLabel("cl-s1", v => v.toFixed(2)), s2 = bindLabel("cl-s2", v => v.toFixed(2));
+  const s3 = bindLabel("cl-s3", v => v.toFixed(2)), tilt = bindLabel("cl-tilt", v => v + "°");
+  const view = makeView($("cl-canvas"), 0.7, 0.35, 55);
+  let seed = 11, base = [], data = [], res = null, t = 0;
+  function sample() { const rng = mulberry(seed); base = [];
+    for (let i = 0; i < 90; i++) base.push([randn(rng), randn(rng), randn(rng)]); }
+  function build() {
+    const a = +tilt.value * Math.PI / 180, z = 35 * Math.PI / 180;
+    data = base.map(r => { let p = [r[0] * +s1.value, r[1] * +s2.value, r[2] * +s3.value];
+      p = [p[0], Math.cos(a) * p[1] - Math.sin(a) * p[2], Math.sin(a) * p[1] + Math.cos(a) * p[2]];
+      return [Math.cos(z) * p[0] - Math.sin(z) * p[1], Math.sin(z) * p[0] + Math.cos(z) * p[1], p[2]]; });
+    if ($("cl-out").checked) data.push([-1.5, 2.5, 3.6]);
+    const { S, mean } = covariance(data), e = eigSym(S);
+    res = { mean, ...e };
+    const tot = e.vals.reduce((x, y) => x + y, 0);
+    screeChart($("cl-scree"), e.vals, [C.orange, C.green, C.purple]);
+    const names = ["x₁", "x₂", "x₃"];
+    $("cl-load").innerHTML = "<tr><th></th><th>PC1</th><th>PC2</th><th>PC3</th></tr>" +
+      names.map((nm, j) => `<tr><th>${nm}</th>${e.vecs.map(v => `<td>${v[j].toFixed(2)}</td>`).join("")}</tr>`).join("") +
+      `<tr><th>λ</th>${e.vals.map(v => `<td>${v.toFixed(3)}</td>`).join("")}</tr>`;
+    const two = 100 * (e.vals[0] + e.vals[1]) / tot;
+    $("cl-msg").textContent = `El plano PC1–PC2 conserva ${two.toFixed(1)}% de la varianza; el error de reconstrucción ` +
+      `promedio es λ₃ = ${e.vals[2].toFixed(3)}.` + ($("cl-out").checked ? " Observa cómo el atípico (rojo) inclina los ejes." : "");
+  }
+  ["cl-s1", "cl-s2", "cl-s3", "cl-tilt", "cl-out"].forEach(id => $(id).addEventListener("input", build));
+  $("cl-new").addEventListener("click", () => { seed++; sample(); build(); });
+  sample(); build();
+  function frame(dt) {
+    const proj = $("cl-proj").checked; t += (proj ? 1 : -1) * dt * 1.5; t = Math.max(0, Math.min(1, t));
+    const { ctx, w, h } = setupCanvas($("cl-canvas")); ctx.clearRect(0, 0, w, h);
+    const O = [0, 0, 0];
+    [[4, 0, 0], [0, 4, 0], [0, 0, 3]].forEach(a => line3(ctx, view, w, h, scale(a, -1), a, C.grid, 1));
+    const [v1, v2, v3] = res.vecs, m = res.mean;
+    if ($("cl-plane").checked) {
+      const A = 2.3 * Math.sqrt(res.vals[0]) + 0.3, B = 2.3 * Math.sqrt(res.vals[1]) + 0.3;
+      poly3(ctx, view, w, h, [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([s, u]) => add(m, add(scale(v1, s * A), scale(v2, u * B)))),
+        C.orange, C.orange, 0.12);
+    }
+    const pts = data.map((p, i) => { const c = sub(p, m), off = dot(c, v3);
+      const q = sub(p, scale(v3, off * t)); return { q, p, i, d: project(view, q, w, h) }; });
+    pts.sort((a, b) => b.d[2] - a.d[2]);
+    pts.forEach(({ q, p, i, d }) => {
+      if (t > 0 && t < 1) line3(ctx, view, w, h, p, q, C.red, 1, null, 0.7);
+      const out = $("cl-out").checked && i === data.length - 1;
+      ctx.fillStyle = out ? C.red : C.blue; ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.arc(d[0], d[1], out ? 6 : 3.4, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    });
+    if ($("cl-arrows").checked) [C.orange, C.green, C.purple].forEach((col, k) =>
+      arrow3(ctx, view, w, h, m, add(m, scale(res.vecs[k], 2 * Math.sqrt(res.vals[k]) + 0.05)), col, "PC" + (k + 1)));
+    if (!view.dragging && active === "cloud") view.yaw += dt * 0.15;
+  }
+  return { frame };
+})();
+
+// ── 3. Barrido 2D ─────────────────────────────────────────────
+const SW = (() => {
+  const ang = $("sw-ang");
+  bindLabel("sw-ang", v => v + "°");
+  const rho = bindLabel("sw-rho", v => v.toFixed(2)), sx = bindLabel("sw-sx", v => v.toFixed(1) + "×");
+  let pts = [], S = null, e = null, target = null;
+  const rng = mulberry(21), Z = Array.from({ length: 40 }, () => [randn(rng), randn(rng)]);
+  function build() {
+    const r = +rho.value, k = +sx.value;
+    pts = Z.map(([a, b]) => [a * k, r * a + Math.sqrt(1 - r * r) * b]);
+    const c = covariance(pts); S = c.S; pts = pts.map(p => sub(p, c.mean)); e = eigSym(S);
+    const best = Math.atan2(e.vecs[0][1], e.vecs[0][0]) * 180 / Math.PI;
+    const b = ((best + 90) % 180 + 180) % 180 - 90;
+    $("sw-best-v").textContent = `PC1 está en ${b.toFixed(0)}° con varianza λ₁ = ${e.vals[0].toFixed(2)}; ` +
+      `PVE₁ = ${(100 * e.vals[0] / (e.vals[0] + e.vals[1])).toFixed(1)}%.`;
+    return b;
+  }
+  rho.addEventListener("input", build); $("sw-sx").addEventListener("input", build);
+  $("sw-best").addEventListener("click", () => { target = build(); });
+  build();
+  function frame(dt) {
+    if (target !== null) { const cur = +ang.value, d = target - cur;
+      if (Math.abs(d) < 1) { ang.value = Math.round(target); target = null; } else ang.value = cur + Math.sign(d) * Math.max(1, Math.abs(d) * 0.12);
+      $("sw-ang-v").textContent = Math.round(+ang.value) + "°"; }
+    const { ctx, w, h } = setupCanvas($("sw-canvas")); ctx.clearRect(0, 0, w, h);
+    const a = +ang.value * Math.PI / 180, u = [Math.cos(a), Math.sin(a)];
+    const cx = w * 0.42, cy = h / 2, sc = Math.min(w * 0.8, h) / 9;
+    const P = q => [cx + q[0] * sc, cy - q[1] * sc];
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+    for (let i = -6; i <= 6; i++) { ctx.beginPath(); let A = P([i, -4.5]), B = P([i, 4.5]); ctx.moveTo(...A); ctx.lineTo(...B); ctx.stroke();
+      if (Math.abs(i) <= 4) { A = P([-6, i]); B = P([6, i]); ctx.beginPath(); ctx.moveTo(...A); ctx.lineTo(...B); ctx.stroke(); } }
+    const L1 = P(scale(u, -6)), L2 = P(scale(u, 6));
+    ctx.strokeStyle = C.orange; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(...L1); ctx.lineTo(...L2); ctx.stroke();
+    pts.forEach(p => { const f = scale(u, dot(p, u)), A = P(p), B = P(f);
+      ctx.strokeStyle = C.red; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(...A); ctx.lineTo(...B); ctx.stroke();
+      ctx.fillStyle = C.orange; ctx.beginPath(); ctx.arc(...B, 2.5, 0, 7); ctx.fill();
+      ctx.fillStyle = C.blue; ctx.beginPath(); ctx.arc(...A, 4, 0, 7); ctx.fill(); });
+    const proj = u[0] * u[0] * S[0][0] + 2 * u[0] * u[1] * S[0][1] + u[1] * u[1] * S[1][1];
+    const tot = S[0][0] + S[1][1];
+    $("sw-p").textContent = proj.toFixed(2); $("sw-r").textContent = (tot - proj).toFixed(2); $("sw-t").textContent = tot.toFixed(2);
+    // barra apilada
+    const bx = w * 0.8, by = h * 0.15, bh = h * 0.7, bw = 34, hp = bh * proj / tot;
+    ctx.fillStyle = C.red; ctx.fillRect(bx, by, bw, bh - hp);
+    ctx.fillStyle = C.orange; ctx.fillRect(bx, by + bh - hp, bw, hp);
+    ctx.strokeStyle = C.ink; ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = C.muted; ctx.font = "12px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("total", bx + bw / 2, by - 8); ctx.textAlign = "left";
+  }
+  return { frame };
+})();
+
+// ── Bucle principal ───────────────────────────────────────────
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (active === "spring") SP.frame(dt);
+  else if (active === "cloud") CL.frame(dt);
+  else SW.frame(dt);
+  requestAnimationFrame(loop);
+}
+window.addEventListener("resize", () => { SP.recompute(); });
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
