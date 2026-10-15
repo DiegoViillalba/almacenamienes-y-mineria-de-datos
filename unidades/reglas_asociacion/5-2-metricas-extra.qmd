@@ -140,6 +140,8 @@ def zhang(row):
 reglas_base["zhang"] = reglas_base.apply(zhang, axis=1)
 ```
 
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
 ## Introducción {#sec-intro-cap2}
 
 El capítulo anterior estableció los fundamentos del análisis de reglas de asociación: las definiciones de soporte, confianza y lift, el proceso de generación mediante el algoritmo Apriori, y los criterios básicos para distinguir reglas genuinas de reglas triviales. El argumento central fue que generar reglas es algorítmicamente sencillo, pero que la evaluación crítica de su validez exige ir más allá de la confianza como criterio único.
@@ -319,6 +321,166 @@ cols = ["regla", "support", "confidence", "lift",
         "leverage", "conviction", "zhang"]
 reglas_base[cols].sort_values("zhang", ascending=False).head(8).round(3)
 ```
+
+### Un cálculo completo a mano
+
+Antes de comparar métricas en todo el conjunto de reglas, calculemos las seis para una sola regla, *yogurt ⇒ whole milk*. En las 50 canastas, yogurt aparece en 14, whole milk en 26 y ambos en 8:
+$$P(A) = \tfrac{14}{50} = 0.28, \qquad P(B) = \tfrac{26}{50} = 0.52, \qquad P(A \cup B) = \tfrac{8}{50} = 0.16.$$
+
+1. **Confianza:** $0.16 / 0.28 = 0.571$.
+2. **Lift:** $0.16 / (0.28 \times 0.52) = 0.16 / 0.1456 = 1.099$.
+3. **Lift máximo y relativo:** $1 / \max(0.28, 0.52) = 1.923$; lift relativo $= 1.099 / 1.923 = 0.571$.
+4. **Leverage:** $0.16 - 0.1456 = 0.0144$, es decir, unas $0.0144 \times 50 \approx 0.7$ canastas más de las esperadas por azar.
+5. **Conviction:** $(1 - 0.52) / (1 - 0.571) = 0.48 / 0.429 = 1.12$.
+6. **Zhang:** el numerador es el leverage, $0.0144$; el denominador es $\max\{0.16 \times 0.72,\; 0.28 \times (0.52 - 0.16)\} = \max\{0.1152,\; 0.1008\} = 0.1152$; resultado $0.125$.
+
+Todas las métricas coinciden en el diagnóstico: asociación positiva, pero débil. El lift de 1.1 parece modesto y lo es; el lift relativo dice que el par alcanza poco más de la mitad de la coocurrencia máxima posible, y Zhang, en su escala de $-1$ a $1$, apenas se separa de cero.
+
+```{python}
+#| label: calculo-mano-yogurt
+pa, pb, pab = df["yogurt"].mean(), df["whole milk"].mean(), (df["yogurt"] & df["whole milk"]).mean()
+conf = pab / pa
+metricas_mano = {
+    "confianza": conf, "lift": pab / (pa * pb), "lift máximo": 1 / max(pa, pb),
+    "lift relativo": (pab / (pa * pb)) * max(pa, pb), "leverage": pab - pa * pb,
+    "conviction": (1 - pb) / (1 - conf),
+    "zhang": (pab - pa * pb) / max(pab * (1 - pa), pa * (pb - pab)),
+}
+pd.Series(metricas_mano).round(4)
+```
+
+### Laboratorio: el techo del lift y las métricas que lo corrigen
+
+El laboratorio fija las frecuencias de $A$ y $B$ y deja mover su coocurrencia $P(A \cup B)$ entre sus límites posibles[^frechet]. Las curvas muestran cómo responde cada métrica. Empieza con el par del cálculo a mano y después compara los escenarios de ítems frecuentes y raros: ambos tienen **el mismo lift de 1.8**.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="mx-lab">
+  <p class="plab-eyebrow">Laboratorio · Más allá del lift</p>
+  <h3 class="plab-title">¿Significa lo mismo un lift de 1.8 para ítems frecuentes que para ítems raros?</h3>
+  <p class="plab-sub">Elige un escenario o ajusta P(A), P(B) y la coocurrencia. Observa el lift frente a su techo y las métricas normalizadas.</p>
+
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:3 1 320px">Escenario
+      <div class="plab-seg" id="mx-preset">
+        <button type="button" data-value="yog" aria-pressed="true">yogurt ⇒ whole milk</button>
+        <button type="button" data-value="freq">Ítems frecuentes, lift 1.8</button>
+        <button type="button" data-value="rare">Ítems raros, lift 1.8</button>
+      </div>
+    </div>
+  </div>
+  <div class="plab-controls">
+    <label>P(A): <b id="mx-pa-v"></b><input type="range" id="mx-pa" min="0.02" max="0.95" step="0.01" value="0.28"></label>
+    <label>P(B): <b id="mx-pb-v"></b><input type="range" id="mx-pb" min="0.02" max="0.95" step="0.01" value="0.52"></label>
+    <label>P(A ∪ B), coocurrencia: <b id="mx-pab-v"></b><input type="range" id="mx-pab" min="0" max="0.28" step="0.0005" value="0.16"></label>
+  </div>
+
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Lift frente a la coocurrencia</h4>
+      <svg id="mx-lift" role="img" aria-label="Curva del lift en función de la coocurrencia, con su techo teórico"></svg>
+      <div class="plab-legend">
+        <span><i style="background:var(--lab-s1)"></i>lift</span>
+        <span><i style="background:var(--lab-s5)"></i>techo 1 / max(P(A), P(B))</span>
+        <span><i style="background:var(--lab-axis)"></i>lift = 1</span>
+      </div>
+    </div>
+    <div class="plab-panel">
+      <h4>Métricas normalizadas</h4>
+      <svg id="mx-norm" role="img" aria-label="Curvas de Zhang y lift relativo en función de la coocurrencia"></svg>
+      <div class="plab-legend">
+        <span><i style="background:var(--lab-s4)"></i>Zhang (−1 a 1)</span>
+        <span><i style="background:var(--lab-s3)"></i>lift relativo (0 a 1)</span>
+      </div>
+    </div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>confianza</span><strong id="mx-conf"></strong></div>
+    <div class="plab-stat"><span>lift</span><strong id="mx-l"></strong></div>
+    <div class="plab-stat"><span>lift relativo</span><strong id="mx-lr"></strong></div>
+    <div class="plab-stat"><span>leverage</span><strong id="mx-lev"></strong></div>
+    <div class="plab-stat"><span>conviction</span><strong id="mx-conv"></strong></div>
+    <div class="plab-stat"><span>Zhang</span><strong id="mx-z"></strong></div>
+  </div>
+  <p class="plab-note" id="mx-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('mx-lab');
+  const $ = s => root.querySelector(s);
+  const PRESETS = { yog: [0.28, 0.52, 0.16], freq: [0.5, 0.5, 0.45], rare: [0.05, 0.05, 0.0045] };
+  const set = ([a, b, ab]) => { $('#mx-pa').value = a; $('#mx-pb').value = b; bounds(); $('#mx-pab').value = ab; };
+  K.segmented($('#mx-preset'), v => { set(PRESETS[v]); render(); });
+
+  const metrics = (pa, pb, pab) => {
+    const conf = pab / pa, lift = pab / (pa * pb), lmax = 1 / Math.max(pa, pb), lev = pab - pa * pb;
+    const den = Math.max(pab * (1 - pa), pa * (pb - pab));
+    return { conf, lift, lmax, lrel: lift / lmax, lev, conv: conf >= 1 - 1e-12 ? Infinity : (1 - pb) / (1 - conf), z: den > 0 ? lev / den : NaN };
+  };
+  function bounds() {
+    const pa = +$('#mx-pa').value, pb = +$('#mx-pb').value, s = $('#mx-pab');
+    const lo = Math.max(0, pa + pb - 1), hi = Math.min(pa, pb);
+    s.min = lo; s.max = hi; s.value = K.clamp(+s.value, lo, hi);
+    return [lo, hi];
+  }
+  function render() {
+    const [lo, hi] = bounds();
+    const pa = +$('#mx-pa').value, pb = +$('#mx-pb').value, pab = +$('#mx-pab').value;
+    $('#mx-pa-v').textContent = K.fmt(pa, 2);
+    $('#mx-pb-v').textContent = K.fmt(pb, 2);
+    $('#mx-pab-v').textContent = `${K.fmt(pab, 4)} (independencia: ${K.fmt(pa * pb, 4)})`;
+    const m = metrics(pa, pb, pab);
+    const xs = Array.from({ length: 81 }, (_, i) => lo + (hi - lo) * i / 80);
+
+    const ymax = m.lmax * 1.12;
+    let c = K.chart($('#mx-lift'), { width: 380, height: 240, x: [lo, hi], y: [0, ymax], margin: { left: 42, bottom: 40 } });
+    c.axes({ xTicks: 4, yTicks: 5, xLabel: 'P(A ∪ B)', yLabel: 'lift', xFmt: v => K.fmt(v, hi < 0.1 ? 3 : 2), yFmt: v => K.fmt(v, ymax < 5 ? 1 : 0) });
+    c.line(lo, m.lmax, hi, m.lmax, 's5 line dash thin');
+    c.text(lo, m.lmax, `techo = ${K.fmt(m.lmax, 2)}`, { dx: 4, dy: -5, class: 's5' });
+    if (1 < ymax) c.line(lo, 1, hi, 1, 'muted line dash thin');
+    c.path(xs.map(x => [x, x / (pa * pb)]), 's1 line');
+    c.dot(pab, m.lift, 6, 's2 dot');
+
+    c = K.chart($('#mx-norm'), { width: 380, height: 240, x: [lo, hi], y: [-1, 1], margin: { left: 42, bottom: 40 } });
+    c.axes({ xTicks: 4, yTicks: 4, xLabel: 'P(A ∪ B)', yLabel: 'valor', xFmt: v => K.fmt(v, hi < 0.1 ? 3 : 2), yFmt: v => K.fmt(v, 1) });
+    c.zeroLines();
+    c.path(xs.map(x => [x, metrics(pa, pb, x).z]), 's4 line');
+    c.path(xs.map(x => [x, metrics(pa, pb, x).lrel]), 's3 line');
+    if (Number.isFinite(m.z)) c.dot(pab, m.z, 6, 's4 dot');
+    c.dot(pab, m.lrel, 6, 's3 dot');
+
+    $('#mx-conf').textContent = K.fmt(m.conf, 3);
+    $('#mx-l').textContent = K.fmt(m.lift, 3);
+    $('#mx-lr').textContent = K.fmt(m.lrel, 3);
+    $('#mx-lev').textContent = K.fmt(m.lev, 4);
+    $('#mx-conv').textContent = Number.isFinite(m.conv) ? K.fmt(m.conv, 3) : '∞';
+    $('#mx-z').textContent = K.fmt(m.z, 3);
+
+    const note = $('#mx-note');
+    note.className = m.lift > 1.05 ? (m.lrel >= 0.5 ? 'plab-note good' : 'plab-note warn') : 'plab-note';
+    note.textContent = m.lift <= 1.05
+      ? `Lift ${K.fmt(m.lift, 2)}: la coocurrencia está cerca o por debajo de la independencia (${K.fmt(pa * pb, 4)}); leverage ${K.fmt(m.lev, 4)} y Zhang ${K.fmt(m.z, 2)} lo confirman.`
+      : `Lift ${K.fmt(m.lift, 2)} con un techo de ${K.fmt(m.lmax, 2)}: el par alcanza el ${K.fmt(100 * m.lrel, 0)} % de su lift máximo posible. ` +
+        (m.lrel >= 0.5 ? `Zhang = ${K.fmt(m.z, 2)} y leverage = ${K.fmt(m.lev, 4)}: asociación fuerte y con impacto.`
+                       : `Aunque el lift parezca alto, Zhang = ${K.fmt(m.z, 2)} y el leverage (${K.fmt(m.lev, 4)}) es diminuto: con ítems raros el lift se infla con facilidad.`);
+  }
+  ['#mx-pa', '#mx-pb', '#mx-pab'].forEach(id => $(id).addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio permite mover la coocurrencia de un par de ítems con frecuencias fijas. Valores de referencia: para *yogurt ⇒ whole milk* ($P(A) = 0.28$, $P(B) = 0.52$, $P(A \cup B) = 0.16$) se obtiene lift 1.099, lift relativo 0.571, leverage 0.0144, conviction 1.12 y Zhang 0.125. Con ítems frecuentes ($0.5$, $0.5$, $0.45$) el lift es 1.8 con lift relativo 0.90, conviction 5 y Zhang 0.89; con ítems raros ($0.05$, $0.05$, $0.0045$) el lift es también 1.8, pero el lift relativo es 0.09, la conviction 1.04 y Zhang 0.47.
+:::
+
+**Guía del laboratorio.**
+
+1. Comprueba que el estado inicial reproduce las seis métricas del cálculo a mano.
+2. Cambia a *Ítems frecuentes* y luego a *Ítems raros*. Predice antes: si el lift es el mismo, ¿qué métricas cambiarán más? Comprueba con los indicadores.
+3. En cualquier escenario, lleva la coocurrencia al máximo. ¿Qué valor alcanzan el lift relativo y Zhang? ¿Qué pasa con la conviction y por qué?
+4. Lleva la coocurrencia al valor de independencia $P(A)P(B)$. ¿Qué valor toma cada métrica?
 
 ### La Correlación entre Métricas: Dónde Coinciden y Dónde Discrepan
 
@@ -858,6 +1020,8 @@ Este capítulo ha profundizado en el análisis de reglas de asociación más all
 
 - La evaluación robusta de una regla requiere examinar simultáneamente al menos cuatro dimensiones: lift relativo, leverage, Zhang y conviction.
 - Las reglas robustas son aquellas en las que múltiples métricas convergen en señalarlas como interesantes; las reglas candidatas son aquellas donde hay convergencia parcial; las reglas descartables son aquellas donde las métricas más exigentes las rechazan.
+
+[^frechet]: Los límites $\max(0,\, P(A) + P(B) - 1) \le P(A \cup B) \le \min(P(A),\, P(B))$ se conocen como **cotas de Fréchet**. La superior dice que no pueden coincidir más canastas que las del ítem más raro; la inferior, que si dos ítems son muy frecuentes, forzosamente se solapan.
 
 ## Referencias {.unnumbered}
 

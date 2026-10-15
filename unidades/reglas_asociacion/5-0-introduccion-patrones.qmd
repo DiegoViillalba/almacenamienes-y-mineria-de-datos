@@ -1,0 +1,412 @@
+---
+title: "Extracción de Patrones: Datos Transaccionales y Espacio de Búsqueda"
+pagetitle: "Extracción de Patrones: Datos Transaccionales y Espacio de Búsqueda"
+open-graph:
+  description: "Introduce la extracción de patrones frecuentes: de la tabla de hechos a la canasta, soporte, la retícula de itemsets y la propiedad antimonótona, con laboratorio interactivo y Python."
+twitter-card:
+  description: "Introduce la extracción de patrones frecuentes: de la tabla de hechos a la canasta, soporte, la retícula de itemsets y la propiedad antimonótona, con laboratorio interactivo y Python."
+description: "Introduce la extracción de patrones frecuentes: de la tabla de hechos a la canasta, soporte, la retícula de itemsets y la propiedad antimonótona, con laboratorio interactivo y Python."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_patrones.bib, referencias_asociacion.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+Dentro de CRISP-DM, la extracción de patrones pertenece a la fase de **modelado**, pero con un objetivo distinto al de la clasificación: no hay una variable que predecir. La pregunta es descriptiva, *¿qué cosas ocurren juntas con más frecuencia de la que cabría esperar?*, y la respuesta sirve a su vez para entender el negocio (fase 1) y para construir variables o reglas que luego alimentan un modelo predictivo. Los datos de entrada suelen salir directamente del almacén de datos: la tabla de hechos de ventas, con una fila por línea de ticket, es la materia prima natural de este análisis.
+
+Esta parte del libro avanza de lo más simple a lo más elaborado:
+
+| Capítulo | Pregunta que responde |
+|---|---|
+| Este capítulo | ¿Cómo se representan las transacciones y cuántos patrones posibles hay? |
+| Reglas de asociación | ¿Qué miden el soporte, la confianza y el lift de una regla $A \Rightarrow B$? |
+| Algoritmo Apriori | ¿Cómo encontrar todos los itemsets frecuentes sin revisar todos los posibles? |
+| Métricas avanzadas | ¿Cómo distinguir reglas interesantes de reglas triviales? |
+| FP-Growth | ¿Cómo evitar generar candidatos comprimiendo los datos en un árbol? |
+| Itemsets cerrados y maximales | ¿Cómo resumir miles de itemsets frecuentes sin perder información? |
+| Patrones secuenciales | ¿Qué ocurre cuando importa el orden de los eventos? |
+| Clasificación asociativa | ¿Cómo convertir reglas en un clasificador y evaluarlo? |
+
+: Ruta de la parte de extracción de patrones. {#tbl-ruta-patrones}
+
+## Intuición: cinco tickets
+
+Imaginemos una tienda pequeña que registró cinco compras:
+
+| Ticket | Productos |
+|---|---|
+| $T_1$ | leche, pan, mantequilla |
+| $T_2$ | leche, pan |
+| $T_3$ | leche, mantequilla |
+| $T_4$ | pan, mantequilla |
+| $T_5$ | leche, pan, queso |
+
+: Base de transacciones de ejemplo, la misma que se usará en los capítulos de reglas y de Apriori. {#tbl-cinco-tickets}
+
+Sin fórmulas, ya podemos hacer observaciones: leche y pan aparecen juntos en tres de los cinco tickets; queso solo aparece una vez; nadie compró los cuatro productos a la vez. Un **patrón** es exactamente eso: un conjunto de productos (un *itemset*) junto con el número de tickets en los que aparece completo. El trabajo de este capítulo es hacer precisa esa idea y descubrir por qué contar *todos* los patrones posibles se vuelve imposible muy rápido.
+
+## De la tabla de hechos a la canasta
+
+En un almacén de datos las ventas no se guardan como listas de productos sino en **formato largo**: una fila por línea de ticket, con la llave del ticket y la del producto. Para minar patrones hay que hacer dos transformaciones:
+
+1. **Agrupar** por ticket y quedarse con el *conjunto* de productos (sin cantidades ni precios: dos cafés en el mismo ticket cuentan como uno).
+2. **Codificar** cada canasta como una fila de una matriz binaria[^onehot]: una columna por producto, con 1 si el producto está en el ticket y 0 si no.
+
+Con los datos de la cafetería que se usaron en la parte de almacenes (`lineas_pos.csv` y `productos.csv`), el proceso completo es:
+
+```{python}
+#| label: canastas-cafeteria
+import pandas as pd
+from mlxtend.preprocessing import TransactionEncoder
+
+lineas = pd.read_csv("../../data/lineas_pos.csv")
+productos = pd.read_csv("../../data/productos.csv")
+
+# 1. Excluir líneas canceladas y traer el nombre del producto
+ventas = (lineas[lineas["cancelado_flag"] == 0]
+          .merge(productos[["sku", "nombre"]], on="sku"))
+print(f"Líneas válidas: {len(ventas)} | tickets: {ventas['order_id'].nunique()}")
+
+# 2. Formato largo -> una canasta (conjunto) por ticket
+canastas = ventas.groupby("order_id")["nombre"].apply(lambda s: sorted(set(s)))
+print(canastas.head(4).to_string())
+
+# 3. Canasta -> matriz binaria (one-hot)
+te = TransactionEncoder()
+X = pd.DataFrame(te.fit_transform(canastas.tolist()), columns=te.columns_,
+                 index=canastas.index)
+X.astype(int).head(4)
+```
+
+La matriz binaria es la entrada de todos los algoritmos de esta parte. Vista completa, se nota una propiedad que tienen casi todos los datos transaccionales reales: está **llena de ceros**.
+
+```{python}
+#| label: fig-matriz-binaria
+#| fig-cap: "Matriz binaria ticket × producto de la cafetería. Cada fila es un ticket; las celdas oscuras indican que el producto está en la canasta. Aunque hay solo 10 productos, la mayor parte de la matriz está vacía."
+import plotly.express as px
+
+densidad = X.values.mean()
+fig = px.imshow(X.astype(int), color_continuous_scale=["#f6f8fa", "#2563eb"],
+                aspect="auto", labels=dict(x="Producto", y="Ticket", color="¿Está?"))
+fig.update_layout(height=430, coloraxis_showscale=False,
+                  title=f"Densidad de la matriz: {densidad:.1%} de celdas con 1")
+fig.show()
+```
+
+Con 10 productos y tickets de 2 a 4 artículos, alrededor de una cuarta parte de las celdas vale 1. En un supermercado con miles de productos y canastas de 10 artículos, la densidad cae por debajo del 1 %. Por eso las implementaciones serias guardan la matriz en formato disperso y por eso, como veremos, el soporte de casi cualquier combinación de productos es muy pequeño.
+
+```{python}
+#| label: fig-frecuencias-cafeteria
+#| fig-cap: "Frecuencia de cada producto: número de tickets en los que aparece. Pocas referencias concentran la mayoría de las apariciones; es la cola larga típica de los datos transaccionales."
+frecuencias = X.sum().sort_values(ascending=False)
+fig = px.bar(x=frecuencias.index, y=frecuencias.values,
+             labels=dict(x="Producto", y="Tickets en los que aparece"),
+             color_discrete_sequence=["#2563eb"])
+fig.update_layout(height=360)
+fig.show()
+```
+
+## Construcción numérica: soporte paso a paso
+
+Volvamos a los cinco tickets de la @tbl-cinco-tickets. Para cada itemset contamos en cuántos tickets aparece **completo**:
+
+- $\{\text{leche}\}$ está en $T_1, T_2, T_3, T_5$: conteo 4, soporte $4/5 = 0.80$.
+- $\{\text{pan}\}$ está en $T_1, T_2, T_4, T_5$: conteo 4, soporte $0.80$.
+- $\{\text{mantequilla}\}$ está en $T_1, T_3, T_4$: conteo 3, soporte $0.60$.
+- $\{\text{queso}\}$ está solo en $T_5$: conteo 1, soporte $0.20$.
+- $\{\text{leche}, \text{pan}\}$ está en $T_1, T_2, T_5$: conteo 3, soporte $0.60$.
+- $\{\text{leche}, \text{pan}, \text{mantequilla}\}$ solo está en $T_1$: conteo 1, soporte $0.20$.
+
+Observa la cadena $\{\text{leche}\} \subset \{\text{leche}, \text{pan}\} \subset \{\text{leche}, \text{pan}, \text{mantequilla}\}$: los conteos son $4 \ge 3 \ge 1$. **Al agregar productos a un itemset, su conteo nunca sube.** No es casualidad: un ticket que contiene a $\{\text{leche}, \text{pan}\}$ forzosamente contiene a $\{\text{leche}\}$. Esta observación sencilla es la que hace posible todo lo que sigue.
+
+Con un umbral de **conteo mínimo 2** (soporte mínimo $0.40$), los itemsets frecuentes son seis: los tres productos frecuentes por separado y los tres pares $\{\text{leche}, \text{pan}\}$ (3), $\{\text{leche}, \text{mantequilla}\}$ (2) y $\{\text{pan}, \text{mantequilla}\}$ (2).
+
+## Formalización
+
+Sea $\mathcal{I} = \{i_1, \ldots, i_m\}$ el catálogo de ítems y $\mathcal{D} = \{T_1, \ldots, T_n\}$ una base de transacciones, con $T_j \subseteq \mathcal{I}$.
+
+::: {.callout-note appearance="minimal"}
+**Definición (soporte).** El conteo de soporte de un itemset $X \subseteq \mathcal{I}$ es $\sigma(X) = |\{T_j \in \mathcal{D} : X \subseteq T_j\}|$ y su soporte relativo es
+$$\text{supp}(X) = \frac{\sigma(X)}{n}.$$ {#eq-soporte-intro}
+Dado un umbral $s_{\min}$, $X$ es **frecuente** si $\text{supp}(X) \ge s_{\min}$.
+:::
+
+El soporte relativo es una probabilidad empírica[^empirica]: la proporción de tickets que contienen a $X$.
+
+**El espacio de búsqueda.** Con $m$ ítems existen $2^m - 1$ itemsets no vacíos. Ordenados por inclusión forman una **retícula**[^reticula]: arriba los ítems sueltos, abajo el itemset con todo el catálogo, y una arista entre $X$ e $Y$ cuando $Y$ se obtiene agregando un ítem a $X$.
+
+```{python}
+#| label: tbl-crecimiento
+#| tbl-cap: "Número de itemsets posibles según el tamaño del catálogo. Con el catálogo del conjunto Groceries (169 productos) el número supera el de átomos estimados en la Tierra."
+import numpy as np
+
+catalogos = [4, 10, 20, 50, 169]
+pd.DataFrame({
+    "Ítems (m)": catalogos,
+    "Itemsets posibles (2^m − 1)": [f"{2**m - 1:,}" if m <= 20 else f"{2.0**m:.2e}" for m in catalogos],
+    "Solo pares C(m, 2)": [m * (m - 1) // 2 for m in catalogos],
+})
+```
+
+**Propiedad antimonótona.** Para cualesquiera itemsets $X \subseteq Y$:
+$$X \subseteq Y \;\Longrightarrow\; \sigma(Y) \le \sigma(X).$$ {#eq-antimonotonia}
+
+La demostración es la del ejemplo: si $Y \subseteq T_j$ y $X \subseteq Y$, entonces $X \subseteq T_j$; todo ticket que cuenta para $Y$ también cuenta para $X$. La propiedad se usa en su forma contrapositiva[^contrapositiva]: **si $X$ no es frecuente, ningún superconjunto de $X$ puede serlo**. En la retícula, eso significa que basta un itemset infrecuente para descartar sin contar toda la región que cuelga debajo de él. La línea que separa los frecuentes de los infrecuentes se llama **frontera**.
+
+## Laboratorio: la retícula de itemsets
+
+El laboratorio dibuja los 15 itemsets de la @tbl-cinco-tickets. Con el modo *Fuerza bruta* se cuentan todos; con el modo *Poda Apriori* solo se cuenta un itemset si todos sus subconjuntos con un ítem menos resultaron frecuentes. Haz clic en cualquier nodo para ver qué tickets lo contienen.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="lat-lab">
+  <p class="plab-eyebrow">Laboratorio · Espacio de búsqueda</p>
+  <h3 class="plab-title">¿Cuántos itemsets hay que contar para encontrar los frecuentes?</h3>
+  <p class="plab-sub">Mueve el conteo mínimo, cambia de modo y haz clic en un nodo de la retícula.</p>
+
+  <div class="plab-controls">
+    <label>Conteo mínimo: <b id="lat-min-v"></b><input type="range" id="lat-min" min="1" max="5" step="1" value="2"></label>
+    <div class="plab-field" style="flex:2 1 240px">Estrategia
+      <div class="plab-seg" id="lat-mode">
+        <button type="button" data-value="brute">Fuerza bruta</button>
+        <button type="button" data-value="apriori" aria-pressed="true">Poda Apriori</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="plab-panel">
+    <h4>Retícula de itemsets (L = leche, P = pan, M = mantequilla, Q = queso)</h4>
+    <svg id="lat-svg" class="wide" role="img" aria-label="Retícula de los 15 itemsets con su conteo de soporte"></svg>
+    <div class="plab-legend">
+      <span><i class="dot" style="background:var(--lab-s3)"></i>frecuente</span>
+      <span><i class="dot" style="background:var(--lab-s5)"></i>contado e infrecuente</span>
+      <span><i class="dot" style="background:var(--lab-axis)"></i>descartado sin contar</span>
+      <span><i style="background:var(--lab-s2)"></i>itemset seleccionado y sus vecinos</span>
+    </div>
+  </div>
+
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Itemsets frecuentes</span><strong id="lat-freq"></strong></div>
+    <div class="plab-stat"><span>Itemsets contados</span><strong id="lat-count"></strong></div>
+    <div class="plab-stat"><span>Ahorrados por la poda</span><strong id="lat-saved"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4 id="lat-sel-title">Tickets</h4><div id="lat-tx" class="plab-scroll"></div></div>
+  </div>
+  <p class="plab-note" id="lat-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('lat-lab');
+  const $ = s => root.querySelector(s);
+  const NAMES = { L: 'leche', P: 'pan', M: 'mantequilla', Q: 'queso' };
+  const ITEMS = ['L', 'P', 'M', 'Q'];
+  const TX = [['L','P','M'], ['L','P'], ['L','M'], ['P','M'], ['L','P','Q']];
+  const key = s => ITEMS.filter(i => s.includes(i)).join('');
+  // Todos los itemsets no vacíos, agrupados por tamaño.
+  const levels = [[], [], [], []];
+  for (let mask = 1; mask < 16; mask++) {
+    const s = ITEMS.filter((_, b) => mask & (1 << b));
+    levels[s.length - 1].push(s);
+  }
+  levels.forEach(l => l.sort((a, b) => key(a).localeCompare(key(b), 'es')));
+  const count = s => TX.filter(t => s.every(i => t.includes(i))).length;
+  const mode = K.segmented($('#lat-mode'), () => render());
+  let selected = 'LP';
+
+  function classify(minc) {
+    const st = {};
+    levels.forEach((lev, k) => lev.forEach(s => {
+      const id = key(s);
+      let counted = true;
+      if (mode.get() === 'apriori' && k > 0) {
+        counted = s.every(i => st[key(s.filter(x => x !== i))].status === 'freq');
+      }
+      const c = count(s);
+      st[id] = { s, c, counted, status: !counted ? 'pruned' : (c >= minc ? 'freq' : 'infreq') };
+    }));
+    return st;
+  }
+
+  function render() {
+    const minc = +$('#lat-min').value;
+    $('#lat-min-v').textContent = `${minc} (soporte ${K.fmt(minc / 5, 2)})`;
+    const st = classify(minc);
+    const svg = $('#lat-svg');
+    const W = 640, H = 330, bw = 86, bh = 40;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.classList.add('plab-chart'); svg.replaceChildren();
+    const pos = {};
+    levels.forEach((lev, k) => lev.forEach((s, i) => {
+      pos[key(s)] = { x: (i + 0.5) * W / lev.length, y: 34 + k * 84 };
+    }));
+    const sel = st[selected].s;
+    const related = id => { const s = st[id].s; return s.every(i => sel.includes(i)) || sel.every(i => s.includes(i)); };
+    // Aristas: X — Y cuando Y = X + un ítem.
+    levels.slice(0, 3).forEach((lev, k) => lev.forEach(a => levels[k + 1].forEach(b => {
+      if (!a.every(i => b.includes(i))) return;
+      const ka = key(a), kb = key(b), hot = related(ka) && related(kb);
+      K.el('line', { x1: pos[ka].x, y1: pos[ka].y + bh / 2, x2: pos[kb].x, y2: pos[kb].y - bh / 2,
+        class: hot ? 's2 line thin' : 'muted line thin ghost' }, svg);
+    })));
+    Object.values(st).forEach(n => {
+      const id = key(n.s), p = pos[id];
+      const cls = n.status === 'freq' ? 's3' : n.status === 'infreq' ? 's5' : 'muted';
+      const g = K.el('g', { 'data-key': id, style: 'cursor:pointer' }, svg);
+      const r = K.el('rect', { x: p.x - bw / 2, y: p.y - bh / 2, width: bw, height: bh, rx: 7,
+        class: cls, 'fill-opacity': n.status === 'pruned' ? 0.08 : 0.2, 'stroke-width': id === selected ? 3 : 1.2 }, g);
+      if (n.status === 'pruned') r.setAttribute('stroke-dasharray', '4 3');
+      if (id === selected) r.setAttribute('style', 'stroke:var(--lab-s2)');
+      K.el('text', { x: p.x, y: p.y - 3, 'text-anchor': 'middle', class: 'strong', 'font-size': 13 }, g).textContent = '{' + n.s.join(',') + '}';
+      K.el('text', { x: p.x, y: p.y + 13, 'text-anchor': 'middle', 'font-size': 11 }, g).textContent =
+        n.counted ? `conteo ${n.c}` : 'sin contar';
+    });
+
+    const all = Object.values(st);
+    const nFreq = all.filter(n => n.status === 'freq').length;
+    const nCount = all.filter(n => n.counted).length;
+    $('#lat-freq').textContent = nFreq;
+    $('#lat-count').textContent = `${nCount} de 15`;
+    $('#lat-saved').textContent = 15 - nCount;
+
+    const sn = st[selected];
+    $('#lat-sel-title').textContent = `Tickets que contienen {${sn.s.map(i => NAMES[i]).join(', ')}}`;
+    $('#lat-tx').innerHTML = '<table class="plab-table"><thead><tr><th>Ticket</th><th>Productos</th><th>¿Lo contiene?</th></tr></thead><tbody>' +
+      TX.map((t, j) => {
+        const has = sn.s.every(i => t.includes(i));
+        return `<tr${has ? ' class="hl"' : ''}><td>T${j + 1}</td><td>${t.map(i => NAMES[i]).join(', ')}</td><td>${has ? 'sí' : 'no'}</td></tr>`;
+      }).join('') + `</tbody></table>`;
+
+    const note = $('#lat-note');
+    const prunedSel = sn.status === 'pruned';
+    if (prunedSel) {
+      const bad = sn.s.map(i => sn.s.filter(x => x !== i)).filter(s => st[key(s)].status !== 'freq').map(s => '{' + s.join(',') + '}');
+      note.className = 'plab-note warn';
+      note.textContent = `{${sn.s.join(',')}} no se cuenta: su subconjunto ${bad[0]} no es frecuente, así que por antimonotonía su conteo (${sn.c}) tampoco puede llegar a ${minc}. Con la poda se contaron ${nCount} itemsets en lugar de 15.`;
+    } else {
+      note.className = sn.status === 'freq' ? 'plab-note good' : 'plab-note bad';
+      note.textContent = `{${sn.s.join(',')}} aparece en ${sn.c} de 5 tickets (soporte ${K.fmt(sn.c / 5, 2)}): ` +
+        (sn.status === 'freq' ? `es frecuente con conteo mínimo ${minc}.` : `no alcanza el conteo mínimo ${minc}; todo lo que cuelga debajo de él queda descartado.`) +
+        ` En total hay ${nFreq} itemsets frecuentes y se contaron ${nCount}.`;
+    }
+  }
+
+  $('#lat-svg').addEventListener('click', e => {
+    const g = e.target.closest('[data-key]');
+    if (g) { selected = g.dataset.key; render(); }
+  });
+  $('#lat-min').addEventListener('input', render);
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio dibuja la retícula de los 15 itemsets de la @tbl-cinco-tickets y permite variar el conteo mínimo. Valores de referencia con conteo mínimo 2: hay 6 itemsets frecuentes; la fuerza bruta cuenta 15 itemsets y la poda Apriori solo 8 (los 4 ítems, los 3 pares sin queso y $\{L, P, M\}$, que resulta infrecuente con conteo 1).
+:::
+
+**Guía del laboratorio.**
+
+1. Predice antes de mover: con conteo mínimo 2 y poda Apriori, ¿se llegará a contar el itemset $\{L, P, Q\}$? Haz clic en él y comprueba el motivo.
+2. Comprueba los números de la sección anterior: el panel debe mostrar 6 itemsets frecuentes, y $\{L, P\}$ debe aparecer en $T_1$, $T_2$ y $T_5$.
+3. Baja el conteo mínimo a 1. ¿Por qué ahora la poda ahorra muy poco? Sube a 4: ¿qué queda en pie y cuántos itemsets se contaron?
+4. Explica con tus palabras por qué $\{L, P, M\}$ sí se cuenta con conteo mínimo 2 aunque al final resulte infrecuente.
+
+## Implementación en Python
+
+El mismo razonamiento, en código. Primero la **fuerza bruta**: enumerar los $2^m - 1$ itemsets y contar cada uno.
+
+```{python}
+#| label: fuerza-bruta
+from itertools import combinations
+
+tickets = [
+    {"leche", "pan", "mantequilla"},
+    {"leche", "pan"},
+    {"leche", "mantequilla"},
+    {"pan", "mantequilla"},
+    {"leche", "pan", "queso"},
+]
+items = ["leche", "pan", "mantequilla", "queso"]
+
+def conteo(itemset, tickets):
+    """Número de tickets que contienen el itemset completo."""
+    return sum(set(itemset) <= t for t in tickets)
+
+filas = []
+for k in range(1, len(items) + 1):
+    for itemset in combinations(items, k):
+        c = conteo(itemset, tickets)
+        filas.append({"itemset": "{" + ", ".join(itemset) + "}", "k": k,
+                      "conteo": c, "soporte": c / len(tickets)})
+
+tabla = pd.DataFrame(filas)
+print(f"Itemsets evaluados por fuerza bruta: {len(tabla)}")
+tabla[tabla["conteo"] >= 2]
+```
+
+Ahora la búsqueda **por niveles con poda**: en el nivel $k$ solo se cuentan los candidatos cuyos subconjuntos de tamaño $k-1$ son todos frecuentes. Es el esqueleto del algoritmo Apriori, que se estudia en detalle más adelante.
+
+```{python}
+#| label: por-niveles
+def busqueda_por_niveles(tickets, items, min_conteo):
+    frecuentes = {}            # itemset (frozenset) -> conteo
+    contados = 0
+    nivel = [frozenset([i]) for i in items]
+    k = 1
+    while nivel:
+        siguientes = {}
+        for cand in nivel:
+            contados += 1
+            c = conteo(cand, tickets)
+            if c >= min_conteo:
+                siguientes[cand] = c
+        frecuentes.update(siguientes)
+        # candidatos de tamaño k+1: uniones de frecuentes cuyo k-subconjunto es frecuente
+        previos = list(siguientes)
+        candidatos = {a | b for a in previos for b in previos if len(a | b) == k + 1}
+        nivel = [c for c in candidatos
+                 if all(c - {i} in siguientes for i in c)]
+        k += 1
+    return frecuentes, contados
+
+frecuentes, contados = busqueda_por_niveles(tickets, items, min_conteo=2)
+print(f"Itemsets contados con poda: {contados} (fuerza bruta: {2**len(items) - 1})")
+for s, c in sorted(frecuentes.items(), key=lambda x: (len(x[0]), -x[1])):
+    print(f"  {sorted(s)}: {c}")
+```
+
+El resultado coincide con el laboratorio: 6 itemsets frecuentes y 8 itemsets contados en lugar de 15. Con cuatro ítems el ahorro parece modesto, pero la poda elimina **regiones enteras** de la retícula; con cientos de productos es la diferencia entre un cálculo factible y uno imposible.
+
+## Lo que viene
+
+Con la representación transaccional, el soporte y la antimonotonía ya están todas las piezas para el resto de la parte. El siguiente capítulo convierte itemsets frecuentes en **reglas** $A \Rightarrow B$ y estudia cómo medir su fuerza; después, el capítulo de **Apriori** formaliza la búsqueda por niveles que acabamos de esbozar [@agrawal1994fast; @tan2006introduction].
+
+[^onehot]: Esta codificación es el mismo *one-hot encoding* del capítulo de conversión de variables, aplicado a una variable cuyo valor es un conjunto. Una matriz con muy pocos unos se llama **dispersa** (*sparse*); guardarla solo con las posiciones de los unos ahorra memoria.
+
+[^empirica]: Una **probabilidad empírica** es una frecuencia relativa observada: si de $n$ tickets $\sigma$ contienen a $X$, se estima $P(X) \approx \sigma/n$. Con más datos la estimación es más estable, pero sigue siendo una propiedad de la muestra, no una certeza sobre la población.
+
+[^reticula]: Formalmente, la inclusión $\subseteq$ es un **orden parcial** sobre los subconjuntos de $\mathcal{I}$: hay pares que no se pueden comparar, como $\{\text{leche}\}$ y $\{\text{pan}\}$. Un orden parcial en el que cada par tiene un ínfimo (la intersección) y un supremo (la unión) se llama **retícula**. Su diagrama, con un nivel por tamaño, se conoce como diagrama de Hasse.
+
+[^contrapositiva]: La **contrapositiva** de «si $p$ entonces $q$» es «si no $q$ entonces no $p$», y es lógicamente equivalente. Aquí: «si $Y$ es frecuente, sus subconjuntos lo son» equivale a «si un subconjunto no es frecuente, $Y$ tampoco».
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

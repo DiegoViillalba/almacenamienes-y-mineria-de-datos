@@ -1,0 +1,596 @@
+---
+title: "Patrones Secuenciales: GSP y PrefixSpan"
+pagetitle: "Patrones Secuenciales: GSP y PrefixSpan"
+open-graph:
+  description: "Introduce la minería de patrones secuenciales con un clickstream: subsecuencias, soporte, GSP por niveles y PrefixSpan con bases proyectadas, con laboratorio interactivo e implementación desde cero en Python."
+twitter-card:
+  description: "Introduce la minería de patrones secuenciales con un clickstream: subsecuencias, soporte, GSP por niveles y PrefixSpan con bases proyectadas, con laboratorio interactivo e implementación desde cero en Python."
+description: "Introduce la minería de patrones secuenciales con un clickstream: subsecuencias, soporte, GSP por niveles y PrefixSpan con bases proyectadas, con laboratorio interactivo e implementación desde cero en Python."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_secuencias.bib, referencias_cerrados.bib, referencias_fp_growth.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+Hasta ahora una transacción ha sido un **conjunto**: el ticket $\{\text{pan}, \text{leche}\}$ es el mismo que $\{\text{leche}, \text{pan}\}$. Pero en muchos datos el **orden** es la información principal. En una tienda en línea, pasar de la búsqueda a la ficha del producto y luego al carrito describe un recorrido de compra; recorrer las mismas páginas al revés describe otra cosa. Lo mismo ocurre con las compras sucesivas de un cliente (primero la impresora, meses después los cartuchos), los eventos de un expediente clínico o los pasos de un proceso registrados en una bitácora. La **minería de patrones secuenciales** busca las subsecuencias de eventos que se repiten en muchas secuencias [@agrawal1995mining; @han2012data].
+
+En el almacén de datos, la materia prima es la misma tabla de hechos que en los capítulos anteriores, pero ahora se agrupa por cliente o por sesión y **se ordena por fecha**: una tabla de hechos de eventos web (*clickstream*) con llave de sesión, página y marca de tiempo produce directamente una secuencia por sesión.
+
+## Intuición: cinco sesiones de una tienda en línea
+
+Una tienda en línea registró cinco sesiones. Cada letra es una página visitada, en orden:
+
+| Sesión | Recorrido | Abreviado |
+|---|---|---|
+| $S_1$ | inicio → búsqueda → ficha → carrito → pago | ⟨I, B, F, C, P⟩ |
+| $S_2$ | inicio → ficha → búsqueda → ficha → carrito | ⟨I, F, B, F, C⟩ |
+| $S_3$ | búsqueda → ficha → carrito → pago | ⟨B, F, C, P⟩ |
+| $S_4$ | inicio → búsqueda → ficha → ficha | ⟨I, B, F, F⟩ |
+| $S_5$ | inicio → carrito → pago | ⟨I, C, P⟩ |
+
+: Cinco sesiones de navegación (I = inicio, B = búsqueda, F = ficha de producto, C = carrito, P = pago). {#tbl-sesiones}
+
+Algunas observaciones sin fórmulas:
+
+- El recorrido **búsqueda → ficha → carrito** aparece en tres sesiones ($S_1$, $S_2$, $S_3$). Es un patrón de compra.
+- **Buscar y ver una ficha** ocurre en cuatro sesiones, pero **ver una ficha y después buscar** solo en una ($S_2$). Como conjuntos, $\{B, F\}$ es lo mismo en ambos casos; como secuencias, son patrones distintos con frecuencias muy diferentes.
+- En $S_1$, el patrón **inicio → carrito** aparece aunque haya páginas en medio. Un patrón secuencial respeta el **orden**, pero admite **huecos**.
+
+## Construcción numérica paso a paso
+
+### Contención y soporte
+
+Una sesión **contiene** un patrón si se pueden encontrar sus páginas en la sesión, en el mismo orden, aunque haya otras páginas entre ellas. Por ejemplo, ⟨I, C⟩ está en $S_1 = ⟨\mathbf{I}, B, F, \mathbf{C}, P⟩$, en $S_2$ y en $S_5$, pero no en $S_3$ (no tiene inicio) ni en $S_4$ (no tiene carrito): su conteo de soporte es 3. Una sesión cuenta **una sola vez** aunque contenga el patrón varias veces: ⟨F⟩ aparece dos veces en $S_2$ y en $S_4$, y su conteo es 4, no 6.
+
+Fijamos un **conteo mínimo de 3 sesiones**. Las cinco páginas son frecuentes: I, B, F y C aparecen en 4 sesiones y P en 3.
+
+### PrefixSpan: crecer el patrón desde un prefijo
+
+La idea de PrefixSpan [@pei2001prefixspan] es la de FP-Growth aplicada al orden: en lugar de generar candidatos, **fija un prefijo** y mira solo lo que ocurre **después** de él. Para cada sesión que contiene el prefijo se guarda el **sufijo** que sigue a su primera aparición; el conjunto de esos sufijos es la **base proyectada**.
+
+**Prefijo ⟨B⟩.** Cortamos cada sesión después de su primera búsqueda:
+
+| Sesión | Sesión completa | Sufijo después de B |
+|---|---|---|
+| $S_1$ | ⟨I, **B**, F, C, P⟩ | ⟨F, C, P⟩ |
+| $S_2$ | ⟨I, F, **B**, F, C⟩ | ⟨F, C⟩ |
+| $S_3$ | ⟨**B**, F, C, P⟩ | ⟨F, C, P⟩ |
+| $S_4$ | ⟨I, **B**, F, F⟩ | ⟨F, F⟩ |
+| $S_5$ | ⟨I, C, P⟩ | (no contiene B) |
+
+: Base proyectada sobre el prefijo ⟨B⟩. {#tbl-proyeccion-b}
+
+En los sufijos, F aparece en 4, C en 3 y P en 2. Por lo tanto ⟨B, F⟩ (4) y ⟨B, C⟩ (3) son frecuentes y ⟨B, P⟩ (2) no. Observa que **no hubo que volver a recorrer las sesiones completas**: el conteo de la extensión se hace dentro de la base proyectada.
+
+**Prefijo ⟨B, F⟩.** Proyectamos de nuevo, ahora sobre los sufijos: ⟨C, P⟩, ⟨C⟩, ⟨C, P⟩ y ⟨F⟩. C aparece en 3, P en 2 y F en 1: solo ⟨B, F, C⟩ (3) es frecuente.
+
+**Prefijo ⟨B, F, C⟩.** Los sufijos son ⟨P⟩ ($S_1$), vacío ($S_2$) y ⟨P⟩ ($S_3$). P aparece en 2: no hay extensión frecuente y esta rama termina. Lo mismo ocurre con ⟨B, C⟩, cuyos sufijos son ⟨P⟩, vacío y ⟨P⟩.
+
+Repitiendo el procedimiento para los otros prefijos de longitud 1:
+
+| Prefijo | Base proyectada | Extensiones frecuentes |
+|---|---|---|
+| ⟨I⟩ | ⟨B,F,C,P⟩, ⟨F,B,F,C⟩, ⟨B,F,F⟩, ⟨C,P⟩ | ⟨I,B⟩ (3), ⟨I,F⟩ (3), ⟨I,C⟩ (3) |
+| ⟨I, B⟩ | ⟨F,C,P⟩, ⟨F,C⟩, ⟨F,F⟩ | ⟨I,B,F⟩ (3) |
+| ⟨I, F⟩ | ⟨C,P⟩, ⟨B,F,C⟩, ⟨F⟩ | ninguna (C y F llegan a 2) |
+| ⟨F⟩ | ⟨C,P⟩, ⟨B,F,C⟩, ⟨C,P⟩, ⟨F⟩ | ⟨F,C⟩ (3) |
+| ⟨C⟩ | ⟨P⟩, vacío, ⟨P⟩, ⟨P⟩ | ⟨C,P⟩ (3) |
+| ⟨P⟩ | vacío en las tres sesiones | ninguna |
+
+: Bases proyectadas del resto de los prefijos (conteo mínimo 3). {#tbl-proyecciones}
+
+El resultado completo son **14 patrones secuenciales frecuentes**: 5 de longitud 1 (I, B, F, C, P), 7 de longitud 2 (⟨I,B⟩, ⟨I,F⟩, ⟨I,C⟩, ⟨B,F⟩, ⟨B,C⟩, ⟨F,C⟩, ⟨C,P⟩) y 2 de longitud 3 (⟨I,B,F⟩ y ⟨B,F,C⟩). Igual que con los itemsets, muchos son redundantes; los **maximales** son cuatro: ⟨I,B,F⟩, ⟨B,F,C⟩, ⟨I,C⟩ y ⟨C,P⟩.
+
+### GSP: la alternativa por niveles
+
+GSP [@srikant1996mining] es la versión secuencial de Apriori. En cada nivel genera candidatos, los poda con la propiedad antimonótona y recorre **toda** la base para contarlos:
+
+- **Nivel 2.** Con 5 páginas frecuentes hay $5 \times 5 = 25$ candidatos, porque el orden importa y una página puede repetirse (⟨F, F⟩ es un candidato válido). Con itemsets serían solo 10 pares. Resultan frecuentes los 7 pares de arriba.
+- **Nivel 3.** Se unen dos patrones cuando el primero sin su primer elemento coincide con el segundo sin su último elemento[^union-gsp]: ⟨I,B⟩ + ⟨B,F⟩ → ⟨I,B,F⟩. Salen 7 candidatos; la poda descarta 3 (por ejemplo ⟨I,C,P⟩, porque ⟨I,P⟩ no es frecuente) y se cuentan 4, de los cuales 2 son frecuentes.
+- **Nivel 4.** ⟨I,B,F⟩ + ⟨B,F,C⟩ → ⟨I,B,F,C⟩, que se poda porque ⟨I,B,C⟩ no es frecuente. Fin.
+
+GSP cuenta $5 + 25 + 4 = 34$ candidatos y recorre la base tres veces. PrefixSpan llega a los mismos 14 patrones sin generar ningún candidato que no aparezca en los datos.
+
+## Formalización
+
+Sea $\mathcal{E}$ el conjunto de eventos posibles (páginas, productos, diagnósticos) y $\mathcal{S} = \{s_1, \ldots, s_n\}$ una base de secuencias.
+
+::: {.callout-note appearance="minimal"}
+**Definición (secuencia y subsecuencia).** Una secuencia es una lista ordenada $s = ⟨e_1, e_2, \ldots, e_\ell⟩$ con $e_j \in \mathcal{E}$; su longitud es $\ell$. Una secuencia $\alpha = ⟨a_1, \ldots, a_k⟩$ es **subsecuencia** de $s$, y se escribe $\alpha \sqsubseteq s$, si existen posiciones $j_1 < j_2 < \cdots < j_k$ tales que $a_r = e_{j_r}$ para todo $r$.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definición (soporte de un patrón secuencial).** El conteo de soporte de $\alpha$ es el número de secuencias que lo contienen,
+$$\sigma(\alpha) = |\{s \in \mathcal{S} : \alpha \sqsubseteq s\}|,$$ {#eq-soporte-secuencial}
+y $\alpha$ es un **patrón secuencial frecuente** si $\sigma(\alpha) \ge \sigma_{\min}$.
+:::
+
+En la definición original [@agrawal1995mining] cada elemento de la secuencia es a su vez un itemset (los productos comprados en una misma visita)[^elementos]. Aquí usamos un evento por posición, que es el caso más común en *clickstream* y bitácoras.
+
+**Antimonotonía.** Si $\alpha \sqsubseteq \beta$, toda secuencia que contiene a $\beta$ contiene a $\alpha$, así que $\sigma(\beta) \le \sigma(\alpha)$. Es la misma propiedad de los itemsets y es la que justifica la poda de GSP. Lo que cambia es el tamaño del espacio de búsqueda: con $m$ eventos hay $m^k$ secuencias posibles de longitud $k$, frente a $\binom{m}{k}$ itemsets, y las secuencias pueden ser más largas que el número de eventos distintos.
+
+**Proyección.** Sea $\alpha$ un prefijo. Para cada $s \sqsupseteq \alpha$, el **sufijo** $s|_\alpha$ es lo que queda de $s$ después de la aparición de $\alpha$ que termina más a la izquierda[^izquierda]. La **base proyectada** es $\mathcal{S}|_\alpha = \{s|_\alpha : s \in \mathcal{S},\ \alpha \sqsubseteq s\}$. El resultado que hace funcionar a PrefixSpan [@pei2004mining] es:
+$$\sigma_{\mathcal{S}}(\alpha \cdot x) = \big|\{u \in \mathcal{S}|_\alpha : x \in u\}\big|,$$ {#eq-proyeccion}
+donde $\alpha \cdot x$ agrega el evento $x$ al final de $\alpha$. Es decir, el soporte de cada extensión se obtiene contando eventos en la base proyectada, que es más pequeña que la original y se encoge con cada paso.
+
+::: {.callout-note appearance="minimal"}
+**Algoritmo PrefixSpan.** Llamar a `PrefixSpan(⟨⟩, 𝒮)`:
+
+1. Contar, en la base actual, en cuántas secuencias aparece cada evento.
+2. Para cada evento $x$ con conteo $\ge \sigma_{\min}$: reportar $\alpha \cdot x$, construir $\mathcal{S}|_{\alpha \cdot x}$ y llamar recursivamente a `PrefixSpan(α·x, 𝒮|α·x)`.
+:::
+
+| | GSP | PrefixSpan | SPADE |
+|---|---|---|---|
+| Estrategia | Por niveles (anchura) | Crecimiento de patrones (profundidad) | Profundidad o anchura sobre listas de ocurrencias |
+| Candidatos | Genera y poda | No genera | Une listas de identificadores |
+| Recorridos de la base | Uno por nivel | Uno por proyección (sobre bases cada vez menores) | Uno, para construir la representación vertical |
+| Restricciones de tiempo | Sí (hueco máximo, ventana) | Con adaptaciones | Con adaptaciones |
+| Referencia | @srikant1996mining | @pei2001prefixspan | @zaki2001spade |
+
+: Algoritmos clásicos de patrones secuenciales. {#tbl-algoritmos-secuencias}
+
+GSP admite de forma natural **restricciones de tiempo**[^restricciones], como exigir que entre dos eventos no pasen más de 30 minutos. Esa flexibilidad es la razón por la que su poda usa subsecuencias contiguas, como se explica en la nota sobre la unión.
+
+## Laboratorio: la base proyectada de PrefixSpan
+
+El laboratorio reproduce el recorrido de PrefixSpan sobre las sesiones de la @tbl-sesiones. Elige un evento para extender el prefijo y observa cómo se encoge la base proyectada; las barras cuentan en cuántos sufijos aparece cada evento. Al final puedes editar las sesiones.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="pfx-lab">
+  <p class="plab-eyebrow">Laboratorio · Patrones secuenciales</p>
+  <h3 class="plab-title">¿Qué ocurre después del prefijo?</h3>
+  <p class="plab-sub">Extiende el prefijo con un evento frecuente, retrocede o salta a cualquier patrón de la lista.</p>
+
+  <div class="plab-controls">
+    <label>Conteo mínimo: <b id="pfx-min-v"></b><input type="range" id="pfx-min" min="1" max="5" step="1" value="3"></label>
+    <div class="plab-field" style="flex:2 1 240px">Prefijo actual: <b id="pfx-cur"></b>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        <button type="button" class="plab-btn" id="pfx-back">← Quitar el último</button>
+        <button type="button" class="plab-btn" id="pfx-reset">Prefijo vacío</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Soporte del prefijo</span><strong id="pfx-sup"></strong></div>
+    <div class="plab-stat"><span>Sufijos no vacíos</span><strong id="pfx-nproj"></strong></div>
+    <div class="plab-stat"><span>Extensiones frecuentes</span><strong id="pfx-next"></strong></div>
+    <div class="plab-stat"><span>Patrones frecuentes (total)</span><strong id="pfx-total"></strong></div>
+  </div>
+
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4 id="pfx-proj-title">Base proyectada</h4>
+      <div id="pfx-proj" class="plab-scroll"></div>
+      <div class="plab-legend">
+        <span><i style="background:var(--lab-s2)"></i>aparición del prefijo más a la izquierda</span>
+        <span><i style="background:var(--lab-s1)"></i>sufijo proyectado</span>
+      </div>
+    </div>
+    <div class="plab-panel">
+      <h4>¿En cuántos sufijos aparece cada evento?</h4>
+      <svg id="pfx-svg" role="img" aria-label="Conteo de cada evento en la base proyectada, con el conteo mínimo como línea horizontal"></svg>
+      <div class="plab-legend">
+        <span><i style="background:var(--lab-s3)"></i>extensión frecuente</span>
+        <span><i style="background:var(--lab-axis)"></i>no alcanza el mínimo</span>
+        <span><i style="background:var(--lab-s5)"></i>conteo mínimo</span>
+      </div>
+      <div class="plab-steps" id="pfx-ext" style="margin-top:.5rem"></div>
+    </div>
+  </div>
+  <p class="plab-note" id="pfx-note" aria-live="polite"></p>
+
+  <div class="plab-panel" style="margin-top:.8rem">
+    <h4>Todos los patrones frecuentes (clic para saltar)</h4>
+    <div id="pfx-all"></div>
+  </div>
+
+  <div class="plab-panel" style="margin-top:.8rem">
+    <h4>Editar las sesiones (letras I, B, F, C, P)</h4>
+    <div class="pfx-edit" id="pfx-edit"></div>
+    <div style="margin-top:.6rem"><button type="button" class="plab-btn" id="pfx-restore">Restaurar sesiones originales</button></div>
+  </div>
+  <style>
+    #pfx-lab .pfx-edit { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: .35rem .5rem; align-items: center; font-size: .85rem; max-width: 420px; }
+    #pfx-lab .pfx-edit input { width: 100%; font-family: "Fira Mono", ui-monospace, monospace; letter-spacing: .25em; text-transform: uppercase;
+      background: var(--lab-bg); color: var(--lab-text); border: 1px solid var(--lab-border); border-radius: 6px; padding: .3rem .45rem; font-size: .9rem; }
+    #pfx-lab .pfx-seq { font-family: "Fira Mono", ui-monospace, monospace; white-space: nowrap; text-align: left; }
+    #pfx-lab .pfx-seq span { display: inline-block; min-width: 1.35em; text-align: center; border-radius: 4px; margin-right: 1px; }
+    #pfx-lab .pfx-seq .m { background: var(--lab-s2); color: #fff; font-weight: 700; }
+    #pfx-lab .pfx-seq .x { color: var(--lab-muted); opacity: .7; }
+    #pfx-lab .pfx-seq .s { color: var(--lab-s1); font-weight: 700; }
+    body.quarto-dark #pfx-lab .pfx-seq .m { color: #0d1117; }
+    #pfx-lab .pfx-len { font-size: .78rem; color: var(--lab-muted); margin: .35rem 0 .15rem; }
+    #pfx-lab #pfx-all .plab-steps { margin-bottom: .2rem; }
+  </style>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('pfx-lab');
+  const $ = s => root.querySelector(s);
+  const EV = ['I', 'B', 'F', 'C', 'P'];
+  const NAMES = { I: 'inicio', B: 'búsqueda', F: 'ficha', C: 'carrito', P: 'pago' };
+  const BASE = ['IBFCP', 'IFBFC', 'BFCP', 'IBFF', 'ICP'];
+  let S = [...BASE];
+  let prefix = [];
+  const show = p => '⟨' + p.join(', ') + '⟩';
+  // Aparición del prefijo que termina más a la izquierda: posiciones emparejadas o null.
+  const match = (s, p) => {
+    const pos = []; let j = 0;
+    for (const e of p) { while (j < s.length && s[j] !== e) j++; if (j === s.length) return null; pos.push(j++); }
+    return pos;
+  };
+  const project = p => S.map(s => { const m = match(s, p); return m ? { s, m, suf: s.slice(p.length ? m[m.length - 1] + 1 : 0) } : null; });
+  const countIn = (rows, e) => rows.filter(r => r && r.suf.includes(e)).length;
+  function prefixSpan(minc, p = [], out = []) {
+    const rows = project(p);
+    EV.forEach(e => {
+      const c = countIn(rows, e);
+      if (c >= minc) { const q = [...p, e]; out.push({ p: q, c }); prefixSpan(minc, q, out); }
+    });
+    return out;
+  }
+
+  function buildEditor() {
+    $('#pfx-edit').innerHTML = S.map((s, i) =>
+      `<span>S${i + 1}</span><input type="text" maxlength="10" data-i="${i}" value="${s}" aria-label="Sesión S${i + 1}" autocomplete="off" spellcheck="false">`).join('');
+  }
+
+  function render() {
+    const minc = +$('#pfx-min').value;
+    $('#pfx-min-v').textContent = `${minc} de ${S.length} sesiones`;
+    const all = prefixSpan(minc);
+    // Si el prefijo dejó de ser frecuente (cambió el umbral o los datos), se recorta.
+    while (prefix.length && !all.some(r => r.p.join('') === prefix.join(''))) prefix.pop();
+    const rows = project(prefix);
+    const sup = rows.filter(Boolean).length;
+    const counts = EV.map(e => countIn(rows, e));
+    const freqExt = EV.filter((e, i) => counts[i] >= minc);
+
+    $('#pfx-cur').textContent = prefix.length ? show(prefix) : '⟨⟩ (vacío)';
+    $('#pfx-back').disabled = !prefix.length;
+    $('#pfx-sup').textContent = prefix.length ? `${sup} de ${S.length}` : '—';
+    $('#pfx-nproj').textContent = rows.filter(r => r && r.suf.length).length;
+    $('#pfx-next').textContent = freqExt.length;
+    $('#pfx-total').textContent = all.length;
+
+    // Tabla de la base proyectada.
+    $('#pfx-proj-title').textContent = prefix.length ? `Base proyectada sobre ${show(prefix)}` : 'Base completa (prefijo vacío)';
+    $('#pfx-proj').innerHTML = '<table class="plab-table"><thead><tr><th>Sesión</th><th style="text-align:left">Secuencia</th><th style="text-align:left">Sufijo</th></tr></thead><tbody>' +
+      S.map((s, i) => {
+        const r = rows[i];
+        if (!r) return `<tr><td>S${i + 1}</td><td class="pfx-seq">${[...s].map(e => `<span class="x">${e}</span>`).join('')}</td><td style="text-align:left;color:var(--lab-muted)">no contiene el prefijo</td></tr>`;
+        const cut = prefix.length ? r.m[r.m.length - 1] : -1;
+        const cells = [...s].map((e, j) => `<span class="${r.m.includes(j) ? 'm' : j > cut ? 's' : 'x'}">${e}</span>`).join('');
+        return `<tr><td>S${i + 1}</td><td class="pfx-seq">${cells || '<span class="x">∅</span>'}</td><td class="pfx-seq">${r.suf.length ? show([...r.suf]) : 'vacío'}</td></tr>`;
+      }).join('') + '</tbody></table>';
+
+    // Barras de conteo en la base proyectada.
+    const c = K.chart($('#pfx-svg'), { width: 400, height: 230, x: [-0.6, EV.length - 0.4], y: [0, S.length],
+      margin: { left: 40, right: 12, top: 14, bottom: 40 } });
+    c.axes({ yTicks: S.length, xTicks: 0, grid: true, yLabel: 'sufijos', yFmt: v => K.fmt(v, 0),
+      xCats: EV.map((e, i) => [i, `${e} · ${NAMES[e]}`]) });
+    EV.forEach((e, i) => {
+      const r = c.rect(i - 0.32, 0, i + 0.32, counts[i], counts[i] >= minc ? 's3' : 'muted');
+      r.style.fillOpacity = 0.75;
+      if (counts[i] > 0) c.text(i, counts[i], String(counts[i]), { dy: -5, 'text-anchor': 'middle', class: 'strong' });
+    });
+    c.line(-0.6, minc, EV.length - 0.4, minc, 's5 line dash thin');
+
+    $('#pfx-ext').innerHTML = EV.map((e, i) =>
+      `<button type="button" data-e="${e}"${counts[i] >= minc ? '' : ' disabled style="opacity:.45;cursor:not-allowed"'}>+ ${e} (${counts[i]})</button>`).join('');
+
+    // Lista de todos los patrones, por longitud.
+    const byLen = {};
+    all.forEach(r => (byLen[r.p.length] = byLen[r.p.length] || []).push(r));
+    $('#pfx-all').innerHTML = Object.keys(byLen).length ? Object.keys(byLen).map(L =>
+      `<p class="pfx-len">Longitud ${L} (${byLen[L].length})</p><div class="plab-steps">` +
+      byLen[L].map(r => `<button type="button" data-p="${r.p.join('')}" aria-pressed="${r.p.join('') === prefix.join('')}">${show(r.p)} ${r.c}</button>`).join('') + '</div>').join('')
+      : '<p style="margin:0;color:var(--lab-muted)">Ningún patrón alcanza el conteo mínimo.</p>';
+
+    const note = $('#pfx-note');
+    const list = a => a.length > 1 ? a.slice(0, -1).join(', ') + ' y ' + a[a.length - 1] : a.join('');
+    if (!all.length) {
+      note.className = 'plab-note warn';
+      note.textContent = `Ningún evento aparece en ${minc} sesiones o más: no hay patrones frecuentes. Baja el conteo mínimo o restaura las sesiones.`;
+    } else if (!prefix.length) {
+      note.className = 'plab-note';
+      note.textContent = `Con el prefijo vacío la base proyectada es la base completa. ${freqExt.length} eventos alcanzan el conteo mínimo ${minc}: ` +
+        `cada uno es un patrón de longitud 1 y el punto de partida de una rama. En total hay ${all.length} patrones frecuentes.`;
+    } else if (freqExt.length) {
+      note.className = 'plab-note good';
+      note.textContent = `${show(prefix)} aparece en ${sup} sesiones. Dentro de sus sufijos, ${list(freqExt.map(e => `${e} está en ${counts[EV.indexOf(e)]}`))}: ` +
+        `por eso ${list(freqExt.map(e => show([...prefix, e])))} ${freqExt.length > 1 ? 'son frecuentes' : 'es frecuente'}, sin volver a recorrer las sesiones completas.`;
+    } else {
+      note.className = 'plab-note warn';
+      const best = Math.max(...counts);
+      note.textContent = `${show(prefix)} aparece en ${sup} sesiones, pero ningún evento llega a ${minc} sufijos (el máximo es ${best}). ` +
+        `La rama termina aquí: por antimonotonía, ninguna secuencia más larga que empiece con este prefijo puede ser frecuente.`;
+    }
+  }
+
+  $('#pfx-ext').addEventListener('click', e => {
+    const b = e.target.closest('button[data-e]');
+    if (b && !b.disabled) { prefix.push(b.dataset.e); render(); }
+  });
+  $('#pfx-all').addEventListener('click', e => {
+    const b = e.target.closest('button[data-p]');
+    if (b) { prefix = [...b.dataset.p]; render(); }
+  });
+  $('#pfx-back').addEventListener('click', () => { prefix.pop(); render(); });
+  $('#pfx-reset').addEventListener('click', () => { prefix = []; render(); });
+  $('#pfx-min').addEventListener('input', render);
+  $('#pfx-edit').addEventListener('input', e => {
+    const inp = e.target.closest('input[data-i]');
+    if (!inp) return;
+    const clean = inp.value.toUpperCase().split('').filter(ch => EV.includes(ch)).join('').slice(0, 10);
+    if (clean !== inp.value) inp.value = clean;
+    S[+inp.dataset.i] = clean;
+    render();
+  });
+  $('#pfx-restore').addEventListener('click', () => { S = [...BASE]; prefix = []; buildEditor(); render(); });
+  buildEditor();
+  prefix = ['B'];
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio recorre PrefixSpan sobre las sesiones de la @tbl-sesiones. Valores de referencia con conteo mínimo 3: hay 14 patrones frecuentes (5 de longitud 1, 7 de longitud 2 y 2 de longitud 3). La base proyectada sobre ⟨B⟩ tiene los sufijos ⟨F,C,P⟩, ⟨F,C⟩, ⟨F,C,P⟩ y ⟨F,F⟩, con conteos F = 4, C = 3 y P = 2. Con conteo mínimo 2 hay 27 patrones, el más largo de longitud 4 (⟨B,F,C,P⟩ e ⟨I,B,F,C⟩); con conteo mínimo 4 quedan 5 (B, F, C, I y ⟨B,F⟩).
+:::
+
+**Guía del laboratorio.**
+
+1. El laboratorio empieza con el prefijo ⟨B⟩. Comprueba la @tbl-proyeccion-b: los sufijos y los conteos F = 4, C = 3 y P = 2.
+2. Predice antes de hacer clic: si extiendes a ⟨B, F⟩, ¿cuántas extensiones frecuentes quedarán? Comprueba y sigue hasta que la rama termine. ¿Por qué el sufijo de $S_2$ queda vacío en ⟨B, F, C⟩?
+3. Ve a ⟨F⟩ con la lista de patrones. En $S_2$, ¿por qué el sufijo es ⟨B, F, C⟩ y no ⟨C⟩? (Pista: aparición más a la izquierda.)
+4. Baja el conteo mínimo a 2. ¿Cuántos patrones hay ahora y cuál es el más largo? Sube a 4: ¿qué patrón de longitud 2 sobrevive?
+5. Rómpelo: cambia $S_4$ a `IBFC`. Antes de mirar, ¿qué patrones nuevos deberían volverse frecuentes con conteo mínimo 3? (Deberías encontrar tres, y uno de ellos tiene longitud 4.) ¿Cuál es ahora el soporte de ⟨B, F, C⟩?
+
+## Implementación en Python
+
+### Contención y soporte
+
+```{python}
+#| label: secuencias-soporte
+sesiones = [list("IBFCP"), list("IFBFC"), list("BFCP"), list("IBFF"), list("ICP")]
+
+def contiene(patron, secuencia):
+    """¿Es `patron` subsecuencia de `secuencia`? (mismo orden, se permiten huecos)"""
+    it = iter(secuencia)
+    return all(e in it for e in patron)   # `in` consume el iterador: garantiza el orden
+
+def soporte(patron, base):
+    return sum(contiene(patron, s) for s in base)
+
+for p in [("B", "F"), ("F", "B"), ("I", "C"), ("B", "F", "C"), ("F",)]:
+    print(f"⟨{', '.join(p)}⟩: {soporte(p, sesiones)} sesiones")
+```
+
+El truco de `contiene` es que `e in it` avanza el iterador hasta encontrar `e`; la siguiente búsqueda empieza donde terminó la anterior, así que el orden se respeta sin manejar índices.
+
+### PrefixSpan desde cero
+
+La implementación sigue literalmente el algoritmo: contar eventos en la base actual, y para cada evento frecuente reportar el patrón, proyectar y llamar recursivamente. El parámetro `traza` imprime el recorrido para compararlo con las tablas de la sección manual.
+
+```{python}
+#| label: prefixspan-desde-cero
+from collections import Counter
+
+def proyectar(base, evento):
+    """Sufijos después de la primera aparición de `evento` en cada secuencia que lo contiene."""
+    return [s[s.index(evento) + 1:] for s in base if evento in s]
+
+def prefixspan(base, min_conteo, prefijo=(), traza=False):
+    patrones = []
+    conteos = Counter(e for s in base for e in set(s))   # cada secuencia cuenta una vez
+    for evento in sorted(conteos):
+        if conteos[evento] < min_conteo:
+            continue
+        nuevo = prefijo + (evento,)
+        patrones.append((nuevo, conteos[evento]))
+        proyectada = proyectar(base, evento)
+        if traza:
+            sufijos = ", ".join("⟨" + ",".join(s) + "⟩" if s else "vacío" for s in proyectada)
+            print(f"{'  ' * len(prefijo)}⟨{','.join(nuevo)}⟩ ({conteos[evento]}) -> {sufijos}")
+        patrones += prefixspan([s for s in proyectada if s], min_conteo, nuevo, traza)
+    return patrones
+
+patrones = prefixspan(sesiones, min_conteo=3, traza=True)
+print(f"\n{len(patrones)} patrones secuenciales frecuentes")
+```
+
+La sangría de la traza es el árbol de búsqueda: cada línea es un prefijo frecuente y, a su derecha, su base proyectada. Las secuencias vacías se descartan antes de la llamada recursiva porque no pueden aportar extensiones.
+
+### GSP desde cero, para comparar
+
+```{python}
+#| label: gsp-desde-cero
+import pandas as pd
+
+def gsp(base, min_conteo):
+    eventos = sorted({e for s in base for e in s})
+    nivel = [(e,) for e in eventos if soporte((e,), base) >= min_conteo]
+    resultado, resumen = list(nivel), [{"nivel": 1, "candidatos contados": len(eventos), "frecuentes": len(nivel)}]
+    k = 1
+    while nivel:
+        previos = set(nivel)
+        if k == 1:   # todos los pares ordenados, con repetición
+            candidatos = [a + b for a in nivel for b in nivel]
+        else:        # unión: a sin su primer elemento == b sin su último
+            candidatos = [a + b[-1:] for a in nivel for b in nivel if a[1:] == b[:-1]]
+            candidatos = [c for c in candidatos   # poda por antimonotonía
+                          if all(c[:i] + c[i + 1:] in previos for i in range(len(c)))]
+        nivel = [c for c in candidatos if soporte(c, base) >= min_conteo]   # un recorrido de la base
+        resultado += nivel
+        k += 1
+        resumen.append({"nivel": k, "candidatos contados": len(candidatos), "frecuentes": len(nivel)})
+    return resultado, pd.DataFrame(resumen)
+
+patrones_gsp, resumen_gsp = gsp(sesiones, min_conteo=3)
+print("¿Mismos patrones que PrefixSpan?", set(patrones_gsp) == {p for p, _ in patrones})
+resumen_gsp
+```
+
+Los dos algoritmos son **exactos**: cambian el camino, no la respuesta. GSP cuenta 34 candidatos con un recorrido completo de la base por nivel; PrefixSpan solo cuenta eventos que efectivamente aparecen en cada base proyectada.
+
+### Patrones maximales y cerrados
+
+Las definiciones del capítulo de itemsets cerrados y maximales se trasladan sin cambios, reemplazando $\subseteq$ por $\sqsubseteq$: un patrón es **cerrado** si ninguna supersecuencia tiene el mismo soporte y **maximal** si ninguna supersecuencia es frecuente [@yan2003clospan].
+
+```{python}
+#| label: secuencias-cerradas
+def condensar(patrones):
+    soporte_de = dict(patrones)
+    filas = []
+    for p, c in patrones:
+        mayores = [q for q in soporte_de if len(q) == len(p) + 1 and contiene(p, q)]
+        filas.append({"patrón": "⟨" + ", ".join(p) + "⟩", "conteo": c,
+                      "cerrado": all(soporte_de[q] < c for q in mayores),
+                      "maximal": not mayores})
+    return pd.DataFrame(filas)
+
+condensado = condensar(patrones)
+print(f"{len(condensado)} frecuentes | {condensado['cerrado'].sum()} cerrados | {condensado['maximal'].sum()} maximales")
+condensado[condensado["cerrado"]].sort_values("conteo", ascending=False)
+```
+
+Como en los itemsets, basta revisar las supersecuencias con un evento más: si una supersecuencia lejana tuviera el mismo soporte, también lo tendrían todas las intermedias.
+
+## Ejemplo práctico: clickstream de una tienda en línea
+
+Simulamos 2 000 sesiones de una tienda en línea con una cadena de Markov[^markov]: desde cada página, la siguiente se elige con probabilidades fijas, y en cualquier momento el visitante puede salir. La pregunta de negocio es **qué recorridos son frecuentes y cuáles se asocian con una compra**.
+
+```{python}
+#| label: clickstream-datos
+import numpy as np
+
+rng = np.random.default_rng(11)
+transiciones = {
+    "inicio":    {"búsqueda": .45, "categoría": .35, "ofertas": .10, "salida": .10},
+    "búsqueda":  {"ficha": .65, "búsqueda": .15, "salida": .20},
+    "categoría": {"ficha": .55, "categoría": .15, "búsqueda": .10, "salida": .20},
+    "ofertas":   {"ficha": .55, "salida": .45},
+    "ficha":     {"reseñas": .25, "carrito": .30, "ficha": .15, "búsqueda": .10, "salida": .20},
+    "reseñas":   {"carrito": .50, "ficha": .25, "salida": .25},
+    "carrito":   {"pago": .55, "ficha": .15, "salida": .30},
+    "pago":      {"salida": 1.0},
+}
+
+def simular_sesion(max_paginas=12):
+    sesion = ["inicio"]
+    while len(sesion) < max_paginas:
+        opciones = transiciones[sesion[-1]]
+        siguiente = str(rng.choice(list(opciones), p=list(opciones.values())))
+        if siguiente == "salida":
+            break
+        sesion.append(siguiente)
+    return sesion
+
+clickstream = [simular_sesion() for _ in range(2000)]
+compra = np.array(["pago" in s for s in clickstream])
+print(f"{len(clickstream)} sesiones | longitud media {np.mean([len(s) for s in clickstream]):.1f} páginas"
+      f" | conversión {compra.mean():.1%}")
+for s in clickstream[:4]:
+    print("  " + " → ".join(s))
+```
+
+Con un soporte mínimo de 5 % (100 sesiones), PrefixSpan encuentra todos los recorridos frecuentes en una fracción de segundo. Como todas las sesiones empiezan en «inicio», cada patrón aparece también con «inicio» delante y con el mismo soporte: es exactamente la redundancia que eliminan los patrones **cerrados**.
+
+```{python}
+#| label: clickstream-prefixspan
+import time
+
+t0 = time.perf_counter()
+frecuentes_web = prefixspan(clickstream, min_conteo=100)
+t1 = time.perf_counter()
+cerrados_web = condensar(frecuentes_web)
+print(f"{len(frecuentes_web)} patrones frecuentes en {t1 - t0:.2f} s | "
+      f"{cerrados_web['cerrado'].sum()} cerrados | {cerrados_web['maximal'].sum()} maximales")
+```
+
+Para cada patrón cerrado de longitud 2 o más que no incluye el pago, calculamos la **tasa de conversión** de las sesiones que lo contienen y la comparamos con la conversión global. Es la misma lógica del lift de los capítulos de reglas, aplicada a la regla «recorrido ⇒ compra».
+
+```{python}
+#| label: fig-clickstream-conversion
+#| fig-cap: "Patrones secuenciales cerrados del clickstream (sin la página de pago). Eje horizontal: soporte; eje vertical: tasa de conversión de las sesiones que contienen el patrón. La línea discontinua es la conversión global. Los recorridos que pasan por el carrito convierten más del doble que el promedio; los que pasan por las reseñas sin llegar al carrito quedan en un punto intermedio."
+import plotly.express as px
+
+filas = []
+for p, c in frecuentes_web:
+    if len(p) < 2 or "pago" in p:
+        continue
+    if not cerrados_web.loc[cerrados_web["patrón"] == "⟨" + ", ".join(p) + "⟩", "cerrado"].item():
+        continue
+    tiene = np.array([contiene(p, s) for s in clickstream])
+    filas.append({"patrón": " → ".join(p), "soporte": c / len(clickstream),
+                  "conversión": compra[tiene].mean(), "longitud": len(p)})
+recorridos = pd.DataFrame(filas)
+recorridos["lift"] = recorridos["conversión"] / compra.mean()
+
+fig = px.scatter(recorridos, x="soporte", y="conversión", size="longitud", hover_name="patrón",
+                 hover_data={"lift": ":.2f", "longitud": True}, color="lift",
+                 color_continuous_scale=["#94a3b8", "#2563eb"], size_max=14)
+fig.add_hline(y=compra.mean(), line_dash="dash", line_color="#dc2626",
+              annotation_text=f"conversión global {compra.mean():.0%}")
+fig.update_layout(height=420, xaxis_tickformat=".0%", yaxis_tickformat=".0%")
+fig.show()
+```
+
+```{python}
+#| label: tbl-clickstream-top
+#| tbl-cap: "Recorridos cerrados con mayor lift sobre la conversión (soporte ≥ 5 %)."
+recorridos.sort_values("lift", ascending=False).head(8).round(3)
+```
+
+Dos advertencias al leer estos resultados. Primero, son **descriptivos**: que las sesiones que pasan por el carrito conviertan más no significa que llevar a alguien al carrito cause la compra; en buena parte, quien ya decidió comprar es quien llega al carrito. Segundo, en datos reales el soporte mínimo y la definición de sesión (¿30 minutos de inactividad?, ¿un día?) cambian por completo los patrones, igual que la definición de transacción en los capítulos anteriores.
+
+En producción no hace falta la implementación propia: `pyspark.ml.fpm.PrefixSpan` ejecuta el mismo algoritmo de forma distribuida en Spark, y bibliotecas como SPMF reúnen decenas de variantes [@fournier2017survey].
+
+## Ventajas y limitaciones
+
+| Aspecto | Patrones secuenciales |
+|---|---|
+| Qué aportan | Orden y recorridos, no solo coocurrencia |
+| Espacio de búsqueda | Mucho mayor que el de itemsets ($m^k$ frente a $\binom{m}{k}$) |
+| Algoritmo recomendado | PrefixSpan (o SPADE) en general; GSP si hay restricciones de tiempo |
+| Riesgo principal | Explosión de patrones redundantes: conviene reportar cerrados o maximales |
+| Decisiones críticas | Definición de sesión, granularidad del evento, soporte mínimo |
+| Interpretación | Descriptiva; para predecir el siguiente paso se usan modelos secuenciales (cadenas de Markov, redes recurrentes) |
+
+: Resumen de la minería de patrones secuenciales. {#tbl-resumen-secuencias}
+
+[^union-gsp]: En GSP original, la poda revisa solo las subsecuencias **contiguas** de longitud $k-1$ (las que se obtienen quitando el primer o el último elemento, o un ítem de un elemento interior). La razón es que, con una restricción de hueco máximo, quitar un evento interior puede crear un hueco demasiado grande y la antimonotonía deja de valer para esas subsecuencias. Sin restricciones de tiempo, como aquí, se pueden revisar todas las subsecuencias de longitud $k-1$, lo que poda más.
+
+[^elementos]: En el caso general, una secuencia es una lista de **itemsets**, por ejemplo ⟨(impresora, papel), (cartuchos)⟩: en la primera visita se compraron dos productos juntos y en la segunda, uno. La contención exige que cada elemento del patrón esté incluido en un elemento distinto de la secuencia, respetando el orden. PrefixSpan maneja este caso distinguiendo dos tipos de extensión: agregar un ítem al último elemento o agregar un elemento nuevo.
+
+[^izquierda]: Usar la aparición que termina más a la izquierda deja el sufijo más largo posible, así que no se pierde ninguna extensión. En $S_2 = ⟨I, F, B, F, C⟩$ con prefijo ⟨F⟩, el sufijo es ⟨B, F, C⟩ y no ⟨C⟩; con el segundo se perdería la extensión ⟨F, B⟩.
+
+[^restricciones]: Las restricciones más comunes son el **hueco mínimo y máximo** entre eventos consecutivos del patrón, la **ventana deslizante** (eventos cercanos en el tiempo se tratan como simultáneos) y la **duración máxima** del patrón completo. Todas reducen el número de patrones y los hacen más interpretables.
+
+[^markov]: Una **cadena de Markov** es un proceso en el que la probabilidad del siguiente estado depende solo del estado actual, no de la historia completa. Aquí, la probabilidad de ir a «carrito» depende solo de la página en la que está el visitante. Es un modelo simple que basta para generar recorridos realistas.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

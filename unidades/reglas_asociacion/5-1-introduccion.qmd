@@ -133,6 +133,8 @@ def zhang(row):
 reglas["zhang"] = reglas.apply(zhang, axis=1)
 ```
 
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
 ## Introducción {#sec-intro}
 
 En la mayoría de los contextos donde se recopilan datos transaccionales —ventas minoristas, registros médicos, historiales de navegación web, interacciones en plataformas digitales— existe una pregunta recurrente que antecede a cualquier modelo predictivo: *¿qué elementos tienden a aparecer juntos?* Esta pregunta, aparentemente simple, da lugar a uno de los problemas más estudiados en la minería de datos: el descubrimiento de reglas de asociación.
@@ -223,326 +225,161 @@ $$\text{lift}(\{pan\} \Rightarrow \{leche\}) = \frac{0.75}{P(\{leche\})} = \frac
 
 El lift de 0.9375 — menor que 1 — revela que, a pesar de una confianza aparentemente alta de 0.75, la presencia de pan en realidad *reduce ligeramente* la probabilidad de encontrar leche en la misma transacción, en relación con la tasa base de leche (que es 0.80). La confianza del 75% era engañosa porque la leche ya era muy frecuente.
 
-## Generación de Reglas Frecuentes {#sec-generacion}
+Antes de seguir, comprobemos estos números con Python. Basta contar transacciones:
 
-### De Itemsets Frecuentes a Reglas
+```{python}
+#| label: ejemplo-concreto-metricas
+tickets = [{"leche", "pan", "mantequilla"}, {"leche", "pan"}, {"leche", "mantequilla"},
+           {"pan", "mantequilla"}, {"leche", "pan", "queso"}]
+n = len(tickets)
+supp = lambda X: sum(X <= t for t in tickets) / n
 
-El proceso de descubrimiento de reglas de asociación se divide en dos etapas [@agrawal1994fast; @han2011]:
+A, B = {"pan"}, {"leche"}
+soporte = supp(A | B)
+confianza = soporte / supp(A)
+lift = confianza / supp(B)
+print(f"supp(A∪B) = {soporte:.2f}   conf(A⇒B) = {confianza:.4f}   P(B) = {supp(B):.2f}   lift = {lift:.4f}")
+```
 
-1. **Descubrimiento de itemsets frecuentes:** identificar todos los itemsets $X \subseteq \mathcal{I}$ cuyo soporte supere un umbral mínimo $\sigma_{\min}$ fijado por el analista.
+Toda la información de una regla con un antecedente y un consecuente cabe en una **tabla 2 × 2** que cruza «¿contiene $A$?» con «¿contiene $B$?». Para pan y leche: 3 tickets tienen ambos ($T_1, T_2, T_5$), 1 tiene pan sin leche ($T_4$), 1 tiene leche sin pan ($T_3$) y ninguno tiene ni lo uno ni lo otro. Soporte, confianza y lift son solo tres formas de leer esa tabla.
 
-2. **Generación de reglas a partir de itemsets frecuentes:** para cada itemset frecuente $X$ de cardinalidad $k \geq 2$, generar todas las reglas $A \Rightarrow B$ donde $A \cup B = X$, $A \cap B = \emptyset$, $A \neq \emptyset$ y $B \neq \emptyset$, y retener solo aquellas cuya confianza supere un umbral mínimo $\gamma_{\min}$.
+### Laboratorio: las métricas de una regla en una tabla 2 × 2
 
-La separación entre estas dos etapas no es arbitraria: la primera es computacionalmente costosa —el espacio de todos los subconjuntos posibles de $\mathcal{I}$ tiene cardinalidad $2^{|\mathcal{I}|}$— mientras que la segunda, una vez conocidos los itemsets frecuentes, es relativamente rápida.
+El laboratorio dibuja la tabla 2 × 2 como un **mosaico**: el ancho de cada columna es la proporción de tickets con y sin $A$, y la parte azul de cada columna es la proporción que además contiene $B$. La confianza es la altura del azul en la columna de $A$; la línea discontinua es la frecuencia base $P(B)$. El lift compara ambas alturas.
 
-### El Algoritmo Apriori
-
-El algoritmo Apriori, propuesto en @agrawal1994fast, fue el primero en resolver eficientemente la primera etapa mediante una estrategia de búsqueda en anchura que explota la propiedad antimonotona del soporte. La idea central es que no tiene sentido evaluar el soporte de un $k$-itemset si alguno de sus $(k-1)$-subconjuntos ya es infrecuente: por antimonotonía, el $k$-itemset también será infrecuente. Esto permite podar el espacio de búsqueda de manera drástica.
-
-El funcionamiento a alto nivel es el siguiente: en cada iteración $k$, el algoritmo genera candidatos de tamaño $k$ a partir de los itemsets frecuentes de tamaño $k-1$ (fase de unión), descarta aquellos que contienen subconjuntos infrecuentes (fase de poda) y escanea el dataset para calcular el soporte de los candidatos restantes. El proceso termina cuando no se pueden generar nuevos candidatos frecuentes.
-
+::: {.content-visible when-format="html"}
 ```{=html}
-<div id="apriori-root" style="font-family:Georgia,serif;background:#f8f9fb;border:1px solid #d8dee6;border-radius:8px;padding:20px 24px;margin:2em 0;">
+<div class="plab" id="rm-lab">
+  <p class="plab-eyebrow">Laboratorio · Soporte, confianza y lift</p>
+  <h3 class="plab-title">¿Cuándo una confianza alta es realmente informativa?</h3>
+  <p class="plab-sub">Mueve los cuatro conteos de la tabla 2 × 2 o elige un escenario. Compara la altura del azul en la columna de A con la línea de P(B).</p>
 
-  <div style="text-align:center;margin-bottom:6px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Algoritmo Apriori — visualizador paso a paso</span><br>
-    <span style="font-size:0.82em;color:#666;">Dataset: 5 transacciones · 4 ítems · ajusta el soporte mínimo y observa cómo cambia la poda</span>
-  </div>
-
-  <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin:14px 0 18px;flex-wrap:wrap;">
-    <label style="font-size:0.88em;font-weight:bold;color:#1a3a5c;">
-      Soporte mínimo &sigma;<sub>min</sub>:
-      <span id="ap-sval" style="color:#e05800;font-size:1.1em;">0.40</span>
-    </label>
-    <input id="ap-slider" type="range" min="1" max="5" step="1" value="2"
-      style="width:180px;accent-color:#1a3a5c;"
-      oninput="aprioriUpdate(this.value)">
-    <span style="font-size:0.78em;color:#888;">0.20 &nbsp;·&nbsp; 0.40 &nbsp;·&nbsp; 0.60 &nbsp;·&nbsp; 0.80</span>
-  </div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
-
-    <!-- Left: transaction database -->
-    <div>
-      <div style="font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:6px;letter-spacing:.03em;">BASE DE TRANSACCIONES</div>
-      <table id="ap-db" style="width:100%;border-collapse:collapse;font-size:0.82em;">
-        <thead>
-          <tr style="background:#e8edf3;">
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ccd;">Trans.</th>
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ccd;">Ítems</th>
-          </tr>
-        </thead>
-        <tbody id="ap-db-body"></tbody>
-      </table>
-      <div style="margin-top:14px;font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:6px;letter-spacing:.03em;">FRECUENCIAS BASE</div>
-      <table style="width:100%;border-collapse:collapse;font-size:0.81em;">
-        <thead>
-          <tr style="background:#e8edf3;">
-            <th style="padding:4px 8px;text-align:left;border:1px solid #ccd;">Ítem</th>
-            <th style="padding:4px 8px;text-align:right;border:1px solid #ccd;">Conteo</th>
-            <th style="padding:4px 8px;text-align:right;border:1px solid #ccd;">Soporte</th>
-          </tr>
-        </thead>
-        <tbody id="ap-freq-body"></tbody>
-      </table>
+  <div class="plab-controls">
+    <div class="plab-field" style="flex:3 1 320px">Escenario
+      <div class="plab-seg" id="rm-preset">
+        <button type="button" data-value="texto" aria-pressed="true">Ejemplo del texto</button>
+        <button type="button" data-value="ubicuo">Consecuente omnipresente</button>
+        <button type="button" data-value="positiva">Asociación positiva</button>
+        <button type="button" data-value="indep">Independencia</button>
+      </div>
     </div>
-
-    <!-- Right: Apriori iterations -->
-    <div id="ap-iterations"></div>
+  </div>
+  <div class="plab-controls">
+    <label>A y B: <b id="rm-n11-v"></b><input type="range" id="rm-n11" min="0" max="20" step="1" value="3"></label>
+    <label>A sin B: <b id="rm-n10-v"></b><input type="range" id="rm-n10" min="0" max="20" step="1" value="1"></label>
+    <label>B sin A: <b id="rm-n01-v"></b><input type="range" id="rm-n01" min="0" max="20" step="1" value="1"></label>
+    <label>Ni A ni B: <b id="rm-n00-v"></b><input type="range" id="rm-n00" min="0" max="20" step="1" value="0"></label>
   </div>
 
-  <!-- Legend -->
-  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:0.79em;color:#555;justify-content:center;">
-    <span><span style="display:inline-block;width:12px;height:12px;background:#c8efc8;border:1px solid #5a9;border-radius:2px;vertical-align:middle;"></span> Frecuente (&ge; &sigma;<sub>min</sub>)</span>
-    <span><span style="display:inline-block;width:12px;height:12px;background:#fde8d8;border:1px solid #d97;border-radius:2px;vertical-align:middle;"></span> Infrecuente (&lt; &sigma;<sub>min</sub>)</span>
-    <span><span style="display:inline-block;width:12px;height:12px;background:#f0e0f0;border:1px solid #a8a;border-radius:2px;vertical-align:middle;"></span> Podado (antimonotonía)</span>
-    <span><span style="display:inline-block;width:12px;height:12px;background:#eeeeee;border:1px solid #bbb;border-radius:2px;vertical-align:middle;"></span> No generado</span>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Mosaico de la tabla 2 × 2</h4>
+      <svg id="rm-svg" role="img" aria-label="Mosaico con la proporción de tickets que contienen B dentro de los que tienen A y los que no"></svg>
+      <div class="plab-legend">
+        <span><i class="dot" style="background:var(--lab-s1)"></i>contiene B</span>
+        <span><i class="dot" style="background:var(--lab-axis)"></i>no contiene B</span>
+        <span><i style="background:var(--lab-s2)"></i>P(B), frecuencia base</span>
+      </div>
+    </div>
+    <div class="plab-panel">
+      <h4>Tabla de conteos</h4>
+      <div id="rm-table" class="plab-scroll"></div>
+      <div class="plab-math" id="rm-math"></div>
+    </div>
   </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>supp(A ∪ B)</span><strong id="rm-supp"></strong></div>
+    <div class="plab-stat"><span>conf(A ⇒ B)</span><strong id="rm-conf"></strong></div>
+    <div class="plab-stat"><span>P(B)</span><strong id="rm-pb"></strong></div>
+    <div class="plab-stat"><span>lift</span><strong id="rm-lift"></strong></div>
+    <div class="plab-stat"><span>conf(B ⇒ A)</span><strong id="rm-confba"></strong></div>
+  </div>
+  <p class="plab-note" id="rm-note" aria-live="polite"></p>
 </div>
-
 <script>
-(function(){
-  /* ── dataset ─────────────────────────────────────────── */
-  const TXS = [
-    {id:"T1", items:["leche","pan","mantequilla"]},
-    {id:"T2", items:["leche","pan"]},
-    {id:"T3", items:["leche","mantequilla"]},
-    {id:"T4", items:["pan","mantequilla"]},
-    {id:"T5", items:["leche","pan","queso"]},
-  ];
-  const N = TXS.length;
-  const ALL_ITEMS = ["leche","pan","mantequilla","queso"];
+(() => {
+  const K = window.LabKit, root = document.getElementById('rm-lab');
+  const $ = s => root.querySelector(s);
+  const PRESETS = { texto: [3, 1, 1, 0], ubicuo: [7, 2, 9, 2], positiva: [6, 2, 1, 11], indep: [4, 4, 6, 6] };
+  const ids = ['n11', 'n10', 'n01', 'n00'];
+  const preset = K.segmented($('#rm-preset'), v => { PRESETS[v].forEach((x, i) => { $('#rm-' + ids[i]).value = x; }); render(); });
 
-  /* ── populate transaction table ──────────────────────── */
-  const dbBody = document.getElementById('ap-db-body');
-  TXS.forEach(t => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td style="padding:4px 8px;border:1px solid #dde;font-weight:bold;">${t.id}</td>
-      <td style="padding:4px 8px;border:1px solid #dde;">${t.items.join(', ')}</td>`;
-    dbBody.appendChild(tr);
-  });
+  function render() {
+    const [n11, n10, n01, n00] = ids.map(id => +$('#rm-' + id).value);
+    ids.forEach((id, i) => { $('#rm-' + id + '-v').textContent = [n11, n10, n01, n00][i]; });
+    const n = n11 + n10 + n01 + n00, nA = n11 + n10, nB = n11 + n01;
+    const pA = n ? nA / n : NaN, pB = n ? nB / n : NaN, supp = n ? n11 / n : NaN;
+    const conf = nA ? n11 / nA : NaN, confNotA = (n01 + n00) ? n01 / (n01 + n00) : NaN;
+    const lift = conf / pB, confBA = nB ? n11 / nB : NaN;
 
-  /* ── support helper ──────────────────────────────────── */
-  function countSupport(itemset) {
-    return TXS.filter(t => itemset.every(x => t.items.includes(x))).length;
-  }
-
-  /* ── populate base frequency table ──────────────────── */
-  const freqBody = document.getElementById('ap-freq-body');
-  ALL_ITEMS.forEach(item => {
-    const cnt = countSupport([item]);
-    const sup = (cnt/N).toFixed(2);
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td style="padding:3px 8px;border:1px solid #dde;">${item}</td>
-      <td style="padding:3px 8px;border:1px solid #dde;text-align:right;">${cnt}/${N}</td>
-      <td style="padding:3px 8px;border:1px solid #dde;text-align:right;">${sup}</td>`;
-    freqBody.appendChild(tr);
-  });
-
-  /* ── generate combinations ───────────────────────────── */
-  function combinations(arr, k) {
-    if (k === 1) return arr.map(x => [x]);
-    const result = [];
-    for (let i = 0; i < arr.length; i++)
-      for (const rest of combinations(arr.slice(i+1), k-1))
-        result.push([arr[i], ...rest]);
-    return result;
-  }
-
-  function subsetsOfSize(set, k) {
-    return combinations(set, k);
-  }
-
-  function setKey(set) { return [...set].sort().join(','); }
-
-  /* ── run Apriori ─────────────────────────────────────── */
-  function runApriori(sigmaMin) {
-    const iterations = [];
-    let prevFrequent = null;    // L_{k-1}
-    let prevFreqSet  = null;    // Set of keys of L_{k-1}
-
-    for (let k = 1; k <= 3; k++) {
-      let candidates;
-      let prunedByAntimonotony = new Set();
-
-      if (k === 1) {
-        candidates = ALL_ITEMS.map(x => [x]);
-      } else {
-        // Generate C_k from L_{k-1}: join step
-        const items = [...new Set(prevFrequent.flat())].sort();
-        candidates = combinations(items, k);
-
-        // Prune step: remove candidates with any infrequent (k-1)-subset
-        const filtered = [];
-        for (const cand of candidates) {
-          const subs = subsetsOfSize(cand, k-1);
-          const anyInfrequent = subs.some(s => !prevFreqSet.has(setKey(s)));
-          if (anyInfrequent) {
-            prunedByAntimonotony.add(setKey(cand));
-          } else {
-            filtered.push(cand);
-          }
-        }
-        // We still want to display pruned ones, so keep full candidate list
-        // but track which are pruned
-      }
-
-      const rows = candidates.map(cand => {
-        const key = setKey(cand);
-        if (k > 1 && prunedByAntimonotony.has(key)) {
-          return { itemset: cand, count: '—', support: '—', status: 'pruned' };
-        }
-        const cnt = countSupport(cand);
-        const sup = cnt / N;
-        return {
-          itemset: cand,
-          count: cnt,
-          support: sup,
-          status: sup >= sigmaMin ? 'frequent' : 'infrequent'
-        };
-      });
-
-      const frequentRows = rows.filter(r => r.status === 'frequent');
-      iterations.push({ k, rows, prunedByAntimonotony });
-
-      if (frequentRows.length === 0) break;
-
-      prevFrequent = frequentRows.map(r => r.itemset);
-      prevFreqSet  = new Set(frequentRows.map(r => setKey(r.itemset)));
+    const c = K.chart($('#rm-svg'), { width: 400, height: 260, x: [0, 1], y: [0, 1], margin: { left: 40, bottom: 40, top: 18 } });
+    c.axes({ xTicks: 0, yTicks: 5, yLabel: 'proporción con B', yFmt: v => K.fmt(v, 1), grid: false,
+             xCats: Number.isFinite(pA) ? [[pA / 2, `con A (${nA})`], [(1 + pA) / 2, `sin A (${n - nA})`]] : [] });
+    if (n) {
+      const gap = 0.008;
+      if (nA) { c.rect(0, 0, pA - gap, conf, 's1').style.fillOpacity = 0.5; c.rect(0, conf, pA - gap, 1, 'muted soft');
+                if (conf > 0.12) c.text(pA / 2, conf / 2, `conf = ${K.fmt(conf, 2)}`, { dy: 4, 'text-anchor': 'middle', class: 'strong' }); }
+      if (n - nA) { c.rect(pA + gap, 0, 1, confNotA, 's1').style.fillOpacity = 0.25; c.rect(pA + gap, confNotA, 1, 1, 'muted soft'); }
+      if (Number.isFinite(pB)) { c.line(0, pB, 1, pB, 's2 line dash'); c.text(1, pB, `P(B) = ${K.fmt(pB, 2)}`, { dy: -6, 'text-anchor': 'end', class: 's2' }); }
     }
-    return iterations;
+
+    $('#rm-table').innerHTML = '<table class="plab-table"><thead><tr><th></th><th>con B</th><th>sin B</th><th>total</th></tr></thead><tbody>' +
+      `<tr><td>con A</td><td class="hl">${n11}</td><td>${n10}</td><td>${nA}</td></tr>` +
+      `<tr><td>sin A</td><td>${n01}</td><td>${n00}</td><td>${n01 + n00}</td></tr>` +
+      `<tr><td>total</td><td>${nB}</td><td>${n10 + n00}</td><td>${n}</td></tr></tbody></table>`;
+    $('#rm-math').textContent = n && nA && nB
+      ? `supp = ${n11}/${n} = ${K.fmt(supp, 3)}\nconf = ${n11}/${nA} = ${K.fmt(conf, 3)}\nlift = conf / P(B) = ${K.fmt(conf, 3)} / ${K.fmt(pB, 3)} = ${K.fmt(lift, 3)}`
+      : 'Se necesitan tickets con A y con B para calcular las métricas.';
+    $('#rm-supp').textContent = K.fmt(supp, 3);
+    $('#rm-conf').textContent = K.fmt(conf, 3);
+    $('#rm-pb').textContent = K.fmt(pB, 3);
+    $('#rm-lift').textContent = K.fmt(lift, 3);
+    $('#rm-confba').textContent = K.fmt(confBA, 3);
+
+    const note = $('#rm-note');
+    if (!Number.isFinite(lift)) { note.className = 'plab-note warn'; note.textContent = 'Con algún total en cero las métricas no están definidas (división entre cero).'; return; }
+    if (Math.abs(lift - 1) < 0.05) { note.className = 'plab-note warn';
+      note.textContent = `Lift ≈ ${K.fmt(lift, 2)}: la proporción de B entre quienes tienen A (${K.fmt(conf, 2)}) es casi la misma que en general (${K.fmt(pB, 2)}). Conocer A no aporta información sobre B.`; }
+    else if (lift > 1) { note.className = 'plab-note good';
+      note.textContent = `Lift = ${K.fmt(lift, 2)}: entre los tickets con A, B aparece ${K.fmt(lift, 2)} veces más que en el total. La confianza ${K.fmt(conf, 2)} supera la frecuencia base ${K.fmt(pB, 2)}.`; }
+    else { note.className = 'plab-note bad';
+      note.textContent = `Lift = ${K.fmt(lift, 2)} < 1: aunque la confianza sea ${K.fmt(conf, 2)}, B es más común sin A (${K.fmt(confNotA, 2)}) que con A. La regla describe una asociación negativa.`; }
+    if (conf >= 0.7 && lift < 1.05) note.textContent += ' Es el error típico de leer solo la confianza cuando el consecuente es muy frecuente.';
   }
 
-  /* ── render ──────────────────────────────────────────── */
-  const STEP_LABELS = {
-    frequent:   { bg:'#c8efc8', bd:'#5a9', label:'frecuente' },
-    infrequent: { bg:'#fde8d8', bd:'#d97', label:'infrecuente' },
-    pruned:     { bg:'#f0e0f0', bd:'#a8a', label:'podado (antimonotonía)' },
-  };
-
-  function renderIterations(sigmaMin) {
-    const container = document.getElementById('ap-iterations');
-    container.innerHTML = '';
-    const iterations = runApriori(sigmaMin);
-
-    iterations.forEach(({k, rows}) => {
-      const nFreq = rows.filter(r=>r.status==='frequent').length;
-      const section = document.createElement('div');
-      section.style.cssText = 'margin-bottom:14px;';
-
-      section.innerHTML = `<div style="font-size:0.82em;font-weight:bold;color:#1a3a5c;margin-bottom:5px;letter-spacing:.03em;">
-        ITERACIÓN k = ${k}
-        <span style="font-weight:normal;color:#666;">— ${nFreq} itemset${nFreq!==1?'s':''} frecuente${nFreq!==1?'s':''}</span>
-      </div>`;
-
-      const tbl = document.createElement('table');
-      tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.80em;';
-      tbl.innerHTML = `<thead><tr style="background:#e8edf3;">
-        <th style="padding:4px 7px;text-align:left;border:1px solid #ccd;">${k}-itemset</th>
-        <th style="padding:4px 7px;text-align:right;border:1px solid #ccd;">Conteo</th>
-        <th style="padding:4px 7px;text-align:right;border:1px solid #ccd;">Soporte</th>
-        <th style="padding:4px 7px;text-align:left;border:1px solid #ccd;">Estado</th>
-      </tr></thead>`;
-
-      const tbody = document.createElement('tbody');
-      rows.forEach(r => {
-        const s = STEP_LABELS[r.status] || {bg:'#eee',bd:'#bbb',label:r.status};
-        const tr = document.createElement('tr');
-        tr.style.background = s.bg;
-        tr.innerHTML = `<td style="padding:3px 7px;border:1px solid #dde;font-weight:bold;">{${r.itemset.join(', ')}}</td>
-          <td style="padding:3px 7px;border:1px solid #dde;text-align:right;">${r.count !== '—' ? r.count+'/'+N : '—'}</td>
-          <td style="padding:3px 7px;border:1px solid #dde;text-align:right;">${typeof r.support==='number' ? r.support.toFixed(2) : '—'}</td>
-          <td style="padding:3px 7px;border:1px solid #dde;color:#444;">${s.label}</td>`;
-        tbody.appendChild(tr);
-      });
-      tbl.appendChild(tbody);
-      section.appendChild(tbl);
-      container.appendChild(section);
-    });
-
-    // Show termination message if no k=3
-    if (iterations.length < 3) {
-      const msg = document.createElement('div');
-      msg.style.cssText = 'font-size:0.81em;color:#888;font-style:italic;margin-top:6px;';
-      msg.textContent = 'No se generan candidatos para k = ' + (iterations.length+1) + '. El algoritmo termina.';
-      container.appendChild(msg);
-    }
-  }
-
-  const SIGMA_VALUES = [0.20, 0.40, 0.60, 0.80];
-
-  window.aprioriUpdate = function(v) {
-    const s = SIGMA_VALUES[parseInt(v)-1];
-    document.getElementById('ap-sval').textContent = s.toFixed(2);
-    renderIterations(s);
-  };
-
-  /* ── init ────────────────────────────────────────────── */
-  renderIterations(0.40);
+  ids.forEach(id => $('#rm-' + id).addEventListener('input', render));
+  render();
 })();
 </script>
 ```
+:::
 
-No es objetivo de este capítulo detallar la implementación del algoritmo — para ello puede consultarse @han2011, capítulo 6, o @tan2006introduction, capítulo 5. Lo que sí importa aquí es comprender sus parámetros y sus consecuencias sobre los resultados.
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio permite variar los cuatro conteos de la tabla 2 × 2 de una regla $A \Rightarrow B$. Valores de referencia: con el ejemplo del texto (3, 1, 1, 0) se obtiene soporte 0.60, confianza 0.75, $P(B) = 0.80$ y lift 0.9375. Con el escenario de asociación positiva (6, 2, 1, 11): confianza 0.75, $P(B) = 0.35$ y lift 2.14. Con el de independencia (4, 4, 6, 6): confianza 0.50 igual a $P(B)$ y lift 1.
+:::
 
-### Los Parámetros como Decisiones del Analista
+**Guía del laboratorio.**
 
-La ejecución de Apriori requiere especificar al menos dos umbrales:
+1. Comprueba que el estado inicial reproduce los números calculados a mano: soporte 0.60, confianza 0.75 y lift 0.9375.
+2. Elige *Consecuente omnipresente*. Predice antes de mirar: ¿la confianza es alta? ¿Y el lift? Explica la diferencia con el mosaico.
+3. Elige *Independencia* y mueve solo «A y B» hacia arriba. ¿Qué pasa con el lift y con la línea de P(B)?
+4. Con *Asociación positiva*, ¿por qué conf(A ⇒ B) y conf(B ⇒ A) son distintas si el lift es uno solo?
 
-- **$\sigma_{\min}$ (soporte mínimo):** controla cuán frecuente debe ser un patrón para ser considerado. Un valor bajo produce más itemsets frecuentes —y potencialmente más reglas— pero también más ruido. Un valor alto filtra agresivamente y puede eliminar patrones genuinos pero poco frecuentes.
 
-- **$\gamma_{\min}$ (confianza mínima):** controla cuán predictiva debe ser una regla para ser reportada. Como se discutirá en la @sec-problema, este umbral no tiene interpretación estadística directa: su valor apropiado depende del dominio.
+## De Itemsets Frecuentes a Reglas {#sec-de-itemsets-a-reglas}
 
-Un aspecto crucial que los textos de introducción rara vez enfatizan es que *los resultados dependen directamente de los parámetros elegidos*. El número de reglas obtenidas puede variar en un orden de magnitud al cambiar $\sigma_{\min}$ en unos pocos puntos porcentuales. Esto implica que reportar reglas sin reportar los parámetros con los que fueron generadas es una práctica metodológicamente deficiente.
+El descubrimiento de reglas de asociación se divide en dos etapas [@agrawal1994fast; @han2011]:
 
-El siguiente bloque de código ilustra esta sensibilidad de manera empírica:
+1. **Descubrimiento de itemsets frecuentes:** identificar todos los itemsets $X \subseteq \mathcal{I}$ cuyo soporte supere un umbral mínimo $\sigma_{\min}$ fijado por el analista.
 
-```{python}
-#| label: sensibilidad-parametros
-#| fig-cap: "Número de reglas generadas en función del soporte mínimo (confianza mínima fija en 0.3). La caída es pronunciada: pasar de soporte 0.08 a 0.14 puede reducir las reglas a la mitad."
+2. **Generación de reglas a partir de itemsets frecuentes:** para cada itemset frecuente $X$ con al menos dos ítems, generar todas las reglas $A \Rightarrow B$ con $A \cup B = X$, $A \cap B = \emptyset$ y ambos no vacíos, y retener solo aquellas cuya confianza supere un umbral mínimo $\gamma_{\min}$.
 
-soportes = [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]
-resultados_sens = []
+La primera etapa es la costosa: el espacio de itemsets tiene $2^{|\mathcal{I}|}$ elementos. El capítulo siguiente desarrolla el **algoritmo Apriori**, que la resuelve nivel por nivel aprovechando la propiedad antimonótona, con un laboratorio paso a paso y un ejemplo práctico ([El algoritmo Apriori](5-1-apriori.qmd)). En lo que resta de este capítulo usamos su implementación en `mlxtend` con $\sigma_{\min} = 0.10$ sobre una muestra de 50 canastas para estudiar el problema que de verdad exige juicio: **qué reglas valen la pena**.
 
-for s in soportes:
-    its = apriori(df, min_support=s, use_colnames=True)
-    if len(its) == 0:
-        resultados_sens.append({"min_support": s, "n_reglas": 0, "lift_med": np.nan})
-        continue
-    r = association_rules(its, metric="confidence", min_threshold=0.3)
-    resultados_sens.append({
-        "min_support": round(s, 2),
-        "n_reglas": len(r),
-        "lift_med": round(r["lift"].median(), 3) if len(r) > 0 else np.nan,
-    })
+Dos umbrales gobiernan el resultado:
 
-df_sens = pd.DataFrame(resultados_sens)
-
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=df_sens["min_support"], y=df_sens["n_reglas"],
-    mode="lines+markers", name="N° de reglas",
-    line=dict(color="#e63946", width=2), marker=dict(size=8),
-    yaxis="y1",
-))
-fig.add_trace(go.Scatter(
-    x=df_sens["min_support"], y=df_sens["lift_med"],
-    mode="lines+markers", name="Lift mediano",
-    line=dict(color="#457b9d", width=2, dash="dash"), marker=dict(size=8),
-    yaxis="y2",
-))
-fig.update_layout(
-    xaxis=dict(title="Soporte mínimo (σ_min)"),
-    yaxis=dict(title="N° de reglas generadas", side="left"),
-    yaxis2=dict(title="Lift mediano", overlaying="y", side="right"),
-    legend=dict(x=0.65, y=0.95),
-    height=400,
-    title="Sensibilidad de los resultados al soporte mínimo",
-)
-fig.show()
-```
-
-Nótese el comportamiento opuesto de ambas curvas: al aumentar $\sigma_{\min}$, el número de reglas disminuye mientras que el lift mediano tiende a aumentar. Esto no es una coincidencia: los itemsets frecuentes con soporte muy bajo son los más susceptibles de ser artefactos estadísticos, y al filtrarlos se conservan los patrones con mayor señal relativa.
+- **$\sigma_{\min}$ (soporte mínimo):** cuán frecuente debe ser un patrón. Un valor bajo produce más reglas y más ruido; uno alto puede eliminar patrones genuinos pero poco frecuentes.
+- **$\gamma_{\min}$ (confianza mínima):** cuán predictiva debe ser una regla. Como se discute a continuación, este umbral no tiene interpretación estadística directa: su valor apropiado depende de la frecuencia del consecuente.
 
 ## El Problema de las Demasiadas Reglas {#sec-problema}
 
@@ -891,7 +728,7 @@ Los ejemplos computacionales de este capítulo utilizan 50 transacciones, lo cua
 
 ### Sensibilidad a los Parámetros
 
-Como se demostró en @sec-generacion, el número y la naturaleza de las reglas obtenidas dependen fuertemente de los parámetros elegidos. Esta sensibilidad tiene dos consecuencias metodológicas: (1) los resultados no son objetivos en el sentido de ser independientes de las decisiones del analista, y (2) dos análisis del mismo dataset con parámetros distintos pueden producir conclusiones superficialmente contradictorias. La buena práctica consiste en explorar el espacio de parámetros sistemáticamente y reportar la robustez de los hallazgos ante variaciones razonables.
+Como se mostró en el [capítulo de Apriori](5-1-apriori.qmd#sec-apriori-sensibilidad), el número y la naturaleza de las reglas obtenidas dependen fuertemente de los parámetros elegidos. Esta sensibilidad tiene dos consecuencias metodológicas: (1) los resultados no son objetivos en el sentido de ser independientes de las decisiones del analista, y (2) dos análisis del mismo dataset con parámetros distintos pueden producir conclusiones superficialmente contradictorias. La buena práctica consiste en explorar el espacio de parámetros sistemáticamente y reportar la robustez de los hallazgos ante variaciones razonables.
 
 ## Resumen Conceptual {#sec-resumen-asociacion}
 

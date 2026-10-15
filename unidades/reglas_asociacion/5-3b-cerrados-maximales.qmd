@@ -1,0 +1,584 @@
+---
+title: "Itemsets Cerrados y Maximales: Representaciones Compactas"
+pagetitle: "Itemsets Cerrados y Maximales: Representaciones Compactas"
+open-graph:
+  description: "Explica los itemsets frecuentes cerrados y maximales, el operador de clausura y cómo recuperar soportes desde una representación compacta, con laboratorio interactivo sobre la retícula y Python."
+twitter-card:
+  description: "Explica los itemsets frecuentes cerrados y maximales, el operador de clausura y cómo recuperar soportes desde una representación compacta, con laboratorio interactivo sobre la retícula y Python."
+description: "Explica los itemsets frecuentes cerrados y maximales, el operador de clausura y cómo recuperar soportes desde una representación compacta, con laboratorio interactivo sobre la retícula y Python."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_cerrados.bib, referencias_fp_growth.bib, referencias_asociacion.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+Apriori y FP-Growth resuelven el problema de **encontrar** todos los itemsets frecuentes. Este capítulo trata un problema distinto que aparece justo después: **hay demasiados**. Si un cliente típico compra juntos 20 productos de despensa, el itemset con esos 20 productos es frecuente y, por la propiedad antimonótona, también lo son sus $2^{20} - 1 \approx 10^6$ subconjuntos. La lista completa es correcta, pero casi toda es redundante: describe una y otra vez el mismo hecho. Las **representaciones compactas** guardan solo una parte de los itemsets frecuentes, elegida de modo que el resto se pueda deducir [@pasquier1999discovering; @han2012data].
+
+## Intuición: once patrones que dicen casi lo mismo
+
+Retomemos los cinco tickets del capítulo de FP-Growth, con conteo mínimo 3:
+
+| Ticket | Productos |
+|---|---|
+| $T_1$ | Pan, Leche |
+| $T_2$ | Pan, Leche, Pañales, Cerveza |
+| $T_3$ | Leche, Pañales, Cerveza |
+| $T_4$ | Pan, Leche, Pañales, Cerveza |
+| $T_5$ | Pan, Leche, Pañales |
+
+: Base de transacciones del capítulo de FP-Growth. {#tbl-tickets-cerrados}
+
+Con esos datos hay **11 itemsets frecuentes**. Mira dos de ellos: $\{\text{Pan}\}$ aparece en 4 tickets y $\{\text{Leche}, \text{Pan}\}$ también en 4. No es coincidencia: **todo ticket que tiene pan tiene leche**. Saber que $\{\text{Leche}, \text{Pan}\}$ tiene conteo 4 ya nos dice el conteo de $\{\text{Pan}\}$; reportar ambos es repetir información.
+
+Hay dos maneras naturales de quitar esa redundancia:
+
+- **Quedarse con los itemsets que no se pueden agrandar sin perder conteo.** $\{\text{Pan}\}$ se puede agrandar a $\{\text{Leche}, \text{Pan}\}$ sin perder nada, así que sobra. Estos itemsets se llaman **cerrados** y, como veremos, con ellos se recupera el conteo exacto de cualquier itemset frecuente.
+- **Quedarse con los itemsets que no se pueden agrandar sin dejar de ser frecuentes.** Son la «frontera» de la retícula y se llaman **maximales**. Con ellos sabemos *cuáles* itemsets son frecuentes, pero no *cuánto*.
+
+## Construcción numérica paso a paso
+
+Para cada itemset frecuente preguntamos dos cosas: ¿tiene algún superconjunto con **el mismo conteo**? (si sí, no es cerrado) y ¿tiene algún superconjunto **frecuente**? (si sí, no es maximal). Basta revisar los superconjuntos con un ítem más[^unpaso].
+
+| Itemset frecuente | Conteo | Superconjunto con el mismo conteo | ¿Cerrado? | ¿Maximal? |
+|---|---:|---|:---:|:---:|
+| $\{\text{Cerveza}\}$ | 3 | $\{\text{Cerveza}, \text{Leche}\}$ (3) | no | no |
+| $\{\text{Leche}\}$ | 5 | ninguno (los pares llegan a 4) | **sí** | no |
+| $\{\text{Pan}\}$ | 4 | $\{\text{Leche}, \text{Pan}\}$ (4) | no | no |
+| $\{\text{Pañales}\}$ | 4 | $\{\text{Leche}, \text{Pañales}\}$ (4) | no | no |
+| $\{\text{Cerveza}, \text{Leche}\}$ | 3 | $\{\text{Cerveza}, \text{Leche}, \text{Pañales}\}$ (3) | no | no |
+| $\{\text{Cerveza}, \text{Pañales}\}$ | 3 | $\{\text{Cerveza}, \text{Leche}, \text{Pañales}\}$ (3) | no | no |
+| $\{\text{Leche}, \text{Pan}\}$ | 4 | ninguno: $\{\text{Leche}, \text{Pan}, \text{Pañales}\}$ baja a 3 | **sí** | no |
+| $\{\text{Leche}, \text{Pañales}\}$ | 4 | ninguno: los tríos bajan a 3 | **sí** | no |
+| $\{\text{Pan}, \text{Pañales}\}$ | 3 | $\{\text{Leche}, \text{Pan}, \text{Pañales}\}$ (3) | no | no |
+| $\{\text{Cerveza}, \text{Leche}, \text{Pañales}\}$ | 3 | ninguno: el cuarteto tiene conteo 2 | **sí** | **sí** |
+| $\{\text{Leche}, \text{Pan}, \text{Pañales}\}$ | 3 | ninguno: el cuarteto tiene conteo 2 | **sí** | **sí** |
+
+: Clasificación de los 11 itemsets frecuentes con conteo mínimo 3. {#tbl-clasificacion-cerrados}
+
+El resultado es una cadena de tres conjuntos: **11 frecuentes, 5 cerrados y 2 maximales**. Los cerrados son $\{\text{Leche}\}{:}5$, $\{\text{Leche}, \text{Pan}\}{:}4$, $\{\text{Leche}, \text{Pañales}\}{:}4$, $\{\text{Leche}, \text{Pan}, \text{Pañales}\}{:}3$ y $\{\text{Cerveza}, \text{Leche}, \text{Pañales}\}{:}3$; los maximales, los dos tríos.
+
+**Un atajo para encontrar el cerrado de un itemset.** Junta los tickets que contienen al itemset y quédate con los productos que están en **todos** ellos. Para $\{\text{Cerveza}\}$: aparece en $T_2$, $T_3$ y $T_4$, y los productos comunes a esos tres tickets son Cerveza, Leche y Pañales. Por lo tanto, el cerrado que «representa» a $\{\text{Cerveza}\}$ es $\{\text{Cerveza}, \text{Leche}, \text{Pañales}\}$, con el mismo conteo 3. Esta operación se llama **clausura**.
+
+**Recuperar un conteo desde los cerrados.** ¿Cuál es el conteo de $\{\text{Pan}, \text{Pañales}\}$ si solo guardamos los 5 cerrados? Buscamos los cerrados que lo contienen: solo $\{\text{Leche}, \text{Pan}, \text{Pañales}\}{:}3$. El conteo es 3. Para $\{\text{Pan}\}$ hay dos cerrados que lo contienen, $\{\text{Leche}, \text{Pan}\}{:}4$ y $\{\text{Leche}, \text{Pan}, \text{Pañales}\}{:}3$; el conteo es **el mayor**, 4.
+
+**Lo que se pierde con los maximales.** Con los dos tríos maximales sabemos que $\{\text{Pan}, \text{Pañales}\}$ es frecuente (está contenido en $\{\text{Leche}, \text{Pan}, \text{Pañales}\}$) y que $\{\text{Cerveza}, \text{Pan}\}$ no lo es (ningún maximal lo contiene). Pero del conteo de $\{\text{Pan}\}$ solo podemos decir que es al menos 3.
+
+## Formalización
+
+Usamos la notación de los capítulos anteriores: $\mathcal{D}$ es la base de transacciones, $\sigma(X)$ el conteo de soporte de $X$ y $\mathcal{F}$ el conjunto de itemsets frecuentes con un umbral dado.
+
+::: {.callout-note appearance="minimal"}
+**Definición (itemset cerrado).** Un itemset $X$ es **cerrado** si ningún superconjunto propio tiene el mismo conteo:
+$$X \text{ es cerrado} \iff \nexists\, Y \supsetneq X \text{ con } \sigma(Y) = \sigma(X).$$
+El conjunto de **itemsets frecuentes cerrados** es $\mathcal{C} = \{X \in \mathcal{F} : X \text{ es cerrado}\}$.
+:::
+
+::: {.callout-note appearance="minimal"}
+**Definición (itemset maximal).** Un itemset frecuente $X$ es **maximal** si ningún superconjunto propio es frecuente:
+$$X \text{ es maximal} \iff X \in \mathcal{F} \text{ y } \nexists\, Y \supsetneq X \text{ con } Y \in \mathcal{F}.$$
+Lo denotamos $\mathcal{M}$.
+:::
+
+**El operador de clausura.** Sea $t(X) = \{T \in \mathcal{D} : X \subseteq T\}$ el conjunto de tickets que contienen a $X$. La clausura de $X$ es la intersección de esos tickets:
+$$\gamma(X) = \bigcap_{T \in t(X)} T.$$ {#eq-clausura}
+
+$\gamma(X)$ son los ítems que acompañan a $X$ **siempre**. Tiene las tres propiedades de un operador de clausura[^clausura]: contiene a $X$, respeta la inclusión y aplicarlo dos veces no cambia nada. Además, $X$ y $\gamma(X)$ aparecen exactamente en los mismos tickets, así que $\sigma(\gamma(X)) = \sigma(X)$. De ahí sale una caracterización muy útil:
+$$X \text{ es cerrado} \iff \gamma(X) = X.$$ {#eq-cerrado-clausura}
+
+**Tres resultados** que justifican el uso de estas representaciones:
+
+1. **Cadena de inclusiones.** $\mathcal{M} \subseteq \mathcal{C} \subseteq \mathcal{F}$. Si $X$ es maximal y $Y \supsetneq X$, entonces $Y$ no es frecuente y $\sigma(Y) < \sigma(X)$; por lo tanto $X$ es cerrado.
+2. **Los cerrados no pierden información** [@pasquier1999discovering]. Para todo $X \in \mathcal{F}$,
+   $$\sigma(X) = \max\{\sigma(C) : C \in \mathcal{C},\; X \subseteq C\}.$$ {#eq-recuperar-soporte}
+   El máximo se alcanza en $C = \gamma(X)$, que es cerrado y tiene el mismo conteo que $X$; cualquier otro cerrado que contenga a $X$ tiene conteo menor o igual por antimonotonía. Si ningún cerrado frecuente contiene a $X$, entonces $X$ no es frecuente.
+3. **Los maximales describen la frontera, no los conteos.** $X$ es frecuente si y solo si está contenido en algún maximal, pero de su conteo solo se sabe que es al menos el umbral.
+
+Por eso se habla de representaciones **condensadas**[^condensada]: los cerrados son una compresión sin pérdida de $\mathcal{F}$ con sus conteos; los maximales son una compresión con pérdida, mucho más pequeña.
+
+**Relación con las reglas.** Una regla con confianza 1 dice que el antecedente arrastra siempre al consecuente; eso es justo la clausura. $\text{Pan} \Rightarrow \text{Leche}$ tiene confianza $4/4 = 1$ porque $\gamma(\{\text{Pan}\}) = \{\text{Leche}, \text{Pan}\}$. En general, toda regla exacta tiene la forma $X \Rightarrow \gamma(X) \setminus X$, y las reglas generadas desde los cerrados evitan buena parte de la redundancia que produce Apriori [@pasquier1999discovering].
+
+**Algoritmos.** Se pueden obtener $\mathcal{C}$ o $\mathcal{M}$ filtrando la salida de Apriori o FP-Growth, que es lo que haremos en Python. Cuando $\mathcal{F}$ es enorme conviene minar directamente la representación compacta:
+
+| Algoritmo | Qué mina | Idea principal |
+|---|---|---|
+| A-Close | Cerrados | Apriori por niveles, generando solo clausuras [@pasquier1999discovering] |
+| CHARM | Cerrados | Búsqueda en profundidad con listas de tickets (*tidsets*) [@zaki2002charm] |
+| CLOSET+ | Cerrados | Crecimiento de patrones sobre un FP-tree [@wang2003closet] |
+| MaxMiner | Maximales | Mira hacia adelante: si la rama completa es frecuente, la poda entera [@bayardo1998efficiently] |
+| FPMax | Maximales | FP-Growth que descarta subconjuntos de maximales ya encontrados [@grahne2003efficiently] |
+
+: Algoritmos clásicos para representaciones compactas. {#tbl-algoritmos-cerrados}
+
+## Laboratorio: frecuentes, cerrados y maximales en la retícula
+
+El laboratorio dibuja los 15 itemsets de la @tbl-tickets-cerrados y los clasifica según el conteo mínimo. Haz clic en un nodo para ver su clausura (la flecha morada lleva al cerrado que lo representa) y cómo se recupera su conteo desde los cerrados. Al final puedes editar los tickets.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="clm-lab">
+  <p class="plab-eyebrow">Laboratorio · Representaciones compactas</p>
+  <h3 class="plab-title">¿Cuántos itemsets hay que guardar para no perder nada?</h3>
+  <p class="plab-sub">Mueve el conteo mínimo, haz clic en un nodo y, al final, edita los tickets.</p>
+
+  <div class="plab-controls">
+    <label>Conteo mínimo: <b id="clm-min-v"></b><input type="range" id="clm-min" min="1" max="5" step="1" value="3"></label>
+    <label style="flex-direction:row;align-items:center;gap:.4rem"><input type="checkbox" id="clm-all"> Mostrar todas las clausuras</label>
+  </div>
+
+  <div class="plab-panel">
+    <h4>Retícula de itemsets (C = Cerveza, L = Leche, P = Pan, Ñ = Pañales)</h4>
+    <svg id="clm-svg" class="wide" role="img" aria-label="Retícula de los 15 itemsets clasificados en frecuentes, cerrados y maximales"></svg>
+    <div class="plab-legend">
+      <span><i class="dot" style="background:var(--lab-s2)"></i>maximal (y cerrado)</span>
+      <span><i class="dot" style="background:var(--lab-s3)"></i>cerrado, no maximal</span>
+      <span><i class="dot" style="background:var(--lab-s1)"></i>frecuente, no cerrado</span>
+      <span><i class="dot" style="background:var(--lab-axis)"></i>infrecuente</span>
+      <span><i style="background:var(--lab-s4)"></i>clausura γ(X)</span>
+    </div>
+  </div>
+
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Frecuentes |F|</span><strong id="clm-nf"></strong></div>
+    <div class="plab-stat"><span>Cerrados |C|</span><strong id="clm-nc"></strong></div>
+    <div class="plab-stat"><span>Maximales |M|</span><strong id="clm-nm"></strong></div>
+    <div class="plab-stat"><span>Se guarda (cerrados)</span><strong id="clm-ratio"></strong></div>
+  </div>
+
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4 id="clm-tx-title">Tickets</h4>
+      <div id="clm-tx" class="plab-scroll"></div>
+      <div class="plab-math" id="clm-closure"></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Recuperar el conteo</h4>
+      <div id="clm-rec" class="plab-scroll"></div>
+      <div class="plab-math" id="clm-max"></div>
+    </div>
+  </div>
+  <p class="plab-note" id="clm-note" aria-live="polite"></p>
+
+  <div class="plab-panel" style="margin-top:.8rem">
+    <h4>Editar los tickets</h4>
+    <div class="clm-grid" id="clm-edit" role="group" aria-label="Productos de cada ticket"></div>
+    <div style="margin-top:.6rem"><button type="button" class="plab-btn" id="clm-reset">Restaurar tickets originales</button></div>
+  </div>
+  <style>
+    #clm-lab .clm-grid { display: grid; grid-template-columns: minmax(40px, .7fr) repeat(4, minmax(52px, 1fr)); gap: .3rem .4rem; align-items: center; font-size: .82rem; max-width: 460px; }
+    #clm-lab .clm-grid b { color: var(--lab-muted); font-weight: 600; text-align: center; }
+    #clm-lab .clm-grid input { justify-self: center; width: 1.05rem; height: 1.05rem; accent-color: var(--lab-accent); }
+  </style>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('clm-lab');
+  const $ = s => root.querySelector(s);
+  const ITEMS = ['C', 'L', 'P', 'Ñ'];
+  const NAMES = { C: 'Cerveza', L: 'Leche', P: 'Pan', 'Ñ': 'Pañales' };
+  const BASE = [['P','L'], ['P','L','Ñ','C'], ['L','Ñ','C'], ['P','L','Ñ','C'], ['P','L','Ñ']];
+  let TX = BASE.map(t => [...t]);
+  const key = s => ITEMS.filter(i => s.includes(i)).join('');
+  const fromKey = k => ITEMS.filter(i => k.includes(i));
+  const show = s => '{' + s.join(',') + '}';
+  const levels = [[], [], [], []];
+  for (let mask = 1; mask < 16; mask++) {
+    const s = ITEMS.filter((_, b) => mask & (1 << b));
+    levels[s.length - 1].push(s);
+  }
+  // Orden dentro de cada nivel según ITEMS (C, L, P, Ñ), no alfabético.
+  const code = s => s.map(i => ITEMS.indexOf(i)).join('');
+  levels.forEach(l => l.sort((a, b) => code(a).localeCompare(code(b))));
+  const ALL = levels.flat();
+  const covers = s => TX.map((t, j) => s.every(i => t.includes(i)) ? j : -1).filter(j => j >= 0);
+  // Clausura: ítems presentes en todos los tickets que contienen a s (null si no aparece).
+  const closure = s => {
+    const cov = covers(s);
+    return cov.length ? ITEMS.filter(i => cov.every(j => TX[j].includes(i))) : null;
+  };
+  let selected = 'P';
+
+  function classify(minc) {
+    const st = {};
+    ALL.forEach(s => {
+      const c = covers(s).length, cl = closure(s);
+      st[key(s)] = { s, c, freq: c >= minc, cl };
+    });
+    Object.values(st).forEach(n => {
+      const ups = ITEMS.filter(i => !n.s.includes(i)).map(i => st[key([...n.s, i])]);
+      n.closed = n.freq && ups.every(u => u.c < n.c);
+      n.maximal = n.freq && ups.every(u => !u.freq);
+      n.status = !n.freq ? 'infreq' : n.maximal ? 'max' : n.closed ? 'closed' : 'freq';
+    });
+    return st;
+  }
+
+  function buildEditor() {
+    $('#clm-edit').innerHTML = '<span></span>' + ITEMS.map(i => `<b>${NAMES[i]}</b>`).join('') +
+      TX.map((t, j) => `<span>T${j + 1}</span>` + ITEMS.map(i =>
+        `<input type="checkbox" data-t="${j}" data-i="${i}" aria-label="T${j + 1}: ${NAMES[i]}"${t.includes(i) ? ' checked' : ''}>`).join('')).join('');
+  }
+
+  function render() {
+    const minc = +$('#clm-min').value;
+    $('#clm-min-v').textContent = `${minc} (soporte ${K.fmt(minc / 5, 2)})`;
+    const st = classify(minc);
+    const svg = $('#clm-svg');
+    const W = 640, H = 340, bw = 92, bh = 44;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.classList.add('plab-chart'); svg.replaceChildren();
+    const pos = {};
+    levels.forEach((lev, k) => lev.forEach((s, i) => { pos[key(s)] = { x: (i + 0.5) * W / lev.length, y: 34 + k * 88 }; }));
+    const sn = st[selected];
+    // Aristas X — X+i; resaltadas si conservan el conteo (señal de «no cerrado»).
+    levels.slice(0, 3).forEach((lev, k) => lev.forEach(a => levels[k + 1].forEach(b => {
+      if (!a.every(i => b.includes(i))) return;
+      const ka = key(a), kb = key(b);
+      const same = st[ka].freq && st[ka].c === st[kb].c;
+      K.el('line', { x1: pos[ka].x, y1: pos[ka].y + bh / 2, x2: pos[kb].x, y2: pos[kb].y - bh / 2,
+        class: same ? 's1 line thin' : 'muted line thin ghost' }, svg);
+    })));
+    const arrow = (ka, kb, strong) => {
+      const a = pos[ka], b = pos[kb];
+      const x1 = a.x, y1 = a.y + bh / 2, x2 = b.x, y2 = b.y - bh / 2 - 3;
+      const ang = Math.atan2(y2 - y1, x2 - x1), h = strong ? 10 : 7;
+      const g = K.el('g', { opacity: strong ? 1 : 0.55 }, svg);
+      K.el('line', { x1, y1, x2, y2, class: 's4 line dash', 'stroke-width': strong ? 2.6 : 1.4 }, g);
+      K.el('path', { d: `M${x2},${y2}L${x2 - h * Math.cos(ang - 0.45)},${y2 - h * Math.sin(ang - 0.45)}L${x2 - h * Math.cos(ang + 0.45)},${y2 - h * Math.sin(ang + 0.45)}Z`, class: 's4' }, g);
+    };
+    Object.values(st).forEach(n => {
+      const k = key(n.s);
+      if (!n.freq || n.closed) return;
+      const strong = k === selected;
+      if (strong || $('#clm-all').checked) arrow(k, key(n.cl), strong);
+    });
+    Object.values(st).forEach(n => {
+      const id = key(n.s), p = pos[id];
+      const cls = { max: 's2', closed: 's3', freq: 's1', infreq: 'muted' }[n.status];
+      const g = K.el('g', { 'data-key': id, style: 'cursor:pointer' }, svg);
+      const r = K.el('rect', { x: p.x - bw / 2, y: p.y - bh / 2, width: bw, height: bh, rx: 7, class: cls,
+        'fill-opacity': n.status === 'infreq' ? 0.06 : n.status === 'freq' ? 0.14 : 0.3,
+        'stroke-width': id === selected ? 3.2 : n.closed ? 2 : 1.1 }, g);
+      if (n.status === 'infreq') r.setAttribute('stroke-dasharray', '4 3');
+      if (id === selected) r.setAttribute('style', 'stroke:var(--lab-text)');
+      K.el('text', { x: p.x, y: p.y - 3, 'text-anchor': 'middle', class: 'strong', 'font-size': 15 }, g).textContent = show(n.s);
+      K.el('text', { x: p.x, y: p.y + 15, 'text-anchor': 'middle', 'font-size': 12 }, g).textContent = `conteo ${n.c}`;
+    });
+
+    const all = Object.values(st);
+    const F = all.filter(n => n.freq), C = all.filter(n => n.closed), M = all.filter(n => n.maximal);
+    $('#clm-nf').textContent = F.length;
+    $('#clm-nc').textContent = C.length;
+    $('#clm-nm').textContent = M.length;
+    $('#clm-ratio').textContent = F.length ? `${C.length} de ${F.length} (${K.fmt(100 * C.length / F.length, 0)} %)` : '—';
+
+    // Panel 1: tickets y clausura.
+    const cov = covers(sn.s);
+    $('#clm-tx-title').textContent = `Tickets que contienen ${show(sn.s)}`;
+    $('#clm-tx').innerHTML = '<table class="plab-table"><thead><tr><th>Ticket</th><th>Productos</th><th>¿Lo contiene?</th></tr></thead><tbody>' +
+      TX.map((t, j) => {
+        const has = cov.includes(j);
+        return `<tr${has ? ' class="hl"' : ''}><td>T${j + 1}</td><td>${t.length ? key(t).split('').join(', ') : '(vacío)'}</td><td>${has ? 'sí' : 'no'}</td></tr>`;
+      }).join('') + '</tbody></table>';
+    $('#clm-closure').textContent = sn.cl
+      ? `γ(${show(sn.s)}) = ${cov.map(j => 'T' + (j + 1)).join(' ∩ ')}\n        = ${show(sn.cl)}   (conteo ${sn.c})`
+      : `${show(sn.s)} no aparece en ningún ticket:\nsu clausura no está definida.`;
+
+    // Panel 2: recuperación desde los cerrados y desde los maximales.
+    const sup = C.filter(n => sn.s.every(i => n.s.includes(i))).sort((a, b) => b.c - a.c);
+    $('#clm-rec').innerHTML = sup.length
+      ? '<table class="plab-table"><thead><tr><th>Cerrado que lo contiene</th><th>Conteo</th></tr></thead><tbody>' +
+        sup.map((n, i) => `<tr${i === 0 ? ' class="hl"' : ''}><td>${show(n.s)}</td><td>${n.c}</td></tr>`).join('') + '</tbody></table>'
+      : `<p style="margin:0;color:var(--lab-muted)">Ningún cerrado frecuente contiene a ${show(sn.s)}.</p>`;
+    const supM = M.filter(n => sn.s.every(i => n.s.includes(i)));
+    $('#clm-max').textContent = sup.length
+      ? `Desde los cerrados:\n  σ = máx(${sup.map(n => n.c).join(', ')}) = ${sup[0].c}\n` +
+        `Desde los maximales:\n  ⊆ ${show(supM[0].s)} → frecuente,\n  conteo desconocido (≥ ${minc})`
+      : `Desde los cerrados:\n  ninguno lo contiene → infrecuente\nDesde los maximales:\n  ninguno lo contiene → infrecuente`;
+
+    const note = $('#clm-note');
+    if (!F.length) {
+      note.className = 'plab-note warn';
+      note.textContent = `Con conteo mínimo ${minc} no hay ningún itemset frecuente: las tres listas están vacías.`;
+    } else if (sn.status === 'freq') {
+      note.className = 'plab-note';
+      note.textContent = `${show(sn.s)} es frecuente pero no cerrado: todo ticket que lo contiene también contiene ${show(sn.cl.filter(i => !sn.s.includes(i)))}, así que ${show(sn.cl)} tiene el mismo conteo (${sn.c}). No hace falta guardarlo: su conteo se lee en el cerrado. ` +
+        `Se guardan ${C.length} cerrados en lugar de ${F.length} frecuentes.`;
+    } else if (sn.status === 'closed' || sn.status === 'max') {
+      note.className = 'plab-note good';
+      note.textContent = `${show(sn.s)} es cerrado: agregar cualquier producto baja su conteo de ${sn.c}. ` +
+        (sn.maximal ? `Además es maximal: ningún superconjunto alcanza el conteo mínimo ${minc}. ` : `No es maximal: algún superconjunto sigue siendo frecuente. `) +
+        `Cadena actual: ${M.length} maximales ⊆ ${C.length} cerrados ⊆ ${F.length} frecuentes.`;
+    } else {
+      note.className = 'plab-note bad';
+      note.textContent = `${show(sn.s)} tiene conteo ${sn.c}, menor que ${minc}: no es frecuente y ningún cerrado frecuente ni maximal lo contiene. Así es como las representaciones compactas «saben» que es infrecuente.`;
+    }
+  }
+
+  $('#clm-svg').addEventListener('click', e => {
+    const g = e.target.closest('[data-key]');
+    if (g) { selected = g.dataset.key; render(); }
+  });
+  $('#clm-edit').addEventListener('change', e => {
+    const cb = e.target;
+    if (!cb.dataset || cb.dataset.t === undefined) return;
+    const t = TX[+cb.dataset.t], i = cb.dataset.i;
+    if (cb.checked && !t.includes(i)) t.push(i);
+    if (!cb.checked) t.splice(t.indexOf(i), 1);
+    render();
+  });
+  $('#clm-reset').addEventListener('click', () => { TX = BASE.map(t => [...t]); buildEditor(); render(); });
+  $('#clm-min').addEventListener('input', render);
+  $('#clm-all').addEventListener('change', render);
+  buildEditor();
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio dibuja la retícula de los 15 itemsets de la @tbl-tickets-cerrados, los clasifica según el conteo mínimo y permite editar los tickets. Valores de referencia: con conteo mínimo 3 hay 11 frecuentes, 5 cerrados y 2 maximales; con conteo mínimo 2 (o 1), los 15 itemsets son frecuentes, hay 6 cerrados (se agrega $\{C, L, P, Ñ\}{:}2$) y un solo maximal, el cuarteto; con conteo mínimo 4 hay 5 frecuentes, 3 cerrados ($\{L\}$, $\{L, P\}$, $\{L, Ñ\}$) y 2 maximales ($\{L, P\}$, $\{L, Ñ\}$).
+:::
+
+**Guía del laboratorio.**
+
+1. Predice antes de hacer clic: ¿cuál es la clausura de $\{\text{Ñ}\}$ (Pañales)? Haz clic en el nodo y comprueba en el panel la intersección de tickets.
+2. Comprueba los números de la @tbl-clasificacion-cerrados: con conteo mínimo 3 deben aparecer 11 frecuentes, 5 cerrados y 2 maximales. Activa «Mostrar todas las clausuras»: ¿a qué cerrado apunta cada uno de los 6 itemsets azules?
+3. Selecciona $\{P, Ñ\}$ y recupera su conteo desde los cerrados. ¿Qué puedes decir de él si solo conservas los maximales?
+4. Baja el conteo mínimo a 2. ¿Por qué solo queda un maximal? ¿Por qué el número de cerrados casi no cambia mientras que el de frecuentes sube a 15?
+5. Rómpelo: quita la leche de $T_1$. ¿Sigue siendo $\{L\}$ cerrado? ¿Qué pasa con $\{P\}$? Explica el cambio con la clausura.
+
+## Implementación en Python
+
+### Desde cero: clausura y clasificación
+
+Las definiciones se traducen casi literalmente. La clasificación revisa solo los superconjuntos con un ítem más, como en la construcción manual.
+
+```{python}
+#| label: cerrados-desde-cero
+from itertools import combinations
+import pandas as pd
+
+tickets = [
+    {"Pan", "Leche"},
+    {"Pan", "Leche", "Pañales", "Cerveza"},
+    {"Leche", "Pañales", "Cerveza"},
+    {"Pan", "Leche", "Pañales", "Cerveza"},
+    {"Pan", "Leche", "Pañales"},
+]
+items = sorted(set().union(*tickets))
+min_conteo = 3
+
+def conteo(X):
+    return sum(X <= t for t in tickets)
+
+def clausura(X):
+    """Intersección de los tickets que contienen a X (Ec. de la clausura)."""
+    cubren = [t for t in tickets if X <= t]
+    return frozenset.intersection(*map(frozenset, cubren)) if cubren else None
+
+todos = {frozenset(c): conteo(set(c))
+         for k in range(1, len(items) + 1) for c in combinations(items, k)}
+frecuentes = {X: c for X, c in todos.items() if c >= min_conteo}
+
+filas = []
+for X, c in frecuentes.items():
+    superiores = [X | {i} for i in items if i not in X]
+    filas.append({
+        "itemset": "{" + ", ".join(sorted(X)) + "}",
+        "conteo": c,
+        "clausura": "{" + ", ".join(sorted(clausura(X))) + "}",
+        "cerrado": all(todos[Y] < c for Y in superiores),
+        "maximal": all(todos[Y] < min_conteo for Y in superiores),
+    })
+tabla = pd.DataFrame(filas).sort_values(["cerrado", "conteo"], ascending=False)
+print(f"Frecuentes: {len(tabla)} | cerrados: {tabla['cerrado'].sum()} | maximales: {tabla['maximal'].sum()}")
+tabla
+```
+
+La columna `clausura` confirma la caracterización de la @eq-cerrado-clausura: un itemset es cerrado exactamente cuando coincide con su clausura.
+
+### Desde la salida de `mlxtend`
+
+En la práctica, los itemsets frecuentes salen de `fpgrowth` o `apriori` [@raschka2018mlxtend]. El resultado es un `DataFrame` con una columna `itemsets` de `frozenset`, así que basta un diccionario `itemset → conteo` para clasificar. Trabajamos con conteos enteros (soporte × $n$) para que la comparación «mismo conteo» sea exacta y no dependa del redondeo de los flotantes.
+
+```{python}
+#| label: cerrados-mlxtend
+import numpy as np
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import fpgrowth, fpmax
+
+def clasificar_itemsets(frecuentes_df, n):
+    """Agrega columnas conteo, cerrado y maximal a la salida de fpgrowth/apriori."""
+    conteos = {X: int(round(s * n)) for X, s in zip(frecuentes_df["itemsets"], frecuentes_df["support"])}
+    universo = set().union(*conteos)
+    cerrado, maximal = [], []
+    for X, c in conteos.items():
+        # superconjuntos frecuentes con un ítem más (los no frecuentes no están en el diccionario)
+        sup = [conteos[X | {i}] for i in universo - X if X | {i} in conteos]
+        cerrado.append(all(cs < c for cs in sup))
+        maximal.append(len(sup) == 0)
+    return frecuentes_df.assign(conteo=list(conteos.values()), cerrado=cerrado, maximal=maximal)
+
+te = TransactionEncoder()
+df = pd.DataFrame(te.fit_transform([list(t) for t in tickets]), columns=te.columns_)
+n = len(df)
+fi = clasificar_itemsets(fpgrowth(df, min_support=min_conteo / n, use_colnames=True), n)
+
+cerrados = fi[fi["cerrado"]]
+maximales = fi[fi["maximal"]]
+print(f"fpgrowth: {len(fi)} frecuentes -> {len(cerrados)} cerrados -> {len(maximales)} maximales")
+
+# Comprobación cruzada con FPMax, que mina los maximales directamente
+mx = fpmax(df, min_support=min_conteo / n, use_colnames=True)
+print("¿FPMax coincide?", set(mx["itemsets"]) == set(maximales["itemsets"]))
+cerrados[["itemsets", "conteo", "maximal"]].sort_values("conteo", ascending=False)
+```
+
+Un detalle sobre «el mismo conteo»: si un superconjunto tiene el mismo conteo que $X$, es frecuente y, por lo tanto, está en la salida de `fpgrowth`. Por eso basta mirar el diccionario de frecuentes para decidir si $X$ es cerrado.
+
+### Reconstruir los soportes desde los cerrados
+
+Ahora olvidamos la lista completa y conservamos solo los 5 cerrados. La @eq-recuperar-soporte reconstruye el conteo de cualquier itemset; lo comprobamos sobre los 11 frecuentes y sobre un itemset infrecuente.
+
+```{python}
+#| label: reconstruir-soportes
+guardados = dict(zip(cerrados["itemsets"], cerrados["conteo"]))
+
+def conteo_desde_cerrados(X, guardados):
+    candidatos = [c for C, c in guardados.items() if X <= C]
+    return max(candidatos) if candidatos else None   # None = no es frecuente
+
+reconstruidos = fi.assign(reconstruido=[conteo_desde_cerrados(X, guardados) for X in fi["itemsets"]])
+print("¿Todos los conteos coinciden?", (reconstruidos["reconstruido"] == reconstruidos["conteo"]).all())
+print("Conteo de {Cerveza, Pan} desde los cerrados:",
+      conteo_desde_cerrados(frozenset({"Cerveza", "Pan"}), guardados), "(infrecuente)")
+reconstruidos[["itemsets", "conteo", "reconstruido"]].sort_values("conteo", ascending=False)
+```
+
+### Ejemplo práctico: datos dispersos frente a datos densos
+
+¿Cuánto se ahorra en la práctica? Depende de cuánto se repitan las combinaciones. Comparamos dos bases:
+
+- **Dispersa**: las 50 canastas de 3 productos de los capítulos de Apriori y FP-Growth.
+- **Enriquecida con la jerarquía**: 300 canastas simuladas en las que, además de cada producto, se agregan su **categoría** y su **departamento**, tal como vienen en la dimensión producto del almacén de datos (café molido → café → bebidas). Es una práctica común para encontrar patrones a varios niveles de detalle, y vuelve los datos mucho más densos.
+
+```{python}
+#| label: fig-compresion-cerrados
+#| fig-cap: "Número de itemsets frecuentes, cerrados y maximales según el soporte mínimo (escala logarítmica). En las canastas dispersas, frecuentes y cerrados casi coinciden; en las canastas con jerarquía, al bajar el umbral los frecuentes crecen mucho más rápido que los cerrados, y estos más que los maximales."
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+canastas = [
+    ["whole milk", "yogurt", "bread"], ["whole milk", "butter", "eggs"], ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"], ["whole milk", "soda", "chips"], ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"], ["eggs", "butter", "cheese"], ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"], ["whole milk", "bread", "eggs"], ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"], ["bread", "eggs", "cheese"], ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"], ["chips", "soda", "beer"], ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"], ["whole milk", "bread", "sugar"], ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"], ["coffee", "sugar", "bread"], ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"], ["bread", "chips", "soda"], ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"], ["whole milk", "butter", "cheese"], ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"], ["chips", "candy", "soda"], ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"], ["yogurt", "cheese", "eggs"], ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"], ["whole milk", "vegetables", "eggs"], ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"], ["whole milk", "fruit", "cheese"], ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"], ["coffee", "bread", "butter"], ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"], ["whole milk", "sugar", "butter"], ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"], ["granola", "yogurt", "fruit"],
+]
+
+jerarquia = {  # producto: (categoría, departamento)
+    "café molido": ("café", "bebidas"), "café soluble": ("café", "bebidas"),
+    "leche entera": ("lácteos", "frescos"), "leche deslactosada": ("lácteos", "frescos"),
+    "yogur": ("lácteos", "frescos"), "pan de caja": ("panadería", "abarrotes"),
+    "bolillo": ("panadería", "abarrotes"), "refresco cola": ("refrescos", "bebidas"),
+    "agua mineral": ("aguas", "bebidas"), "papas": ("botanas", "abarrotes"),
+    "cacahuates": ("botanas", "abarrotes"), "manzana": ("fruta", "frescos"),
+    "plátano": ("fruta", "frescos"),
+}
+prob_compra = [.25, .15, .30, .15, .20, .25, .20, .25, .15, .20, .10, .20, .20]
+rng = np.random.default_rng(7)
+densas = []
+for _ in range(300):
+    compra = [p for p, q in zip(jerarquia, prob_compra) if rng.random() < q] or [str(rng.choice(list(jerarquia)))]
+    niveles = set(compra) | {jerarquia[p][0] for p in compra} | {jerarquia[p][1] for p in compra}
+    densas.append(sorted(niveles))
+print("Ejemplo de canasta enriquecida:", densas[0])
+
+def conteos_por_umbral(transacciones, umbrales):
+    te = TransactionEncoder()
+    X = pd.DataFrame(te.fit_transform(transacciones), columns=te.columns_)
+    filas = []
+    for s in umbrales:
+        f = clasificar_itemsets(fpgrowth(X, min_support=s, use_colnames=True), len(X))
+        filas.append({"soporte mínimo": s, "frecuentes": len(f),
+                      "cerrados": int(f["cerrado"].sum()), "maximales": int(f["maximal"].sum())})
+    return pd.DataFrame(filas)
+
+umbrales = [0.06, 0.08, 0.10, 0.15, 0.20, 0.30]
+resultados = {"Canastas dispersas (50)": conteos_por_umbral(canastas, umbrales),
+              "Canastas con jerarquía (300)": conteos_por_umbral(densas, umbrales)}
+
+colores = {"frecuentes": "#2563eb", "cerrados": "#16a34a", "maximales": "#ea580c"}
+fig = make_subplots(rows=1, cols=2, subplot_titles=list(resultados), shared_yaxes=True)
+for col, (nombre, r) in enumerate(resultados.items(), start=1):
+    for serie, color in colores.items():
+        fig.add_scatter(x=r["soporte mínimo"], y=r[serie], name=serie, mode="lines+markers",
+                        line=dict(color=color, width=2), showlegend=(col == 1), row=1, col=col)
+fig.update_yaxes(type="log", title_text="Número de itemsets", row=1, col=1)
+fig.update_xaxes(title_text="Soporte mínimo")
+fig.update_layout(height=380, legend=dict(orientation="h", y=-0.25))
+fig.show()
+```
+
+```{python}
+#| label: tbl-compresion-cerrados
+#| tbl-cap: "Itemsets frecuentes, cerrados y maximales con soporte mínimo 0.10 en las dos bases."
+pd.DataFrame({nombre: r.set_index("soporte mínimo").loc[0.10] for nombre, r in resultados.items()}).T
+```
+
+En las canastas dispersas casi todo itemset frecuente ya es cerrado: con tres productos por canasta, rara vez un producto «arrastra» siempre a otro. En las canastas con jerarquía ocurre lo contrario: todo ticket con café molido tiene también «café» y «bebidas», así que $\gamma(\{\text{café molido}\}) \supseteq \{\text{café molido}, \text{café}, \text{bebidas}\}$ y cada combinación de productos aparece repetida con todas las combinaciones de sus ancestros, con el mismo conteo. Los frecuentes se multiplican; los cerrados, no. La lección práctica: **en datos densos o con dependencias exactas, reporta cerrados (si necesitas los conteos) o maximales (si solo necesitas saber qué combinaciones son frecuentes)**.
+
+Observa también que la compresión de los cerrados depende de que haya conteos **exactamente iguales**. Si dos productos casi siempre van juntos, pero no siempre, sus itemsets siguen siendo cerrados; para resumir esas dependencias aproximadas existen variantes como los itemsets *δ-libres* o los cerrados aproximados, que quedan fuera de este capítulo.
+
+## Cuándo usar cada representación
+
+| Representación | Tamaño | ¿Conteos exactos? | Uso típico |
+|---|---|---|---|
+| Frecuentes $\mathcal{F}$ | El más grande | Sí, directos | Datos dispersos; generar todas las reglas |
+| Cerrados $\mathcal{C}$ | Intermedio | Sí, con la @eq-recuperar-soporte | Datos densos; reglas no redundantes; análisis formal de conceptos[^fca] |
+| Maximales $\mathcal{M}$ | El más pequeño | No, solo «≥ umbral» | Describir la frontera; patrones largos; resumen para el negocio |
+
+: Comparación de las tres representaciones. {#tbl-representaciones}
+
+Las mismas ideas se extienden más allá de los itemsets. En el capítulo siguiente, de patrones secuenciales, los patrones son **secuencias** ordenadas de eventos, y allí también se habla de secuencias cerradas y maximales con exactamente las mismas definiciones.
+
+[^unpaso]: Si algún superconjunto $Y \supsetneq X$ tiene el mismo conteo que $X$, entonces también lo tiene cualquier itemset intermedio $X \subsetneq Z \subseteq Y$, porque por antimonotonía $\sigma(X) \ge \sigma(Z) \ge \sigma(Y) = \sigma(X)$. En particular, lo tiene algún superconjunto con un solo ítem más. Lo mismo vale para «ser frecuente».
+
+[^clausura]: Un **operador de clausura** sobre los subconjuntos de $\mathcal{I}$ es una función $\gamma$ que cumple tres propiedades: es *extensiva*, $X \subseteq \gamma(X)$; es *monótona*, $X \subseteq Y \Rightarrow \gamma(X) \subseteq \gamma(Y)$; y es *idempotente*, $\gamma(\gamma(X)) = \gamma(X)$. Los conjuntos fijos ($\gamma(X) = X$) se llaman cerrados. El nombre viene de la topología y del álgebra, donde «cerrar» un conjunto es agregarle todo lo que se deduce de él.
+
+[^condensada]: Una representación es **condensada** si a partir de ella se puede reconstruir toda la información de interés. Es la misma distinción que en compresión de archivos: ZIP es sin pérdida (se recupera el original exacto), JPEG es con pérdida (se recupera una aproximación). Los cerrados son el «ZIP» de los itemsets frecuentes; los maximales, el «JPEG».
+
+[^fca]: El **análisis formal de conceptos** (*formal concept analysis*) estudia exactamente esta estructura: pares (conjunto de ítems cerrado, conjunto de tickets que lo contienen), llamados *conceptos*, ordenados en una retícula [@ganter1999formal]. Los itemsets cerrados son las «intenciones» de esos conceptos.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

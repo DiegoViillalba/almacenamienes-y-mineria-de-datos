@@ -248,3 +248,11 @@ el navegador suele servir versiones en caché.
 | `4-3-conversion.qmd` | El espacio que ve KNN | Ejes con igual escala, parámetros aprendidos en entrenamiento y aplicados a un punto nuevo |
 | `4-6-ruido.qmd` | Filtros | Curva de error frente a un hiperparámetro (compromiso sesgo–varianza) |
 | `4-1-introduccion.qmd` | Ajustar y aplicar | Casillas de transformaciones, fuga de datos visible |
+| `5-0-introduccion-patrones.qmd` | Retícula de itemsets | Diagrama SVG con nodos clicables (`data-key` + `closest`), poda Apriori sobre la retícula |
+| `5-1-introduccion.qmd` | Métricas en una tabla 2 × 2 | Mosaico con `K.chart`, escenarios con `K.segmented`, división entre cero controlada |
+| `5-1-apriori.qmd` | Apriori nivel por nivel | Pasos generados dinámicamente, barras apiladas por nivel, generación de reglas |
+| `5-2-metricas-extra.qmd` | El techo del lift | Control con `min`/`max` dinámicos (cotas de Fréchet), dos gráficas de curvas enlazadas |
+| `5-3-fp_growth.qmd` | Construir y minar el FP-tree | Árbol SVG con distribución por hojas, enlaces de nodo, minado recursivo de bases condicionales |
+| `5-3b-cerrados-maximales.qmd` | Frecuentes, cerrados y maximales | Retícula clasificada con flechas de clausura, recuperación de conteos, tickets editables con casillas en CSS grid |
+| `5-3c-patrones-secuenciales.qmd` | Base proyectada de PrefixSpan | Prefijo que se extiende con botones, resaltado de la aparición más a la izquierda, lista de patrones clicable, sesiones editables con `input` de texto saneado |
+| `5-4-clasificacion-asociativa.qmd` | Clasificador CBA | Validación cruzada LOOCV en el navegador, matriz de confusión, predicción con `select` |
