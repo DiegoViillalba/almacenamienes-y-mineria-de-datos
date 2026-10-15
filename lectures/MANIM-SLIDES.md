@@ -481,12 +481,21 @@ Concepto uno · Concepto dos · Aplicación
 Después:
 
 ```bash
-quarto render presentaciones.qmd --no-execute
+quarto render presentaciones.qmd --to html --no-execute
 ```
 
-Verificar que `docs/presentaciones.html` contiene la ruta nueva. Un render de
-Quarto puede actualizar índices de búsqueda y el sitemap; revisar el diff para
-detectar cambios incidentales.
+`--to html` es obligatorio. `_quarto.yml` también declara el formato `pdf`;
+sin esa opción, Quarto reconstruye el libro completo (HTML y PDF, varios
+minutos), limpia `docs/` —borrando recursos versionados como `docs/lectures/`
+y `docs/data/`, incluido el HTML recién exportado— y sobrescribe
+`docs/Almacenes-y-Minería-de-Datos.pdf` y el `.tex`. Si ocurre, restaurar con
+`git restore -- docs "Almacenes-y-Minería-de-Datos.tex"`, eliminar el
+`site_libs/` que aparezca en la raíz y volver a exportar la presentación.
+
+Verificar que `docs/presentaciones.html` contiene la ruta nueva y que
+`git status` no muestra archivos borrados en `docs/` ni cambios en el PDF.
+`docs/presentaciones.html` está ignorado por Git: el sitio publicado lo
+regenera el workflow.
 
 ---
 

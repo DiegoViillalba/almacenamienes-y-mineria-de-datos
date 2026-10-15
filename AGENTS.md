@@ -55,8 +55,12 @@ Para presentaciones Quarto:
 ```bash
 quarto render lectures
 quarto render lectures/ruta/a/clase.qmd
-quarto render presentaciones.qmd --no-execute
+quarto render presentaciones.qmd --to html --no-execute
 ```
+
+Renderiza `presentaciones.qmd` siempre con `--to html`: sin esa opción Quarto
+también construye el PDF del libro completo y limpia `docs/`, borrando recursos
+versionados.
 
 Lee `lectures/AGENTS.md` antes de tocar presentaciones; las presentaciones de
 Manim tienen un flujo adicional obligatorio.

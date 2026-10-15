@@ -119,7 +119,7 @@ mkdir -p ../../../docs/lectures/_output/03-eda/03-05-medidas-heterogeneidad-mani
 Actualizar la galería desde la raíz:
 
 ```bash
-quarto render presentaciones.qmd --no-execute
+quarto render presentaciones.qmd --to html --no-execute
 ```
 
 ## Convenciones estadísticas
