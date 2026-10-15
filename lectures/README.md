@@ -61,5 +61,5 @@ Para actualizar el sitio después de editar una clase:
 
 ```bash
 quarto render lectures
-quarto render presentaciones.qmd --no-execute
+quarto render presentaciones.qmd --to html --no-execute
 ```
