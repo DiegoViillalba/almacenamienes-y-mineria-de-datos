@@ -44,6 +44,8 @@ crossref:
 jupyter: python3
 ---
 
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
 ## FP-Growth y minería de patrones frecuentes
 
 ### Introducción
@@ -368,6 +370,154 @@ conditional_root = build_fp_tree(conditional_transactions)
 print_tree(conditional_root)
 ```
 
+### Laboratorio: construir y minar el FP-tree
+
+El laboratorio inserta las transacciones de una en una. En cada paso verás qué prefijo se comparte (los contadores suben) y qué nodos nuevos se crean. Después elige un ítem para obtener su base de patrones condicional y los patrones frecuentes que terminan en él. Las líneas discontinuas son los **enlaces de nodo** de la tabla de encabezados: conectan todas las apariciones de un mismo ítem en el árbol.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="fp-lab">
+  <p class="plab-eyebrow">Laboratorio · FP-Growth</p>
+  <h3 class="plab-title">¿Cómo comprime el FP-tree las transacciones y cómo se minan sus patrones?</h3>
+  <p class="plab-sub">Mueve el número de transacciones insertadas, cambia el soporte mínimo y elige el ítem cuya base condicional quieres ver.</p>
+
+  <div class="plab-controls">
+    <label>Transacciones insertadas: <b id="fp-ins-v"></b><input type="range" id="fp-ins" min="0" max="5" step="1" value="5"></label>
+    <label>Soporte mínimo (conteo): <b id="fp-min-v"></b><input type="range" id="fp-min" min="1" max="5" step="1" value="3"></label>
+    <div class="plab-field" style="flex:2 1 260px">Ítem a minar
+      <div class="plab-seg" id="fp-item"></div>
+    </div>
+  </div>
+
+  <div class="plab-panel">
+    <h4 id="fp-tree-title">FP-tree</h4>
+    <svg id="fp-svg" class="wide" role="img" aria-label="Árbol FP con los contadores de cada nodo"></svg>
+    <div class="plab-legend">
+      <span><i class="dot" style="background:var(--lab-s1)"></i>nodo del árbol</span>
+      <span><i class="dot" style="background:var(--lab-s2)"></i>camino de la última transacción insertada</span>
+      <span><i style="background:var(--lab-s4)"></i>enlaces de nodo del ítem elegido</span>
+    </div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Ítems en las transacciones</span><strong id="fp-raw"></strong></div>
+    <div class="plab-stat"><span>Nodos en el árbol</span><strong id="fp-nodes"></strong></div>
+    <div class="plab-stat"><span>Compresión</span><strong id="fp-ratio"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Transacciones ordenadas</h4><div id="fp-tx" class="plab-scroll"></div></div>
+    <div class="plab-panel"><h4 id="fp-cond-title">Base condicional</h4><div id="fp-cond" class="plab-scroll"></div></div>
+  </div>
+  <p class="plab-note" id="fp-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('fp-lab');
+  const $ = s => root.querySelector(s);
+  const TX = [['Pan','Leche'], ['Pan','Leche','Pañales','Cerveza'], ['Leche','Pañales','Cerveza'], ['Pan','Leche','Pañales','Cerveza'], ['Pan','Leche','Pañales']];
+  const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  const COUNT = {}; TX.flat().forEach(i => { COUNT[i] = (COUNT[i] || 0) + 1; });
+  let item = 'Cerveza';
+
+  // Minado recursivo sobre una base condicional ponderada: [[prefijo ordenado], peso].
+  function mine(base, suffix, minc, order, out) {
+    const cnt = {}; base.forEach(([p, w]) => p.forEach(i => { cnt[i] = (cnt[i] || 0) + w; }));
+    order.filter(i => (cnt[i] || 0) >= minc).reverse().forEach(i => {
+      const pat = [i, ...suffix]; out.push([pat, cnt[i]]);
+      const sub = base.filter(([p]) => p.includes(i)).map(([p, w]) => [p.slice(0, p.indexOf(i)).filter(x => (cnt[x] || 0) >= minc), w]).filter(([p]) => p.length);
+      mine(sub, pat, minc, order, out);
+    });
+  }
+
+  function render() {
+    const ins = +$('#fp-ins').value, minc = +$('#fp-min').value;
+    $('#fp-ins-v').textContent = ins; $('#fp-min-v').textContent = minc;
+    const order = Object.keys(COUNT).filter(i => COUNT[i] >= minc).sort((a, b) => (COUNT[b] - COUNT[a]) || cmp(a, b));
+    const ordered = TX.map(t => order.filter(i => t.includes(i)));
+    // Selector de ítem (solo ítems frecuentes).
+    if (!order.includes(item)) item = order[order.length - 1];
+    $('#fp-item').innerHTML = order.map(i => `<button type="button" data-value="${i}" aria-pressed="${i === item}">${i}</button>`).join('');
+
+    // Construcción del árbol con las primeras `ins` transacciones.
+    let uid = 0;
+    const rootN = { item: null, count: 0, children: [], parent: null, id: uid++, depth: 0 };
+    const links = {}; let lastPath = [], shared = 0, created = 0;
+    ordered.slice(0, ins).forEach((t, j) => {
+      let cur = rootN; const path = []; let sh = 0, cr = 0;
+      t.forEach(i => {
+        let ch = cur.children.find(c => c.item === i);
+        if (ch) sh++; else { ch = { item: i, count: 0, children: [], parent: cur, id: uid++, depth: cur.depth + 1 }; cur.children.push(ch); (links[i] = links[i] || []).push(ch); cr++; }
+        ch.count++; path.push(ch.id); cur = ch;
+      });
+      if (j === ins - 1) { lastPath = path; shared = sh; created = cr; }
+    });
+    const nodes = []; (function walk(n) { if (n.item) nodes.push(n); n.children.forEach(walk); })(rootN);
+
+    // Distribución: hojas en orden DFS, padres al centro de sus hijos.
+    let leaf = 0;
+    (function place(n) { if (!n.children.length) { n.x = leaf++; return; } n.children.forEach(place); n.x = K.mean(n.children.map(c => c.x)); })(rootN);
+    const maxD = Math.max(1, ...nodes.map(n => n.depth)), W = 640, H = 50 + maxD * 70;
+    const svg = $('#fp-svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.classList.add('plab-chart'); svg.replaceChildren();
+    const X = x => leaf <= 1 ? W / 2 : 70 + x * (W - 140) / (leaf - 1), Yp = d => 24 + d * 70;
+    const hot = new Set(lastPath);
+    nodes.forEach(n => K.el('line', { x1: X(n.parent.x), y1: Yp(n.parent.depth) + 14, x2: X(n.x), y2: Yp(n.depth) - 14,
+      class: hot.has(n.id) ? 's2 line' : 'muted line thin' }, svg));
+    (links[item] || []).forEach((n, k, arr) => { if (k) K.el('path', { d: `M${X(arr[k - 1].x)},${Yp(arr[k - 1].depth)}Q${(X(arr[k - 1].x) + X(n.x)) / 2},${Math.max(Yp(arr[k - 1].depth), Yp(n.depth)) + 40} ${X(n.x)},${Yp(n.depth)}`, class: 's4 line thin dash' }, svg); });
+    K.el('circle', { cx: X(rootN.x), cy: Yp(0), r: 12, class: 'muted soft' }, svg);
+    K.el('text', { x: X(rootN.x), y: Yp(0) + 4, 'text-anchor': 'middle' }, svg).textContent = 'null';
+    nodes.forEach(n => {
+      const cls = n.item === item ? 's4' : hot.has(n.id) ? 's2' : 's1';
+      const r = K.el('rect', { x: X(n.x) - 44, y: Yp(n.depth) - 14, width: 88, height: 28, rx: 8, class: cls }, svg);
+      r.style.fillOpacity = 0.18;
+      K.el('text', { x: X(n.x), y: Yp(n.depth) + 4, 'text-anchor': 'middle', class: 'strong', 'font-size': 12 }, svg).textContent = `${n.item}: ${n.count}`;
+    });
+    if (!ins) K.el('text', { x: W / 2, y: Yp(1), 'text-anchor': 'middle' }, svg).textContent = 'Árbol vacío: mueve el control para insertar transacciones.';
+
+    const raw = ordered.slice(0, ins).reduce((s, t) => s + t.length, 0);
+    $('#fp-raw').textContent = raw; $('#fp-nodes').textContent = nodes.length;
+    $('#fp-ratio').textContent = raw ? `${K.fmt(nodes.length / raw * 100, 0)} %` : '—';
+    $('#fp-tree-title').textContent = `FP-tree con orden global ${order.join(' ≻ ')}`;
+    $('#fp-tx').innerHTML = '<table class="plab-table"><thead><tr><th>T</th><th style="text-align:left">Original</th><th style="text-align:left">Ordenada y filtrada</th></tr></thead><tbody>' +
+      TX.map((t, j) => `<tr${j === ins - 1 ? ' class="hl"' : ''} style="${j >= ins ? 'opacity:.45' : ''}"><td>T${j + 1}</td><td style="text-align:left">${t.join(', ')}</td><td style="text-align:left">[${ordered[j].join(', ')}]</td></tr>`).join('') + '</tbody></table>';
+
+    // Base condicional del ítem elegido (en el árbol actual).
+    const base = (links[item] || []).map(n => { const p = []; let q = n.parent; while (q.item) { p.unshift(q.item); q = q.parent; } return [p, n.count]; });
+    const supItem = (links[item] || []).reduce((s, n) => s + n.count, 0);
+    const pats = supItem >= minc ? [[[item], supItem]] : [];
+    if (supItem >= minc) mine(base.filter(([p]) => p.length), [item], minc, order, pats);
+    const ccount = {}; base.forEach(([p, w]) => p.forEach(i => { ccount[i] = (ccount[i] || 0) + w; }));
+    $('#fp-cond-title').textContent = `Base condicional de ${item}`;
+    $('#fp-cond').innerHTML = (base.length ? '<table class="plab-table"><thead><tr><th style="text-align:left">Camino prefijo</th><th>Conteo</th></tr></thead><tbody>' +
+      base.map(([p, w]) => `<tr><td style="text-align:left">[${p.join(', ') || '∅'}]</td><td>${w}</td></tr>`).join('') + '</tbody></table>' : '<p class="plab-sub">El ítem aún no aparece en el árbol.</p>') +
+      (Object.keys(ccount).length ? '<div class="plab-math">conteos condicionales: ' + order.filter(i => ccount[i]).map(i => `${i}=${ccount[i]}${ccount[i] < minc ? ' ✗' : ''}`).join(', ') + '</div>' : '') +
+      (pats.length ? '<div class="plab-math">patrones frecuentes:\n' + pats.map(([p, c]) => `{${p.join(', ')}}: ${c}`).join('\n') + '</div>' : '');
+
+    const note = $('#fp-note');
+    note.className = 'plab-note';
+    note.textContent = !ins ? 'Primer recorrido: se cuentan los ítems y se fija el orden global. El segundo recorrido inserta cada transacción ordenada.'
+      : `T${ins} ordenada = [${ordered[ins - 1].join(', ')}]: comparte un prefijo de ${shared} nodo(s), cuyos contadores suben en 1, y crea ${created} nodo(s) nuevo(s). ` +
+        `El árbol guarda ${nodes.length} nodos para ${raw} apariciones de ítems. ` +
+        (pats.length ? `Con soporte mínimo ${minc}, ${item} participa en ${pats.length} patrón(es) frecuente(s).` : `${item} no alcanza el soporte mínimo ${minc} con las transacciones insertadas.`);
+  }
+
+  $('#fp-item').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { item = b.dataset.value; render(); } });
+  ['#fp-ins', '#fp-min'].forEach(id => $(id).addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio construye el FP-tree insertando las transacciones de una en una y calcula la base condicional del ítem elegido. Valores de referencia con soporte mínimo 3 y las cinco transacciones: 6 nodos para 16 apariciones de ítems (38 %); la base condicional de Cerveza es [Leche, Pan, Pañales]: 2 y [Leche, Pañales]: 1, con conteos condicionales Leche = 3, Pan = 2, Pañales = 3, y sus patrones frecuentes son {Cerveza}, {Pañales, Cerveza}, {Leche, Pañales, Cerveza} y {Leche, Cerveza}, todos con conteo 3.
+:::
+
+**Guía del laboratorio.**
+
+1. Lleva el control a 0 y avanza de una en una. Predice antes de cada paso cuántos nodos nuevos creará la transacción; comprueba con la nota. ¿Cuál es la única transacción que abre una rama nueva bajo Leche?
+2. Con las cinco transacciones, elige Cerveza y compara la base condicional con la tabla de la sección anterior.
+3. Elige Pañales. ¿Por qué tiene dos caminos prefijo? ¿Qué patrones frecuentes salen?
+4. Baja el soporte mínimo a 2. ¿Qué patrones nuevos aparecen para Cerveza y por qué todos incluyen a Pan? Súbelo a 4: ¿qué ítem desaparece del árbol y cuántos nodos quedan?
+
 ### Patrones frecuentes del ejemplo
 
 Repitiendo el procedimiento para los ítems restantes en orden ascendente de frecuencia, se obtienen los conjuntos frecuentes:
@@ -468,6 +618,70 @@ rules[selected_columns].sort_values(
 ```
 
 La confianza puede ser alta aun cuando el consecuente sea muy frecuente. Por ello, conviene interpretarla junto con el lift. Un lift mayor que uno sugiere asociación positiva; un lift cercano a uno sugiere que la regla no mejora sustancialmente lo esperado por independencia; un lift menor que uno sugiere asociación negativa.
+
+### Ejemplo práctico: FP-Growth sobre 50 canastas
+
+Volvamos a la muestra de 50 canastas del capítulo de Apriori. Construimos el FP-tree con las funciones de este capítulo para medir cuánto comprime y comprobamos que `fpgrowth` y `apriori` devuelven exactamente los mismos itemsets frecuentes.
+
+```{python}
+#| label: fp-practico
+#| fig-cap: "Crecimiento del FP-tree al insertar las 50 canastas (soporte mínimo de 5 canastas). La línea azul cuenta las apariciones de ítems frecuentes acumuladas en las transacciones; la naranja, los nodos del árbol. La distancia entre ambas es la compresión."
+import plotly.graph_objects as go
+from mlxtend.frequent_patterns import apriori
+
+canastas = [
+    ["whole milk", "yogurt", "bread"], ["whole milk", "butter", "eggs"], ["whole milk", "yogurt", "vegetables"],
+    ["bread", "butter", "eggs"], ["whole milk", "soda", "chips"], ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"], ["eggs", "butter", "cheese"], ["whole milk", "vegetables", "fruit"],
+    ["soda", "chips", "candy"], ["whole milk", "bread", "eggs"], ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"], ["bread", "eggs", "cheese"], ["whole milk", "yogurt", "coffee"],
+    ["butter", "eggs", "bread"], ["chips", "soda", "beer"], ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"], ["whole milk", "bread", "sugar"], ["eggs", "cheese", "vegetables"],
+    ["whole milk", "soda", "bread"], ["coffee", "sugar", "bread"], ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"], ["bread", "chips", "soda"], ["whole milk", "granola", "yogurt"],
+    ["vegetables", "fruit", "bread"], ["whole milk", "butter", "cheese"], ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"], ["chips", "candy", "soda"], ["whole milk", "coffee", "eggs"],
+    ["bread", "vegetables", "fruit"], ["yogurt", "cheese", "eggs"], ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"], ["whole milk", "vegetables", "eggs"], ["yogurt", "granola", "whole milk"],
+    ["bread", "butter", "sugar"], ["whole milk", "fruit", "cheese"], ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"], ["coffee", "bread", "butter"], ["yogurt", "whole milk", "bread"],
+    ["eggs", "cheese", "bread"], ["whole milk", "sugar", "butter"], ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"], ["granola", "yogurt", "fruit"],
+]
+min_conteo_g = 5
+conteos_g = Counter(i for t in canastas for i in t)
+orden_g = sorted([i for i, c in conteos_g.items() if c >= min_conteo_g], key=lambda i: (-conteos_g[i], i))
+rango_g = {i: r for r, i in enumerate(orden_g)}
+
+def contar_nodos(nodo):
+    return sum(1 + contar_nodos(h) for h in nodo.children.values())
+
+raiz_g, apariciones, nodos = FPNode(item="null"), [], []
+for t in canastas:
+    t_ord = sorted([i for i in t if i in rango_g], key=rango_g.get)
+    insert_transaction(raiz_g, t_ord)
+    apariciones.append((apariciones[-1] if apariciones else 0) + len(t_ord))
+    nodos.append(contar_nodos(raiz_g))
+
+fig = go.Figure()
+fig.add_scatter(y=apariciones, mode="lines", name="apariciones de ítems", line=dict(color="#2563eb", width=2))
+fig.add_scatter(y=nodos, mode="lines", name="nodos del FP-tree", line=dict(color="#ea580c", width=2))
+fig.update_layout(xaxis_title="Canastas insertadas", yaxis_title="Total acumulado", height=360)
+fig.show()
+print(f"{apariciones[-1]} apariciones de ítems -> {nodos[-1]} nodos ({nodos[-1] / apariciones[-1]:.0%})")
+```
+
+```{python}
+#| label: fp-vs-apriori
+te_g = TransactionEncoder()
+df_g = pd.DataFrame(te_g.fit_transform(canastas), columns=te_g.columns_)
+fp_items = fpgrowth(df_g, min_support=0.10, use_colnames=True)
+ap_items = apriori(df_g, min_support=0.10, use_colnames=True)
+mismos = set(map(frozenset, fp_items["itemsets"])) == set(map(frozenset, ap_items["itemsets"]))
+print(f"FP-Growth: {len(fp_items)} itemsets | Apriori: {len(ap_items)} itemsets | ¿idénticos? {mismos}")
+```
+
+Con canastas tan cortas y heterogéneas la compresión es moderada: muchas canastas no comparten prefijo. El árbol comprime más cuando las transacciones se parecen entre sí, que es justamente el caso de datos densos donde Apriori genera más candidatos. Ambos algoritmos son **exactos**: cambian el camino, no la respuesta.
 
 ### Comparación entre FP-Growth y Apriori
 

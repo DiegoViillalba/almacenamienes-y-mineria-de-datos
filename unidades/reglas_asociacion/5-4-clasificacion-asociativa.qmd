@@ -1,0 +1,601 @@
+---
+title: "De Patrones a Predicciones: Introducción a la Clasificación con Reglas de Asociación"
+pagetitle: "Introducción a la Clasificación con Reglas de Asociación (CBA)"
+open-graph:
+  description: "Introduce los algoritmos de clasificación a partir de reglas de asociación (CBA): reglas de clase, cobertura, predicción y evaluación con validación cruzada, con laboratorio interactivo y un ejemplo práctico en Python."
+twitter-card:
+  description: "Introduce los algoritmos de clasificación a partir de reglas de asociación (CBA): reglas de clase, cobertura, predicción y evaluación con validación cruzada, con laboratorio interactivo y un ejemplo práctico en Python."
+description: "Introduce los algoritmos de clasificación a partir de reglas de asociación (CBA): reglas de clase, cobertura, predicción y evaluación con validación cruzada, con laboratorio interactivo y un ejemplo práctico en Python."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_patrones.bib, referencias_asociacion.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+Hasta ahora, las reglas de asociación han servido para **describir**: qué productos se compran juntos y qué tan sorprendente es esa coincidencia. Este capítulo da el paso que conecta esta parte del libro con la siguiente: usar reglas para **predecir**. Si una de las columnas de los datos es una etiqueta (¿el cliente aceptó la oferta?, ¿la transacción es fraude?, ¿se jugó el partido?), basta restringir las reglas a las que tienen esa etiqueta como consecuente para obtener un **clasificador**. El método, llamado CBA (*Classification Based on Associations*), fue propuesto por @liu1998integrating y es una introducción natural a los algoritmos de clasificación: cada decisión que toma se puede leer como una regla «si… entonces…».
+
+En el camino aparecen las ideas que se repetirán en todos los clasificadores de la parte siguiente: variables predictoras y variable objetivo, ajuste con datos de entrenamiento, predicción sobre casos nuevos y, sobre todo, **evaluación honesta** con datos que el modelo no vio.
+
+## El problema de clasificación
+
+Un problema de clasificación tiene dos ingredientes:
+
+- **Variables predictoras** (*features*) $\mathbf{x} = (x_1, \ldots, x_p)$: lo que sabemos de cada caso.
+- **Variable objetivo** (*target*) $y$, que toma valores en un conjunto finito de **clases**, por ejemplo $\{\text{sí}, \text{no}\}$.
+
+Un **clasificador** es una función $f$ que asigna una clase a cada vector de predictoras, $\hat{y} = f(\mathbf{x})$. Se construye (se *entrena*) con ejemplos etiquetados $(\mathbf{x}_j, y_j)$ y se juzga por su capacidad de acertar en ejemplos **nuevos**[^generalizacion]. Los árboles de decisión, la regresión logística o las redes neuronales que se estudian más adelante son distintas formas de construir $f$. CBA construye $f$ como una **lista ordenada de reglas**.
+
+## Intuición: catorce días de tenis
+
+Usaremos un conjunto clásico de la literatura de aprendizaje automático [@mitchell1997machine]: durante 14 días se registró el estado del tiempo y si se jugó un partido de tenis.
+
+| Día | Cielo | Temperatura | Humedad | Viento | ¿Jugar? |
+|---|---|---|---|---|---|
+| D1 | soleado | calor | alta | débil | no |
+| D2 | soleado | calor | alta | fuerte | no |
+| D3 | nublado | calor | alta | débil | sí |
+| D4 | lluvioso | templado | alta | débil | sí |
+| D5 | lluvioso | frío | normal | débil | sí |
+| D6 | lluvioso | frío | normal | fuerte | no |
+| D7 | nublado | frío | normal | fuerte | sí |
+| D8 | soleado | templado | alta | débil | no |
+| D9 | soleado | frío | normal | débil | sí |
+| D10 | lluvioso | templado | normal | débil | sí |
+| D11 | soleado | templado | normal | fuerte | sí |
+| D12 | nublado | templado | alta | fuerte | sí |
+| D13 | nublado | calor | normal | débil | sí |
+| D14 | lluvioso | templado | alta | fuerte | no |
+
+: Conjunto «jugar tenis» (14 días, 9 «sí» y 5 «no»). {#tbl-tenis}
+
+Mirando la tabla sin fórmulas ya aparecen regularidades: **todos** los días nublados se jugó; los días soleados con humedad alta, nunca; los días lluviosos dependen del viento. Esas frases son reglas de asociación cuyo consecuente es la clase. El trabajo del capítulo es encontrarlas de forma sistemática, decidir cuáles conservar y medir qué tan bien predicen.
+
+Antes de construir nada conviene fijar la **referencia mínima** (*baseline*): un clasificador que siempre responde la clase más frecuente, «sí», acierta $9/14 \approx 0.643$ de las veces. Cualquier modelo que valga la pena debe superar ese número.
+
+## Construcción paso a paso
+
+### Paso 1. Cada fila es una transacción
+
+Convertimos cada día en un conjunto de ítems de la forma `atributo=valor`. El día D1 se vuelve la transacción
+$$T_1 = \{\text{cielo=soleado}, \text{temp=calor}, \text{humedad=alta}, \text{viento=débil}\}, \qquad y_1 = \text{no}.$$
+Es la misma codificación binaria del capítulo introductorio: diez ítems posibles (tres valores de cielo, tres de temperatura, dos de humedad y dos de viento).
+
+### Paso 2. Reglas de clase
+
+Una **regla de clase** (*class association rule*, CAR) es una regla $X \Rightarrow c$ donde $X$ es un itemset de predictoras y $c$ es una clase. Sus métricas son las de siempre, contando solo filas:
+
+- **Cobertura** de $X$: número de días que cumplen todas las condiciones de $X$.
+- **Conteo** de la regla: días que cumplen $X$ **y** tienen clase $c$ (el soporte de $X \cup \{c\}$).
+- **Confianza**: conteo / cobertura, es decir, $P(c \mid X)$ estimada.
+
+Tres reglas calculadas a mano:
+
+| Regla | Cobertura | Conteo | Confianza |
+|---|---:|---:|---:|
+| cielo=nublado ⇒ sí | 4 (D3, D7, D12, D13) | 4 | 4/4 = 1.00 |
+| humedad=alta ⇒ no | 7 (D1, D2, D3, D4, D8, D12, D14) | 4 | 4/7 = 0.57 |
+| cielo=soleado ∧ humedad=alta ⇒ no | 3 (D1, D2, D8) | 3 | 3/3 = 1.00 |
+
+: Tres reglas de clase calculadas sobre la @tbl-tenis. {#tbl-cars-mano}
+
+Con umbrales de **conteo mínimo 2** y **confianza mínima 0.80**, la primera y la tercera se conservan; la segunda no: la humedad alta sola no basta para decidir. Al repetir el cálculo para todos los itemsets de una, dos, tres y cuatro condiciones (con a lo más una condición por atributo) quedan **21 reglas de clase**. Su búsqueda es exactamente un Apriori por niveles en el que, además, se cuenta la clase.
+
+### Paso 3. Ordenar y seleccionar por cobertura
+
+Las 21 reglas se solapan y a veces se contradicen, así que CBA las **ordena por precedencia**: primero mayor confianza, luego mayor conteo, luego menos condiciones (más general). Después recorre la lista y **cubre** los datos de entrenamiento:
+
+1. Tomar la siguiente regla. Si clasifica bien al menos un caso que aún no está cubierto, se **selecciona** y se retiran todos los casos que cumple.
+2. Tras cada selección se calcula la **clase por defecto**: la mayoritaria entre los casos que quedan.
+3. Se registra el error total: errores de las reglas seleccionadas más los errores de la clase por defecto sobre lo que queda.
+4. Al final se corta la lista en el punto de **menor error total**.
+
+En nuestro ejemplo:
+
+| # | Regla seleccionada | Retira | Quedan | Por defecto | Error total |
+|---|---|---|---:|---|---:|
+| 1 | cielo=nublado ⇒ sí | D3, D7, D12, D13 | 10 | no (empate 5–5) | 5 |
+| 2 | humedad=normal ∧ viento=débil ⇒ sí | D5, D9, D10 | 7 | no | 2 |
+| 3 | cielo=lluvioso ∧ viento=débil ⇒ sí | D4 | 6 | no | 1 |
+| 4 | cielo=soleado ∧ humedad=alta ⇒ no | D1, D2, D8 | 3 | no | 1 |
+| 5 | cielo=lluvioso ∧ viento=fuerte ⇒ no | D6, D14 | 1 | sí | 0 |
+
+: Selección por cobertura. En la fila 1 los diez días restantes se reparten 5 y 5; el empate se resuelve con la primera clase que aparece (D1, «no»). {#tbl-cobertura}
+
+El clasificador final es la lista de cinco reglas más la clase por defecto «sí». Observa que tiene la misma estructura que un árbol de decisión: primero mira el cielo y, según el caso, la humedad o el viento.
+
+### Paso 4. Predecir
+
+Para un día nuevo se recorre la lista y se aplica **la primera regla que se cumple**; si ninguna se cumple, se responde la clase por defecto. Un día *soleado, frío, humedad alta, viento fuerte* no es nublado (regla 1), no tiene humedad normal (regla 2), no es lluvioso (regla 3) y sí cumple la regla 4: la predicción es **no**.
+
+### Paso 5. Evaluar sin hacer trampa
+
+Sobre los 14 días de entrenamiento el clasificador acierta los 14. Ese 100 % es **optimista**: las reglas se eligieron precisamente para acertar en esos días[^sobreajuste]. Para estimar el desempeño en días nuevos usamos **validación cruzada dejando uno fuera** (LOOCV)[^loocv]: se entrena 14 veces con 13 días y se predice el día que quedó fuera.
+
+El resultado es de 12 aciertos en 14, una exactitud de $0.857$, frente al $0.643$ de la referencia. Los dos errores son instructivos:
+
+- **D6** (lluvioso, frío, normal, fuerte; «no»). Sin D6, la regla *humedad=normal ⇒ sí* tiene confianza 6/6 y gana la precedencia: el día se predice «sí».
+- **D11** (soleado, templado, normal, fuerte; «sí»). Sin D11, ninguna regla con conteo ≥ 2 lo cubre y la clase por defecto es «no».
+
+La **matriz de confusión**[^confusion] de la validación cruzada resume los aciertos por clase:
+
+|  | Predicho sí | Predicho no |
+|---|---:|---:|
+| **Real sí** (9) | 8 | 1 |
+| **Real no** (5) | 1 | 4 |
+
+: Matriz de confusión de LOOCV con conteo mínimo 2 y confianza mínima 0.80. {#tbl-confusion-tenis}
+
+## Formalización
+
+Sea $\mathcal{D} = \{(T_j, y_j)\}_{j=1}^n$ con $T_j$ un conjunto de ítems `atributo=valor` y $y_j \in \mathcal{C}$. Para un itemset $X$ y una clase $c$:
+$$\text{cob}(X) = |\{j : X \subseteq T_j\}|, \qquad \sigma(X \Rightarrow c) = |\{j : X \subseteq T_j,\; y_j = c\}|, \qquad \text{conf}(X \Rightarrow c) = \frac{\sigma(X \Rightarrow c)}{\text{cob}(X)}.$$ {#eq-car}
+
+El conjunto de reglas candidatas es $\mathcal{R} = \{X \Rightarrow c : \sigma(X \Rightarrow c) \ge s_{\min},\ \text{conf}(X \Rightarrow c) \ge c_{\min}\}$. Como $\sigma(X \Rightarrow c) \le \text{cob}(X)$ y la cobertura es antimonótona, se puede minar por niveles descartando todo itemset con $\text{cob}(X) < s_{\min}$, igual que en Apriori.
+
+La **precedencia** $r_a \succ r_b$ se define por, en este orden: mayor confianza, mayor conteo, menos condiciones (y, para que el resultado sea reproducible, un desempate final alfabético). El clasificador es una lista de decisión[^lista-decision]
+$$f(\mathbf{x}) = \begin{cases} c_1 & \text{si } X_1 \subseteq T(\mathbf{x}) \\ c_2 & \text{si no, y si } X_2 \subseteq T(\mathbf{x}) \\ \;\vdots \\ c_{\text{def}} & \text{si ninguna regla se cumple.} \end{cases}$$
+
+La confianza de la regla que dispara es una estimación de $P(y = c \mid X)$; por eso CBA puede entenderse como un clasificador que, para cada caso, elige la región más «pura» que lo contiene.
+
+## Laboratorio: construye y evalúa un clasificador CBA
+
+El laboratorio repite todos los pasos con los datos de la @tbl-tenis. El estado inicial (conteo mínimo 2, confianza mínima 0.80) reproduce las 21 reglas, el clasificador de cinco reglas y la exactitud de validación cruzada de 12/14.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="cba-lab">
+  <p class="plab-eyebrow">Laboratorio · Clasificación asociativa</p>
+  <h3 class="plab-title">¿Cuántas reglas necesita un buen clasificador?</h3>
+  <p class="plab-sub">Ajusta los umbrales, observa qué reglas se seleccionan y compara la exactitud en entrenamiento con la de validación cruzada. Después clasifica un día nuevo.</p>
+
+  <div class="plab-controls">
+    <label>Conteo mínimo: <b id="cba-sup-v"></b><input type="range" id="cba-sup" min="1" max="5" step="1" value="2"></label>
+    <label>Confianza mínima: <b id="cba-conf-v"></b><input type="range" id="cba-conf" min="0.5" max="1" step="0.05" value="0.8"></label>
+  </div>
+
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Reglas de clase</span><strong id="cba-ncar"></strong></div>
+    <div class="plab-stat"><span>Reglas en el clasificador</span><strong id="cba-nsel"></strong></div>
+    <div class="plab-stat"><span>Exactitud entrenamiento</span><strong id="cba-train"></strong></div>
+    <div class="plab-stat"><span>Exactitud LOOCV</span><strong id="cba-loo"></strong></div>
+  </div>
+
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Error total según el número de reglas usadas</h4>
+      <svg id="cba-svg" role="img" aria-label="Error total de entrenamiento frente al número de reglas seleccionadas"></svg>
+      <div class="plab-legend">
+        <span><i style="background:var(--lab-s1)"></i>error total en entrenamiento</span>
+        <span><i class="dot" style="background:var(--lab-s2)"></i>corte elegido</span>
+      </div>
+    </div>
+    <div class="plab-panel">
+      <h4>Clasificador (lista de decisión)</h4>
+      <div id="cba-model" class="plab-scroll"></div>
+    </div>
+  </div>
+
+  <div class="plab-panel" style="margin-top:1rem">
+    <h4>Clasifica un día nuevo</h4>
+    <div class="plab-controls" id="cba-new"></div>
+    <p class="plab-note" id="cba-pred" aria-live="polite"></p>
+  </div>
+
+  <div class="plab-grid" style="margin-top:1rem">
+    <div class="plab-panel"><h4>Matriz de confusión (LOOCV)</h4><div id="cba-cm" class="plab-scroll"></div></div>
+    <div class="plab-panel"><h4>Primeras reglas de clase por precedencia</h4><div id="cba-cars" class="plab-scroll"></div></div>
+  </div>
+  <p class="plab-note" id="cba-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('cba-lab');
+  const $ = s => root.querySelector(s);
+  const ATTRS = ['cielo', 'temp', 'humedad', 'viento'];
+  const VALUES = { cielo: ['soleado', 'nublado', 'lluvioso'], temp: ['calor', 'templado', 'frío'], humedad: ['alta', 'normal'], viento: ['débil', 'fuerte'] };
+  const ROWS = [
+    ['soleado','calor','alta','débil','no'], ['soleado','calor','alta','fuerte','no'], ['nublado','calor','alta','débil','sí'],
+    ['lluvioso','templado','alta','débil','sí'], ['lluvioso','frío','normal','débil','sí'], ['lluvioso','frío','normal','fuerte','no'],
+    ['nublado','frío','normal','fuerte','sí'], ['soleado','templado','alta','débil','no'], ['soleado','frío','normal','débil','sí'],
+    ['lluvioso','templado','normal','débil','sí'], ['soleado','templado','normal','fuerte','sí'], ['nublado','templado','alta','fuerte','sí'],
+    ['nublado','calor','normal','débil','sí'], ['lluvioso','templado','alta','fuerte','no']];
+  const T = ROWS.map(r => ATTRS.map((a, i) => `${a}=${r[i]}`).sort());
+  const Y = ROWS.map(r => r[4]);
+  const has = (t, X) => X.every(i => t.includes(i));
+  const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  // Todos los itemsets con a lo más una condición por atributo, en orden alfabético.
+  const ITEMSETS = [];
+  (function rec(k, cur) {
+    if (k === ATTRS.length) { if (cur.length) ITEMSETS.push([...cur].sort()); return; }
+    rec(k + 1, cur);
+    VALUES[ATTRS[k]].forEach(v => rec(k + 1, [...cur, `${ATTRS[k]}=${v}`]));
+  })(0, []);
+
+  function mine(idx, minc, minconf) {
+    const classes = [...new Set(idx.map(j => Y[j]))].sort(cmp), out = [];
+    ITEMSETS.forEach(X => {
+      const cov = idx.filter(j => has(T[j], X));
+      if (cov.length < minc) return;
+      classes.forEach(c => {
+        const n = cov.filter(j => Y[j] === c).length;
+        if (n >= minc && n / cov.length >= minconf - 1e-9) out.push({ X, c, n, cov: cov.length, conf: n / cov.length });
+      });
+    });
+    out.sort((a, b) => (b.conf - a.conf) || (b.n - a.n) || (a.X.length - b.X.length) || cmp(a.X.join('|'), b.X.join('|')) || cmp(a.c, b.c));
+    return out;
+  }
+  const majority = labels => {
+    const cnt = {}; let best = null;
+    labels.forEach(l => { cnt[l] = (cnt[l] || 0) + 1; if (best === null || cnt[l] > cnt[best]) best = l; });
+    return best;
+  };
+  function build(idx, rules) {
+    let rem = [...idx], err = 0; const steps = [];
+    for (const r of rules) {
+      const cover = rem.filter(j => has(T[j], r.X));
+      if (!cover.some(j => Y[j] === r.c)) continue;
+      err += cover.filter(j => Y[j] !== r.c).length;
+      rem = rem.filter(j => !cover.includes(j));
+      const def = rem.length ? majority(rem.map(j => Y[j])) : majority(idx.map(j => Y[j]));
+      steps.push({ r, def, total: err + rem.filter(j => Y[j] !== def).length, left: rem.length });
+      if (!rem.length) break;
+    }
+    if (!steps.length) return { model: [], def: majority(idx.map(j => Y[j])), steps, best: -1 };
+    let best = 0; steps.forEach((s, i) => { if (s.total < steps[best].total) best = i; });
+    return { model: steps.slice(0, best + 1).map(s => s.r), def: steps[best].def, steps, best };
+  }
+  const predict = (m, t) => { const r = m.model.find(r => has(t, r.X)); return { c: r ? r.c : m.def, r }; };
+  const ruleTxt = r => r.X.join(' ∧ ') + ' ⇒ ' + r.c;
+
+  // Selectores del día nuevo.
+  const newDay = { cielo: 'soleado', temp: 'frío', humedad: 'alta', viento: 'fuerte' };
+  $('#cba-new').innerHTML = ATTRS.map(a => `<label>${a}<select data-a="${a}">${VALUES[a].map(v => `<option${v === newDay[a] ? ' selected' : ''}>${v}</option>`).join('')}</select></label>`).join('');
+
+  function render() {
+    const minc = +$('#cba-sup').value, minconf = +$('#cba-conf').value;
+    $('#cba-sup-v').textContent = `${minc} (soporte ${K.fmt(minc / 14, 2)})`;
+    $('#cba-conf-v').textContent = K.fmt(minconf, 2);
+    const all = ROWS.map((_, j) => j);
+    const cars = mine(all, minc, minconf), m = build(all, cars);
+    const trainHits = all.filter(j => predict(m, T[j]).c === Y[j]).length;
+    // Validación cruzada dejando uno fuera.
+    const cm = { 'sí': { 'sí': 0, no: 0 }, no: { 'sí': 0, no: 0 } }; let loo = 0;
+    all.forEach(i => {
+      const tr = all.filter(j => j !== i), mi = build(tr, mine(tr, minc, minconf)), p = predict(mi, T[i]).c;
+      cm[Y[i]][p]++; if (p === Y[i]) loo++;
+    });
+    $('#cba-ncar').textContent = cars.length;
+    $('#cba-nsel').textContent = m.model.length;
+    $('#cba-train').textContent = `${trainHits}/14 = ${K.fmt(trainHits / 14, 3)}`;
+    $('#cba-loo').textContent = `${loo}/14 = ${K.fmt(loo / 14, 3)}`;
+
+    // Curva de error total frente al número de reglas seleccionadas.
+    const pts = [[0, Y.filter(y => y !== majority(Y)).length], ...m.steps.map((s, i) => [i + 1, s.total])];
+    const xmax = Math.max(1, pts.length - 1), ymax = Math.max(6, ...pts.map(p => p[1]));
+    const c = K.chart($('#cba-svg'), { width: 420, height: 250, x: [0, xmax + 0.3], y: [0, ymax], margin: { left: 40, bottom: 40 } });
+    c.axes({ xTicks: Math.min(xmax, 6), yTicks: 6, xLabel: 'reglas usadas (0 = solo clase por defecto)', yLabel: 'errores', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 0) });
+    c.path(pts, 's1 line');
+    pts.forEach(p => c.dot(p[0], p[1], 4, 's1 dot'));
+    if (m.best >= 0) { c.dot(m.best + 1, pts[m.best + 1][1], 7, 's2 dot'); c.text(m.best + 1, pts[m.best + 1][1], 'corte', { dy: -12, 'text-anchor': 'middle', class: 's2' }); }
+
+    $('#cba-model').innerHTML = '<table class="plab-table"><thead><tr><th>#</th><th style="text-align:left">Regla</th><th>Conf.</th><th>Conteo</th></tr></thead><tbody>' +
+      m.model.map((r, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${ruleTxt(r)}</td><td>${K.fmt(r.conf, 2)}</td><td>${r.n}/${r.cov}</td></tr>`).join('') +
+      `<tr class="hl"><td>—</td><td style="text-align:left">en otro caso ⇒ ${m.def}</td><td></td><td></td></tr></tbody></table>`;
+    $('#cba-cars').innerHTML = cars.length ? '<table class="plab-table"><thead><tr><th style="text-align:left">Regla</th><th>Conf.</th><th>Conteo</th></tr></thead><tbody>' +
+      cars.slice(0, 8).map(r => `<tr${m.model.includes(r) ? ' class="hl"' : ''}><td style="text-align:left">${ruleTxt(r)}</td><td>${K.fmt(r.conf, 2)}</td><td>${r.n}</td></tr>`).join('') +
+      `</tbody></table><p class="plab-sub" style="margin:.4rem 0 0">${cars.length > 8 ? `… y ${cars.length - 8} más. ` : ''}Resaltadas: reglas que entraron al clasificador.</p>` : '<p class="plab-sub">Ninguna regla supera los umbrales.</p>';
+    $('#cba-cm').innerHTML = '<table class="plab-table"><thead><tr><th></th><th>Predicho sí</th><th>Predicho no</th></tr></thead><tbody>' +
+      ['sí', 'no'].map(r => `<tr><td>Real ${r}</td><td${r === 'sí' ? ' class="hl"' : ''}>${cm[r]['sí']}</td><td${r === 'no' ? ' class="hl"' : ''}>${cm[r].no}</td></tr>`).join('') + '</tbody></table>';
+
+    // Día nuevo.
+    const t = ATTRS.map(a => `${a}=${$(`select[data-a="${a}"]`).value}`).sort();
+    const p = predict(m, t), pn = $('#cba-pred');
+    pn.className = 'plab-note';
+    pn.textContent = p.r ? `Predicción: ${p.c}. Dispara la regla ${m.model.indexOf(p.r) + 1} (${ruleTxt(p.r)}), con confianza ${K.fmt(p.r.conf, 2)} en entrenamiento.`
+                         : `Predicción: ${p.c}. Ninguna regla se cumple, así que se usa la clase por defecto.`;
+
+    const note = $('#cba-note'), gap = trainHits - loo;
+    note.className = loo / 14 <= 9 / 14 ? 'plab-note bad' : gap >= 3 ? 'plab-note warn' : 'plab-note good';
+    note.textContent = loo / 14 <= 9 / 14
+      ? `La validación cruzada (${loo}/14) no supera la referencia de responder siempre «sí» (9/14): con estos umbrales casi no quedan reglas útiles.`
+      : `Entrenamiento ${trainHits}/14 frente a validación cruzada ${loo}/14: la diferencia de ${gap} acierto(s) es el optimismo de evaluar con los mismos datos con los que se eligieron las reglas. La referencia (siempre «sí») es 9/14.`;
+  }
+
+  root.querySelectorAll('input[type=range], select').forEach(el => el.addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio construye el clasificador CBA con umbrales ajustables. Valores de referencia: con conteo mínimo 2 y confianza mínima 0.80 hay 21 reglas de clase, el clasificador usa 5 reglas con clase por defecto «sí», acierta 14/14 en entrenamiento y 12/14 en validación cruzada. Con conteo mínimo 3 quedan 5 reglas de clase y la validación cruzada baja a 10/14; con conteo mínimo 4, a 8/14, por debajo de la referencia de 9/14.
+:::
+
+**Guía del laboratorio.**
+
+1. Comprueba el estado inicial contra la @tbl-cobertura: las cinco reglas, la clase por defecto y el punto de corte en la curva de error.
+2. Predice antes de mover: si subes el conteo mínimo a 3, ¿la exactitud de entrenamiento subirá o bajará? ¿Y la de validación cruzada? Compruébalo.
+3. Sube el conteo mínimo a 4. ¿Por qué el clasificador ya no supera a la referencia de 9/14?
+4. Con los umbrales iniciales, clasifica el día *soleado, frío, alta, fuerte* y luego cambia la humedad a *normal*. ¿Qué regla dispara en cada caso?
+5. Explica en una frase por qué la exactitud de entrenamiento no sirve para elegir los umbrales.
+
+## Implementación en Python
+
+Las cuatro funciones siguientes implementan CBA completo. `minar_cars` es un Apriori por niveles que además cuenta la clase; `construir_cba` aplica la selección por cobertura; `predecir` recorre la lista de decisión.
+
+```{python}
+#| label: cba-funciones
+import pandas as pd
+import numpy as np
+from collections import Counter
+
+def minar_cars(T, y, min_conteo, min_conf, max_len=4):
+    """Reglas de clase X => c con conteo >= min_conteo y confianza >= min_conf."""
+    clases = sorted(set(y))
+    items = sorted({i for t in T for i in t})
+    nivel = [frozenset([i]) for i in items]
+    reglas, k = [], 1
+    while nivel:
+        sobreviven = []
+        for X in sorted(nivel, key=lambda s: tuple(sorted(s))):
+            cubiertos = [c for t, c in zip(T, y) if X <= t]
+            if len(cubiertos) < min_conteo:          # poda por antimonotonía
+                continue
+            sobreviven.append(X)
+            cuenta = Counter(cubiertos)
+            for c in clases:
+                if cuenta[c] >= min_conteo and cuenta[c] / len(cubiertos) >= min_conf:
+                    reglas.append({"X": X, "clase": c, "conteo": cuenta[c],
+                                   "cobertura": len(cubiertos),
+                                   "conf": cuenta[c] / len(cubiertos)})
+        if k == max_len:
+            break
+        candidatos = {a | b for a in sobreviven for b in sobreviven if len(a | b) == k + 1}
+        # a lo más una condición por atributo
+        nivel = [c for c in candidatos if len({i.split("=")[0] for i in c}) == k + 1]
+        k += 1
+    # precedencia: confianza, conteo, generalidad y desempate alfabético
+    reglas.sort(key=lambda r: (-r["conf"], -r["conteo"], len(r["X"]),
+                               tuple(sorted(r["X"])), r["clase"]))
+    return reglas
+
+def mayoritaria(etiquetas):
+    return Counter(etiquetas).most_common(1)[0][0]
+
+def construir_cba(T, y, reglas):
+    """Selección por cobertura y corte en el mínimo error total."""
+    restantes, pasos, errores = list(range(len(T))), [], 0
+    for r in reglas:
+        cubre = [i for i in restantes if r["X"] <= T[i]]
+        if not any(y[i] == r["clase"] for i in cubre):
+            continue
+        errores += sum(y[i] != r["clase"] for i in cubre)
+        restantes = [i for i in restantes if i not in cubre]
+        defecto = mayoritaria([y[i] for i in restantes]) if restantes else mayoritaria(y)
+        pasos.append({"regla": r, "defecto": defecto, "quedan": len(restantes),
+                      "error_total": errores + sum(y[i] != defecto for i in restantes)})
+        if not restantes:
+            break
+    if not pasos:
+        return [], mayoritaria(y), pasos
+    mejor = min(range(len(pasos)), key=lambda j: pasos[j]["error_total"])
+    return [p["regla"] for p in pasos[:mejor + 1]], pasos[mejor]["defecto"], pasos
+
+def predecir(modelo, defecto, t):
+    for r in modelo:
+        if r["X"] <= t:
+            return r["clase"]
+    return defecto
+
+texto = lambda r: " ∧ ".join(sorted(r["X"])) + " ⇒ " + r["clase"]
+```
+
+Aplicado a la @tbl-tenis:
+
+```{python}
+#| label: cba-tenis
+tenis = pd.DataFrame([
+    ["soleado", "calor", "alta", "débil", "no"],     ["soleado", "calor", "alta", "fuerte", "no"],
+    ["nublado", "calor", "alta", "débil", "sí"],     ["lluvioso", "templado", "alta", "débil", "sí"],
+    ["lluvioso", "frío", "normal", "débil", "sí"],   ["lluvioso", "frío", "normal", "fuerte", "no"],
+    ["nublado", "frío", "normal", "fuerte", "sí"],   ["soleado", "templado", "alta", "débil", "no"],
+    ["soleado", "frío", "normal", "débil", "sí"],    ["lluvioso", "templado", "normal", "débil", "sí"],
+    ["soleado", "templado", "normal", "fuerte", "sí"], ["nublado", "templado", "alta", "fuerte", "sí"],
+    ["nublado", "calor", "normal", "débil", "sí"],   ["lluvioso", "templado", "alta", "fuerte", "no"],
+], columns=["cielo", "temp", "humedad", "viento", "jugar"])
+
+def a_transacciones(X):
+    """Cada fila -> conjunto de ítems 'atributo=valor'."""
+    return [frozenset(f"{c}={v}" for c, v in fila.items()) for fila in X.to_dict("records")]
+
+T = a_transacciones(tenis.drop(columns="jugar"))
+y = tenis["jugar"].tolist()
+
+reglas = minar_cars(T, y, min_conteo=2, min_conf=0.8)
+modelo, defecto, pasos = construir_cba(T, y, reglas)
+print(f"Reglas de clase: {len(reglas)}\n")
+pd.DataFrame([{"regla": texto(p["regla"]), "quedan": p["quedan"],
+               "por defecto": p["defecto"], "error total": p["error_total"]} for p in pasos])
+```
+
+```{python}
+#| label: cba-tenis-eval
+from sklearn.metrics import confusion_matrix
+
+aciertos_train = sum(predecir(modelo, defecto, t) == c for t, c in zip(T, y))
+
+# Validación cruzada dejando uno fuera
+pred_loo = []
+for i in range(len(T)):
+    T_tr, y_tr = T[:i] + T[i + 1:], y[:i] + y[i + 1:]
+    m_i, d_i, _ = construir_cba(T_tr, y_tr, minar_cars(T_tr, y_tr, 2, 0.8))
+    pred_loo.append(predecir(m_i, d_i, T[i]))
+
+print(f"Clasificador: {len(modelo)} reglas, clase por defecto = {defecto}")
+print(f"Exactitud en entrenamiento: {aciertos_train}/{len(T)}")
+print(f"Exactitud LOOCV:            {sum(p == c for p, c in zip(pred_loo, y))}/{len(T)}")
+print(f"Referencia (clase mayoritaria): {max(Counter(y).values())}/{len(T)}")
+pd.DataFrame(confusion_matrix(y, pred_loo, labels=["sí", "no"]),
+             index=["real sí", "real no"], columns=["pred. sí", "pred. no"])
+```
+
+Para comparar, entrenamos un árbol de decisión sobre las mismas variables codificadas en binario. Su primera pregunta es también si el cielo está nublado; después usa la humedad y el viento. Si sigues cada rama hasta su hoja verás que delimita las mismas regiones que las cinco reglas de CBA: humedad normal con viento débil ⇒ sí, soleado con humedad alta ⇒ no, lluvioso con viento fuerte ⇒ no, y así sucesivamente.
+
+```{python}
+#| label: cba-vs-arbol
+from sklearn.tree import DecisionTreeClassifier, export_text
+
+X_bin = pd.get_dummies(tenis.drop(columns="jugar"), prefix_sep="=")
+arbol = DecisionTreeClassifier(criterion="entropy", random_state=0).fit(X_bin, y)
+print(export_text(arbol, feature_names=list(X_bin.columns)))
+```
+
+La diferencia está en cómo se buscan las reglas: el árbol **parte** los datos de forma voraz, una pregunta a la vez, y cada caso cae en exactamente una hoja; CBA **enumera** todas las reglas frecuentes y confiables y luego elige una lista. Por eso CBA puede encontrar combinaciones que un árbol voraz no explora, a costa de minar muchas más reglas.
+
+## Ejemplo práctico: especies de pingüinos
+
+Ahora un conjunto real y algo más grande: 333 pingüinos de tres especies (Adelie, Chinstrap y Gentoo) con medidas del pico, la aleta y la masa corporal, además de la isla y el sexo. El flujo es el de cualquier proyecto de clasificación:
+
+1. Separar entrenamiento y prueba **antes** de transformar nada.
+2. Discretizar las variables numéricas en tres niveles (*bajo*, *medio*, *alto*) con los terciles **del entrenamiento**, para no filtrar información del conjunto de prueba[^fuga].
+3. Convertir cada fila en una transacción `atributo=nivel`.
+4. Minar reglas de clase, construir el clasificador y evaluarlo en prueba.
+
+```{python}
+#| label: pinguinos-preparacion
+from sklearn.model_selection import train_test_split
+
+pinguinos = pd.read_csv("../../docs/data/penguins.csv").dropna()
+print(f"{len(pinguinos)} pingüinos:", pinguinos["species"].value_counts().to_dict())
+
+entrena, prueba = train_test_split(pinguinos, test_size=0.3,
+                                   stratify=pinguinos["species"], random_state=42)
+
+numericas = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm", "body_mass_g"]
+cortes = {c: np.quantile(entrena[c], [1 / 3, 2 / 3]) for c in numericas}   # solo entrenamiento
+
+def discretizar(d):
+    out = pd.DataFrame(index=d.index)
+    for c in numericas:
+        bajo, medio = cortes[c]
+        out[c] = np.select([d[c] <= bajo, d[c] <= medio], ["bajo", "medio"], "alto")
+    out["island"], out["sex"] = d["island"], d["sex"]
+    return out
+
+D_tr, D_te = discretizar(entrena), discretizar(prueba)
+T_tr, T_te = a_transacciones(D_tr), a_transacciones(D_te)
+y_tr, y_te = entrena["species"].tolist(), prueba["species"].tolist()
+pd.DataFrame(cortes, index=["corte bajo|medio", "corte medio|alto"]).round(1)
+```
+
+Con 233 casos de entrenamiento, un soporte mínimo del 5 % equivale a 12 pingüinos. Limitamos las reglas a tres condiciones para mantenerlas legibles.
+
+```{python}
+#| label: pinguinos-cba
+min_conteo = int(np.ceil(0.05 * len(T_tr)))
+reglas_p = minar_cars(T_tr, y_tr, min_conteo=min_conteo, min_conf=0.8, max_len=3)
+modelo_p, defecto_p, _ = construir_cba(T_tr, y_tr, reglas_p)
+
+print(f"Reglas de clase minadas: {len(reglas_p)}  ->  reglas en el clasificador: {len(modelo_p)}")
+print(f"Clase por defecto: {defecto_p}\n")
+pd.DataFrame([{"#": i + 1, "regla": texto(r), "conteo": r["conteo"],
+               "confianza": round(r["conf"], 3)} for i, r in enumerate(modelo_p)])
+```
+
+Las reglas son legibles para un biólogo: un pico corto es casi exclusivo de Adelie; aletas largas en la isla Biscoe identifican a Gentoo; un pico largo en la isla Dream, a Chinstrap. Ahora la evaluación en el conjunto de prueba, comparando con la referencia mayoritaria y con un árbol de decisión de profundidad 3 entrenado sobre exactamente las mismas variables discretizadas:
+
+```{python}
+#| label: fig-pinguinos-comparacion
+#| fig-cap: "Exactitud en el conjunto de prueba (100 pingüinos). Ambos clasificadores usan las mismas variables discretizadas; la referencia responde siempre la especie más frecuente."
+import plotly.graph_objects as go
+from sklearn.metrics import accuracy_score
+
+pred_cba = [predecir(modelo_p, defecto_p, t) for t in T_te]
+
+X_todo = pd.get_dummies(pd.concat([D_tr, D_te]), prefix_sep="=")
+arbol_p = DecisionTreeClassifier(max_depth=3, random_state=0).fit(X_todo.loc[D_tr.index], y_tr)
+pred_arbol = arbol_p.predict(X_todo.loc[D_te.index])
+
+resultados = pd.DataFrame({
+    "modelo": ["Referencia (mayoritaria)", "Árbol de decisión (prof. 3)", f"CBA ({len(modelo_p)} reglas)"],
+    "exactitud": [max(Counter(y_te).values()) / len(y_te),
+                  accuracy_score(y_te, pred_arbol), accuracy_score(y_te, pred_cba)],
+})
+fig = go.Figure(go.Bar(x=resultados["exactitud"], y=resultados["modelo"], orientation="h",
+                       marker_color=["#8c959f", "#16a34a", "#2563eb"],
+                       text=resultados["exactitud"].round(3), textposition="outside"))
+fig.update_layout(xaxis=dict(range=[0, 1.1], title="Exactitud en prueba"), height=300,
+                  margin=dict(l=10, r=10, t=20, b=40))
+fig.show()
+```
+
+```{python}
+#| label: fig-pinguinos-confusion
+#| fig-cap: "Matriz de confusión de CBA en el conjunto de prueba. La diagonal son los aciertos; fuera de ella, la especie real (fila) que se confundió con la predicha (columna)."
+import plotly.express as px
+
+especies = ["Adelie", "Chinstrap", "Gentoo"]
+cm = confusion_matrix(y_te, pred_cba, labels=especies)
+fig = px.imshow(cm, x=especies, y=especies, text_auto=True, color_continuous_scale="Blues",
+                labels=dict(x="Predicha", y="Real", color="Pingüinos"))
+fig.update_layout(height=380, coloraxis_showscale=False)
+fig.show()
+```
+
+En este ejemplo CBA acierta alrededor del 98 % de los pingüinos de prueba con diez reglas legibles, frente a cerca del 93 % del árbol poco profundo y el 44 % de la referencia. No conviene generalizar ese orden: con otras particiones o umbrales los resultados cambian, y en la parte de clasificación se estudia cómo compararlos con validación cruzada. Lo importante es que **un conjunto pequeño de patrones frecuentes y confiables puede ser un clasificador competitivo e interpretable**.
+
+## Ventajas, limitaciones y extensiones
+
+**Ventajas.** Las reglas son legibles y auditables, algo valioso en crédito, salud o cumplimiento normativo. El método reutiliza la maquinaria de minado de patrones, maneja bien variables categóricas y encuentra interacciones entre condiciones sin especificarlas de antemano.
+
+**Limitaciones.**
+
+- Las variables numéricas deben **discretizarse**, y el resultado depende de los cortes.
+- El número de reglas candidatas crece rápido con el número de atributos; hay que limitar la longitud y subir el soporte mínimo.
+- Una sola regla decide cada caso. Si la regla de mayor precedencia se apoya en pocos casos, la predicción es frágil, como ocurrió con D6.
+- Con clases desbalanceadas, un soporte mínimo global puede impedir reglas para la clase minoritaria; una solución es fijar un soporte mínimo por clase.
+
+**Extensiones.** CMAR [@li2001cmar] no se queda con la primera regla: combina todas las reglas que se cumplen mediante un voto ponderado por $\chi^2$, lo que reduce la fragilidad anterior. Esta idea, combinar muchos clasificadores débiles en lugar de confiar en uno, reaparecerá en los métodos de ensamble de la parte de clasificación.
+
+## Resumen
+
+- Un clasificador asigna una clase a cada caso a partir de sus variables predictoras; se entrena con ejemplos etiquetados y se evalúa con casos que no vio.
+- CBA restringe las reglas de asociación a las que tienen la clase como consecuente, las ordena por confianza, conteo y generalidad, y selecciona una lista mínima por cobertura.
+- La predicción es la clase de la primera regla que se cumple, o la clase por defecto.
+- La exactitud de entrenamiento es optimista; la validación cruzada y un conjunto de prueba dan estimaciones honestas, que siempre deben compararse con la referencia de la clase mayoritaria.
+
+El siguiente paso natural es la parte de **Clasificación**, que empieza con los árboles de decisión: otro modo de construir reglas «si… entonces…», esta vez partiendo los datos en lugar de enumerar patrones.
+
+[^generalizacion]: La capacidad de acertar en casos no vistos se llama **generalización**. Un modelo puede memorizar los datos de entrenamiento y aun así generalizar mal.
+
+[^sobreajuste]: Este fenómeno se llama **sobreajuste** (*overfitting*): el modelo se adapta a particularidades, incluso al ruido, de la muestra de entrenamiento. Su síntoma es una brecha grande entre el desempeño en entrenamiento y en datos nuevos.
+
+[^loocv]: En la **validación cruzada de $k$ pliegues** los datos se dividen en $k$ partes; se entrena con $k-1$ y se evalúa con la restante, rotando. **Dejar uno fuera** (*leave-one-out*) es el caso $k = n$. Es útil con muy pocos datos porque aprovecha casi toda la muestra para entrenar, aunque su estimación puede ser variable.
+
+[^confusion]: La **matriz de confusión** cruza la clase real (filas) con la predicha (columnas). La exactitud es la suma de la diagonal entre el total; otras métricas, como la precisión y la sensibilidad, se calculan con sus celdas y se estudian en la parte de clasificación.
+
+[^lista-decision]: Una **lista de decisión** es una secuencia ordenada de reglas «si condición entonces clase» que se evalúan en orden hasta que una se cumple. A diferencia de un conjunto de reglas sin orden, nunca hay conflicto: decide la primera.
+
+[^fuga]: Calcular los cortes con todos los datos sería una forma de **fuga de datos** (*data leakage*): el modelo usaría, indirectamente, información del conjunto con el que después se le evalúa. Es el mismo principio de «ajustar en entrenamiento y aplicar en prueba» del capítulo de preprocesamiento.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

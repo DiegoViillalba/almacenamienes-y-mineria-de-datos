@@ -1,0 +1,541 @@
+---
+title: "El Algoritmo Apriori: Paso a Paso y Ejemplo Práctico"
+pagetitle: "El Algoritmo Apriori: Paso a Paso y Ejemplo Práctico"
+open-graph:
+  description: "Desarrolla el algoritmo Apriori paso a paso: unión, poda, conteo y generación de reglas, con un laboratorio interactivo, una implementación desde cero en Python y un ejemplo práctico con mlxtend."
+twitter-card:
+  description: "Desarrolla el algoritmo Apriori paso a paso: unión, poda, conteo y generación de reglas, con un laboratorio interactivo, una implementación desde cero en Python y un ejemplo práctico con mlxtend."
+description: "Desarrolla el algoritmo Apriori paso a paso: unión, poda, conteo y generación de reglas, con un laboratorio interactivo, una implementación desde cero en Python y un ejemplo práctico con mlxtend."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_asociacion.bib, referencias_fp_growth.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+En el capítulo introductorio vimos que el número de itemsets posibles crece como $2^m$ y que la propiedad antimonótona permite descartar regiones enteras de la retícula. En el capítulo de reglas definimos soporte, confianza y lift. **Apriori** [@agrawal1994fast] une ambas ideas en un procedimiento concreto: encuentra **todos** los itemsets frecuentes recorriendo la retícula nivel por nivel y, a partir de ellos, genera las reglas que superan una confianza mínima. Este capítulo lo desarrolla a mano, lo implementa desde cero y lo aplica a un conjunto de canastas de supermercado.
+
+## Intuición: buscar por niveles
+
+Supón que quieres saber qué pares de productos son frecuentes. La estrategia ingenua es contar todos los pares posibles. Apriori razona antes de contar:
+
+> Un par solo puede ser frecuente si **cada uno** de sus productos es frecuente. Un trío solo puede serlo si **cada uno** de sus tres pares lo es.
+
+Así que primero cuenta productos sueltos, después solo los pares formados con productos frecuentes, después solo los tríos cuyos pares son todos frecuentes, y así sucesivamente. Cada nivel usa el resultado del anterior para decidir qué vale la pena contar. El algoritmo se detiene cuando un nivel no produce ningún itemset frecuente.
+
+## Desarrollo manual paso a paso {#sec-generacion}
+
+Usamos los cinco tickets de siempre, con **conteo mínimo 2** (soporte mínimo $0.40$) y **confianza mínima 0.60**. Para que la unión sea reproducible, los ítems dentro de cada itemset se escriben en orden alfabético.
+
+| Ticket | Productos |
+|---|---|
+| $T_1$ | leche, mantequilla, pan |
+| $T_2$ | leche, pan |
+| $T_3$ | leche, mantequilla |
+| $T_4$ | mantequilla, pan |
+| $T_5$ | leche, pan, queso |
+
+: Base de transacciones del ejemplo, con los ítems en orden alfabético. {#tbl-apriori-tickets}
+
+### Nivel 1: contar ítems sueltos
+
+Primer recorrido de los datos. Los candidatos $C_1$ son todos los ítems:
+
+| Candidato | Conteo | ¿Frecuente? |
+|---|---:|---|
+| {leche} | 4 | sí |
+| {mantequilla} | 3 | sí |
+| {pan} | 4 | sí |
+| {queso} | 1 | no |
+
+$L_1 = \{\{\text{leche}\}, \{\text{mantequilla}\}, \{\text{pan}\}\}$. A partir de aquí **queso desaparece del análisis**: ningún itemset que lo contenga puede ser frecuente.
+
+### Nivel 2: unión, poda y conteo
+
+**Unión.** Se combinan pares de itemsets de $L_1$. Con tres ítems frecuentes salen $\binom{3}{2} = 3$ candidatos: {leche, mantequilla}, {leche, pan} y {mantequilla, pan}. Los tres pares con queso nunca se generan.
+
+**Poda.** Cada candidato se conserva solo si todos sus subconjuntos de tamaño 1 están en $L_1$. Aquí todos pasan.
+
+**Conteo.** Segundo recorrido de los datos:
+
+| Candidato | Tickets | Conteo | ¿Frecuente? |
+|---|---|---:|---|
+| {leche, mantequilla} | $T_1, T_3$ | 2 | sí |
+| {leche, pan} | $T_1, T_2, T_5$ | 3 | sí |
+| {mantequilla, pan} | $T_1, T_4$ | 2 | sí |
+
+$L_2$ contiene los tres pares.
+
+### Nivel 3: la unión exige un prefijo común
+
+Para formar candidatos de tamaño 3 se unen **dos itemsets de $L_2$ que comparten su primer ítem**[^prefijo]: {leche, mantequilla} y {leche, pan} comparten «leche» y producen {leche, mantequilla, pan}. El par {mantequilla, pan} no tiene con quién combinarse.
+
+**Poda.** Los tres subconjuntos de tamaño 2 de {leche, mantequilla, pan} son {leche, mantequilla}, {leche, pan} y {mantequilla, pan}; los tres están en $L_2$, así que el candidato sobrevive.
+
+**Conteo.** Tercer recorrido: solo $T_1$ contiene los tres productos, conteo 1 < 2. $L_3 = \varnothing$ y **el algoritmo termina**.
+
+En total se contaron $4 + 3 + 1 = 8$ candidatos en tres recorridos de los datos, en lugar de los 15 itemsets posibles. Hay 6 itemsets frecuentes.
+
+### Generación de reglas
+
+Cada itemset frecuente $Z$ con al menos dos ítems produce reglas $A \Rightarrow Z \setminus A$. Su confianza **no requiere volver a los datos**: todos los soportes necesarios ya se contaron.
+$$\text{conf}(A \Rightarrow Z \setminus A) = \frac{\sigma(Z)}{\sigma(A)}.$$
+
+| Itemset | Regla | Confianza | ¿≥ 0.60? | Lift |
+|---|---|---|---|---:|
+| {leche, mantequilla} | leche ⇒ mantequilla | 2/4 = 0.50 | no | 0.833 |
+| {leche, mantequilla} | mantequilla ⇒ leche | 2/3 = 0.67 | sí | 0.833 |
+| {leche, pan} | leche ⇒ pan | 3/4 = 0.75 | sí | 0.938 |
+| {leche, pan} | pan ⇒ leche | 3/4 = 0.75 | sí | 0.938 |
+| {mantequilla, pan} | mantequilla ⇒ pan | 2/3 = 0.67 | sí | 0.833 |
+| {mantequilla, pan} | pan ⇒ mantequilla | 2/4 = 0.50 | no | 0.833 |
+
+: Reglas candidatas del ejemplo. El lift se calcula como confianza entre el soporte del consecuente. {#tbl-reglas-apriori}
+
+Cuatro reglas superan la confianza mínima. Pero observa la última columna: **todos los lifts son menores que 1**. En este ejemplo diminuto, cada par de productos aparece junto un poco *menos* de lo que esperaríamos por azar. Es el recordatorio del capítulo anterior: Apriori encuentra lo frecuente y lo confiable, no necesariamente lo interesante.
+
+## Formalización
+
+::: {.callout-note appearance="minimal"}
+**Algoritmo Apriori** [@agrawal1994fast].
+
+**Entrada:** transacciones $\mathcal{D}$, conteo mínimo $s_{\min}$.
+
+1. $L_1 \leftarrow \{\{i\} : \sigma(\{i\}) \ge s_{\min}\}$ (primer recorrido).
+2. Para $k = 2, 3, \ldots$ mientras $L_{k-1} \neq \varnothing$:
+   a. **Unión:** $C_k \leftarrow \{\, A \cup B : A, B \in L_{k-1},\ A \text{ y } B \text{ coinciden en sus primeros } k-2 \text{ ítems} \,\}$.
+   b. **Poda:** eliminar de $C_k$ todo candidato con algún $(k-1)$-subconjunto fuera de $L_{k-1}$.
+   c. **Conteo:** un recorrido de $\mathcal{D}$ para obtener $\sigma(c)$ de cada $c \in C_k$.
+   d. $L_k \leftarrow \{c \in C_k : \sigma(c) \ge s_{\min}\}$.
+3. Devolver $\bigcup_k L_k$.
+:::
+
+**Corrección.** Todo $k$-itemset frecuente $Z$ se genera en la unión: si $Z = \{z_1 < \cdots < z_k\}$, sus subconjuntos $Z \setminus \{z_k\}$ y $Z \setminus \{z_{k-1}\}$ son frecuentes por antimonotonía, comparten los primeros $k-2$ ítems y su unión es $Z$. La poda solo descarta candidatos que la antimonotonía garantiza infrecuentes. Por tanto, Apriori es **completo**: no pierde ningún itemset frecuente.
+
+**Costo.** Apriori hace un recorrido de los datos por nivel, es decir, $k_{\max} + 1$ recorridos si el itemset frecuente más largo tiene $k_{\max}$ ítems. El cuello de botella suele ser el nivel 2: con $|L_1|$ ítems frecuentes hay $\binom{|L_1|}{2}$ candidatos, y con miles de productos eso son millones de pares. FP-Growth, que se estudia más adelante, ataca precisamente este costo.
+
+**Reglas.** Para un itemset frecuente $Z$, mover ítems del antecedente al consecuente solo puede bajar la confianza: si $A' \subset A$, entonces $\sigma(A') \ge \sigma(A)$ y
+$$\text{conf}(A' \Rightarrow Z \setminus A') = \frac{\sigma(Z)}{\sigma(A')} \le \frac{\sigma(Z)}{\sigma(A)} = \text{conf}(A \Rightarrow Z \setminus A).$$
+Por eso las reglas también se generan por niveles: si $\{a, b\} \Rightarrow \{c\}$ no alcanza la confianza mínima, tampoco la alcanzará $\{a\} \Rightarrow \{b, c\}$.
+
+## Laboratorio: Apriori nivel por nivel
+
+El laboratorio ejecuta Apriori sobre la @tbl-apriori-tickets. Recorre los pasos con los botones: en cada nivel verás qué candidatos produjo la unión, cuáles eliminó la poda y cuáles resultaron frecuentes al contar. El último paso genera las reglas.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="apr-lab">
+  <p class="plab-eyebrow">Laboratorio · Algoritmo Apriori</p>
+  <h3 class="plab-title">¿Qué candidatos se generan, se podan y se cuentan en cada nivel?</h3>
+  <p class="plab-sub">Elige un paso, ajusta el conteo mínimo y la confianza mínima y compara con el desarrollo manual.</p>
+
+  <div class="plab-controls">
+    <label>Conteo mínimo: <b id="apr-sup-v"></b><input type="range" id="apr-sup" min="1" max="5" step="1" value="2"></label>
+    <label>Confianza mínima: <b id="apr-conf-v"></b><input type="range" id="apr-conf" min="0.3" max="1" step="0.05" value="0.6"></label>
+  </div>
+  <div class="plab-steps" id="apr-steps"></div>
+
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4 id="apr-step-title"></h4>
+      <div id="apr-table" class="plab-scroll"></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Candidatos por nivel</h4>
+      <svg id="apr-svg" role="img" aria-label="Barras con candidatos podados, contados y frecuentes por nivel"></svg>
+      <div class="plab-legend">
+        <span><i class="dot" style="background:var(--lab-axis)"></i>podados</span>
+        <span><i class="dot" style="background:var(--lab-s5)"></i>contados e infrecuentes</span>
+        <span><i class="dot" style="background:var(--lab-s3)"></i>frecuentes</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Recorridos de los datos</span><strong id="apr-scans"></strong></div>
+    <div class="plab-stat"><span>Candidatos contados</span><strong id="apr-counted"></strong></div>
+    <div class="plab-stat"><span>Itemsets frecuentes</span><strong id="apr-freq"></strong></div>
+    <div class="plab-stat"><span>Reglas aceptadas</span><strong id="apr-rules"></strong></div>
+  </div>
+  <p class="plab-note" id="apr-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('apr-lab');
+  const $ = s => root.querySelector(s);
+  const TX = [['leche','mantequilla','pan'], ['leche','pan'], ['leche','mantequilla'], ['mantequilla','pan'], ['leche','pan','queso']];
+  const N = TX.length;
+  const ITEMS = [...new Set(TX.flat())].sort();
+  const key = s => s.join(',');
+  const count = s => TX.filter(t => s.every(i => t.includes(i))).length;
+  const br = s => '{' + s.join(', ') + '}';
+  const subsets = (s, k) => k === 0 ? [[]] : s.length < k ? [] :
+    [...subsets(s.slice(1), k - 1).map(r => [s[0], ...r]), ...subsets(s.slice(1), k)];
+  let step = 0;
+
+  function run(minc) {
+    const levels = [];
+    let C = ITEMS.map(i => ({ s: [i], from: null }));
+    let prev = null;
+    for (let k = 1; C.length; k++) {
+      const rows = C.map(c => {
+        if (c.pruned) return Object.assign(c, { status: 'pruned' });
+        const n = count(c.s);
+        return Object.assign(c, { n, status: n >= minc ? 'freq' : 'infreq' });
+      });
+      const L = rows.filter(r => r.status === 'freq').map(r => r.s);
+      levels.push({ k, rows, L });
+      if (!L.length) break;
+      // Unión de itemsets con los mismos primeros k-1 ítems, y poda.
+      const Lset = new Set(L.map(key)), next = [];
+      for (let a = 0; a < L.length; a++) for (let b = a + 1; b < L.length; b++) {
+        if (key(L[a].slice(0, k - 1)) !== key(L[b].slice(0, k - 1))) continue;
+        const s = [...new Set([...L[a], ...L[b]])].sort();
+        const bad = subsets(s, k).find(x => !Lset.has(key(x)));
+        next.push({ s, from: [L[a], L[b]], pruned: !!bad, bad });
+      }
+      C = next; prev = L;
+    }
+    return levels;
+  }
+
+  function rules(levels, minconf) {
+    const sup = {}; levels.forEach(l => l.rows.forEach(r => { if (r.status === 'freq') sup[key(r.s)] = r.n; }));
+    const out = [];
+    levels.filter(l => l.k >= 2).forEach(l => l.L.forEach(Z => {
+      for (let a = 1; a < Z.length; a++) subsets(Z, a).forEach(A => {
+        const B = Z.filter(i => !A.includes(i));
+        const conf = sup[key(Z)] / sup[key(A)], lift = conf / (sup[key(B)] / N);
+        out.push({ A, B, n: sup[key(Z)], conf, lift, ok: conf >= minconf - 1e-9 });
+      });
+    }));
+    return out;
+  }
+
+  function render() {
+    const minc = +$('#apr-sup').value, minconf = +$('#apr-conf').value;
+    $('#apr-sup-v').textContent = `${minc} (soporte ${K.fmt(minc / N, 2)})`;
+    $('#apr-conf-v').textContent = K.fmt(minconf, 2);
+    const levels = run(minc), R = rules(levels, minconf);
+    const nSteps = levels.length + 1;
+    if (step >= nSteps) step = nSteps - 1;
+    $('#apr-steps').innerHTML = levels.map((l, i) => `<button type="button" data-i="${i}" aria-pressed="${i === step}">Nivel k = ${l.k}</button>`).join('') +
+      `<button type="button" data-i="${levels.length}" aria-pressed="${step === levels.length}">Reglas</button>`;
+
+    const counted = levels.reduce((s, l) => s + l.rows.filter(r => r.status !== 'pruned').length, 0);
+    const nFreq = levels.reduce((s, l) => s + l.L.length, 0);
+    $('#apr-scans').textContent = levels.length;
+    $('#apr-counted').textContent = `${counted} de ${2 ** ITEMS.length - 1}`;
+    $('#apr-freq').textContent = nFreq;
+    $('#apr-rules').textContent = `${R.filter(r => r.ok).length} de ${R.length}`;
+
+    const note = $('#apr-note');
+    if (step < levels.length) {
+      const l = levels[step];
+      $('#apr-step-title').textContent = l.k === 1 ? 'Nivel 1: todos los ítems son candidatos' : `Nivel ${l.k}: unión de L${l.k - 1}, poda y conteo`;
+      $('#apr-table').innerHTML = '<table class="plab-table"><thead><tr><th>Candidato</th>' + (l.k > 1 ? '<th style="text-align:left">Unión de</th>' : '') +
+        '<th>Conteo</th><th style="text-align:left">Estado</th></tr></thead><tbody>' +
+        l.rows.map(r => `<tr${r.status === 'freq' ? ' class="hl"' : ''}><td>${br(r.s)}</td>` +
+          (l.k > 1 ? `<td style="text-align:left">${br(r.from[0])} + ${br(r.from[1])}</td>` : '') +
+          `<td>${r.status === 'pruned' ? '—' : r.n}</td><td style="text-align:left">${r.status === 'freq' ? 'frecuente' : r.status === 'infreq' ? 'infrecuente' : 'podado: ' + br(r.bad) + ' no está en L' + (l.k - 1)}</td></tr>`).join('') +
+        '</tbody></table>';
+      const pr = l.rows.filter(r => r.status === 'pruned').length, inf = l.rows.filter(r => r.status === 'infreq').length;
+      note.className = l.L.length ? 'plab-note good' : 'plab-note warn';
+      note.textContent = `Nivel ${l.k}: ${l.rows.length} candidato(s); ${pr} podado(s) sin contar, ${l.rows.length - pr} contado(s) en un recorrido de los datos, ${inf} infrecuente(s) y ${l.L.length} frecuente(s).` +
+        (l.L.length ? (step === levels.length - 1 ? ' La unión no produce candidatos de tamaño mayor: el algoritmo termina.' : '') : ' Ningún itemset frecuente en este nivel: el algoritmo termina.');
+    } else {
+      $('#apr-step-title').textContent = 'Reglas generadas a partir de los itemsets frecuentes';
+      $('#apr-table').innerHTML = R.length ? '<table class="plab-table"><thead><tr><th>Regla</th><th>Conf.</th><th>Lift</th><th>¿Aceptada?</th></tr></thead><tbody>' +
+        R.map(r => `<tr${r.ok ? ' class="hl"' : ''}><td>${br(r.A)} ⇒ ${br(r.B)}</td><td style="white-space:nowrap">${r.n}/${Math.round(r.n / r.conf)} = ${K.fmt(r.conf, 2)}</td><td>${K.fmt(r.lift, 3)}</td><td>${r.ok ? 'sí' : 'no'}</td></tr>`).join('') +
+        '</tbody></table>' : '<p class="plab-sub">No hay itemsets frecuentes con dos o más ítems, así que no se puede formar ninguna regla.</p>';
+      const ok = R.filter(r => r.ok), pos = ok.filter(r => r.lift > 1).length;
+      note.className = ok.length && !pos ? 'plab-note warn' : 'plab-note';
+      note.textContent = !R.length ? 'Sube el número de itemsets frecuentes bajando el conteo mínimo.'
+        : `${ok.length} de ${R.length} reglas superan la confianza mínima ${K.fmt(minconf, 2)}; ${pos} de ellas tienen lift mayor que 1.` +
+          (ok.length && !pos ? ' Alta confianza no implica asociación positiva: en estos datos todos los pares aparecen juntos menos de lo esperado por azar.' : '');
+    }
+
+    // Barras apiladas por nivel.
+    const maxC = Math.max(...levels.map(l => l.rows.length), 1);
+    const c = K.chart($('#apr-svg'), { width: 380, height: 230, x: [0.4, levels.length + 0.6], y: [0, maxC], margin: { left: 36, bottom: 40 } });
+    c.axes({ xTicks: 0, yTicks: Math.min(maxC, 5), xLabel: 'nivel k', yLabel: 'candidatos', yFmt: v => K.fmt(v, 0), xCats: levels.map(l => [l.k, `k = ${l.k}`]) });
+    levels.forEach((l, i) => {
+      const f = l.L.length, inf = l.rows.filter(r => r.status === 'infreq').length, pr = l.rows.length - f - inf;
+      const x = l.k, w = 0.32;
+      if (f) c.rect(x - w, 0, x + w, f, 's3');
+      if (inf) c.rect(x - w, f, x + w, f + inf, 's5');
+      if (pr) c.rect(x - w, f + inf, x + w, l.rows.length, 'muted');
+      if (i === step) c.rect(x - w - 0.06, 0, x + w + 0.06, l.rows.length, 's2 line thin');
+    });
+  }
+
+  $('#apr-steps').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { step = +b.dataset.i; render(); } });
+  root.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio ejecuta Apriori nivel por nivel sobre la @tbl-apriori-tickets. Valores de referencia con conteo mínimo 2 y confianza mínima 0.60: tres recorridos de los datos, 8 candidatos contados, 6 itemsets frecuentes y 4 de 6 reglas aceptadas, todas con lift menor que 1. Con conteo mínimo 1 la unión produce tres candidatos de tamaño 3 y aparece la poda: {leche, mantequilla, queso} se elimina sin contarlo porque {mantequilla, queso} no es frecuente.
+:::
+
+**Guía del laboratorio.**
+
+1. Comprueba el estado inicial contra el desarrollo manual: en el nivel 2 deben aparecer tres candidatos frecuentes; en el nivel 3, un solo candidato con conteo 1.
+2. Predice antes de mover: con conteo mínimo 1, ¿cuántos candidatos de tamaño 3 producirá la unión? ¿Alguno se podará? Comprueba en el nivel 3 cuál es el subconjunto que provoca la poda.
+3. Con conteo mínimo 3, ¿cuántos recorridos de los datos se necesitan y cuántas reglas quedan?
+4. En el paso «Reglas», sube la confianza mínima a 0.70. ¿Qué reglas se pierden? Explica por qué *leche ⇒ pan* y *pan ⇒ leche* tienen la misma confianza aquí.
+
+## Implementación desde cero en Python
+
+La función `apriori_gen` implementa la unión con prefijo común y la poda; `apriori_desde_cero` alterna generación y conteo y guarda estadísticas por nivel.
+
+```{python}
+#| label: apriori-desde-cero
+from itertools import combinations
+import pandas as pd
+
+def apriori_gen(L_prev, k):
+    """Candidatos de tamaño k a partir de los (k-1)-itemsets frecuentes (tuplas ordenadas)."""
+    L_prev = sorted(L_prev)
+    frecuentes = set(L_prev)
+    candidatos, podados = [], []
+    for i in range(len(L_prev)):
+        for j in range(i + 1, len(L_prev)):
+            a, b = L_prev[i], L_prev[j]
+            if a[:k - 2] != b[:k - 2]:            # unión: mismo prefijo de k-2 ítems
+                continue
+            c = tuple(sorted(set(a) | set(b)))
+            if all(s in frecuentes for s in combinations(c, k - 1)):   # poda
+                candidatos.append(c)
+            else:
+                podados.append(c)
+    return candidatos, podados
+
+def apriori_desde_cero(transacciones, min_conteo):
+    T = [frozenset(t) for t in transacciones]
+    C = [(i,) for i in sorted({i for t in T for i in t})]
+    soporte, niveles, k = {}, [], 1
+    podados = []
+    while C:
+        conteos = {c: sum(set(c) <= t for t in T) for c in C}     # un recorrido de los datos
+        L = [c for c in C if conteos[c] >= min_conteo]
+        soporte.update({c: conteos[c] for c in L})
+        niveles.append({"k": k, "podados": len(podados), "contados": len(C), "frecuentes": len(L)})
+        k += 1
+        C, podados = apriori_gen(L, k)
+        if not L:
+            break
+    return soporte, pd.DataFrame(niveles)
+
+tickets = [["leche", "mantequilla", "pan"], ["leche", "pan"], ["leche", "mantequilla"],
+           ["mantequilla", "pan"], ["leche", "pan", "queso"]]
+soporte, niveles = apriori_desde_cero(tickets, min_conteo=2)
+print({", ".join(s): c for s, c in soporte.items()})
+niveles
+```
+
+La generación de reglas usa solo los conteos ya calculados:
+
+```{python}
+#| label: apriori-reglas-desde-cero
+def generar_reglas(soporte, n, min_conf):
+    filas = []
+    for Z, cZ in soporte.items():
+        for r in range(1, len(Z)):
+            for A in combinations(Z, r):
+                B = tuple(i for i in Z if i not in A)
+                conf = cZ / soporte[A]
+                filas.append({"regla": f"{set(A)} ⇒ {set(B)}", "soporte": cZ / n,
+                              "confianza": round(conf, 3),
+                              "lift": round(conf / (soporte[B] / n), 3),
+                              "aceptada": conf >= min_conf})
+    return pd.DataFrame(filas)
+
+generar_reglas(soporte, n=len(tickets), min_conf=0.6)
+```
+
+Los resultados coinciden con la @tbl-reglas-apriori y con el laboratorio. En la práctica se usa una implementación optimizada como la de `mlxtend` [@raschka2018mlxtend], que trabaja sobre la matriz binaria:
+
+```{python}
+#| label: apriori-mlxtend-mini
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, association_rules
+
+te = TransactionEncoder()
+df_mini = pd.DataFrame(te.fit_transform(tickets), columns=te.columns_)
+frecuentes_mini = apriori(df_mini, min_support=2 / 5, use_colnames=True)
+frecuentes_mini
+```
+
+## Ejemplo práctico: canastas de supermercado
+
+Pasamos a una muestra de 50 canastas con 15 productos, inspirada en el conjunto *Groceries* (la misma que usan los capítulos de reglas y de métricas). El objetivo de negocio es típico: encontrar combinaciones de productos para promociones cruzadas.
+
+```{python}
+#| label: practico-datos
+transacciones_raw = [
+    ["whole milk", "yogurt", "bread"], ["whole milk", "butter", "eggs"],
+    ["whole milk", "yogurt", "vegetables"], ["bread", "butter", "eggs"],
+    ["whole milk", "soda", "chips"], ["yogurt", "fruit", "bread"],
+    ["whole milk", "coffee", "bread"], ["eggs", "butter", "cheese"],
+    ["whole milk", "vegetables", "fruit"], ["soda", "chips", "candy"],
+    ["whole milk", "bread", "eggs"], ["yogurt", "fruit", "granola"],
+    ["whole milk", "coffee", "sugar"], ["bread", "eggs", "cheese"],
+    ["whole milk", "yogurt", "coffee"], ["butter", "eggs", "bread"],
+    ["chips", "soda", "beer"], ["whole milk", "vegetables", "butter"],
+    ["yogurt", "granola", "fruit"], ["whole milk", "bread", "sugar"],
+    ["eggs", "cheese", "vegetables"], ["whole milk", "soda", "bread"],
+    ["coffee", "sugar", "bread"], ["yogurt", "whole milk", "fruit"],
+    ["butter", "whole milk", "eggs"], ["bread", "chips", "soda"],
+    ["whole milk", "granola", "yogurt"], ["vegetables", "fruit", "bread"],
+    ["whole milk", "butter", "cheese"], ["eggs", "bread", "coffee"],
+    ["whole milk", "yogurt", "butter"], ["chips", "candy", "soda"],
+    ["whole milk", "coffee", "eggs"], ["bread", "vegetables", "fruit"],
+    ["yogurt", "cheese", "eggs"], ["whole milk", "bread", "coffee"],
+    ["soda", "beer", "chips"], ["whole milk", "vegetables", "eggs"],
+    ["yogurt", "granola", "whole milk"], ["bread", "butter", "sugar"],
+    ["whole milk", "fruit", "cheese"], ["eggs", "vegetables", "butter"],
+    ["whole milk", "chips", "soda"], ["coffee", "bread", "butter"],
+    ["yogurt", "whole milk", "bread"], ["eggs", "cheese", "bread"],
+    ["whole milk", "sugar", "butter"], ["vegetables", "fruit", "yogurt"],
+    ["whole milk", "bread", "butter"], ["granola", "yogurt", "fruit"],
+]
+n = len(transacciones_raw)
+productos = sorted({i for t in transacciones_raw for i in t})
+print(f"{n} canastas, {len(productos)} productos, {2**len(productos) - 1:,} itemsets posibles")
+```
+
+### Paso 1: elegir el soporte mínimo en unidades de canastas
+
+Un soporte mínimo de $0.10$ significa al menos **5 canastas** de 50. Es el mínimo razonable para que un patrón no sea una coincidencia aislada; con datos reales de miles de tickets se puede bajar el soporte relativo manteniendo un conteo absoluto suficiente.
+
+### Paso 2: ejecutar Apriori y mirar el trabajo por nivel
+
+```{python}
+#| label: fig-practico-niveles
+#| fig-cap: "Trabajo de Apriori por nivel con soporte mínimo 0.10 (5 canastas). En el nivel 2 se cuentan 78 pares, pero solo 13 resultan frecuentes; en el nivel 3, la poda reduce los candidatos a 5 y ninguno alcanza el umbral."
+import plotly.graph_objects as go
+
+soporte_g, niveles_g = apriori_desde_cero(transacciones_raw, min_conteo=5)
+niveles_g["infrecuentes"] = niveles_g["contados"] - niveles_g["frecuentes"]
+
+fig = go.Figure()
+fig.add_bar(x=niveles_g["k"], y=niveles_g["frecuentes"], name="frecuentes", marker_color="#16a34a")
+fig.add_bar(x=niveles_g["k"], y=niveles_g["infrecuentes"], name="contados e infrecuentes", marker_color="#dc2626")
+fig.add_bar(x=niveles_g["k"], y=niveles_g["podados"], name="podados sin contar", marker_color="#8c959f")
+fig.update_layout(barmode="stack", height=360, xaxis=dict(title="Nivel k", dtick=1),
+                  yaxis_title="Candidatos")
+fig.show()
+print(f"Candidatos contados: {niveles_g['contados'].sum()} de {2**len(productos) - 1:,} posibles")
+```
+
+Apriori resolvió el problema contando menos de 100 itemsets de más de 32 000 posibles. Con `mlxtend` el resultado es el mismo:
+
+```{python}
+#| label: practico-mlxtend
+te = TransactionEncoder()
+df = pd.DataFrame(te.fit_transform(transacciones_raw), columns=te.columns_)
+
+itemsets = apriori(df, min_support=0.10, use_colnames=True)
+itemsets["k"] = itemsets["itemsets"].apply(len)
+print(itemsets["k"].value_counts().sort_index().to_string())
+assert len(itemsets) == len(soporte_g)          # misma respuesta que la versión desde cero
+itemsets.sort_values("support", ascending=False).head(8)
+```
+
+### Paso 3: generar reglas y leerlas con lift
+
+```{python}
+#| label: practico-reglas
+reglas = association_rules(itemsets, metric="confidence", min_threshold=0.40)
+reglas["regla"] = (reglas["antecedents"].apply(lambda s: ", ".join(sorted(s))) + " ⇒ " +
+                   reglas["consequents"].apply(lambda s: ", ".join(sorted(s))))
+print(f"Reglas con confianza ≥ 0.40: {len(reglas)}")
+reglas.sort_values("lift", ascending=False)[["regla", "support", "confidence", "lift"]].round(3)
+```
+
+```{python}
+#| label: fig-practico-reglas
+#| fig-cap: "Reglas con confianza ≥ 0.40. El eje horizontal es la confianza; el vertical, el lift. La línea discontinua marca lift = 1. Las reglas hacia *whole milk* tienen confianza respetable pero lift cercano o inferior a 1: la leche está en más de la mitad de las canastas."
+import plotly.express as px
+
+fig = px.scatter(reglas, x="confidence", y="lift", size="support", color="lift",
+                 color_continuous_scale="RdBu", color_continuous_midpoint=1.0,
+                 hover_name="regla", size_max=22,
+                 labels=dict(confidence="Confianza", lift="Lift", support="Soporte"))
+fig.add_hline(y=1, line_dash="dash", line_color="gray")
+fig.update_layout(height=430)
+fig.show()
+```
+
+La lectura de negocio sale del cuadrante superior: reglas como *chips ⇒ soda* o *granola ⇒ yogurt* combinan confianza alta con lift muy superior a 1. Son candidatas naturales para una promoción cruzada. Las reglas hacia *whole milk* son el caso contrario: frecuentes, aparentemente confiables y casi sin información.
+
+### Paso 4: la sensibilidad a los umbrales {#sec-apriori-sensibilidad}
+
+Los umbrales de Apriori son decisiones del analista. Antes de reportar reglas conviene ver cuánto cambia el resultado al moverlos:
+
+```{python}
+#| label: sensibilidad-parametros
+#| fig-cap: "Número de reglas generadas (confianza mínima 0.3) y lift mediano en función del soporte mínimo. Al subir el soporte quedan menos reglas, pero las que sobreviven tienden a tener mayor lift."
+import numpy as np
+
+resultados_sens = []
+for s in [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]:
+    its = apriori(df, min_support=s, use_colnames=True)
+    r = association_rules(its, metric="confidence", min_threshold=0.3) if len(its) else pd.DataFrame()
+    resultados_sens.append({"min_support": s, "n_reglas": len(r),
+                            "lift_med": r["lift"].median() if len(r) else np.nan})
+df_sens = pd.DataFrame(resultados_sens)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=df_sens["min_support"], y=df_sens["n_reglas"], mode="lines+markers",
+                         name="N.º de reglas", line=dict(color="#dc2626", width=2)))
+fig.add_trace(go.Scatter(x=df_sens["min_support"], y=df_sens["lift_med"], mode="lines+markers",
+                         name="Lift mediano", yaxis="y2", line=dict(color="#2563eb", width=2, dash="dash")))
+fig.update_layout(xaxis_title="Soporte mínimo", yaxis=dict(title="N.º de reglas"),
+                  yaxis2=dict(title="Lift mediano", overlaying="y", side="right"),
+                  legend=dict(x=0.6, y=0.95), height=400)
+fig.show()
+```
+
+Reportar reglas sin reportar los umbrales con los que se obtuvieron es una práctica deficiente: el conjunto de reglas es una función de los datos **y** de los parámetros. El capítulo de métricas avanzadas retoma este análisis con más detalle.
+
+## Ventajas y limitaciones
+
+| Aspecto | Apriori |
+|---|---|
+| Idea central | Búsqueda por niveles con poda por antimonotonía |
+| Recorridos de los datos | Uno por nivel ($k_{\max} + 1$) |
+| Cuello de botella | Número de candidatos del nivel 2 con muchos ítems frecuentes |
+| Memoria | Baja: solo candidatos y conteos del nivel actual |
+| Fortaleza | Fácil de entender, implementar y explicar; completo y exacto |
+| Debilidad | Lento en datos densos o con soporte mínimo bajo |
+
+: Resumen de Apriori. {#tbl-resumen-apriori}
+
+Estas debilidades motivan **FP-Growth**, que comprime los datos en un árbol y evita generar candidatos. Antes de llegar a él, el siguiente capítulo profundiza en cómo evaluar las reglas que Apriori produce.
+
+[^prefijo]: Unir solo itemsets con el mismo prefijo de $k-2$ ítems evita generar el mismo candidato varias veces. Si se unieran todos los pares de $L_{k-1}$, {leche, mantequilla, pan} saldría de tres combinaciones distintas.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::
