@@ -17,7 +17,7 @@ format:
     number-sections: true
     code-fold: true
     code-tools: true
-    code-summary: "Mostrar codigo"
+    code-summary: "Mostrar código"
     fig-align: center
     theme: cosmo
     highlight-style: github
@@ -36,7 +36,7 @@ execute:
   warning: false
   message: false
   cache: false
-bibliography: [referencias_xgboost.bib, ../../references.bib]
+bibliography: [referencias_xgboost.bib, referencias_fundamentos_clasificacion.bib, ../../references.bib]
 crossref:
   fig-title: "Figura"
   tbl-title: "Tabla"
@@ -44,19 +44,127 @@ crossref:
 jupyter: python3
 ---
 
-XGBoost (*eXtreme Gradient Boosting*) fue propuesto por Chen y Guestrin en 2016 [@chen2016xgboost] y desde entonces ha dominado competencias de machine learning en Kaggle y otros benchmarks de referencia. Se trata de una implementacion regularizada y optimizada a segundo orden del algoritmo de gradient boosting [@friedman2001greedy], con innovaciones clave en la busqueda aproximada de particiones, el manejo eficiente de datos dispersos, y un diseno de sistema orientado a la escalabilidad. Este capitulo cubre los fundamentos matematicos del algoritmo, sus hiperparametros principales, la interpretacion de importancia de variables mediante SHAP, y la implementacion practica en Python.
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-## De los arboles de decision al boosting
+
+XGBoost (*eXtreme Gradient Boosting*) fue propuesto por Chen y Guestrin en 2016 [@chen2016xgboost] y desde entonces ha dominado competencias de machine learning en Kaggle y otros benchmarks de referencia. Se trata de una implementación regularizada y optimizada a segundo orden del algoritmo de gradient boosting [@friedman2001greedy], con innovaciones clave en la búsqueda aproximada de particiones, el manejo eficiente de datos dispersos, y un diseño de sistema orientado a la escalabilidad. Este capitulo cubre los fundamentos matemáticos del algoritmo, sus hiperparámetros principales, la interpretación de importancia de variables mediante SHAP, y la implementación práctica en Python.
+
+## Intuición: cada árbol corrige al anterior
+
+Imagina que estimas el precio de una casa. Un primer tasador da una cifra; un segundo no tasa la casa desde cero, sino que estudia **cuánto se equivocó el primero** y propone una corrección; un tercero corrige lo que aún falta, y así sucesivamente. Si cada corrección es pequeña y prudente, la suma converge a una buena estimación. Eso es el *gradient boosting*: una suma de árboles pequeños en la que cada uno aprende los **residuos** que dejaron los anteriores. El capítulo anterior presentó AdaBoost, que repesa ejemplos; aquí el mecanismo es más general: cada árbol nuevo se ajusta al **gradiente de la pérdida**, lo que permite usar cualquier pérdida diferenciable, desde el error cuadrático hasta la log-loss de la clasificación.
+
+## Construcción paso a paso
+
+### Gradient boosting a mano
+
+Cinco casas con un tamaño $x$ y un precio $y$ (en millones):
+
+| $x$ | 1 | 2 | 3 | 4 | 5 |
+|---|---:|---:|---:|---:|---:|
+| $y$ | 2 | 4 | 9 | 10 | 15 |
+
+: Cinco observaciones para construir gradient boosting a mano. {#tbl-gb-datos}
+
+Usaremos tocones de regresión (árboles de un solo corte) y una **tasa de aprendizaje** $\eta = 0.5$.
+
+**Paso 1. Predicción inicial.** Con pérdida cuadrática, la mejor constante es el promedio: $F_0 = 40/5 = 8$. Su suma de cuadrados es $\text{SSE}_0 = 36 + 16 + 1 + 4 + 49 = 106$.
+
+**Paso 2. Residuos y primer árbol.** Los residuos $r_i = y_i - F_0$ son $(-6, -4, 1, 2, 7)$. El mejor tocón para esos residuos corta entre $x = 2$ y $x = 3$: a la izquierda predice el promedio $-5$ y a la derecha $(1 + 2 + 7)/3 = 3.33$.
+
+**Paso 3. Encoger y sumar.** No sumamos la corrección completa, sino la mitad:
+$$F_1(x) = F_0 + \eta\,h_1(x) = \begin{cases} 8 + 0.5(-5) = 5.5 & x \le 2.5,\\ 8 + 0.5(3.33) = 9.67 & x > 2.5.\end{cases}$$
+La suma de cuadrados baja a $\text{SSE}_1 = 43.5$.
+
+**Paso 4. Repetir.** Los nuevos residuos son $(-3.5, -1.5, -0.67, 0.33, 5.33)$: el gran error que queda es la última casa. El segundo tocón corta entre $x = 4$ y $x = 5$, con valores $-1.33$ y $5.33$, y $F_2 = (4.83, 4.83, 9, 9, 12.33)$, con $\text{SSE}_2 = 16.83$.
+
+| Ronda | Predicciones $F_m$ | Corte del tocón | SSE |
+|---:|---|---|---:|
+| 0 | 8, 8, 8, 8, 8 | — | 106.00 |
+| 1 | 5.50, 5.50, 9.67, 9.67, 9.67 | $x \le 2.5$ | 43.50 |
+| 2 | 4.83, 4.83, 9.00, 9.00, 12.33 | $x \le 4.5$ | 16.83 |
+| 3 | 3.92, 3.92, 9.61, 9.61, 12.94 | $x \le 2.5$ | 8.43 |
+
+: Tres rondas de gradient boosting con η = 0.5. {#tbl-gb-rondas}
+
+Dos observaciones importantes. Primero, un mismo corte puede reaparecer (rondas 1 y 3): cada ronda solo ve los residuos actuales. Segundo, con $\eta = 1$ el primer tocón corregiría por completo su parte del error, pero también aprendería por completo su ruido; con $\eta$ pequeño hacen falta más rondas, a cambio de un modelo más estable. Esa es la **contracción** (*shrinkage*).
+
+### Lo que agrega XGBoost: gradiente, hessiano y regularización
+
+Con pérdida cuadrática $\frac{1}{2}(y - F)^2$, el **gradiente** respecto a la predicción es $g_i = F - y_i = -r_i$ y la **segunda derivada** (hessiano) es $h_i = 1$. En la primera ronda, $g = (6, 4, -1, -2, -7)$. XGBoost calcula el valor de cada hoja con la @eq-peso-optimo, $w = -G/(H + \lambda)$, donde $G$ y $H$ suman $g_i$ y $h_i$ de los ejemplos de la hoja. Con $\lambda = 1$ y el corte $x \le 2.5$:
+
+$$
+w_L = -\frac{6 + 4}{2 + 1} = -3.33, \qquad w_R = -\frac{-1 - 2 - 7}{3 + 1} = 2.5.
+$$
+
+Comparados con los promedios del tocón clásico ($-5$ y $3.33$), los valores se **encogen hacia cero**, más en la hoja pequeña: $\lambda$ actúa como una muestra ficticia que tira cada hoja hacia la predicción actual. La calidad del corte se mide con la ganancia de la @eq-ganancia:
+
+$$
+\text{Ganancia} = \frac{1}{2}\left[\frac{10^2}{2 + 1} + \frac{(-10)^2}{3 + 1} - \frac{0^2}{5 + 1}\right] - \gamma = \frac{1}{2}(33.3 + 25) - \gamma = 29.2 - \gamma.
+$$
+
+| Corte | $G_L$ | $G_R$ | Ganancia ($\lambda = 1$, $\gamma = 0$) |
+|---|---:|---:|---:|
+| $x \le 1.5$ | 6 | −6 | 12.60 |
+| $x \le 2.5$ | 10 | −10 | **29.17** |
+| $x \le 3.5$ | 9 | −9 | 23.63 |
+| $x \le 4.5$ | 7 | −7 | 17.15 |
+
+: Ganancia de cada corte en la primera ronda de XGBoost. {#tbl-xgb-ganancias}
+
+Si $\gamma$ fuera mayor que 29.17, ningún corte compensaría y el árbol se quedaría en una sola hoja: así poda XGBoost.
+
+### Clasificación: el mismo mecanismo con la log-loss
+
+En clasificación binaria, el modelo suma árboles en la escala de los **log-odds** y la probabilidad es $p = \sigma(F)$. Para la log-loss, $g_i = p_i - y_i$ y $h_i = p_i(1 - p_i)$. Si una hoja recibe tres ejemplos con $y = (1, 1, 0)$ y la predicción actual es $p = 0.5$ para todos, entonces $G = (-0.5) + (-0.5) + 0.5 = -0.5$, $H = 3 \times 0.25 = 0.75$ y, con $\lambda = 1$, $w = 0.5/1.75 = 0.286$: los log-odds de esa hoja suben de 0 a $0.286\,\eta$. El hessiano hace que las hojas donde el modelo ya está seguro ($p$ cercano a 0 o 1, $h$ pequeño) reciban correcciones más cautelosas en relación con su gradiente.
+
+El siguiente código reproduce la @tbl-gb-rondas con una implementación desde cero y verifica con `xgboost` los pesos de hoja de la primera ronda:
+
+```{python}
+#| label: gb-manual
+import numpy as np
+import pandas as pd
+import xgboost as xgb
+
+x5 = np.array([1, 2, 3, 4, 5], dtype=float)
+y5 = np.array([2, 4, 9, 10, 15], dtype=float)
+
+def mejor_tocon(x, r):
+    """Tocón de regresión: corte que minimiza la suma de cuadrados de los residuos."""
+    mejor = None
+    for k in range(1, len(x)):
+        izq, der = r[:k], r[k:]
+        sse = ((izq - izq.mean()) ** 2).sum() + ((der - der.mean()) ** 2).sum()
+        if mejor is None or sse < mejor[0]:
+            mejor = (sse, (x[k - 1] + x[k]) / 2, izq.mean(), der.mean())
+    return mejor[1:]
+
+F, eta, filas = np.full(5, y5.mean()), 0.5, []
+filas.append({"ronda": 0, "predicciones": np.round(F, 2), "corte": None, "SSE": ((y5 - F) ** 2).sum()})
+for m in range(1, 4):
+    corte, a, b = mejor_tocon(x5, y5 - F)
+    F = F + eta * np.where(x5 <= corte, a, b)
+    filas.append({"ronda": m, "predicciones": np.round(F, 2), "corte": corte, "SSE": round(((y5 - F) ** 2).sum(), 2)})
+print(pd.DataFrame(filas).to_string(index=False))
+
+# Primera ronda de XGBoost con λ = 1: pesos de hoja −G/(H+λ)
+m1 = xgb.XGBRegressor(n_estimators=1, max_depth=1, learning_rate=1.0, reg_lambda=1.0, base_score=8.0,
+                      tree_method="exact", min_child_weight=0).fit(x5.reshape(-1, 1), y5)
+print(m1.get_booster().get_dump(with_stats=True)[0])
+```
+
+Las hojas valen −3.33 y 2.5, como en el cálculo a mano. `xgboost` reporta la ganancia sin el factor ½: $58.33 = 2 \times 29.17$.
+
+## De los árboles de decisión al boosting
 
 ### El problema del sesgo-varianza y los modelos individuales
 
-Un arbol de decision profundo tiene la capacidad de memorizar el conjunto de entrenamiento: al aumentar la profundidad, el modelo se ajusta cada vez mas a los datos observados y su varianza aumenta. Por el contrario, un arbol poco profundo (o un "tronco" de un solo nivel) introduce un sesgo alto porque su capacidad expresiva es limitada. Este dilema entre sesgo y varianza es central en el aprendizaje automatico y motiva el uso de metodos de ensamble.
+Un árbol de decisión profundo tiene la capacidad de memorizar el conjunto de entrenamiento: al aumentar la profundidad, el modelo se ajusta cada vez más a los datos observados y su varianza aumenta. Por el contrario, un árbol poco profundo (o un "tronco" de un solo nivel) introduce un sesgo alto porque su capacidad expresiva es limitada. Este dilema entre sesgo y varianza es central en el aprendizaje automático y motiva el uso de métodos de ensamble.
 
-Los metodos de ensamble combinan multiples modelos debiles para obtener un modelo fuerte. En el caso del *bagging* (e.g., Random Forest [@breiman2001]), los arboles se entrenan de forma independiente sobre muestras con reemplazo, y su prediccion se promedia para reducir la varianza. En el *boosting*, la estrategia es diferente: los modelos se construyen de manera secuencial, donde cada nuevo arbol aprende de los errores del ensamble anterior, reduciendo progresivamente el sesgo.
+Los métodos de ensamble combinan múltiples modelos débiles para obtener un modelo fuerte. En el caso del *bagging* (e.g., Random Forest [@breiman2001]), los árboles se entrenan de forma independiente sobre muestras con reemplazo, y su predicción se promedia para reducir la varianza. En el *boosting*, la estrategia es diferente: los modelos se construyen de manera secuencial, donde cada nuevo árbol aprende de los errores del ensamble anterior, reduciendo progresivamente el sesgo.
 
 ```{python}
 #| label: fig-gb-sesgo-varianza
-#| fig-cap: "Ilustracion del compromiso sesgo-varianza para arboles de decision de distinta profundidad. Un arbol superficial (profundidad 1) presenta alto sesgo, mientras que uno muy profundo (profundidad 10) presenta alta varianza."
+#| fig-cap: "Ilustración del compromiso sesgo-varianza para árboles de decisión de distinta profundidad. Un árbol superficial (profundidad 1) presenta alto sesgo, mientras que uno muy profundo (profundidad 10) presenta alta varianza."
 #| code-fold: true
 
 import numpy as np
@@ -127,31 +235,31 @@ fig.update_yaxes(title_text="y", col=1)
 fig.show()
 ```
 
-La @fig-gb-sesgo-varianza muestra claramente como la profundidad del arbol determina el equilibrio entre sesgo y varianza. El arbol de profundidad 3 logra un ajuste razonable sin sobreajustar el ruido.
+La @fig-gb-sesgo-varianza muestra claramente como la profundidad del árbol determina el equilibrio entre sesgo y varianza. El árbol de profundidad 3 logra un ajuste razonable sin sobreajustar el ruido.
 
 ### Boosting: aprendizaje secuencial de residuos
 
-El boosting construye un modelo aditivo de forma secuencial. Partiendo de una prediccion inicial constante:
+El boosting construye un modelo aditivo de forma secuencial. Partiendo de una predicción inicial constante:
 
 $$F_0(\mathbf{x}) = \underset{\gamma}{\mathrm{argmin}} \sum_{i=1}^{n} L(y_i, \gamma)$$ {#eq-f0}
 
-En cada iteracion $m = 1, \ldots, M$, se calcula el gradiente negativo (pseudoresiduos) de la funcion de perdida evaluada en la prediccion actual:
+En cada iteración $m = 1, \ldots, M$, se calcula el gradiente negativo (pseudoresiduos) de la función de pérdida evaluada en la predicción actual:
 
 $$r_i^{(m)} = -\left[\frac{\partial L(y_i, F(\mathbf{x}_i))}{\partial F(\mathbf{x}_i)}\right]_{F = F_{m-1}}$$ {#eq-pseudoresiduos}
 
-Luego se ajusta un modelo debil $h_m$ a estos pseudoresiduos, y se actualiza el ensamble:
+Luego se ajusta un modelo débil $h_m$ a estos pseudoresiduos, y se actualiza el ensamble:
 
 $$F_m(\mathbf{x}) = F_{m-1}(\mathbf{x}) + \eta \cdot h_m(\mathbf{x})$$ {#eq-actualizacion}
 
-donde $\eta \in (0, 1]$ es la tasa de aprendizaje o *shrinkage*. Para la perdida cuadratica $L(y, F) = \tfrac{1}{2}(y - F)^2$, el gradiente negativo es simplemente el residuo ordinario $r_i = y_i - F_{m-1}(\mathbf{x}_i)$. Esto significa que el algoritmo ajusta iterativamente los errores del ensamble: cada nuevo arbol aprende lo que el ensamble anterior no pudo capturar.
+donde $\eta \in (0, 1]$ es la tasa de aprendizaje o *shrinkage*. Para la pérdida cuadrática $L(y, F) = \tfrac{1}{2}(y - F)^2$, el gradiente negativo es simplemente el residuo ordinario $r_i = y_i - F_{m-1}(\mathbf{x}_i)$. Esto significa que el algoritmo ajusta iterativamente los errores del ensamble: cada nuevo árbol aprende lo que el ensamble anterior no pudo capturar.
 
 ::: {.callout-note appearance="minimal"}
-**Gradient Boosting (version simplificada)**
+**Gradient Boosting (versión simplificada)**
 
 1. Inicializar $F_0(\mathbf{x}) = \bar{y}$ (media de la variable objetivo).
 2. Para $m = 1, \ldots, M$:
    - Calcular residuos $r_i^{(m)} = y_i - F_{m-1}(\mathbf{x}_i)$.
-   - Ajustar un arbol debil $h_m$ a $\{(\mathbf{x}_i, r_i^{(m)})\}_{i=1}^n$.
+   - Ajustar un árbol débil $h_m$ a $\{(\mathbf{x}_i, r_i^{(m)})\}_{i=1}^n$.
    - Actualizar $F_m(\mathbf{x}) = F_{m-1}(\mathbf{x}) + \eta \cdot h_m(\mathbf{x})$.
 3. Devolver $F_M(\mathbf{x})$.
 :::
@@ -160,7 +268,7 @@ La siguiente figura ilustra la convergencia del algoritmo de gradient boosting i
 
 ```{python}
 #| label: fig-gb-pasos
-#| fig-cap: "Convergencia iterativa del gradient boosting sobre un problema de regresion 1D. Cada frame muestra la prediccion acumulada del ensamble (azul) y los residuos actuales (naranja) luego de agregar M arboles."
+#| fig-cap: "Convergencia iterativa del gradient boosting sobre un problema de regresión 1D. Cada frame muestra la predicción acumulada del ensamble (azul) y los residuos actuales (naranja) luego de agregar M árboles."
 #| code-fold: true
 
 import numpy as np
@@ -303,37 +411,37 @@ fig2.update_layout(
 fig2.show()
 ```
 
-Observando la @fig-gb-pasos se aprecia como los residuos (puntos naranjas) se reducen progresivamente a medida que se agregan mas arboles al ensamble, y la curva de prediccion (azul) se acerca a la funcion verdadera (linea discontinua negra).
+Observando la @fig-gb-pasos se aprecia como los residuos (puntos naranjas) se reducen progresivamente a medida que se agregan más árboles al ensamble, y la curva de predicción (azul) se acerca a la función verdadera (línea discontinua negra).
 
-Un aspecto fundamental del boosting es que la tasa de aprendizaje $\eta$ en la @eq-actualizacion actua como un regulador de la velocidad de convergencia. Con $\eta = 1$ el algoritmo intenta corregir completamente los errores en cada paso, lo que puede llevar a sobreajuste rapido. Con $\eta$ pequeno se necesitan mas iteraciones pero el modelo final suele generalizar mejor. Este efecto se conoce como *shrinkage* [@friedman2002stochastic] y es uno de los mecanismos de regularizacion implicitos del boosting.
+Un aspecto fundamental del boosting es que la tasa de aprendizaje $\eta$ en la @eq-actualizacion actua como un regulador de la velocidad de convergencia. Con $\eta = 1$ el algoritmo intenta corregir completamente los errores en cada paso, lo que puede llevar a sobreajuste rápido. Con $\eta$ pequeño se necesitan más iteraciones pero el modelo final suele generalizar mejor. Este efecto se conoce como *shrinkage* [@friedman2002stochastic] y es uno de los mecanismos de regularización implicitos del boosting.
 
-El gradient boosting en su forma general (@eq-pseudoresiduos) puede verse como un descenso de gradiente funcional: en lugar de actualizar los parametros de un modelo parametrico en el espacio euclidiano, se actualiza la funcion de prediccion en el espacio funcional. Cada nuevo arbol debil $h_m$ es el "paso de gradiente" que mas reduce la perdida esperada. Esta perspectiva, formalizada por @friedman2001greedy, unifica una amplia familia de algoritmos de aprendizaje bajo un unico marco matematico.
+El gradient boosting en su forma general (@eq-pseudoresiduos) puede verse como un descenso de gradiente funcional: en lugar de actualizar los parámetros de un modelo parametrico en el espacio euclidiano, se actualiza la función de predicción en el espacio funcional. Cada nuevo árbol débil $h_m$ es el "paso de gradiente" que más reduce la pérdida esperada. Esta perspectiva, formalizada por @friedman2001greedy, unifica una amplia familia de algoritmos de aprendizaje bajo un único marco matemático.
 
 ## El objetivo de XGBoost
 
-### Modelo aditivo y funcion objetivo regularizada
+### Modelo aditivo y función objetivo regularizada
 
 XGBoost construye el modelo de forma aditiva:
 
 $$\hat{y}_i^{(t)} = \sum_{k=1}^{t} f_k(\mathbf{x}_i), \quad f_k \in \mathcal{F}$$ {#eq-modelo-aditivo}
 
-donde $\mathcal{F}$ es el espacio de arboles de regresion. En cada ronda $t$, se busca el arbol $f_t$ que minimiza el objetivo regularizado:
+donde $\mathcal{F}$ es el espacio de árboles de regresión. En cada ronda $t$, se busca el árbol $f_t$ que minimiza el objetivo regularizado:
 
 $$\text{Obj}^{(t)} = \sum_{i=1}^{n} l\!\left(y_i,\, \hat{y}_i^{(t-1)} + f_t(\mathbf{x}_i)\right) + \Omega(f_t) + \text{constante}$$ {#eq-objetivo}
 
-La regularizacion $\Omega$ penaliza tanto el numero de hojas como la magnitud de los pesos:
+La regularización $\Omega$ penaliza tanto el número de hojas como la magnitud de los pesos:
 
 $$\Omega(f) = \gamma T + \frac{1}{2}\lambda\|\mathbf{w}\|^2$$ {#eq-regularizacion}
 
-donde $T$ es el numero de hojas del arbol $f_t$ y $\mathbf{w}$ son los pesos de las hojas. El parametro $\gamma$ controla la poda (un arbol solo se expande si la ganancia supera $\gamma$) y $\lambda$ regula el tamano de los pesos mediante regularizacion L2.
+donde $T$ es el número de hojas del árbol $f_t$ y $\mathbf{w}$ son los pesos de las hojas. El parámetro $\gamma$ controla la poda (un árbol solo se expande si la ganancia supera $\gamma$) y $\lambda$ regula el tamaño de los pesos mediante regularización L2.
 
 ::: {.callout-note appearance="minimal"}
-**Innovacion clave de XGBoost:** A diferencia del gradient boosting clasico [@friedman2001greedy], XGBoost incluye explicitamente la regularizacion en el objetivo de optimizacion y utiliza informacion de segundo orden (el hessiano) para encontrar pesos optimos de forma analitica, lo que conduce a una convergencia mas rapida y modelos mas robustos.
+**Innovación clave de XGBoost:** A diferencia del gradient boosting clásico [@friedman2001greedy], XGBoost incluye explícitamente la regularización en el objetivo de optimización y utiliza información de segundo orden (el hessiano) para encontrar pesos óptimos de forma analítica, lo que conduce a una convergencia más rápida y modelos más robustos.
 :::
 
-### Aproximacion de Taylor de segundo orden
+### Aproximación de Taylor de segundo orden
 
-Para poder optimizar el objetivo de la @eq-objetivo eficientemente, XGBoost aplica una expansion de Taylor de segundo orden alrededor de $\hat{y}_i^{(t-1)}$:
+Para poder optimizar el objetivo de la @eq-objetivo eficientemente, XGBoost aplica una expansión de Taylor de segundo orden alrededor de $\hat{y}_i^{(t-1)}$:
 
 $$l\!\left(y_i, \hat{y}_i^{(t-1)} + f_t\right) \approx l\!\left(y_i, \hat{y}_i^{(t-1)}\right) + g_i f_t(\mathbf{x}_i) + \frac{1}{2} h_i f_t^2(\mathbf{x}_i)$$ {#eq-taylor}
 
@@ -343,15 +451,15 @@ $$g_i = \frac{\partial\, l(y_i, \hat{y}^{(t-1)})}{\partial\, \hat{y}^{(t-1)}} \q
 
 $$h_i = \frac{\partial^2\, l(y_i, \hat{y}^{(t-1)})}{\partial\, (\hat{y}^{(t-1)})^2} \quad \text{(hessiano — curvatura local)}$$ {#eq-hessiano}
 
-Descartando los terminos constantes respecto a $f_t$, el objetivo simplificado es:
+Descartando los términos constantes respecto a $f_t$, el objetivo simplificado es:
 
 $$\tilde{\text{Obj}}^{(t)} = \sum_{i=1}^{n}\left[g_i f_t(\mathbf{x}_i) + \frac{1}{2}h_i f_t^2(\mathbf{x}_i)\right] + \gamma T + \frac{1}{2}\lambda\sum_{j=1}^{T}w_j^2$$ {#eq-objetivo-simplificado}
 
-Esta aproximacion cuadratica es exacta para la perdida cuadratica y una buena aproximacion local para cualquier perdida dos veces diferenciable, lo que hace a XGBoost aplicable a una amplia variedad de problemas (regresion, clasificacion, ranking, etc.).
+Esta aproximación cuadrática es exacta para la pérdida cuadrática y una buena aproximación local para cualquier pérdida dos veces diferenciable, lo que hace a XGBoost aplicable a una amplia variedad de problemas (regresión, clasificación, ranking, etc.).
 
 ```{python}
 #| label: fig-xgb-taylor
-#| fig-cap: "Aproximacion de Taylor de segundo orden de la funcion de perdida. Panel izquierdo: curva de perdida real (negro), aproximacion lineal (naranja) y aproximacion cuadratica (azul) alrededor del punto de expansion F=-0.3. Panel derecho: contribucion cuadratica al objetivo en funcion del cambio Delta, con el optimo analitico senalado."
+#| fig-cap: "Aproximación de Taylor de segundo orden de la función de pérdida. Panel izquierdo: curva de pérdida real (negro), aproximación lineal (naranja) y aproximación cuadrática (azul) alrededor del punto de expansión F=-0.3. Panel derecho: contribución cuadrática al objetivo en función del cambio Delta, con el óptimo analítico senalado."
 #| code-fold: true
 
 import numpy as np
@@ -455,15 +563,15 @@ fig3.update_layout(
 fig3.show()
 ```
 
-La @fig-xgb-taylor ilustra por que la aproximacion cuadratica es util: permite encontrar el cambio optimo $\Delta^* = -g_i / (h_i + \lambda)$ de forma analitica, sin necesidad de busqueda iterativa. XGBoost utiliza exactamente esta idea para calcular el peso optimo de cada hoja.
+La @fig-xgb-taylor ilustra por que la aproximación cuadrática es útil: permite encontrar el cambio óptimo $\Delta^* = -g_i / (h_i + \lambda)$ de forma analítica, sin necesidad de búsqueda iterativa. XGBoost utiliza exactamente esta idea para calcular el peso óptimo de cada hoja.
 
-### Pesos optimos de las hojas
+### Pesos óptimos de las hojas
 
-Agrupando las muestras por hoja $j$ (donde $I_j = \{i : q(\mathbf{x}_i) = j\}$ es el conjunto de indices de la hoja $j$), el objetivo simplificado se puede reescribir como:
+Agrupando las muestras por hoja $j$ (donde $I_j = \{i : q(\mathbf{x}_i) = j\}$ es el conjunto de índices de la hoja $j$), el objetivo simplificado se puede reescribir como:
 
 $$\tilde{\text{Obj}}^{(t)} = \sum_{j=1}^{T}\left[\left(\sum_{i\in I_j}g_i\right)w_j + \frac{1}{2}\left(\sum_{i\in I_j}h_i + \lambda\right)w_j^2\right] + \gamma T$$ {#eq-objetivo-hojas}
 
-Definiendo $G_j = \sum_{i\in I_j} g_i$ y $H_j = \sum_{i\in I_j} h_i$, y minimizando respecto a $w_j$, se obtiene el peso optimo:
+Definiendo $G_j = \sum_{i\in I_j} g_i$ y $H_j = \sum_{i\in I_j} h_i$, y minimizando respecto a $w_j$, se obtiene el peso óptimo:
 
 $$w_j^* = -\frac{G_j}{H_j + \lambda}$$ {#eq-peso-optimo}
 
@@ -471,19 +579,19 @@ Sustituyendo en el objetivo:
 
 $$\text{Obj}^* = -\frac{1}{2}\sum_{j=1}^{T}\frac{G_j^2}{H_j + \lambda} + \gamma T$$ {#eq-objetivo-optimo}
 
-Este valor sirve como puntuacion de la estructura del arbol: cuanto mas negativo sea, mejor es el arbol. Notese que $\lambda > 0$ reduce la magnitud de los pesos y tiene un efecto regularizador directo, ya que $|w_j^*|$ decrece con $\lambda$.
+Este valor sirve como puntuación de la estructura del árbol: cuanto más negativo sea, mejor es el árbol. Nótese que $\lambda > 0$ reduce la magnitud de los pesos y tiene un efecto regularizador directo, ya que $|w_j^*|$ decrece con $\lambda$.
 
-### Ganancia de una particion
+### Ganancia de una partición
 
-Para decidir si realizar una division, XGBoost compara el objetivo antes y despues de la particion. Si un nodo padre $P$ se divide en hijos izquierdo $L$ y derecho $R$, la ganancia de la division es:
+Para decidir si realizar una división, XGBoost compara el objetivo antes y después de la partición. Si un nodo padre $P$ se divide en hijos izquierdo $L$ y derecho $R$, la ganancia de la división es:
 
 $$\text{Gain} = \frac{1}{2}\left[\frac{G_L^2}{H_L+\lambda} + \frac{G_R^2}{H_R+\lambda} - \frac{G_P^2}{H_P+\lambda}\right] - \gamma$$ {#eq-ganancia}
 
-Si $\text{Gain} \leq 0$, la division se rechaza (poda). El termino $-\gamma$ penaliza la complejidad del arbol: un $\gamma$ mayor hace que solo se acepten divisiones con mejoras sustanciales.
+Si $\text{Gain} \leq 0$, la división se rechaza (poda). El término $-\gamma$ penaliza la complejidad del árbol: un $\gamma$ mayor hace que solo se acepten divisiones con mejoras sustanciales.
 
 ```{python}
 #| label: fig-xgb-ganancia
-#| fig-cap: "Ganancia de particion en funcion del umbral para un conjunto de datos sintetico 1D. La linea discontinua roja marca el umbral optimo (maxima ganancia). La linea horizontal gris indica Gain=0, umbral de poda cuando gamma=0."
+#| fig-cap: "Ganancia de partición en función del umbral para un conjunto de datos sintético 1D. La línea discontinua roja marca el umbral óptimo (máxima ganancia). La línea horizontal gris indica Gain=0, umbral de poda cuando gamma=0."
 #| code-fold: true
 
 import numpy as np
@@ -564,59 +672,188 @@ fig4.update_layout(
 fig4.show()
 ```
 
-La @fig-xgb-ganancia muestra como la ganancia varia en funcion del umbral de corte. El algoritmo busca el umbral que maximiza esta funcion en cada nivel del arbol. Cuando $\gamma > 0$, cualquier ganancia por debajo de ese valor lleva a rechazar la particion.
+La @fig-xgb-ganancia muestra como la ganancia varia en función del umbral de corte. El algoritmo busca el umbral que maximiza esta función en cada nivel del árbol. Cuando $\gamma > 0$, cualquier ganancia por debajo de ese valor lleva a rechazar la partición.
 
-### Busqueda aproximada de particiones (*Approximate Split Finding*)
+### Búsqueda aproximada de particiones (*Approximate Split Finding*)
 
-Un aspecto crucial del diseno de XGBoost es que la busqueda exacta del mejor umbral (recorriendo todos los valores unicos de cada variable) puede ser prohibitivamente costosa para conjuntos de datos grandes. Para abordar esto, @chen2016xgboost proponen un algoritmo de busqueda aproximada basado en quantiles ponderados.
+Un aspecto crucial del diseño de XGBoost es que la búsqueda exacta del mejor umbral (recorriendo todos los valores únicos de cada variable) puede ser prohibitivamente costosa para conjuntos de datos grandes. Para abordar esto, @chen2016xgboost proponen un algoritmo de búsqueda aproximada basado en quantiles ponderados.
 
-La idea es proponer un conjunto reducido de candidatos de particion $\mathcal{S}_k = \{s_{k1}, s_{k2}, \ldots, s_{kl}\}$ para cada variable $k$, utilizando los quantiles de la distribucion de la variable ponderada por los hessianos $h_i$:
+La idea es proponer un conjunto reducido de candidatos de partición $\mathcal{S}_k = \{s_{k1}, s_{k2}, \ldots, s_{kl}\}$ para cada variable $k$, utilizando los quantiles de la distribución de la variable ponderada por los hessianos $h_i$:
 
 $$\text{rank}_k(z) = \frac{\sum_{(x,h): x_k < z} h}{\sum_{(x,h)} h}$$ {#eq-rank}
 
-Los candidatos se seleccionan tal que $|\text{rank}_k(s_{k,j}) - \text{rank}_k(s_{k,j+1})| \leq \varepsilon$, donde $\varepsilon$ controla el numero aproximado de candidatos: $\approx 1/\varepsilon$ por variable. Esto garantiza que el error de aproximacion respecto a la solucion exacta esta acotado.
+Los candidatos se seleccionan tal que $|\text{rank}_k(s_{k,j}) - \text{rank}_k(s_{k,j+1})| \leq \varepsilon$, donde $\varepsilon$ controla el número aproximado de candidatos: $\approx 1/\varepsilon$ por variable. Esto garantiza que el error de aproximación respecto a la solución exacta esta acotado.
 
-El uso de los hessianos $h_i$ como pesos en la distribucion de quantiles no es arbitrario: las observaciones con mayor hessiano (mayor curvatura de la perdida) tienen mas influencia en la seleccion de los puntos de corte, lo que dirige la busqueda hacia las regiones del espacio de caracteristicas donde la ganancia potencial es mayor.
+El uso de los hessianos $h_i$ como pesos en la distribución de quantiles no es arbitrario: las observaciones con mayor hessiano (mayor curvatura de la pérdida) tienen más influencia en la selección de los puntos de corte, lo que dirige la búsqueda hacia las regiones del espacio de características donde la ganancia potencial es mayor.
 
 ::: {.callout-note appearance="minimal"}
 **Sparsity-awareness (manejo de datos dispersos)**
 
-XGBoost aprende automaticamente la *direccion por defecto* para los valores faltantes o cero en cada nodo. Durante el entrenamiento, solo se evaluan los valores no faltantes para cada variable; los valores faltantes se asignan a la rama que minimiza el objetivo. Esto hace que XGBoost sea nativamente compatible con matrices dispersas sin necesidad de imputacion previa, una ventaja practica significativa en aplicaciones reales [@chen2016xgboost].
+XGBoost aprende automáticamente la *dirección por defecto* para los valores faltantes o cero en cada nodo. Durante el entrenamiento, solo se evaluan los valores no faltantes para cada variable; los valores faltantes se asignan a la rama que minimiza el objetivo. Esto hace que XGBoost sea nativamente compatible con matrices dispersas sin necesidad de imputación previa, una ventaja práctica significativa en aplicaciones reales [@chen2016xgboost].
 :::
 
-## Hiperparametros principales
+## Laboratorio: gradient boosting paso a paso
 
-XGBoost expone numerosos hiperparametros que permiten controlar la capacidad del modelo, la regularizacion, el subsampling y la velocidad de convergencia. La siguiente tabla resume los mas importantes.
+El laboratorio usa los mismos 40 puntos de entrenamiento y 300 de prueba del laboratorio de *bagging* ($y = 2\sin x + 0.3x$ más ruido de varianza 0.36). Cada ronda ajusta un árbol de regresión a los gradientes con la ganancia y los pesos de XGBoost ($\gamma = 0$); con $\lambda = 0$ es el *gradient boosting* clásico. El panel derecho muestra los residuos actuales y el árbol que se agregará en la ronda siguiente.
 
-Desde la perspectiva del aprendizaje estadistico, los hiperparametros pueden agruparse en tres categorias conceptuales:
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="gb-lab">
+  <p class="plab-eyebrow">Laboratorio · Gradient boosting</p>
+  <h3 class="plab-title">¿Cuántas rondas y qué tan grande cada paso?</h3>
+  <p class="plab-sub">Avanza las rondas y compara tasas de aprendizaje. Observa cuándo el error de prueba deja de bajar.</p>
+  <div class="plab-controls">
+    <label>Rondas M: <b id="gb-m-v"></b><input type="range" id="gb-m" min="0" max="300" step="1" value="1"></label>
+    <label>Tasa de aprendizaje η: <b id="gb-eta-v"></b><input type="range" id="gb-eta" min="0.02" max="1" step="0.02" value="0.3"></label>
+    <label>Profundidad de cada árbol: <b id="gb-d-v"></b><input type="range" id="gb-d" min="1" max="4" step="1" value="2"></label>
+    <label>Regularización λ: <b id="gb-l-v"></b><input type="range" id="gb-l" min="0" max="20" step="0.5" value="1"></label>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>ECM entrenamiento</span><strong id="gb-tr"></strong></div>
+    <div class="plab-stat"><span>ECM prueba</span><strong id="gb-te"></strong></div>
+    <div class="plab-stat"><span>Mejor M en prueba</span><strong id="gb-best"></strong></div>
+    <div class="plab-stat"><span>Error irreducible σ²</span><strong>0.360</strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Predicción del ensamble F<sub>M</sub></h4>
+      <svg id="gb-svg" role="img" aria-label="Datos, función real y predicción del ensamble tras M rondas"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>entrenamiento</span><span><i style="background:var(--lab-s3)"></i>función real</span><span><i style="background:var(--lab-s2)"></i>F<sub>M</sub></span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Residuos y próximo árbol</h4>
+      <svg id="gb-res" role="img" aria-label="Residuos actuales y árbol que se ajustará en la siguiente ronda"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s4)"></i>residuos y − F<sub>M</sub></span><span><i style="background:var(--lab-s5)"></i>árbol h<sub>M+1</sub> (antes de multiplicar por η)</span></div>
+    </div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem">
+    <h4>Error según el número de rondas</h4>
+    <svg id="gb-curve" class="wide" role="img" aria-label="Error cuadrático medio de entrenamiento y prueba en función de las rondas"></svg>
+    <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>entrenamiento</span><span><i style="background:var(--lab-s4)"></i>prueba</span><span><i style="background:var(--lab-s3)"></i>σ² irreducible</span><span><i class="dot" style="background:var(--lab-s2)"></i>ronda actual</span></div>
+  </div>
+  <p class="plab-note" id="gb-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('gb-lab');
+  const $ = s => root.querySelector(s);
+  const D = {"tr":[[0.29,0.87],[0.7,1.65],[0.83,2.38],[1.29,1.54],[1.29,1.91],[1.3,1.81],[1.38,1.34],[1.48,2.51],[1.48,2.75],[2.02,1.96],[2.05,3.22],[2.17,2.8],[2.35,2.5],[2.75,1.83],[2.77,2.13],[3.53,-0.5],[3.69,0.43],[4.3,-0.18],[4.67,-1.66],[4.84,-0.32],[4.99,-0.58],[5.11,0.16],[5.12,-0.56],[5.49,0.21],[5.54,0.51],[5.92,0.54],[6.01,1.62],[6.22,1.68],[6.63,2.96],[6.7,2.51],[6.73,3.53],[7.88,4.73],[8.02,4.27],[8.17,4.73],[8.67,4.73],[8.96,4.66],[9.01,2.56],[9.28,3.6],[9.48,3.01],[9.81,2.14]],"te":[[0.02,0.33],[0.03,0.62],[0.03,0.42],[0.07,0.83],[0.07,0.39],[0.07,0.21],[0.1,-0.9],[0.13,0.03],[0.2,1.44],[0.23,0.65],[0.35,1.32],[0.36,0.74],[0.38,0.5],[0.41,2.2],[0.43,1.23],[0.46,1.97],[0.46,1.39],[0.54,1.06],[0.56,-0.07],[0.57,1.35],[0.57,0.36],[0.64,0.1],[0.68,2.26],[0.71,2.0],[0.71,1.95],[0.74,1.65],[0.77,1.65],[0.77,1.93],[0.78,1.78],[0.82,1.8],[0.82,2.2],[0.85,0.33],[0.91,2.43],[0.98,1.62],[0.99,2.53],[1.02,2.76],[1.02,1.55],[1.07,2.59],[1.08,2.6],[1.15,1.78],[1.21,1.94],[1.22,2.33],[1.24,0.94],[1.26,2.03],[1.27,2.41],[1.3,2.06],[1.34,1.4],[1.35,2.13],[1.35,3.27],[1.37,3.17],[1.42,2.34],[1.45,1.94],[1.5,2.44],[1.5,2.46],[1.63,2.08],[1.7,2.3],[1.71,2.87],[1.79,3.05],[1.8,1.03],[1.85,3.07],[1.88,2.55],[1.89,3.16],[1.89,2.46],[1.89,2.73],[1.89,3.45],[1.92,0.67],[1.93,3.41],[1.97,2.55],[1.99,1.33],[2.01,0.81],[2.02,2.6],[2.11,1.73],[2.19,2.89],[2.19,2.42],[2.22,2.18],[2.22,2.86],[2.24,2.36],[2.31,2.62],[2.36,2.62],[2.37,2.3],[2.41,2.53],[2.44,2.5],[2.45,1.19],[2.49,1.8],[2.51,1.86],[2.57,1.63],[2.58,0.89],[2.59,1.49],[2.6,2.02],[2.62,1.9],[2.71,2.56],[2.77,1.19],[2.83,1.2],[2.83,1.12],[2.86,1.22],[2.89,1.0],[2.91,0.21],[2.93,1.51],[2.94,1.88],[2.95,1.94],[2.95,0.61],[3.03,1.02],[3.1,2.12],[3.14,0.88],[3.24,0.99],[3.32,0.55],[3.42,1.08],[3.47,0.98],[3.5,1.75],[3.5,0.65],[3.69,0.33],[3.85,-0.87],[3.94,-0.5],[4.01,-0.74],[4.04,-0.55],[4.05,-1.15],[4.06,0.36],[4.08,-1.02],[4.09,-0.23],[4.13,-1.19],[4.17,-0.25],[4.19,0.52],[4.19,-0.97],[4.24,-0.29],[4.33,-0.6],[4.35,-0.39],[4.35,-0.31],[4.37,-0.95],[4.49,-0.71],[4.54,-0.96],[4.55,-1.1],[4.58,-1.35],[4.61,-0.03],[4.68,-1.04],[4.69,-0.19],[4.76,-0.24],[4.79,-1.16],[4.79,0.07],[4.8,-1.07],[4.85,-0.15],[4.85,0.35],[4.86,-0.95],[4.89,-1.06],[4.94,-1.03],[4.99,0.95],[4.99,-0.65],[5.0,-1.18],[5.04,0.11],[5.17,-0.35],[5.21,-0.22],[5.35,-0.6],[5.36,-1.33],[5.39,-0.38],[5.41,-0.54],[5.43,-0.85],[5.43,-0.54],[5.46,-0.4],[5.58,0.86],[5.58,0.8],[5.65,0.81],[5.66,0.2],[5.76,-0.03],[5.79,0.96],[5.8,1.08],[5.93,1.68],[6.0,1.22],[6.0,1.16],[6.03,1.49],[6.06,0.81],[6.1,0.98],[6.16,1.98],[6.2,0.93],[6.23,1.71],[6.47,2.78],[6.49,2.49],[6.53,2.7],[6.62,1.98],[6.62,2.57],[6.7,2.65],[6.71,3.2],[6.8,3.28],[6.81,3.07],[6.81,4.19],[6.81,3.38],[6.83,2.92],[6.83,2.73],[6.86,3.13],[6.87,2.83],[6.87,4.16],[6.91,3.6],[6.92,3.09],[6.95,2.94],[6.95,2.69],[6.96,3.19],[6.96,4.14],[6.97,3.88],[7.09,3.55],[7.11,3.7],[7.15,2.57],[7.21,4.23],[7.21,3.65],[7.21,4.6],[7.29,3.79],[7.4,3.75],[7.43,4.2],[7.47,3.73],[7.48,4.93],[7.51,4.33],[7.51,4.38],[7.53,4.38],[7.63,4.05],[7.64,4.56],[7.64,4.38],[7.65,5.33],[7.7,4.35],[7.72,4.55],[7.75,4.07],[7.78,4.14],[7.79,4.19],[7.8,5.15],[7.82,4.44],[7.85,4.98],[7.87,4.25],[7.9,4.2],[7.9,3.26],[7.91,4.92],[7.93,5.66],[7.93,4.29],[7.95,5.29],[8.01,4.94],[8.03,4.02],[8.04,4.89],[8.06,3.9],[8.06,4.25],[8.19,5.14],[8.25,4.48],[8.25,3.68],[8.28,5.21],[8.28,3.71],[8.31,4.25],[8.35,4.12],[8.36,4.22],[8.41,3.77],[8.54,3.19],[8.57,5.25],[8.58,3.56],[8.6,3.58],[8.66,2.58],[8.71,4.04],[8.72,4.74],[8.72,4.81],[8.79,5.54],[8.8,4.77],[8.8,4.12],[8.81,3.87],[8.82,4.71],[8.86,3.77],[8.86,3.91],[8.89,3.18],[8.89,3.81],[8.92,4.89],[8.93,3.65],[8.96,3.89],[8.97,2.19],[8.98,4.42],[8.98,3.84],[9.01,4.42],[9.03,3.68],[9.03,3.02],[9.06,2.67],[9.1,3.72],[9.15,3.32],[9.16,2.73],[9.19,3.22],[9.21,2.85],[9.23,3.62],[9.28,2.86],[9.34,2.26],[9.35,2.92],[9.37,2.6],[9.38,3.8],[9.42,2.57],[9.43,2.04],[9.46,2.74],[9.47,2.6],[9.47,2.91],[9.47,2.87],[9.49,2.09],[9.52,2.62],[9.62,2.42],[9.67,1.68],[9.68,2.03],[9.81,2.29],[9.83,1.18],[9.87,1.42],[9.9,1.74],[9.93,1.92],[9.95,2.25],[9.96,1.11],[9.96,2.1]]}, TR = D.tr, TE = D.te, n = TR.length, MMAX = 300;
+  const freal = x => 2 * Math.sin(x) + 0.3 * x;
+  // Árbol de regresión sobre gradientes (pérdida cuadrática: g = F − y, h = 1) con ganancia y pesos de XGBoost.
+  function tree(idx, g, depth, maxD, lam) {
+    const G = K.sum(idx.map(i => g[i])), H = idx.length, w = -G / (H + lam);
+    if (depth >= maxD || idx.length < 2) return { w };
+    const s = [...idx].sort((a, b) => TR[a][0] - TR[b][0]); let best = null, GL = 0;
+    for (let k = 0; k < s.length - 1; k++) {
+      GL += g[s[k]]; const HL = k + 1, GR = G - GL, HR = H - HL;
+      if (TR[s[k]][0] === TR[s[k + 1]][0]) continue;
+      const gain = 0.5 * (GL * GL / (HL + lam) + GR * GR / (HR + lam) - G * G / (H + lam));
+      if (!best || gain > best.gain + 1e-12) best = { gain, t: (TR[s[k]][0] + TR[s[k + 1]][0]) / 2 };
+    }
+    if (!best || best.gain <= 1e-12) return { w };
+    return { t: best.t, L: tree(s.filter(i => TR[i][0] <= best.t), g, depth + 1, maxD, lam), R: tree(s.filter(i => TR[i][0] > best.t), g, depth + 1, maxD, lam) };
+  }
+  const pred = (t, x) => { while (t.L) t = x <= t.t ? t.L : t.R; return t.w; };
+  let cacheKey = '', run = null;
+  function boost(eta, maxD, lam) {
+    const key = [eta, maxD, lam].join('|'); if (key === cacheKey) return run;
+    const F0 = K.mean(TR.map(p => p[1])), F = TR.map(() => F0), Ft = TE.map(() => F0), trees = [], tr = [], te = [];
+    const mse = (Fv, set) => K.mean(set.map((p, i) => (Fv[i] - p[1]) ** 2));
+    tr.push(mse(F, TR)); te.push(mse(Ft, TE));
+    for (let m = 0; m <= MMAX; m++) {
+      const g = TR.map((p, i) => F[i] - p[1]), t = tree(TR.map((_, i) => i), g, 0, maxD, lam);
+      trees.push(t);
+      if (m === MMAX) break;
+      TR.forEach((p, i) => { F[i] += eta * pred(t, p[0]); }); TE.forEach((p, i) => { Ft[i] += eta * pred(t, p[0]); });
+      tr.push(mse(F, TR)); te.push(mse(Ft, TE));
+    }
+    cacheKey = key; run = { F0, trees, tr, te, eta };
+    return run;
+  }
+  const GRID = Array.from({ length: 201 }, (_, i) => i * 0.05);
+  function render() {
+    const M = +$('#gb-m').value, eta = +$('#gb-eta').value, maxD = +$('#gb-d').value, lam = +$('#gb-l').value;
+    $('#gb-m-v').textContent = M; $('#gb-eta-v').textContent = K.fmt(eta, 2); $('#gb-d-v').textContent = maxD; $('#gb-l-v').textContent = K.fmt(lam, 1);
+    const R = boost(eta, maxD, lam);
+    const FM = x => { let s = R.F0; for (let m = 0; m < M; m++) s += eta * pred(R.trees[m], x); return s; };
+    $('#gb-tr').textContent = K.fmt(R.tr[M], 3); $('#gb-te').textContent = K.fmt(R.te[M], 3);
+    const bestM = R.te.indexOf(Math.min(...R.te));
+    $('#gb-best').textContent = `${bestM} (${K.fmt(R.te[bestM], 3)})`;
+    const c = K.chart($('#gb-svg'), { width: 380, height: 260, x: [0, 10], y: [-3, 6], margin: { left: 40, bottom: 40 } });
+    c.axes({ xTicks: 5, yTicks: 5, xLabel: 'x', yLabel: 'y', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 0) });
+    c.path(GRID.map(x => [x, freal(x)]), 's3 line dash');
+    TR.forEach(p => c.dot(p[0], p[1], 3.5, 's1 dot'));
+    c.path(GRID.map(x => [x, FM(x)]), 's2 line');
+    const res = TR.map(p => [p[0], p[1] - FM(p[0])]), nxt = R.trees[M];
+    const rmax = Math.max(1.5, ...res.map(r => Math.abs(r[1]))) * 1.1;
+    const cr = K.chart($('#gb-res'), { width: 380, height: 260, x: [0, 10], y: [-rmax, rmax], margin: { left: 40, bottom: 40 } });
+    cr.axes({ xTicks: 5, yTicks: 4, xLabel: 'x', yLabel: 'residuo', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    cr.zeroLines();
+    res.forEach(r => cr.dot(r[0], r[1], 3.5, 's4 dot'));
+    cr.path(GRID.map(x => [x, pred(nxt, x)]), 's5 line');
+    const ymax = Math.max(1.6, R.te[0] * 1.05);
+    const cc = K.chart($('#gb-curve'), { width: 640, height: 220, x: [0, MMAX], y: [0, ymax], margin: { left: 44, bottom: 40 } });
+    cc.axes({ xTicks: 6, yTicks: 4, xLabel: 'rondas M', yLabel: 'ECM', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    cc.line(0, 0.36, MMAX, 0.36, 's3 line dash thin');
+    cc.path(R.tr.map((v, m) => [m, v]), 's1 line'); cc.path(R.te.map((v, m) => [m, v]), 's4 line');
+    cc.dot(M, R.te[M], 6, 's2 dot');
+    const note = $('#gb-note');
+    if (M === 0) { note.className = 'plab-note warn'; note.textContent = `Con M = 0 el modelo es la constante F₀ = ${K.fmt(R.F0, 2)} (el promedio). El árbol rojo es la primera corrección.`; }
+    else if (M > bestM + 40 && R.te[M] > R.te[bestM] + 0.02) { note.className = 'plab-note warn'; note.textContent = `Sobreajuste: el error de entrenamiento sigue bajando (${K.fmt(R.tr[M], 3)}) pero el de prueba subió de ${K.fmt(R.te[bestM], 3)} (ronda ${bestM}) a ${K.fmt(R.te[M], 3)}. En la práctica se detiene con un conjunto de validación (early stopping).`; }
+    else { note.className = 'plab-note good'; note.textContent = `Ronda ${M}: ECM de entrenamiento ${K.fmt(R.tr[M], 3)} y de prueba ${K.fmt(R.te[M], 3)}. Con η = ${K.fmt(eta, 2)} el mínimo de prueba está en la ronda ${bestM}; un η menor necesita más rondas pero suele llegar a un mínimo igual o mejor.`; }
+  }
+  root.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
 
-1. **Capacidad del modelo:** `max_depth`, `n_estimators`, `min_child_weight`. Determinan cuanta informacion puede memorizar el modelo. Valores altos de `max_depth` y `n_estimators` pueden llevar a sobreajuste.
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio recorre el gradient boosting ronda por ronda sobre los datos del laboratorio de bagging. Con $\eta = 0.3$, profundidad 2 y $\lambda = 1$, el ECM de prueba baja de 2.94 (la constante inicial) a su mínimo de 0.483 en la ronda 23 y después sube lentamente hasta 0.62 en la ronda 300, mientras el de entrenamiento llega casi a 0: el mínimo es el punto donde conviene detenerse (*early stopping*).
+:::
 
-2. **Regularizacion:** `gamma`, `reg_alpha`, `reg_lambda`. Penalizan la complejidad del modelo y reducen la varianza de los pesos de las hojas. Corresponden directamente a los terminos de la @eq-regularizacion.
+**Guía del laboratorio.**
 
-3. **Aleatoriedad y robustez:** `subsample`, `colsample_bytree`, `learning_rate`. Introducen estocasticidad en el proceso de construccion, similar al gradient boosting estocastico [@friedman2002stochastic], y controlan la velocidad de convergencia mediante el *shrinkage* $\eta$.
+1. Con $M = 0$, el árbol rojo es la primera corrección. ¿Dónde está el mayor residuo y cómo lo atiende el árbol?
+2. Avanza hasta $M = 10$ con $\eta = 0.3$. Predice antes de mover: ¿qué pasará con $\eta = 1$? Compara las curvas de error.
+3. Lleva $M$ a 300 con profundidad 4. ¿En qué ronda alcanza su mínimo el error de prueba? ¿Qué le pasa después?
+4. Sube $\lambda$ a 10. ¿Cómo cambia la altura del árbol rojo y la velocidad de convergencia?
+5. Explica por qué en boosting más árboles sí pueden sobreajustar, a diferencia de *bagging*.
 
-| Parametro | Descripcion | Valor tipico |
+## Hiperparámetros principales
+
+XGBoost expone numerosos hiperparámetros que permiten controlar la capacidad del modelo, la regularización, el subsampling y la velocidad de convergencia. La siguiente tabla resume los más importantes.
+
+Desde la perspectiva del aprendizaje estadístico, los hiperparámetros pueden agruparse en tres categorías conceptuales:
+
+1. **Capacidad del modelo:** `max_depth`, `n_estimators`, `min_child_weight`. Determinan cuanta información puede memorizar el modelo. Valores altos de `max_depth` y `n_estimators` pueden llevar a sobreajuste.
+
+2. **Regularización:** `gamma`, `reg_alpha`, `reg_lambda`. Penalizan la complejidad del modelo y reducen la varianza de los pesos de las hojas. Corresponden directamente a los términos de la @eq-regularizacion.
+
+3. **Aleatoriedad y robustez:** `subsample`, `colsample_bytree`, `learning_rate`. Introducen estocasticidad en el proceso de construcción, similar al gradient boosting estocástico [@friedman2002stochastic], y controlan la velocidad de convergencia mediante el *shrinkage* $\eta$.
+
+| Parámetro | Descripción | Valor típico |
 |-----------|-------------|--------------|
-| `n_estimators` | Numero de arboles en el ensamble | 100–1000 |
-| `max_depth` | Profundidad maxima por arbol | 3–8 |
+| `n_estimators` | Número de árboles en el ensamble | 100–1000 |
+| `max_depth` | Profundidad máxima por árbol | 3–8 |
 | `learning_rate` ($\eta$) | Tasa de aprendizaje (shrinkage) | 0.01–0.3 |
-| `subsample` | Fraccion de filas muestreadas por arbol | 0.6–1.0 |
-| `colsample_bytree` | Fraccion de columnas por arbol | 0.6–1.0 |
-| `min_child_weight` | Minimo de $\sum h_i$ en un nodo hoja | 1–10 |
-| `gamma` ($\gamma$) | Ganancia minima para realizar una particion | 0–5 |
-| `reg_alpha` | Regularizacion L1 sobre pesos | 0–1 |
-| `reg_lambda` | Regularizacion L2 sobre pesos | 1 (default) |
+| `subsample` | Fracción de filas muestreadas por árbol | 0.6–1.0 |
+| `colsample_bytree` | Fracción de columnas por árbol | 0.6–1.0 |
+| `min_child_weight` | Mínimo de $\sum h_i$ en un nodo hoja | 1–10 |
+| `gamma` ($\gamma$) | Ganancia mínima para realizar una partición | 0–5 |
+| `reg_alpha` | Regularización L1 sobre pesos | 0–1 |
+| `reg_lambda` | Regularización L2 sobre pesos | 1 (default) |
 
-: Hiperparametros principales de XGBoost y sus rangos tipicos. {#tbl-hiperparametros}
+: Hiperparámetros principales de XGBoost y sus rangos típicos. {#tbl-hiperparametros}
 
-El numero de arboles (`n_estimators`) y la tasa de aprendizaje (`learning_rate`) interactuan directamente: tasas de aprendizaje menores requieren mas arboles pero generalmente producen mejores modelos. El `subsample` y el `colsample_bytree` introducen aleatoriedad similar al Random Forest, lo que reduce la varianza y el sobreajuste [@friedman2002stochastic]. El `min_child_weight` controla la complejidad de cada arbol al exigir que cada hoja tenga una suma de hessianos minima.
+El número de árboles (`n_estimators`) y la tasa de aprendizaje (`learning_rate`) interactuan directamente: tasas de aprendizaje menores requieren más árboles pero generalmente producen mejores modelos. El `subsample` y el `colsample_bytree` introducen aleatoriedad similar al Random Forest, lo que reduce la varianza y el sobreajuste [@friedman2002stochastic]. El `min_child_weight` controla la complejidad de cada árbol al exigir que cada hoja tenga una suma de hessianos mínima.
 
 ### Convergencia y early stopping
 
 ```{python}
 #| label: fig-xgb-convergencia
-#| fig-cap: "Curvas de error RMSE en entrenamiento y validacion en funcion del numero de rondas de boosting para el conjunto de datos California Housing. La linea vertical indica la ronda de parada anticipada (early stopping). La zona roja sombreada senala la region de sobreajuste potencial."
+#| fig-cap: "Curvas de error RMSE en entrenamiento y validación en función del número de rondas de boosting para el conjunto de datos California Housing. La línea vertical indica la ronda de parada anticipada (early stopping). La zona roja sombreada senala la región de sobreajuste potencial."
 #| code-fold: true
 
 import numpy as np
@@ -697,13 +934,13 @@ fig5.update_layout(
 fig5.show()
 ```
 
-La @fig-xgb-convergencia muestra el comportamiento tipico del gradient boosting: el error de entrenamiento decrece monotonamente, mientras el error de validacion se estabiliza y puede comenzar a subir si se excede la cantidad optima de arboles. La tecnica de *early stopping* detiene el entrenamiento cuando el error de validacion no mejora durante un numero definido de rondas consecutivas.
+La @fig-xgb-convergencia muestra el comportamiento típico del gradient boosting: el error de entrenamiento decrece monotonamente, mientras el error de validación se estabiliza y puede comenzar a subir si se excede la cantidad óptima de árboles. La técnica de *early stopping* detiene el entrenamiento cuando el error de validación no mejora durante un número definido de rondas consecutivas.
 
-### Busqueda de hiperparametros: profundidad y tasa de aprendizaje
+### Búsqueda de hiperparámetros: profundidad y tasa de aprendizaje
 
 ```{python}
 #| label: fig-xgb-hiperparametros
-#| fig-cap: "RMSE de validacion sobre una grilla de max_depth x learning_rate en el conjunto California Housing. Valores mas bajos (verde) indican mejor rendimiento. La celda optima se marca con un borde rojo."
+#| fig-cap: "RMSE de validación sobre una grilla de max_depth x learning_rate en el conjunto California Housing. Valores más bajos (verde) indican mejor rendimiento. La celda óptima se marca con un borde rojo."
 #| code-fold: true
 
 import numpy as np
@@ -778,29 +1015,29 @@ fig6.update_layout(
 fig6.show()
 ```
 
-La @fig-xgb-hiperparametros revela la interaccion entre la profundidad del arbol y la tasa de aprendizaje. En general, tasas de aprendizaje muy bajas (0.01) requieren mas arboles para converger y con solo 100 estimadores pueden tener alto sesgo. Profundidades intermedias (3–5) suelen dar el mejor equilibrio entre capacidad y generalizacion.
+La @fig-xgb-hiperparametros revela la interacción entre la profundidad del árbol y la tasa de aprendizaje. En general, tasas de aprendizaje muy bajas (0.01) requieren más árboles para converger y con solo 100 estimadores pueden tener alto sesgo. Profundidades intermedias (3–5) suelen dar el mejor equilibrio entre capacidad y generalización.
 
 ## Importancia de variables
 
-XGBoost ofrece tres metricas para cuantificar la importancia de cada variable en el modelo entrenado:
+XGBoost ofrece tres métricas para cuantificar la importancia de cada variable en el modelo entrenado:
 
-- **Frecuencia (weight):** numero de veces que la variable se usa en una division a lo largo de todos los arboles. Es sensible al numero de categorias distintas de cada variable.
-- **Ganancia (gain):** reduccion promedio de la perdida aportada por cada division que usa esa variable. Es la metrica mas informativa porque captura la contribucion real al rendimiento del modelo.
-- **Cobertura (cover):** numero promedio de observaciones que pasan por cada division de la variable. Refleja cuantas muestras son "afectadas" por esa variable.
+- **Frecuencia (weight):** número de veces que la variable se usa en una división a lo largo de todos los árboles. Es sensible al número de categorías distintas de cada variable.
+- **Ganancia (gain):** reducción promedio de la pérdida aportada por cada división que usa esa variable. Es la métrica más informativa porque captura la contribución real al rendimiento del modelo.
+- **Cobertura (cover):** número promedio de observaciones que pasan por cada división de la variable. Refleja cuantas muestras son "afectadas" por esa variable.
 
-La metrica de ganancia suele ser la mas recomendable para interpretar cuales variables son verdaderamente relevantes, ya que la frecuencia puede sobreestimar la importancia de variables con muchos valores posibles.
+La métrica de ganancia suele ser la más recomendable para interpretar cuales variables son verdaderamente relevantes, ya que la frecuencia puede sobreestimar la importancia de variables con muchos valores posibles.
 
-Es importante destacar que todas estas metricas miden la importancia *global* del modelo, es decir, el aporte promedio de cada variable a traves de todas las observaciones. Para obtener importancias *locales* (especificas a una prediccion individual), se deben usar los valores SHAP, descritos en la @sec-shap.
+Es importante destacar que todas estas métricas miden la importancia *global* del modelo, es decir, el aporte promedio de cada variable a través de todas las observaciones. Para obtener importancias *locales* (especificas a una predicción individual), se deben usar los valores SHAP, descritos en la @sec-shap.
 
-Matematicamente, la importancia de ganancia para la variable $k$ se calcula como:
+Matemáticamente, la importancia de ganancia para la variable $k$ se calcula como:
 
 $$\text{Gain}_k = \frac{1}{|\mathcal{T}_k|} \sum_{t \in \mathcal{T}_k} \text{Gain}_t$$ {#eq-importancia-gain}
 
-donde $\mathcal{T}_k$ es el conjunto de todas las divisiones que usan la variable $k$ en todos los arboles del ensamble. La importancia de frecuencia es simplemente $|\mathcal{T}_k|$, y la de cobertura es el promedio de $|I_L| + |I_R|$ sobre todas esas divisiones.
+donde $\mathcal{T}_k$ es el conjunto de todas las divisiones que usan la variable $k$ en todos los árboles del ensamble. La importancia de frecuencia es simplemente $|\mathcal{T}_k|$, y la de cobertura es el promedio de $|I_L| + |I_R|$ sobre todas esas divisiones.
 
 ```{python}
 #| label: fig-xgb-importancia
-#| fig-cap: "Importancia de variables del modelo XGBoost entrenado en California Housing, segun tres criterios: Frecuencia (numero de divisiones), Ganancia (reduccion media de perdida) y Cobertura (muestras promedio por division)."
+#| fig-cap: "Importancia de variables del modelo XGBoost entrenado en California Housing, según tres criterios: Frecuencia (número de divisiones), Ganancia (reducción media de pérdida) y Cobertura (muestras promedio por división)."
 #| code-fold: true
 
 import numpy as np
@@ -870,23 +1107,23 @@ fig7.update_layout(
 fig7.show()
 ```
 
-Segun la @fig-xgb-importancia, la variable `MedInc` (ingreso mediano del bloque censal) es consistentemente la mas importante en los tres criterios, lo cual es coherente con el conocimiento del dominio: el ingreso es el predictor mas fuerte del precio de la vivienda en California. Las variables `Latitude` y `Longitude` tambien aparecen como relevantes, capturando efectos geograficos.
+Según la @fig-xgb-importancia, la variable `MedInc` (ingreso mediano del bloque censal) es consistentemente la más importante en los tres criterios, lo cual es coherente con el conocimiento del dominio: el ingreso es el predictor más fuerte del precio de la vivienda en California. Las variables `Latitude` y `Longitude` también aparecen como relevantes, capturando efectos geograficos.
 
-## Regularizacion y poda
+## Regularización y poda
 
-### Efecto de $\lambda$ (L2) y $\gamma$ (ganancia minima)
+### Efecto de $\lambda$ (L2) y $\gamma$ (ganancia mínima)
 
-La regularizacion en XGBoost actua por dos mecanismos complementarios, derivados directamente de la @eq-regularizacion:
+La regularización en XGBoost actua por dos mecanismos complementarios, derivados directamente de la @eq-regularizacion:
 
-**Regularizacion L2 ($\lambda$):** El peso optimo de cada hoja es $w_j^* = -G_j / (H_j + \lambda)$. Un $\lambda$ mayor reduce la magnitud de los pesos, produciendo predicciones mas conservadoras y previniendo el sobreajuste. Es equivalente a la regularizacion Ridge en modelos lineales pero aplicada a los pesos de cada hoja del arbol.
+**Regularización L2 ($\lambda$):** El peso óptimo de cada hoja es $w_j^* = -G_j / (H_j + \lambda)$. Un $\lambda$ mayor reduce la magnitud de los pesos, produciendo predicciones más conservadoras y previniendo el sobreajuste. Es equivalente a la regularización Ridge en modelos lineales pero aplicada a los pesos de cada hoja del árbol.
 
-**Poda por ganancia minima ($\gamma$):** Una division solo se realiza si $\text{Gain} > \gamma$ (ver @eq-ganancia). Un $\gamma$ mayor lleva a arboles mas pequeños y con menos divisiones. A diferencia de la poda post-entrenamiento, esta poda ocurre durante la construccion del arbol, lo que es mas eficiente computacionalmente.
+**Poda por ganancia mínima ($\gamma$):** Una división solo se realiza si $\text{Gain} > \gamma$ (ver @eq-ganancia). Un $\gamma$ mayor lleva a árboles más pequeños y con menos divisiones. A diferencia de la poda post-entrenamiento, esta poda ocurre durante la construcción del árbol, lo que es más eficiente computacionalmente.
 
-La combinacion de ambos parametros es complementaria: $\lambda$ controla la magnitud de cada prediccion de hoja, mientras que $\gamma$ controla la estructura del arbol. Se recomienda priorizar $\lambda$ alto sobre $\gamma$ alto, ya que $\lambda$ tiene un efecto mas suave y continuo.
+La combinación de ambos parámetros es complementaria: $\lambda$ controla la magnitud de cada predicción de hoja, mientras que $\gamma$ controla la estructura del árbol. Se recomienda priorizar $\lambda$ alto sobre $\gamma$ alto, ya que $\lambda$ tiene un efecto más suave y continuo.
 
 ```{python}
 #| label: fig-xgb-regularizacion
-#| fig-cap: "RMSE de validacion en funcion de la regularizacion L2 (lambda) y la ganancia minima de poda (gamma) en California Housing. Colores mas verdes indican menor error."
+#| fig-cap: "RMSE de validación en función de la regularización L2 (lambda) y la ganancia mínima de poda (gamma) en California Housing. Colores más verdes indican menor error."
 #| code-fold: true
 
 import numpy as np
@@ -945,29 +1182,29 @@ fig8.show()
 
 La @fig-xgb-regularizacion confirma que valores muy altos de $\gamma$ (mayor a 2) pueden degradar el rendimiento al podar demasiado agresivamente, impidiendo que el modelo capture patrones relevantes. Un $\lambda$ moderado (entre 1 y 5) generalmente ofrece el mejor equilibrio.
 
-Adicionalmente, XGBoost soporta regularizacion L1 sobre los pesos de las hojas mediante el parametro `reg_alpha`. El objetivo con regularizacion elastica (L1 + L2) toma la forma:
+Adicionalmente, XGBoost soporta regularización L1 sobre los pesos de las hojas mediante el parámetro `reg_alpha`. El objetivo con regularización elastica (L1 + L2) toma la forma:
 
 $$\Omega(f) = \gamma T + \alpha \sum_{j=1}^{T}|w_j| + \frac{1}{2}\lambda\sum_{j=1}^{T}w_j^2$$ {#eq-elasticnet}
 
-La regularizacion L1 ($\alpha > 0$) induce esparsidad en los pesos de las hojas: muchos pesos se vuelven exactamente cero, lo que produce arboles donde algunas hojas no contribuyen a la prediccion. Esto puede ser util cuando se sospecha que muchas divisiones son redundantes o ruidosas. En la practica, la regularizacion L2 ($\lambda$) es suficiente en la mayoria de los casos y se recomienda comenzar con $\alpha = 0$.
+La regularización L1 ($\alpha > 0$) induce esparsidad en los pesos de las hojas: muchos pesos se vuelven exactamente cero, lo que produce árboles donde algunas hojas no contribuyen a la predicción. Esto puede ser útil cuando se sospecha que muchas divisiones son redundantes o ruidosas. En la práctica, la regularización L2 ($\lambda$) es suficiente en la mayoría de los casos y se recomienda comenzar con $\alpha = 0$.
 
-### Efecto del subsampling sobre la regularizacion
+### Efecto del subsampling sobre la regularización
 
-El parametro `subsample` (fraccion de filas) y `colsample_bytree` (fraccion de columnas) introducen aleatoriedad en la construccion de cada arbol. Desde una perspectiva estadistica, esto puede verse como una forma de regularizacion implicita: al entrenar cada arbol con un subconjunto distinto de datos, se reduce la correlacion entre los arboles del ensamble, lo que disminuye la varianza de las predicciones. @friedman2002stochastic demostro empiricamente que el subsampling de filas mejora consistentemente la generalizacion del gradient boosting, especialmente en conjuntos de datos con ruido.
+El parámetro `subsample` (fracción de filas) y `colsample_bytree` (fracción de columnas) introducen aleatoriedad en la construcción de cada árbol. Desde una perspectiva estadística, esto puede verse como una forma de regularización implícita: al entrenar cada árbol con un subconjunto distinto de datos, se reduce la correlación entre los árboles del ensamble, lo que disminuye la varianza de las predicciones. @friedman2002stochastic demostro empíricamente que el subsampling de filas mejora consistentemente la generalización del gradient boosting, especialmente en conjuntos de datos con ruido.
 
 ## Contribuciones individuales (SHAP simplificado) {#sec-shap}
 
-Los valores SHAP (*SHapley Additive exPlanations*), propuestos por @lundberg2017unified, permiten descomponer la prediccion de cualquier modelo en contribuciones aditivas de cada variable para una observacion especifica. Para XGBoost, @lundberg2020local2global desarrollaron el algoritmo TreeSHAP, que calcula estas contribuciones de forma exacta y eficiente en tiempo polinomial.
+Los valores SHAP (*SHapley Additive exPlanations*), propuestos por @lundberg2017unified, permiten descomponer la predicción de cualquier modelo en contribuciones aditivas de cada variable para una observación específica. Para XGBoost, @lundberg2020local2global desarrollaron el algoritmo TreeSHAP, que calcula estas contribuciones de forma exacta y eficiente en tiempo polinomial.
 
-Formalmente, para una prediccion $\hat{y}_i$, los valores SHAP $\phi_j$ satisfacen:
+Formalmente, para una predicción $\hat{y}_i$, los valores SHAP $\phi_j$ satisfacen:
 
 $$\hat{y}_i = \phi_0 + \sum_{j=1}^{p} \phi_j$$ {#eq-shap}
 
-donde $\phi_0 = \mathbb{E}[\hat{y}]$ es la prediccion base (valor esperado del modelo) y $\phi_j$ es la contribucion de la variable $j$ para esa observacion en particular. Las contribuciones pueden ser positivas (la variable empuja la prediccion hacia arriba) o negativas (la variable la baja).
+donde $\phi_0 = \mathbb{E}[\hat{y}]$ es la predicción base (valor esperado del modelo) y $\phi_j$ es la contribución de la variable $j$ para esa observación en particular. Las contribuciones pueden ser positivas (la variable empuja la predicción hacia arriba) o negativas (la variable la baja).
 
 ```{python}
 #| label: fig-xgb-waterfall
-#| fig-cap: "Grafico de cascada (waterfall) que muestra la contribucion de cada variable para una prediccion individual en el conjunto California Housing. Las barras verdes suman a la prediccion y las rojas restan. Se muestran ordenadas por magnitud de contribucion."
+#| fig-cap: "Gráfico de cascada (waterfall) que muestra la contribución de cada variable para una predicción individual en el conjunto California Housing. Las barras verdes suman a la predicción y las rojas restan. Se muestran ordenadas por magnitud de contribución."
 #| code-fold: true
 
 import numpy as np
@@ -1056,16 +1293,16 @@ fig9.update_layout(
 fig9.show()
 ```
 
-La @fig-xgb-waterfall muestra como la prediccion final se construye sumando la contribucion de cada variable al valor base. Para esta observacion particular, `MedInc` tiene la mayor influencia positiva, mientras que algunas variables geograficas pueden reducir la prediccion estimada. Esta visualizacion es especialmente util para comunicar predicciones individuales a usuarios no tecnicos o para auditar el comportamiento del modelo.
+La @fig-xgb-waterfall muestra como la predicción final se construye sumando la contribución de cada variable al valor base. Para esta observación particular, `MedInc` tiene la mayor influencia positiva, mientras que algunas variables geograficas pueden reducir la predicción estimada. Esta visualización es especialmente útil para comunicar predicciones individuales a usuarios no técnicos o para auditar el comportamiento del modelo.
 
-## XGBoost para clasificacion
+## XGBoost para clasificación
 
-XGBoost es igualmente aplicable a problemas de clasificacion, con soporte nativo para:
+XGBoost es igualmente aplicable a problemas de clasificación, con soporte nativo para:
 
-- **Clasificacion binaria:** `objective="binary:logistic"` — el modelo genera probabilidades mediante la funcion sigmoide $p_i = \sigma(\hat{y}_i)$, y la funcion de perdida es la log-verosimilitud negativa (log-loss). Los gradientes toman la forma $g_i = p_i - y_i$ y el hessiano $h_i = p_i(1-p_i)$.
-- **Clasificacion multiclase:** `objective="multi:softprob"` con `num_class=K` — se entrena un conjunto de arboles por clase y se aplica softmax para normalizar las probabilidades.
+- **Clasificación binaria:** `objective="binary:logistic"` — el modelo genera probabilidades mediante la función sigmoide $p_i = \sigma(\hat{y}_i)$, y la función de pérdida es la log-verosimilitud negativa (log-loss). Los gradientes toman la forma $g_i = p_i - y_i$ y el hessiano $h_i = p_i(1-p_i)$.
+- **Clasificación multiclase:** `objective="multi:softprob"` con `num_class=K` — se entrena un conjunto de árboles por clase y se aplica softmax para normalizar las probabilidades.
 
-La ventaja de usar el hessiano $h_i = p_i(1-p_i)$ es que pesa menos las observaciones donde el modelo ya esta seguro (probabilidad cercana a 0 o 1), concentrando el aprendizaje en los casos dificiles (probabilidad cercana a 0.5).
+La ventaja de usar el hessiano $h_i = p_i(1-p_i)$ es que pesa menos las observaciones donde el modelo ya esta seguro (probabilidad cercana a 0 o 1), concentrando el aprendizaje en los casos difíciles (probabilidad cercana a 0.5).
 
 ```{python}
 #| label: tbl-clasificacion-xgb
@@ -1098,15 +1335,15 @@ print(f"AUC-ROC en prueba: {auc:.4f}")
 print(f"Exactitud en prueba: {acc:.4f}")
 ```
 
-El resultado muestra el excelente rendimiento de XGBoost incluso con hiperparametros predeterminados. En el conjunto de cancer de mama (569 observaciones, 30 variables), se obtiene un AUC-ROC superior a 0.99, lo cual refleja tanto la calidad del clasificador como la separabilidad del conjunto de datos.
+El resultado muestra el excelente rendimiento de XGBoost incluso con hiperparámetros predeterminados. En el conjunto de cancer de mama (569 observaciones, 30 variables), se obtiene un AUC-ROC superior a 0.99, lo cual refleja tanto la calidad del clasificador como la separabilidad del conjunto de datos.
 
-### Curva ROC y analisis de umbrales
+### Curva ROC y análisis de umbrales
 
-La curva ROC (*Receiver Operating Characteristic*) es una herramienta estandar para evaluar clasificadores binarios. Traza la tasa de verdaderos positivos (sensibilidad) frente a la tasa de falsos positivos (1 - especificidad) para todos los umbrales de decision posibles. El area bajo la curva (AUC) cuantifica la capacidad discriminatoria del modelo en un unico numero: AUC = 1 indica clasificacion perfecta, AUC = 0.5 indica prediccion aleatoria.
+La curva ROC (*Receiver Operating Characteristic*) es una herramienta estándar para evaluar clasificadores binarios. Traza la tasa de verdaderos positivos (sensibilidad) frente a la tasa de falsos positivos (1 - especificidad) para todos los umbrales de decisión posibles. El área bajo la curva (AUC) cuantifica la capacidad discriminatoria del modelo en un único número: AUC = 1 indica clasificación perfecta, AUC = 0.5 indica predicción aleatoria.
 
 ```{python}
 #| label: fig-xgb-roc
-#| fig-cap: "Curva ROC del clasificador XGBoost en el conjunto de prueba de cancer de mama. El area bajo la curva (AUC) indica la capacidad discriminatoria del modelo. La linea diagonal punteada representa un clasificador aleatorio."
+#| fig-cap: "Curva ROC del clasificador XGBoost en el conjunto de prueba de cancer de mama. El área bajo la curva (AUC) indica la capacidad discriminatoria del modelo. La línea diagonal punteada representa un clasificador aleatorio."
 #| code-fold: true
 
 import numpy as np
@@ -1175,43 +1412,43 @@ fig_roc.update_layout(
 fig_roc.show()
 ```
 
-La @fig-xgb-roc confirma visualmente el alto rendimiento del clasificador: la curva ROC se acerca al punto ideal (0, 1), y el area bajo la curva es practicamente perfecta para este conjunto de datos. En aplicaciones reales, donde la separabilidad es menor, la curva ROC permite elegir el umbral de decision adecuado segun el costo relativo de falsos positivos y falsos negativos.
+La @fig-xgb-roc confirma visualmente el alto rendimiento del clasificador: la curva ROC se acerca al punto ideal (0, 1), y el área bajo la curva es prácticamente perfecta para este conjunto de datos. En aplicaciones reales, donde la separabilidad es menor, la curva ROC permite elegir el umbral de decisión adecuado según el costo relativo de falsos positivos y falsos negativos.
 
-## Buenas practicas y comparacion con alternativas
+## Buenas prácticas y comparación con alternativas
 
-### Comparacion de metodos de ensamble
+### Comparación de métodos de ensamble
 
-La siguiente tabla resume el posicionamiento de XGBoost en el contexto de otros metodos de aprendizaje supervisado.
+La siguiente tabla resume el posicionamiento de XGBoost en el contexto de otros métodos de aprendizaje supervisado.
 
-| Metodo | Complejidad | Interpretabilidad | Rendimiento tipico |
+| Método | Complejidad | Interpretabilidad | Rendimiento típico |
 |--------|------------|-------------------|--------------------|
-| Arbol unico | Baja | Alta | Bajo |
+| Árbol único | Baja | Alta | Bajo |
 | Random Forest | Media | Media | Bueno |
 | Gradient Boosting (sklearn) | Media | Media | Muy bueno |
 | XGBoost | Media-alta | Media (+ SHAP) | Excelente |
 | LightGBM / CatBoost | Media-alta | Media (+ SHAP) | Excelente |
 
-: Comparacion de metodos de ensamble segun complejidad, interpretabilidad y rendimiento tipico. {#tbl-comparacion}
+: Comparación de métodos de ensamble según complejidad, interpretabilidad y rendimiento típico. {#tbl-comparacion}
 
-### Recomendaciones practicas
+### Recomendaciones prácticas
 
-Las siguientes guias resumen las mejores practicas para usar XGBoost de forma efectiva:
+Las siguientes guias resumen las mejores prácticas para usar XGBoost de forma efectiva:
 
-1. **Estrategia de ajuste de hiperparametros:** Comenzar con `learning_rate=0.1` y `n_estimators=200–500`. Una vez identificado un buen numero de arboles mediante *early stopping*, reducir la tasa de aprendizaje a 0.05 o 0.01 y aumentar proporcionalmente los estimadores para refinar el modelo [@hastie2009].
+1. **Estrategia de ajuste de hiperparámetros:** Comenzar con `learning_rate=0.1` y `n_estimators=200–500`. Una vez identificado un buen número de árboles mediante *early stopping*, reducir la tasa de aprendizaje a 0.05 o 0.01 y aumentar proporcionalmente los estimadores para refinar el modelo [@hastie2009].
 
-2. **Early stopping obligatorio:** Siempre usar `early_stopping_rounds` con un conjunto de validacion separado. Esto evita el sobreajuste sin necesidad de una busqueda exhaustiva del numero optimo de arboles.
+2. **Early stopping obligatorio:** Siempre usar `early_stopping_rounds` con un conjunto de validación separado. Esto evita el sobreajuste sin necesidad de una búsqueda exhaustiva del número óptimo de árboles.
 
-3. **Subsampling para reducir varianza:** Activar `subsample=0.8` y `colsample_bytree=0.8` por defecto. La aleatoriedad adicional que introducen, similar al Random Forest, generalmente mejora la generalizacion [@friedman2002stochastic].
+3. **Subsampling para reducir varianza:** Activar `subsample=0.8` y `colsample_bytree=0.8` por defecto. La aleatoriedad adicional que introducen, similar al Random Forest, generalmente mejora la generalización [@friedman2002stochastic].
 
-4. **Metrica de importancia:** Preferir `importance_type="gain"` sobre `"weight"`, ya que la frecuencia puede ser enganiosa cuando las variables tienen cardinalidades muy distintas.
+4. **Métrica de importancia:** Preferir `importance_type="gain"` sobre `"weight"`, ya que la frecuencia puede ser enganiosa cuando las variables tienen cardinalidades muy distintas.
 
-5. **Regularizacion:** Mantener `reg_lambda=1` (valor por defecto) como punto de partida. Aumentar si hay seniales de sobreajuste. Usar `gamma` con moderacion (valores entre 0 y 1) para podar divisiones poco informativas.
+5. **Regularización:** Mantener `reg_lambda=1` (valor por defecto) como punto de partida. Aumentar si hay seniales de sobreajuste. Usar `gamma` con moderación (valores entre 0 y 1) para podar divisiones poco informativas.
 
-6. **Validacion cruzada:** Para conjuntos de datos pequenos, usar `xgb.cv()` con k-fold para estimar el numero optimo de arboles de forma mas robusta que con un unico conjunto de validacion.
+6. **Validación cruzada:** Para conjuntos de datos pequeños, usar `xgb.cv()` con k-fold para estimar el número óptimo de árboles de forma más robusta que con un único conjunto de validación.
 
-7. **Manejo de valores faltantes:** XGBoost aprende automaticamente la direccion optima para los valores faltantes durante el entrenamiento (sparsity-awareness [@chen2016xgboost]). No es necesario imputar previamente.
+7. **Manejo de valores faltantes:** XGBoost aprende automáticamente la dirección óptima para los valores faltantes durante el entrenamiento (sparsity-awareness [@chen2016xgboost]). No es necesario imputar previamente.
 
-8. **Comparar con LightGBM:** Para conjuntos de datos muy grandes (millones de filas o cientos de variables), LightGBM suele ser mas rapido gracias a su estrategia de construccion de arboles basada en histogramas (*leaf-wise growth*). La API es muy similar a XGBoost.
+8. **Comparar con LightGBM:** Para conjuntos de datos muy grandes (millones de filas o cientos de variables), LightGBM suele ser más rápido gracias a su estrategia de construcción de árboles basada en histogramas (*leaf-wise growth*). La API es muy similar a XGBoost.
 
 ## Referencias {.unnumbered}
 

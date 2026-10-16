@@ -44,6 +44,9 @@ crossref:
 jupyter: python3
 ---
 
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+
 Los **modelos de mezcla gaussiana** (GMM, por sus siglas en inglés) son modelos probabilísticos generativos que representan la distribución de los datos como una suma ponderada de distribuciones normales, lo que los hace ideales para capturar estructuras multimodales que una sola gaussiana no puede describir [@bishop2006; @murphy2012]. El algoritmo de Expectation-Maximization (EM), introducido formalmente por @dempster1977, proporciona el marco de optimización para estimar los parámetros del modelo a partir de datos incompletos (en este caso, los datos están "incompletos" porque la asignación de cada observación a cada componente es desconocida). Los GMM pueden entenderse como una generalización probabilística del algoritmo K-Means: cuando las covarianzas son esféricas e iguales y se toma el límite de varianza cero, las asignaciones blandas del GMM convergen a las asignaciones duras de K-Means [@hastie2009]. En este capítulo se desarrolla la teoría completa del modelo, el algoritmo EM desde cero, y todos los ejemplos computacionales se implementan exclusivamente con `numpy` y `plotly`.
 
 ## Motivación: ¿por qué un solo gaussiano no basta?
@@ -314,6 +317,48 @@ $$
 \boldsymbol{\Sigma}_k^{(t+1)} = \frac{1}{N_k} \sum_{i=1}^{N} r_{ik} \,
 (\mathbf{x}_i - \boldsymbol{\mu}_k^{(t+1)})(\mathbf{x}_i - \boldsymbol{\mu}_k^{(t+1)})^\top
 $$ {#eq-m-step-sigma}
+
+### EM a mano: cinco puntos en una recta
+
+Cinco observaciones, $x = (1, 2, 4, 6, 7)$, y una mezcla de dos componentes inicializada con $\mu_1 = 2$, $\mu_2 = 6$, $\sigma_1^2 = \sigma_2^2 = 1$ y $\pi_1 = \pi_2 = 0.5$. La log-verosimilitud inicial es $\ell = -10.367$.
+
+**Paso E.** Para cada punto, la responsabilidad de la componente 1 compara las dos densidades ponderadas. Para $x = 2$: $\mathcal{N}(2 \mid 2, 1) = 0.3989$ y $\mathcal{N}(2 \mid 6, 1) = e^{-8}/\sqrt{2\pi} = 0.000134$, así que $r_{21} = 0.3989/(0.3989 + 0.000134) = 0.9997$. El punto $x = 4$ está exactamente a la misma distancia de ambas medias: $r_{31} = 0.5$.
+
+| $x$ | 1 | 2 | 4 | 6 | 7 | $N_k = \sum_i r_{ik}$ |
+|---|---:|---:|---:|---:|---:|---:|
+| $r_{i1}$ | 1.0000 | 0.9997 | 0.5000 | 0.0003 | 0.0000 | 2.5 |
+| $r_{i2}$ | 0.0000 | 0.0003 | 0.5000 | 0.9997 | 1.0000 | 2.5 |
+
+: Responsabilidades del primer paso E. {#tbl-em-resp}
+
+**Paso M.** Cada componente se reajusta como un promedio **ponderado por las responsabilidades**:
+
+$$
+\mu_1 = \frac{1(1) + 0.9997(2) + 0.5(4) + 0.0003(6) + 0(7)}{2.5} = 2.0006, \qquad
+\sigma_1^2 = \frac{\sum_i r_{i1}(x_i - \mu_1)^2}{2.5} = 1.202, \qquad \pi_1 = \frac{2.5}{5} = 0.5,
+$$
+
+y simétricamente $\mu_2 = 5.9994$ y $\sigma_2^2 = 1.202$. El punto ambiguo $x = 4$ contribuye **la mitad** a cada componente y ensancha ambas varianzas. La log-verosimilitud sube a $-10.320$ y, en las iteraciones siguientes, apenas cambia: EM convergió en dos pasos a $\mu \approx (2.002, 5.998)$ y $\sigma^2 \approx 1.209$. A diferencia de $k$-medias, que habría asignado el punto 4 por completo a uno de los grupos, el GMM reconoce explícitamente su ambigüedad.
+
+```{python}
+#| label: gmm-em-manual
+import numpy as np
+
+x5 = np.array([1, 2, 4, 6, 7], dtype=float)
+mu, var, pi = np.array([2.0, 6.0]), np.array([1.0, 1.0]), np.array([0.5, 0.5])
+normal = lambda x, m, v: np.exp(-(x - m) ** 2 / (2 * v)) / np.sqrt(2 * np.pi * v)
+loglik = lambda: np.log((pi * normal(x5[:, None], mu, var)).sum(axis=1)).sum()
+
+print(f"ℓ inicial = {loglik():.3f}")
+for t in range(1, 4):
+    dens = pi * normal(x5[:, None], mu, var)          # paso E
+    r = dens / dens.sum(axis=1, keepdims=True)
+    Nk = r.sum(axis=0)                                # paso M
+    mu = (r * x5[:, None]).sum(axis=0) / Nk
+    var = (r * (x5[:, None] - mu) ** 2).sum(axis=0) / Nk
+    pi = Nk / len(x5)
+    print(f"iteración {t}: r(x=4) = {r[2].round(3)}, μ = {mu.round(4)}, σ² = {var.round(4)}, ℓ = {loglik():.4f}")
+```
 
 ### Convergencia y propiedad monótona
 
@@ -590,11 +635,107 @@ fig_ll.update_layout(
 fig_ll.show()
 ```
 
+## Laboratorio: EM paso a paso
+
+El laboratorio alterna los pasos E y M sobre datos unidimensionales. Cada punto se colorea mezclando el azul y el naranja según su responsabilidad; las curvas son las componentes ponderadas $\pi_k \mathcal{N}(x \mid \mu_k, \sigma_k^2)$ y su suma. El estado inicial reproduce el ejemplo a mano.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="em-lab">
+  <p class="plab-eyebrow">Laboratorio · Algoritmo EM</p>
+  <h3 class="plab-title">¿Quién pertenece a qué componente?</h3>
+  <p class="plab-sub">Avanza un paso E (recalcular responsabilidades) o un paso M (reajustar parámetros). La log-verosimilitud nunca baja.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="em-data"><button data-value="cinco" aria-pressed="true">Cinco puntos</button><button data-value="mezcla">Mezcla (80 puntos)</button></div>
+    </div>
+    <div class="plab-field">Avanzar
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap"><button class="plab-btn primary" id="em-step">Siguiente paso</button><button class="plab-btn" id="em-iter">Iteración completa</button><button class="plab-btn" id="em-run">Hasta converger</button><button class="plab-btn" id="em-reset">Reiniciar</button><button class="plab-btn" id="em-rand">Inicio aleatorio</button></div>
+    </div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Próximo paso</span><strong id="em-next"></strong></div>
+    <div class="plab-stat"><span>μ₁, μ₂</span><strong id="em-mu"></strong></div>
+    <div class="plab-stat"><span>σ₁², σ₂² · π₁</span><strong id="em-var"></strong></div>
+    <div class="plab-stat"><span>Log-verosimilitud ℓ</span><strong id="em-ll"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Componentes y responsabilidades</h4><svg id="em-svg" role="img" aria-label="Datos coloreados por responsabilidad y densidades de las componentes"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>componente 1</span><span><i style="background:var(--lab-s2)"></i>componente 2</span><span><i style="background:var(--lab-s4)"></i>mezcla</span></div></div>
+    <div class="plab-panel"><h4>Log-verosimilitud por iteración</h4><svg id="em-ll-svg" role="img" aria-label="Log-verosimilitud después de cada paso M"></svg>
+      <div id="em-tab" class="plab-scroll" style="margin-top:.5rem"></div></div>
+  </div>
+  <p class="plab-note" id="em-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('em-lab');
+  const $ = s => root.querySelector(s);
+  const g = K.rng(9), mezcla = [];
+  for (let k = 0; k < 80; k++) mezcla.push(k < 50 ? 3 + 1.1 * g.normal() : 8 + 0.7 * g.normal());
+  const SETS = { cinco: { x: [1, 2, 4, 6, 7], lim: [-1, 9], init: [2, 6, 1, 1, 0.5] }, mezcla: { x: mezcla.map(v => +v.toFixed(2)), lim: [-1, 11.5], init: [5, 6, 4, 4, 0.5] } };
+  const N = (x, m, v) => Math.exp(-((x - m) ** 2) / (2 * v)) / Math.sqrt(2 * Math.PI * v);
+  let S, th, resp, phase, hist, it, rnd = K.rng(31);
+  const ll = () => K.sum(S.x.map(x => Math.log(th[4] * N(x, th[0], th[2]) + (1 - th[4]) * N(x, th[1], th[3]))));
+  const dataSeg = K.segmented($('#em-data'), () => { reset(); render(); });
+  function reset(init) { S = SETS[dataSeg.get()]; th = (init || S.init).slice(); resp = null; phase = 'E'; it = 0; hist = [[0, ll()]]; }
+  function eStep() { resp = S.x.map(x => { const a = th[4] * N(x, th[0], th[2]), b = (1 - th[4]) * N(x, th[1], th[3]); return a / (a + b); }); phase = 'M'; }
+  function mStep() { const r1 = resp, r2 = resp.map(r => 1 - r), N1 = K.sum(r1), N2 = K.sum(r2);
+    const m1 = K.sum(S.x.map((x, i) => r1[i] * x)) / N1, m2 = K.sum(S.x.map((x, i) => r2[i] * x)) / N2;
+    const v1 = Math.max(1e-3, K.sum(S.x.map((x, i) => r1[i] * (x - m1) ** 2)) / N1), v2 = Math.max(1e-3, K.sum(S.x.map((x, i) => r2[i] * (x - m2) ** 2)) / N2);
+    th = [m1, m2, v1, v2, N1 / S.x.length]; phase = 'E'; it++; hist.push([it, ll()]); }
+  const step = () => (phase === 'E' ? eStep() : mStep());
+  $('#em-step').addEventListener('click', () => { step(); render(); });
+  $('#em-iter').addEventListener('click', () => { if (phase === 'M') mStep(); eStep(); mStep(); render(); });
+  $('#em-run').addEventListener('click', () => { for (let k = 0; k < 500; k++) { const before = ll(); if (phase === 'M') mStep(); eStep(); mStep(); if (Math.abs(ll() - before) < 1e-8) break; } render(); });
+  $('#em-reset').addEventListener('click', () => { reset(); render(); });
+  $('#em-rand').addEventListener('click', () => { const [lo, hi] = SETS[dataSeg.get()].lim; reset([lo + rnd() * (hi - lo), lo + rnd() * (hi - lo), 0.5 + rnd() * 3, 0.5 + rnd() * 3, 0.5]); render(); });
+  function render() {
+    $('#em-next').textContent = phase === 'E' ? 'E (responsabilidades)' : 'M (parámetros)';
+    $('#em-mu').textContent = `${K.fmt(th[0], 3)}, ${K.fmt(th[1], 3)}`; $('#em-var').textContent = `${K.fmt(th[2], 3)}, ${K.fmt(th[3], 3)} · ${K.fmt(th[4], 2)}`;
+    $('#em-ll').textContent = K.fmt(ll(), 3);
+    const [lo, hi] = S.lim, xs = []; for (let x = lo; x <= hi + 1e-9; x += (hi - lo) / 300) xs.push(x);
+    const c1 = x => th[4] * N(x, th[0], th[2]), c2 = x => (1 - th[4]) * N(x, th[1], th[3]);
+    const ymax = Math.max(...xs.map(x => c1(x) + c2(x))) * 1.15;
+    const c = K.chart($('#em-svg'), { width: 380, height: 260, x: [lo, hi], y: [-ymax * 0.18, ymax], margin: { left: 40, bottom: 38 } });
+    c.axes({ xTicks: 5, yTicks: 4, xLabel: 'x', yLabel: 'densidad', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 2) });
+    c.path(xs.map(x => [x, c1(x)]), 's1 line'); c.path(xs.map(x => [x, c2(x)]), 's2 line'); c.path(xs.map(x => [x, c1(x) + c2(x)]), 's4 line thin');
+    c.line(th[0], 0, th[0], c1(th[0]), 's1 line dash thin'); c.line(th[1], 0, th[1], c2(th[1]), 's2 line dash thin');
+    const rr = resp || S.x.map(x => { const a = c1(x), b = c2(x); return a / (a + b); });
+    S.x.forEach((x, i) => { const d = c.dot(x, -ymax * 0.09 + (S.x.length > 10 ? ((i * 37) % 7 - 3) * ymax * 0.012 : 0), S.x.length > 10 ? 4 : 7, 's1 dot');
+      d.style.fill = `color-mix(in srgb, var(--lab-s1) ${Math.round(100 * rr[i])}%, var(--lab-s2))`; });
+    const lmin = Math.min(...hist.map(h => h[1])), lmax = Math.max(...hist.map(h => h[1]));
+    const cl = K.chart($('#em-ll-svg'), { width: 380, height: 170, x: [0, Math.max(5, it)], y: [lmin - 0.05 * (lmax - lmin + 1), lmax + 0.05 * (lmax - lmin + 1)], margin: { left: 50, bottom: 34 } });
+    cl.axes({ xTicks: 5, yTicks: 4, xLabel: 'iteración', yLabel: 'ℓ', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    cl.path(hist, 's4 line'); hist.forEach(h => cl.dot(h[0], h[1], 3, 's4 dot'));
+    $('#em-tab').innerHTML = S.x.length <= 10 && resp ? '<table class="plab-table"><thead><tr><th>x</th>' + S.x.map(x => `<th>${x}</th>`).join('') + '</tr></thead><tbody><tr><td>r₁</td>' + resp.map(r => `<td>${K.fmt(r, 4)}</td>`).join('') + '</tr></tbody></table>' : '';
+    const note = $('#em-note'), conv = hist.length > 2 && Math.abs(hist[hist.length - 1][1] - hist[hist.length - 2][1]) < 1e-6;
+    note.className = conv ? 'plab-note good' : 'plab-note';
+    note.textContent = conv ? `Convergió en ${it} iteraciones: ℓ = ${K.fmt(ll(), 3)}. Prueba un inicio aleatorio: EM puede llegar a otro óptimo local (o a una componente que colapsa sobre un solo punto).`
+      : phase === 'M' ? 'Responsabilidades calculadas: cada punto se reparte entre las componentes. El paso M reajustará cada componente con su promedio ponderado.' : `Iteración ${it}. El siguiente paso E reasigna los puntos con los parámetros nuevos.`;
+  }
+  reset(); render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, un laboratorio alterna los pasos E y M. Con los cinco puntos y el inicio $\mu = (2, 6)$, $\sigma^2 = (1, 1)$: tras el primer paso E, $r(x = 4) = 0.5$; tras el primer paso M, $\mu = (2.001, 5.999)$, $\sigma^2 = (1.202, 1.202)$ y $\ell$ sube de $-10.367$ a $-10.320$.
+:::
+
+**Guía del laboratorio.**
+
+1. Con *Cinco puntos*, da un paso E y comprueba la @tbl-em-resp; después un paso M y comprueba $\mu$ y $\sigma^2$.
+2. Predice antes de mover: ¿cuántas iteraciones más hacen falta para converger?
+3. Cambia a *Mezcla* y pulsa *Hasta converger*. ¿Recupera las dos componentes (medias cercanas a 3 y 8, pesos 0.625 y 0.375)?
+4. Usa *Inicio aleatorio* varias veces. ¿Siempre llega a la misma solución? ¿Qué ocurre si una componente empieza lejos de todos los datos?
+
 ## Tipos de covarianza
 
 La flexibilidad de un GMM depende en gran medida de la estructura impuesta a las matrices de covarianza $\boldsymbol{\Sigma}_k$. Restringir la forma de $\boldsymbol{\Sigma}_k$ reduce el número de parámetros a estimar, lo que puede mejorar la generalización cuando los datos son escasos, pero a costa de capacidad expresiva [@murphy2012; @hastie2009]. La siguiente tabla resume las cuatro estructuras más comunes en la práctica:
 
-| Tipo | Descripcion | Parametros por componente | Forma del contorno |
+| Tipo | Descripción | Parámetros por componente | Forma del contorno |
 |------|-------------|--------------------------|-------------------|
 | Esférica (*spherical*) | $\boldsymbol{\Sigma}_k = \sigma_k^2 \mathbf{I}$ | 1 | Círculos |
 | Diagonal (*diagonal*) | $\boldsymbol{\Sigma}_k = \mathrm{diag}(\sigma_{k1}^2, \ldots, \sigma_{kD}^2)$ | $D$ | Elipses alineadas con los ejes |
@@ -841,7 +982,7 @@ La figura @fig-gmm-vs-kmeans ilustra la diferencia entre las asignaciones duras 
 
 ```{python}
 #| label: fig-gmm-vs-kmeans
-#| fig-cap: "Comparacion entre K-Means (asignaciones duras) y GMM (asignaciones blandas) con K=3 en 2D. Panel izquierdo: cada punto toma el color discreto de su centroide más cercano. Panel derecho: el color de cada punto es una mezcla de los colores de los componentes, ponderada por las responsabilidades."
+#| fig-cap: "Comparación entre K-Means (asignaciones duras) y GMM (asignaciones blandas) con K=3 en 2D. Panel izquierdo: cada punto toma el color discreto de su centroide más cercano. Panel derecho: el color de cada punto es una mezcla de los colores de los componentes, ponderada por las responsabilidades."
 #| code-fold: true
 
 import numpy as np

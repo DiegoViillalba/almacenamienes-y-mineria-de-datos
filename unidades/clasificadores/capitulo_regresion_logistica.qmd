@@ -44,6 +44,9 @@ crossref:
 jupyter: python3
 ---
 
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+
 La regresión logística es uno de los modelos de clasificación más utilizados en estadística y aprendizaje automático. A pesar de su nombre, no es un método de regresión en el sentido predictivo clásico: su objetivo es modelar la probabilidad de que una observación pertenezca a una clase determinada. Su elegancia reside en combinar la interpretabilidad de un modelo lineal con una transformación que garantiza salidas en el intervalo $(0,1)$, haciendo posible tratar las predicciones como probabilidades genuinas [@hosmer2013; @mccullagh1989].
 
 El modelo fue propuesto formalmente por David Cox en 1958 y desde entonces se ha convertido en la referencia de partida para problemas de clasificación binaria en medicina, epidemiología, economía y ciencias sociales. En aprendizaje automático, sigue siendo competitivo frente a métodos más complejos cuando los datos son aproximadamente linealmente separables o cuando la interpretabilidad de los coeficientes es una prioridad [@hastie2009].
@@ -416,6 +419,63 @@ $$
 
 De aquí en adelante, cuando no haya ambigüedad, omitiremos la tilde y escribiremos simplemente $\boldsymbol{\beta}^\top \mathbf{x}$ entendiendo que el vector $\mathbf{x}$ ya incluye la coordenada $1$.
 
+## Construcción paso a paso: seis estudiantes
+
+Antes de formalizar la estimación, sigamos el procedimiento con un ejemplo que cabe en una hoja. Seis estudiantes registraron sus horas de estudio y si aprobaron:
+
+| Horas $x$ | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---:|---:|---:|---:|---:|---:|
+| Aprobó $y$ | 0 | 0 | 1 | 0 | 1 | 1 |
+
+: Horas de estudio y aprobación de seis estudiantes. {#tbl-log-datos}
+
+**Paso 1. Un modelo inicial y su pérdida.** Con $\beta_0 = \beta_1 = 0$, todos reciben $p = \sigma(0) = 0.5$. Cada estudiante aporta a la **log-loss** $-\ln p$ si aprobó y $-\ln(1 - p)$ si no; aquí todos aportan $-\ln 0.5 = 0.693$, y la pérdida promedio es $0.693$. Es la pérdida de quien no sabe nada.
+
+**Paso 2. El gradiente.** La derivada de la pérdida promedio respecto a cada coeficiente es el promedio de $(p_i - y_i)$ multiplicado por la variable correspondiente (se deduce más abajo, en la @eq-gradient):
+
+| $x$ | 1 | 2 | 3 | 4 | 5 | 6 | Promedio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| $p - y$ | 0.5 | 0.5 | −0.5 | 0.5 | −0.5 | −0.5 | $\partial/\partial\beta_0 = 0$ |
+| $x(p - y)$ | 0.5 | 1.0 | −1.5 | 2.0 | −2.5 | −3.0 | $\partial/\partial\beta_1 = -0.583$ |
+
+: Componentes del gradiente en β = (0, 0). {#tbl-log-gradiente}
+
+La derivada respecto a $\beta_1$ es negativa: **subir la pendiente reduce la pérdida**, porque quienes estudian más tienden a aprobar.
+
+**Paso 3. Un paso de descenso.** Con tasa de aprendizaje $\eta = 0.5$, $\beta_1 \leftarrow 0 - 0.5(-0.583) = 0.292$ y $\beta_0$ no cambia. Las probabilidades pasan a $\sigma(0.292x)$ = 0.57, 0.64, 0.71, 0.76, 0.81, 0.85 y la pérdida baja a 0.672.
+
+**Paso 4. Hasta el óptimo.** Repitiendo cientos de pasos (o con el método de Newton, más abajo) se llega a $\hat{\beta}_0 = -4.25$ y $\hat{\beta}_1 = 1.21$, con pérdida 0.413:
+
+| $x$ | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---:|---:|---:|---:|---:|---:|
+| $\hat{p} = \sigma(-4.25 + 1.21x)$ | 0.05 | 0.14 | 0.35 | 0.65 | 0.86 | 0.95 |
+
+: Probabilidades ajustadas. {#tbl-log-ajuste}
+
+La frontera $\hat{p} = 0.5$ está en $x^{*} = 4.25/1.21 = 3.5$ horas: justo entre los dos casos «raros» (el estudiante de 3 horas que aprobó y el de 4 que no). Y $e^{1.21} = 3.37$: cada hora adicional **multiplica por 3.37 las probabilidades a favor** (*odds*) de aprobar, una interpretación que se desarrolla en la sección de *odds ratio*.
+
+```{python}
+#| label: log-manual
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+horas = np.array([1, 2, 3, 4, 5, 6], dtype=float)
+aprobo = np.array([0, 0, 1, 0, 1, 1])
+Xh = np.column_stack([np.ones(6), horas])
+sigma = lambda z: 1 / (1 + np.exp(-z))
+logloss = lambda b: -np.mean(aprobo * np.log(sigma(Xh @ b)) + (1 - aprobo) * np.log(1 - sigma(Xh @ b)))
+
+b = np.zeros(2)
+grad = Xh.T @ (sigma(Xh @ b) - aprobo) / 6
+print(f"Pérdida inicial {logloss(b):.3f}; gradiente {grad.round(3)}")
+b = b - 0.5 * grad
+print(f"Tras un paso (η = 0.5): β = {b.round(3)}, pérdida {logloss(b):.3f}")
+
+modelo = LogisticRegression(penalty=None).fit(horas.reshape(-1, 1), aprobo)
+b_opt = np.r_[modelo.intercept_, modelo.coef_[0]]
+print(f"Óptimo: β = {b_opt.round(2)}, pérdida {logloss(b_opt):.3f}, frontera {-b_opt[0] / b_opt[1]:.2f} h, odds ratio {np.exp(b_opt[1]):.2f}")
+```
+
 ## Estimación por máxima verosimilitud
 
 Para aprender los parámetros $\boldsymbol{\beta}$ del modelo se usa el principio de **máxima verosimilitud** (MLE): se buscan los valores de $\boldsymbol{\beta}$ que hacen más probable el conjunto de observaciones de entrenamiento $\{(\mathbf{x}_i, y_i)\}_{i=1}^n$ [@murphy2012].
@@ -559,6 +619,112 @@ fig.show()
 ```
 
 Observamos que una tasa de aprendizaje grande ($\eta = 0.5$) converge rápidamente pero puede ser inestable, mientras que una tasa pequeña ($\eta = 0.02$) converge de manera más suave pero requiere más iteraciones. La elección de $\eta$ es un hiperparámetro crítico del entrenamiento [@hastie2009].
+
+## Laboratorio: ajustar la logística
+
+El laboratorio repite la construcción anterior. Mueve $\beta_0$ y $\beta_1$ a mano o da pasos de descenso de gradiente desde $(0, 0)$; cada barra vertical es la pérdida $-\ln \hat{p}(y_i)$ de un estudiante. El modo *Separable* elimina el traslape (los tres primeros reprueban y los tres últimos aprueban): sin regularización los coeficientes crecen sin límite.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="log-lab">
+  <p class="plab-eyebrow">Laboratorio · Regresión logística</p>
+  <h3 class="plab-title">¿Qué curva hace más probables los datos?</h3>
+  <p class="plab-sub">La log-loss suma lo «sorprendido» que queda el modelo con cada etiqueta. Minimízala a mano o con descenso de gradiente.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="log-data"><button data-value="ej" aria-pressed="true">Seis estudiantes</button><button data-value="sep">Separable</button></div>
+    </div>
+    <label>Intercepto β₀: <b id="log-b0-v"></b><input type="range" id="log-b0" min="-20" max="5" step="0.001" value="0"></label>
+    <label>Pendiente β₁: <b id="log-b1-v"></b><input type="range" id="log-b1" min="-1" max="6" step="0.001" value="0"></label>
+    <label>Tasa de aprendizaje η: <b id="log-eta-v"></b><input type="range" id="log-eta" min="0.05" max="1.5" step="0.05" value="0.5"></label>
+    <label>Regularización L2 λ: <b id="log-lam-v"></b><input type="range" id="log-lam" min="0" max="0.5" step="0.01" value="0"></label>
+    <div class="plab-field">Descenso de gradiente
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap"><button class="plab-btn primary" id="log-step">1 paso</button><button class="plab-btn" id="log-run">200 pasos</button><button class="plab-btn" id="log-reset">Reiniciar en (0, 0)</button></div>
+    </div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Log-loss (promedio)</span><strong id="log-loss"></strong></div>
+    <div class="plab-stat"><span>Gradiente (∂β₀, ∂β₁)</span><strong id="log-grad"></strong></div>
+    <div class="plab-stat"><span>Frontera x* (p̂ = 0.5)</span><strong id="log-x"></strong></div>
+    <div class="plab-stat"><span>Odds ratio e<sup>β₁</sup></span><strong id="log-or"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Curva logística y pérdida de cada caso</h4>
+      <svg id="log-svg" role="img" aria-label="Curva sigmoide, datos y pérdida de cada observación"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>aprobó (y = 1)</span><span><i class="dot" style="background:var(--lab-s2)"></i>reprobó (y = 0)</span><span><i style="background:var(--lab-s4)"></i>p̂(x)</span><span><i style="background:var(--lab-s5);opacity:.6"></i>pérdida −ln p̂(yᵢ)</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Pérdida en el plano (β₀, β₁) y trayectoria</h4>
+      <svg id="log-map" role="img" aria-label="Mapa de la log-loss y la trayectoria del descenso de gradiente"></svg>
+      <div class="plab-legend"><span>más oscuro = menor pérdida</span><span><i style="background:var(--lab-s2)"></i>trayectoria</span><span><i class="dot" style="background:var(--lab-s3)"></i>óptimo</span></div>
+    </div>
+  </div>
+  <p class="plab-note" id="log-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('log-lab');
+  const $ = s => root.querySelector(s);
+  const X = [1, 2, 3, 4, 5, 6], SETS = { ej: [0, 0, 1, 0, 1, 1], sep: [0, 0, 0, 1, 1, 1] };
+  const sig = z => 1 / (1 + Math.exp(-z));
+  let path = [[0, 0]];
+  const Y = () => SETS[dataSeg.get()];
+  function loss(b0, b1, lam) { const y = Y(); return K.mean(X.map((x, i) => { const p = K.clamp(sig(b0 + b1 * x), 1e-12, 1 - 1e-12); return -(y[i] * Math.log(p) + (1 - y[i]) * Math.log(1 - p)); })) + lam / 2 * b1 * b1; }
+  function grad(b0, b1, lam) { const y = Y(); let g0 = 0, g1 = 0; X.forEach((x, i) => { const d = sig(b0 + b1 * x) - y[i]; g0 += d; g1 += d * x; }); return [g0 / 6, g1 / 6 + lam * b1]; }
+  function optimum(lam) { let b = [0, 0]; for (let t = 0; t < 4000; t++) { const g = grad(b[0], b[1], lam); b = [b[0] - 0.8 * g[0], b[1] - 0.8 * g[1]]; } return b; }
+  const dataSeg = K.segmented($('#log-data'), () => { path = [[0, 0]]; set(0, 0); render(); });
+  const set = (b0, b1) => { $('#log-b0').value = b0; $('#log-b1').value = b1; };
+  const cur = () => [+$('#log-b0').value, +$('#log-b1').value];
+  function stepGD(n) { const eta = +$('#log-eta').value, lam = +$('#log-lam').value; let b = path[path.length - 1];
+    const c = cur(); if (Math.abs(c[0] - b[0]) > 1e-9 || Math.abs(c[1] - b[1]) > 1e-9) { b = c; path = [c]; }
+    for (let t = 0; t < n; t++) { const g = grad(b[0], b[1], lam); b = [b[0] - eta * g[0], b[1] - eta * g[1]]; path.push(b); }
+    set(K.clamp(b[0], -20, 5), K.clamp(b[1], -1, 6)); path[path.length - 1] = cur(); render(); }
+  $('#log-step').addEventListener('click', () => stepGD(1));
+  $('#log-run').addEventListener('click', () => stepGD(200));
+  $('#log-reset').addEventListener('click', () => { path = [[0, 0]]; set(0, 0); render(); });
+  function render() {
+    const [b0, b1] = cur(), lam = +$('#log-lam').value, y = Y(), L = loss(b0, b1, lam), g = grad(b0, b1, lam), opt = optimum(lam);
+    $('#log-b0-v').textContent = K.fmt(b0, 2); $("#log-b1-v").textContent = K.fmt(b1, 3); $('#log-eta-v').textContent = K.fmt(+$('#log-eta').value, 2); $('#log-lam-v').textContent = K.fmt(lam, 2);
+    $('#log-loss').textContent = K.fmt(L, 3); $('#log-grad').textContent = `(${K.fmt(g[0], 3)}, ${K.fmt(g[1], 3)})`;
+    $('#log-x').textContent = Math.abs(b1) > 1e-6 ? K.fmt(-b0 / b1, 2) : '—'; $('#log-or').textContent = K.fmt(Math.exp(b1), 2);
+    const c = K.chart($('#log-svg'), { width: 380, height: 280, x: [0, 7], y: [-0.05, 1.05], margin: { left: 40, bottom: 40 } });
+    c.axes({ xTicks: 7, yTicks: 5, xLabel: 'horas de estudio x', yLabel: 'p̂(aprobar)', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    const pts = []; for (let x = 0; x <= 7.001; x += 0.05) pts.push([x, sig(b0 + b1 * x)]); c.path(pts, 's4 line');
+    c.line(0, 0.5, 7, 0.5, 'muted line dash thin');
+    X.forEach((x, i) => { const p = sig(b0 + b1 * x), l = -Math.log(K.clamp(y[i] ? p : 1 - p, 1e-12, 1)); c.line(x, y[i], x, p, 's5 line').style.strokeOpacity = 0.55;
+      c.text(x, (y[i] + p) / 2, K.fmt(l, 2), { dx: 6, style: 'font-size:10px' }); c.dot(x, y[i], 6, (y[i] ? 's1' : 's2') + ' dot'); });
+    const m = K.chart($('#log-map'), { width: 380, height: 280, x: [-20, 5], y: [-1, 6], margin: { left: 44, bottom: 40 } });
+    const G = 40, dx = 25 / G, dy = 7 / G, cells = [];
+    for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) { const a = -20 + (i + 0.5) * dx, b = -1 + (j + 0.5) * dy; cells.push([a, b, Math.log(loss(a, b, lam) + 1e-3)]); }
+    const lo = Math.min(...cells.map(q => q[2])), hi = Math.max(...cells.map(q => q[2]));
+    cells.forEach(q => { const r = m.rect(q[0] - dx / 2, q[1] - dy / 2, q[0] + dx / 2, q[1] + dy / 2, 's1'); r.style.stroke = 'none'; r.style.fillOpacity = 0.85 * (1 - (q[2] - lo) / (hi - lo)) + 0.03; });
+    m.axes({ xTicks: 5, yTicks: 4, xLabel: 'β₀', yLabel: 'β₁', grid: false, xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 0) });
+    if (path.length > 1) m.path(path.map(p => [K.clamp(p[0], -20, 5), K.clamp(p[1], -1, 6)]), 's2 line thin');
+    m.dot(K.clamp(opt[0], -20, 5), K.clamp(opt[1], -1, 6), 6, 's3 dot'); m.dot(b0, b1, 5, 's2 dot');
+    const note = $('#log-note'), gn = Math.hypot(g[0], g[1]);
+    if (dataSeg.get() === 'sep' && lam === 0) { note.className = 'plab-note warn'; note.textContent = `Datos separables sin regularización: la pérdida (${K.fmt(L, 4)}) siempre puede bajar más haciendo la curva más empinada; el óptimo está en el infinito (aquí se recorta al borde del mapa). Sube λ para obtener coeficientes finitos.`; }
+    else if (gn < 2e-3) { note.className = 'plab-note good'; note.textContent = `Gradiente casi nulo: estás en el mínimo. β₀ = ${K.fmt(b0, 2)}, β₁ = ${K.fmt(b1, 2)}, log-loss ${K.fmt(L, 3)}. La frontera queda en x* = ${K.fmt(-b0 / b1, 2)} horas.`; }
+    else { note.className = 'plab-note'; note.textContent = `Log-loss ${K.fmt(L, 3)} (el mínimo es ${K.fmt(loss(opt[0], opt[1], lam), 3)}). ${path.length > 1 ? `Llevas ${path.length - 1} pasos de gradiente; el valle es largo y estrecho porque x no está centrada, y el descenso avanza en zigzag.` : 'Prueba a dar pasos de gradiente o mover los controles.'}`; }
+  }
+  root.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio ajusta la regresión logística a los seis estudiantes. Valores de referencia: en $(0, 0)$ la log-loss es 0.693 y el gradiente es $(0, -0.583)$; tras un paso con $\eta = 0.5$, $\beta = (0, 0.292)$ y la pérdida es 0.672; el óptimo es $(-4.25, 1.21)$ con pérdida 0.413, frontera en 3.5 horas y *odds ratio* 3.37. Con datos separables y $\lambda = 0$ los coeficientes crecen sin límite.
+:::
+
+**Guía del laboratorio.**
+
+1. Desde $(0, 0)$, da un paso con $\eta = 0.5$ y comprueba los números del Paso 3.
+2. Pulsa *200 pasos* varias veces. ¿Por qué la trayectoria avanza en zigzag por un valle diagonal? ¿Qué pasaría si centraras $x$ restándole su media?
+3. Predice antes de mover: con $\eta = 1.5$, ¿el descenso converge más rápido o se vuelve inestable?
+4. En el óptimo, ¿qué estudiante aporta más pérdida? ¿Por qué el modelo no puede evitarlo?
+5. Cambia a *Separable* con $\lambda = 0$ y da muchos pasos. ¿Qué pasa con $\beta_1$ y con la pérdida? Sube $\lambda$ a 0.05: ¿dónde queda ahora el óptimo?
 
 ## Interpretación de coeficientes: odds ratio
 

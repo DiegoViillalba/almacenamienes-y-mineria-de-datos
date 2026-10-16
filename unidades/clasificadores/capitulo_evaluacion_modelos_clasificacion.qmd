@@ -1,662 +1,601 @@
 ---
-description: "Cubre la validación cruzada K-fold, la matriz de confusión y métricas como precisión, recall, especificidad, F1-score y la curva ROC para clasificadores."
-jupyter: python3
+title: "Validación y selección de modelos"
+pagetitle: "Validación cruzada, selección de hiperparámetros y comparación de clasificadores"
 open-graph:
-  description: "Cubre la validación cruzada K-fold, la matriz de confusión y métricas como precisión, recall, especificidad, F1-score y la curva ROC para clasificadores."
+  description: "Cómo estimar el desempeño de un clasificador sin engañarse: holdout, validación cruzada, LOOCV, selección de hiperparámetros, validación anidada, fuga de datos, clases desbalanceadas, calibración y comparación de modelos, con desarrollo manual, laboratorio interactivo y Python."
 twitter-card:
-  description: "Cubre la validación cruzada K-fold, la matriz de confusión y métricas como precisión, recall, especificidad, F1-score y la curva ROC para clasificadores."
+  description: "Cómo estimar el desempeño de un clasificador sin engañarse: holdout, validación cruzada, LOOCV, selección de hiperparámetros, validación anidada, fuga de datos, clases desbalanceadas, calibración y comparación de modelos, con desarrollo manual, laboratorio interactivo y Python."
+description: "Cómo estimar el desempeño de un clasificador sin engañarse: holdout, validación cruzada, LOOCV, selección de hiperparámetros, validación anidada, fuga de datos, clases desbalanceadas, calibración y comparación de modelos, con desarrollo manual, laboratorio interactivo y Python."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_fundamentos_clasificacion.bib, referencias_evaluacion_clasificacion.bib, referencias_svm.bib, ../../references.bib]
+jupyter: python3
 ---
 
-# Evaluación de un modelo de clasificación
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-## Introducción
+El capítulo anterior respondió **qué** medir. Este responde **cómo medirlo sin engañarse**. Un número de desempeño se usa para tres cosas distintas, y las tres exigen datos que el modelo no haya visto:
 
-La evaluación de un modelo de clasificación es una etapa central del aprendizaje supervisado. En este tipo de problemas se dispone de un conjunto de observaciones para las cuales se conocen tanto las variables predictoras como la etiqueta o clase verdadera. A partir de estos datos, el objetivo es aprender una regla de decisión capaz de asignar una clase a nuevas observaciones no vistas durante el entrenamiento [@hastie2009; @james2021].
+1. **Estimar** cuánto acertará el modelo en producción.
+2. **Seleccionar**: elegir entre algoritmos, hiperparámetros, variables o umbrales.
+3. **Comparar** dos modelos y decidir si la diferencia es real o producto del azar.
 
-En términos prácticos, evaluar un clasificador no significa únicamente calcular cuántas predicciones son correctas. La calidad de un modelo depende también de cómo se distribuyen sus errores, del balance entre clases, del coste relativo de falsos positivos y falsos negativos, y del contexto de uso. Por ejemplo, en un sistema de filtrado de spam puede ser aceptable que algunos correos no deseados lleguen a la bandeja principal, pero puede ser mucho más grave clasificar como spam un correo importante. En un sistema de detección médica, en cambio, puede ser preferible generar falsos positivos antes que dejar pasar casos reales de enfermedad [@fawcett2006; @saito2015].
+El problema de fondo es que los datos etiquetados son escasos y cada uso los «gasta»: un dato que sirvió para elegir algo ya no es un juez imparcial de esa elección. Este capítulo presenta las herramientas para administrar ese presupuesto: el *holdout*, la validación cruzada, la validación anidada, y las trampas más comunes, empezando por la **fuga de datos** [@hastie2009; @kohavi1995].
 
-Este capítulo desarrolla los elementos fundamentales para evaluar modelos de clasificación. Primero se estudian los métodos de partición de datos, como holdout y validación cruzada $K$-fold. Después se introducen la matriz de confusión y las principales métricas derivadas de ella: exactitud, tasa de error, precisión, recall, sensibilidad, especificidad y F1-score. Finalmente, se discute la curva ROC, el área bajo la curva y la selección de métricas según la necesidad del problema.
+## Intuición: ¿qué clasificador elegirías?
 
-## Aprendizaje supervisado y evaluación
+Volvamos a los diez clientes del capítulo introductorio, pero ahora supongamos que **no hay** cinco clientes nuevos de prueba: solo tenemos los diez. Queremos elegir entre el tocón «endeudamiento ≤ $t$», el 1-NN y el 3-NN. La exactitud de entrenamiento recomienda el 1-NN (10/10), y ya sabemos que es la peor recomendación posible: el 1-NN memoriza.
 
-En aprendizaje supervisado se trabaja con un conjunto de datos etiquetado. Cada observación contiene un vector de características $\mathbf{x}_i$ y una etiqueta asociada $y_i$. En clasificación binaria, la etiqueta suele tomar valores en $\{0,1\}$, donde $1$ representa la clase positiva y $0$ la clase negativa.
+La idea de todo este capítulo cabe en una frase: **para juzgar a un modelo hay que esconderle datos**, entrenarlo con el resto y preguntarle por los escondidos.
 
-::: {.callout-note appearance=“minimal”}
-Definición. Un conjunto de datos supervisado es una colección de pares entrada--salida:
+## Construcción paso a paso
+
+### Paso 1. Esconder algunos datos: el *holdout*
+
+Separamos tres clientes como **validación**, entrenamos con los siete restantes y contamos aciertos en los tres escondidos. El resultado depende mucho de **cuáles** tres se esconden:
+
+| Clientes escondidos | Tocón | 1-NN | 3-NN | ¿Cuál gana? |
+|---|---:|---:|---:|---|
+| 2, 5, 8 | 3/3 | 1/3 | 2/3 | tocón |
+| 1, 4, 7 | 3/3 | 3/3 | 3/3 | empate |
+| 6, 9, 10 | 2/3 | 2/3 | 1/3 | tocón y 1-NN |
+
+: Tres particiones holdout distintas de los mismos diez clientes. {#tbl-holdout-variable}
+
+Con la segunda partición los tres clasificadores parecen igual de buenos; con la tercera, el 1-NN empata con el tocón. Una sola partición produce una estimación con **varianza alta**: con pocos datos de validación, el azar de la partición pesa tanto como la calidad del modelo.
+
+### Paso 2. Esconder cada dato una vez: dejar uno fuera
+
+Para no depender de una partición, repetimos el procedimiento diez veces, escondiendo **un** cliente cada vez y entrenando con los otros nueve. Es la **validación cruzada dejando uno fuera** (LOOCV, *leave-one-out*). Para el 1-NN es fácil a mano: basta buscar el vecino más cercano de cada cliente **sin contarlo a él mismo**, usando las distancias del capítulo introductorio.
+
+| Cliente | Clase | Vecino más cercano (sin él) | Distancia | 1-NN | 3 vecinos | 3-NN | Tocón |
+|---:|---|---:|---:|---|---|---|---|
+| 1 | sí | 2 | 11.18 | sí ✓ | 2, 3, 5 | sí ✓ | sí ✓ |
+| 2 | sí | 3 | 8.60 | sí ✓ | 3, 1, 4 | sí ✓ | sí ✓ |
+| 3 | sí | 2 | 8.60 | sí ✓ | 2, 4, 1 | sí ✓ | sí ✓ |
+| 4 | sí | 3 | 11.66 | sí ✓ | 3, 2, 10 | sí ✓ | sí ✓ |
+| 5 | sí | 2 | 14.14 | sí ✓ | 2, 10, 7 | no ✗ | sí ✓ |
+| 6 | sí | 9 | 6.40 | no ✗ | 9, 8, 10 | no ✗ | no ✗ |
+| 7 | no | 8 | 11.18 | no ✓ | 8, 5, 10 | no ✓ | no ✓ |
+| 8 | no | 6 | 8.25 | sí ✗ | 6, 7, 9 | no ✓ | no ✓ |
+| 9 | no | 6 | 6.40 | sí ✗ | 6, 8, 10 | no ✓ | no ✓ |
+| 10 | no | 6 | 10.20 | sí ✗ | 6, 8, 5 | sí ✗ | no ✓ |
+| | | | | **6/10** | | **7/10** | **9/10** |
+
+: Validación cruzada dejando uno fuera con los diez clientes. {#tbl-loocv-manual}
+
+Para el tocón hay que **reajustar** el corte cada vez: sin el cliente 5, el mejor corte se mueve a 41.5; sin el 10, a 47.5; en los demás casos sigue en 44. Solo falla con el cliente 6, la excepción.
+
+### Paso 3. Leer el resultado
+
+| Clasificador | Exactitud en entrenamiento | Exactitud LOOCV | Exactitud en los 5 clientes nuevos |
+|---|---:|---:|---:|
+| Tocón | 0.90 | **0.90** | **0.80** |
+| 1-NN | **1.00** | 0.60 | 0.60 |
+| 3-NN | 0.90 | 0.70 | 0.60 |
+
+: Entrenamiento, validación cruzada y prueba. {#tbl-loocv-resumen}
+
+La validación cruzada **invierte** el orden que sugería el entrenamiento y coincide con lo que después mostraron los clientes nuevos: el tocón generaliza mejor. La tabla también explica por qué el 1-NN falla: el cliente 6, la excepción, es el vecino más cercano de los clientes 8, 9 y 10, y los «contagia». El 3-NN diluye parte de ese contagio; el tocón lo ignora.
+
+### Paso 4. De uno en uno a $K$ pliegues
+
+LOOCV entrena el modelo $n$ veces, algo inviable con un millón de registros o modelos caros. La **validación cruzada de $K$ pliegues** (*K-fold*) divide los datos al azar en $K$ grupos del mismo tamaño; cada grupo se esconde una vez mientras se entrena con los otros $K - 1$. Con $K = 5$ y nuestros diez clientes, se esconderían dos clientes cada vez y se entrenaría cinco veces. LOOCV es el caso extremo $K = n$.
+
+## Formalización
+
+### El estimador de validación cruzada
+
+Sea $\kappa(i) \in \{1, \ldots, K\}$ el pliegue al que pertenece la observación $i$ y $\hat{f}^{-k}$ el modelo entrenado sin el pliegue $k$. La estimación por validación cruzada del riesgo es
+
 $$
-\mathcal{D} = \{(\mathbf{x}_i, y_i)\}_{i=1}^{n},
-\qquad
-\mathbf{x}_i \in \mathbb{R}^p,\quad y_i \in \mathcal{Y}
-$$
-:::
+\widehat{R}_{\text{CV}} = \frac{1}{n} \sum_{i=1}^{n} L\big(y_i, \hat{f}^{-\kappa(i)}(\mathbf{x}_i)\big),
+$$ {#eq-cv}
 
-El modelo de clasificación puede entenderse como una función entrenable
-$$
-f_\theta:\mathbb{R}^p \to \mathcal{Y},
-$$
-donde $\theta$ representa los parámetros aprendidos a partir de los datos. En modelos probabilísticos, el clasificador puede producir una puntuación o probabilidad estimada:
-$$
-\hat{p}_i = P_\theta(y_i = 1 \mid \mathbf{x}_i).
-$$
-Para convertir esta puntuación en una clase, se usa un umbral de decisión $\tau$:
-$$
-\hat{y}_i =
-\begin{cases}
-1, & \hat{p}_i \geq \tau,\\
-0, & \hat{p}_i < \tau.
-\end{cases}
-$$
+con $L$ la pérdida 0-1 o cualquier otra métrica. Cada observación se predice **exactamente una vez** con un modelo que no la vio [@stone1974cross].
 
-La evaluación se realiza sobre datos no utilizados para entrenar el modelo. Esto busca estimar su capacidad de generalización, es decir, su desempeño ante nuevas observaciones. Si se evalúa el modelo únicamente sobre los datos de entrenamiento, se corre el riesgo de obtener una estimación demasiado optimista debido al sobreajuste [@hastie2009; @bishop2006].
+El estimador tiene dos fuentes de error:
 
-## Partición de datos
+- **Sesgo.** Cada modelo se entrena con $(K-1)n/K$ observaciones, no con $n$; como los modelos suelen mejorar con más datos, $\widehat{R}_{\text{CV}}$ tiende a ser algo **pesimista**. El sesgo es grande con $K = 2$ y casi nulo con LOOCV.
+- **Varianza.** Depende de la partición aleatoria y del tamaño de cada pliegue. LOOCV no depende del azar, pero sus $n$ modelos son casi idénticos y sus errores están muy correlacionados, lo que también puede dar varianza alta.
 
-Una práctica estándar consiste en dividir el conjunto de datos en subconjuntos con funciones distintas. La presentación base distingue entre conjunto de entrenamiento, conjunto de validación y conjunto de prueba.
+El estudio clásico de @kohavi1995 recomienda **$K = 10$ estratificado** como un buen compromiso; $K = 5$ es la elección habitual cuando entrenar es costoso. Repetir la validación cruzada con varias particiones aleatorias (por ejemplo, 5 × 10 pliegues) y promediar reduce la varianza debida a la partición.
 
-::: {.callout-note appearance=“minimal”}
-Definición. Una partición entrenamiento--validación--prueba divide el conjunto de datos en tres subconjuntos disjuntos:
-$$
-\mathcal{D} =
-\mathcal{D}_{\text{train}}
-\cup
-\mathcal{D}_{\text{val}}
-\cup
-\mathcal{D}_{\text{test}},
-\qquad
-\mathcal{D}_{a} \cap \mathcal{D}_{b} = \varnothing
-\quad (a \neq b)
-$$
-:::
+**Estratificación.** En clasificación conviene que cada pliegue conserve la proporción de clases del total; si no, con clases desbalanceadas algún pliegue puede quedarse sin positivos. Es la opción por defecto de `scikit-learn` para clasificadores.
 
-El conjunto de entrenamiento se usa para ajustar los parámetros del modelo. El conjunto de validación se usa para comparar configuraciones, ajustar hiperparámetros o seleccionar entre modelos candidatos. El conjunto de prueba se reserva hasta el final para estimar el desempeño del modelo seleccionado.
+**Incertidumbre.** Con los errores por pliegue $e_1, \ldots, e_K$ suele reportarse $\bar{e} \pm s_e/\sqrt{K}$, con $s_e$ su desviación estándar. Es una aproximación: los pliegues comparten datos de entrenamiento y no son independientes, así que este error estándar subestima la incertidumbre real.
 
-Una partición típica puede ser:
+### Tres conjuntos y un presupuesto
 
-| Subconjunto | Porcentaje típico | Función principal |
-|---|---:|---|
-| Entrenamiento | 70 % | Ajustar el modelo |
-| Validación | 15 % | Seleccionar hiperparámetros o modelos |
-| Prueba | 15 % | Evaluar el modelo final |
+Cuando hay que **elegir** algo (hiperparámetros, variables, umbral) y además **estimar** el desempeño del elegido, hacen falta datos distintos para cada tarea:
 
-Otra alternativa, frecuente cuando se desea dedicar más datos a validación y prueba, es dividir en 50 % para entrenamiento, 25 % para validación y 25 % para prueba. La elección depende del tamaño del dataset, del coste computacional y de la estabilidad esperada de la evaluación.
-
-### Método holdout
-
-El método holdout, o método de reserva, consiste en dividir el conjunto de datos una sola vez. Por ejemplo, se puede asignar 80 % de las observaciones al conjunto de entrenamiento y 20 % al conjunto de prueba.
-
-::: {.callout-note appearance=“minimal”}
-Definición. En el método holdout se construye una partición única:
-$$
-\mathcal{D} = \mathcal{D}_{\text{train}} \cup \mathcal{D}_{\text{test}},
-\qquad
-\mathcal{D}_{\text{train}} \cap \mathcal{D}_{\text{test}} = \varnothing
-$$
-:::
-
-Su principal ventaja es la simplicidad. Es fácil de implementar, rápido de ejecutar y escalable a conjuntos de datos grandes. Sin embargo, su principal desventaja es que la evaluación depende fuertemente de la partición realizada. Si por azar el conjunto de prueba contiene ejemplos demasiado fáciles, el rendimiento parecerá mejor de lo real. Si contiene ejemplos particularmente difíciles o atípicos, el rendimiento parecerá peor.
-
-En problemas con clases desbalanceadas, el holdout aleatorio puede producir particiones con representación insuficiente de la clase minoritaria. Por ejemplo, si un dataset contiene 950 registros de pacientes sin enfermedad y solo 50 con enfermedad, una división aleatoria puede dejar pocos casos positivos en validación o prueba. Esto vuelve inestable la estimación de métricas como recall o sensibilidad.
-
-### Muestreo aleatorio estratificado
-
-Para reducir el riesgo de particiones no representativas, se usa el muestreo estratificado. La idea es preservar aproximadamente la proporción de clases en cada subconjunto. Si la clase A representa 80 % del dataset y la clase B representa 20 %, entonces entrenamiento, validación y prueba deben conservar proporciones cercanas a 80 % y 20 %.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Una partición estratificada preserva aproximadamente la distribución marginal de clases:
-$$
-P_{\mathcal{D}_{\text{train}}}(Y=y)
-\approx
-P_{\mathcal{D}_{\text{val}}}(Y=y)
-\approx
-P_{\mathcal{D}_{\text{test}}}(Y=y)
-\approx
-P_{\mathcal{D}}(Y=y)
-$$
-:::
-
-La estratificación es especialmente útil cuando hay desbalance de clases. No obstante, no elimina todos los problemas. Aunque preserve proporciones, puede ocurrir que algunos subconjuntos contengan casos más fáciles, más difíciles o más atípicos que otros. En datasets pequeños, incluso la estratificación puede ser insuficiente para obtener una evaluación estable.
-
-### Holdout repetido
-
-Una extensión natural del holdout es repetir varias veces el proceso de partición aleatoria y promediar las métricas. Así se reduce la dependencia respecto a una única división.
-
-::: {.callout-note appearance=“minimal”}
-Definición. En holdout repetido se generan $R$ particiones independientes y se reporta el promedio de una métrica $M$:
-$$
-\bar{M}
-=
-\frac{1}{R}
-\sum_{r=1}^{R}
-M^{(r)}
-$$
-:::
-
-Por ejemplo, si cinco repeticiones producen exactitudes de 85 %, 82 %, 88 %, 84 % y 86 %, el promedio es:
-$$
-\bar{M}
-=
-\frac{85 + 82 + 88 + 84 + 86}{5}
-=
-85\%.
-$$
-
-Este método ofrece una evaluación más estable que el holdout simple, pero tiene una limitación: algunos registros pueden aparecer muchas veces en conjuntos de prueba o entrenamiento, mientras que otros pueden aparecer pocas veces o ninguna. Por ello, cuando el tamaño del dataset es reducido, la validación cruzada suele ser una alternativa más sistemática.
-
-### Validación cruzada K-fold
-
-La validación cruzada $K$-fold divide el conjunto de datos en $K$ subconjuntos llamados folds. El modelo se entrena $K$ veces. En cada iteración, un fold se usa como prueba y los $K-1$ folds restantes se usan como entrenamiento [@stone1974cross; @kohavi1995].
-
-::: {.callout-note appearance=“minimal”}
-Definición. En validación cruzada $K$-fold, una métrica $M$ se estima como el promedio de las métricas obtenidas en los $K$ folds:
-$$
-\widehat{M}_{\text{CV}}
-=
-\frac{1}{K}
-\sum_{k=1}^{K}
-M_k
-$$
-:::
-
-Por ejemplo, con $K=5$, cada fold puede contener 20 % de los datos. En la primera iteración se prueba con el fold 1 y se entrena con los folds 2, 3, 4 y 5. En la segunda iteración se prueba con el fold 2 y se entrena con los demás, y así sucesivamente.
-
-Si las exactitudes obtenidas son 82 %, 80 %, 84 %, 81 % y 83 %, entonces:
-$$
-\widehat{M}_{\text{CV}}
-=
-\frac{82 + 80 + 84 + 81 + 83}{5}
-=
-82\%.
-$$
-
-La validación cruzada usa mejor los datos disponibles porque cada observación se evalúa exactamente una vez y se usa para entrenamiento en $K-1$ iteraciones. Su principal coste es computacional: el modelo debe entrenarse $K$ veces. Por esta razón, $K=5$ o $K=10$ son elecciones frecuentes en la práctica [@kohavi1995].
-
-## Ejemplo en Python: partición holdout y validación cruzada
-
-El siguiente ejemplo usa `scikit-learn` para entrenar una regresión logística en un problema binario. Se muestra primero una partición holdout estratificada y después validación cruzada $K$-fold.
-
-```{python}
-#| label: ejemplo-holdout-cv
-#| echo: true
-#| warning: false
-#| message: false
-
-import numpy as np
-from sklearn.datasets import make_classification
-from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-
-X, y = make_classification(
-    n_samples=1000,
-    n_features=10,
-    n_informative=5,
-    n_redundant=2,
-    weights=[0.85, 0.15],
-    random_state=42
-)
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    stratify=y,
-    random_state=42
-)
-
-model = LogisticRegression(max_iter=1000)
-model.fit(X_train, y_train)
-
-y_pred = model.predict(X_test)
-
-metricas_holdout = {
-    "accuracy": accuracy_score(y_test, y_pred),
-    "precision": precision_score(y_test, y_pred),
-    "recall": recall_score(y_test, y_pred),
-    "f1": f1_score(y_test, y_pred),
-}
-
-metricas_holdout
-```
-
-```{python}
-#| label: ejemplo-kfold
-#| echo: true
-#| warning: false
-#| message: false
-
-cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-scores = cross_validate(
-    model,
-    X,
-    y,
-    cv=cv,
-    scoring=["accuracy", "precision", "recall", "f1"],
-    return_train_score=False
-)
-
-{metrica: scores[f"test_{metrica}"].mean()
- for metrica in ["accuracy", "precision", "recall", "f1"]}
-```
-
-Este ejemplo también ilustra por qué no basta con observar solo accuracy. En un dataset desbalanceado, un clasificador puede obtener alta exactitud simplemente favoreciendo la clase mayoritaria, pero tener bajo recall sobre la clase positiva.
-
-## Matriz de confusión
-
-La matriz de confusión resume la relación entre las etiquetas reales y las predicciones del modelo. En clasificación binaria se compone de cuatro cantidades: verdaderos positivos, verdaderos negativos, falsos positivos y falsos negativos.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Para una clase positiva $1$ y una clase negativa $0$, la matriz de confusión se define por:
-$$
-\begin{array}{c|cc}
- & \hat{y}=0 & \hat{y}=1\\
-\hline
-y=0 & TN & FP\\
-y=1 & FN & TP
-\end{array}
-$$
-:::
-
-Las cantidades se interpretan así:
-
-| Cantidad | Nombre | Interpretación |
+| Conjunto | Para qué se usa | Cuántas veces se mira |
 |---|---|---|
-| $TP$ | Verdadero positivo | El caso era positivo y el modelo predijo positivo |
-| $TN$ | Verdadero negativo | El caso era negativo y el modelo predijo negativo |
-| $FP$ | Falso positivo | El caso era negativo, pero el modelo predijo positivo |
-| $FN$ | Falso negativo | El caso era positivo, pero el modelo predijo negativo |
+| Entrenamiento | Ajustar parámetros | Muchas |
+| Validación (o validación cruzada sobre el entrenamiento) | Elegir hiperparámetros, variables, umbral | Muchas |
+| Prueba | Estimar el desempeño del modelo final | **Una** |
 
-En el ejemplo de detección de spam, un falso positivo ocurre cuando un correo legítimo se clasifica como spam. Un falso negativo ocurre cuando un correo spam se clasifica como no spam.
+: Papel de cada conjunto de datos. {#tbl-tres-conjuntos}
 
-## Métricas básicas de clasificación
+La regla de oro: **cualquier decisión tomada mirando un conjunto contamina a ese conjunto como estimador**. Si se prueban cien configuraciones y se reporta la mejor exactitud de validación, ese número es optimista, porque la mejor configuración ganó en parte por suerte [@cawley2010over].
 
-A partir de la matriz de confusión se definen las principales métricas de evaluación. Cada una responde una pregunta distinta, por lo que ninguna métrica es universalmente superior.
+### Selección de hiperparámetros
 
-### Exactitud y tasa de error
+Para un hiperparámetro $\lambda$ (el $k$ de $k$-NN, la profundidad de un árbol), se elige
 
-::: {.callout-note appearance=“minimal”}
-Definición. La exactitud o accuracy es la proporción total de predicciones correctas:
 $$
-\text{Accuracy}
-=
-\frac{TP + TN}{TP + TN + FP + FN}
+\hat{\lambda} = \arg\min_{\lambda \in \Lambda} \widehat{R}_{\text{CV}}(\lambda),
 $$
-:::
 
-La accuracy responde: ¿qué porcentaje total de observaciones clasificó correctamente el modelo? Es útil cuando las clases están relativamente balanceadas y cuando los costes de los errores son similares.
-
-::: {.callout-note appearance=“minimal”}
-Definición. La tasa de error es la proporción total de predicciones incorrectas:
-$$
-\text{Error Rate}
-=
-\frac{FP + FN}{TP + TN + FP + FN}
-=
-1 - \text{Accuracy}
-$$
-:::
-
-La tasa de error responde: ¿qué porcentaje de decisiones fueron incorrectas?
-
-### Precisión
-
-::: {.callout-note appearance=“minimal”}
-Definición. La precisión mide qué proporción de las predicciones positivas fueron correctas:
-$$
-\text{Precision}
-=
-\frac{TP}{TP + FP}
-$$
-:::
-
-La precisión responde: cuando el modelo predice positivo, ¿qué tan seguido tiene razón? Es una métrica importante cuando los falsos positivos son costosos. Por ejemplo, en un sistema que marca transacciones como fraudulentas, una baja precisión puede generar demasiadas falsas alarmas.
-
-### Recall, sensibilidad y tasa de verdaderos positivos
-
-::: {.callout-note appearance=“minimal”}
-Definición. El recall o sensibilidad mide qué proporción de positivos reales fueron detectados:
-$$
-\text{Recall}
-=
-\text{Sensitivity}
-=
-\text{TPR}
-=
-\frac{TP}{TP + FN}
-$$
-:::
-
-El recall responde: de todos los casos positivos reales, ¿cuántos encontró el modelo? Es fundamental cuando los falsos negativos son costosos. En screening médico, por ejemplo, suele priorizarse una alta sensibilidad para reducir el riesgo de dejar pasar casos reales.
-
-### Especificidad y tasa de falsos positivos
-
-::: {.callout-note appearance=“minimal”}
-Definición. La especificidad mide qué proporción de negativos reales fueron identificados correctamente:
-$$
-\text{Specificity}
-=
-\frac{TN}{TN + FP}
-$$
-:::
-
-La especificidad responde: de todos los casos negativos reales, ¿cuántos fueron clasificados correctamente como negativos? Es importante cuando se desea evitar falsas alarmas.
-
-::: {.callout-note appearance=“minimal”}
-Definición. La tasa de falsos positivos mide qué proporción de negativos reales fueron clasificados erróneamente como positivos:
-$$
-\text{FPR}
-=
-\frac{FP}{FP + TN}
-=
-1 - \text{Specificity}
-$$
-:::
-
-La tasa de falsos positivos es central para construir la curva ROC.
-
-### F1-score
-
-::: {.callout-note appearance=“minimal”}
-Definición. El F1-score es la media armónica entre precisión y recall:
-$$
-F_1
-=
-2
-\cdot
-\frac{\text{Precision}\cdot \text{Recall}}
-{\text{Precision} + \text{Recall}}
-$$
-:::
-
-El F1-score es útil cuando se desea balancear precisión y recall en una sola medida. Al ser una media armónica, penaliza valores muy bajos de cualquiera de las dos métricas. Por ello resulta especialmente informativo en problemas con clases desbalanceadas [@sokolova2009systematic].
-
-### Exactitud balanceada
-
-::: {.callout-note appearance=“minimal”}
-Definición. La exactitud balanceada es el promedio entre sensibilidad y especificidad:
-$$
-\text{Balanced Accuracy}
-=
-\frac{\text{Sensitivity} + \text{Specificity}}{2}
-$$
-:::
-
-Esta métrica es útil cuando las clases están desbalanceadas, porque no permite que el desempeño sobre la clase mayoritaria domine completamente la evaluación.
-
-## Ejemplo en Python: matriz de confusión y métricas
-
-```{python}
-#| label: ejemplo-matriz-confusion
-#| echo: true
-#| warning: false
-#| message: false
-
-from sklearn.metrics import confusion_matrix, classification_report
-
-cm = confusion_matrix(y_test, y_pred)
-cm
-```
-
-```{python}
-#| label: ejemplo-reporte-clasificacion
-#| echo: true
-#| warning: false
-#| message: false
-
-print(classification_report(y_test, y_pred, target_names=["Clase 0", "Clase 1"]))
-```
-
-También podemos calcular explícitamente las métricas a partir de la matriz de confusión.
-
-```{python}
-#| label: ejemplo-metricas-manuales
-#| echo: true
-
-tn, fp, fn, tp = cm.ravel()
-
-accuracy = (tp + tn) / (tp + tn + fp + fn)
-error_rate = (fp + fn) / (tp + tn + fp + fn)
-precision = tp / (tp + fp)
-recall = tp / (tp + fn)
-specificity = tn / (tn + fp)
-f1 = 2 * precision * recall / (precision + recall)
-balanced_accuracy = (recall + specificity) / 2
-
-{
-    "accuracy": accuracy,
-    "error_rate": error_rate,
-    "precision": precision,
-    "recall": recall,
-    "specificity": specificity,
-    "f1": f1,
-    "balanced_accuracy": balanced_accuracy,
-}
-```
-
-## Selección de métricas según la necesidad del problema
-
-La métrica adecuada depende del contexto. Antes de evaluar un modelo conviene preguntar qué tipo de error es más costoso.
-
-| Métrica | Necesidad típica | Pregunta de decisión |
-|---|---|---|
-| Accuracy | La mayoría de decisiones deben ser correctas | ¿Todos los errores tienen coste similar? |
-| Error rate | Se desea cuantificar el porcentaje de fallos | ¿Qué porcentaje de errores es aceptable? |
-| Precision | Se desea que las predicciones positivas sean confiables | Cuando el modelo predice positivo, ¿qué tan seguido acierta? |
-| Recall / Sensitivity | Se desea detectar tantos positivos reales como sea posible | ¿Cuántos positivos reales deja pasar el modelo? |
-| Specificity | Se desea evitar falsas alarmas | ¿Cuántos negativos reales identifica correctamente? |
-| F1-score | Se desea balancear precisión y recall | ¿Hay compromiso entre falsos positivos y falsos negativos? |
-
-Un ejemplo clásico es la detección de cáncer en pruebas de screening. Supongamos dos modelos:
-
-| Modelo | TPR | FPR |
-|---|---:|---:|
-| A | 0.92 | 0.35 |
-| B | 0.81 | 0.08 |
-
-El modelo A detecta más casos positivos reales, pero también genera más falsos positivos. En screening médico, la alta sensibilidad puede ser preferible porque es muy importante no dejar pasar casos reales. Sin embargo, si los falsos positivos generan pruebas invasivas, ansiedad o costes elevados, el modelo B podría ser más equilibrado. Esta decisión no puede tomarse solo con una métrica; requiere entender el coste de cada error y el uso final del sistema [@fawcett2006].
-
-## Umbral de decisión
-
-Muchos clasificadores producen puntuaciones continuas o probabilidades estimadas. La clase final depende del umbral $\tau$. Cambiar el umbral modifica la matriz de confusión y, por tanto, todas las métricas.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Dada una puntuación $\hat{p}(\mathbf{x})$, una regla de clasificación binaria con umbral $\tau$ se define como:
-$$
-\hat{y}(\mathbf{x};\tau)
-=
-\mathbb{I}\{\hat{p}(\mathbf{x}) \geq \tau\}
-$$
-:::
-
-Si se baja el umbral de decisión de 0.70 a 0.30, más observaciones serán clasificadas como positivas. En general, esto aumenta el TPR porque se detectan más positivos reales, pero también aumenta el FPR porque más negativos son clasificados erróneamente como positivos.
-
-```{python}
-#| label: ejemplo-umbrales
-#| echo: true
-#| warning: false
-#| message: false
-
-from sklearn.metrics import confusion_matrix
-
-probs = model.predict_proba(X_test)[:, 1]
-
-for tau in [0.70, 0.50, 0.30]:
-    y_pred_tau = (probs >= tau).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred_tau).ravel()
-    tpr = tp / (tp + fn)
-    fpr = fp / (fp + tn)
-    print(f"umbral={tau:.2f} | TPR={tpr:.3f} | FPR={fpr:.3f}")
-```
-
-## Curva ROC y AUC
-
-La curva ROC permite analizar el rendimiento del clasificador para todos los posibles umbrales de decisión. En el eje vertical se grafica la tasa de verdaderos positivos, y en el eje horizontal la tasa de falsos positivos [@fawcett2006].
-
-::: {.callout-note appearance=“minimal”}
-Definición. La curva ROC es el conjunto de puntos:
-$$
-\text{ROC}
-=
-\left\{
-\left(
-\text{FPR}(\tau),
-\text{TPR}(\tau)
-\right)
-:
-\tau \in \mathbb{R}
-\right\}
-$$
-:::
-
-Un clasificador ideal se acerca a la esquina superior izquierda, donde $\text{TPR}=1$ y $\text{FPR}=0$. La línea diagonal representa un clasificador sin valor predictivo. Un modelo cuya curva está cerca de esa diagonal no discrimina bien entre positivos y negativos.
-
-El AUC resume el área bajo la curva ROC. Puede interpretarse como la probabilidad de que el modelo asigne una puntuación mayor a una observación positiva elegida al azar que a una observación negativa elegida al azar [@fawcett2006].
-
-::: {.callout-note appearance=“minimal”}
-Definición. El área bajo la curva ROC se define como:
-$$
-\text{AUC}
-=
-\int_{0}^{1}
-\text{TPR}(\text{FPR})\,d(\text{FPR})
-$$
-:::
-
-Una interpretación usual de AUC es:
-
-| AUC | Interpretación general |
-|---:|---|
-| 0.90--1.00 | Sobresaliente |
-| 0.80--0.90 | Bueno o excelente |
-| 0.70--0.80 | Aceptable |
-| 0.60--0.70 | Bajo |
-| 0.50--0.60 | Sin buena discriminación |
-
-Estas categorías deben usarse con cuidado. Un AUC alto no garantiza que el modelo sea adecuado para todos los umbrales ni para todos los costes de error. Además, en problemas fuertemente desbalanceados, la curva Precision--Recall puede ser más informativa que la curva ROC [@saito2015].
-
-Si un clasificador tiene $\text{AUC}=0.50$, significa que no discrimina mejor que el azar. En un ejemplo médico, si se compara al azar un paciente con cáncer y uno sin cáncer, el modelo solo tendría 50 % de probabilidad de asignar una puntuación mayor al paciente con cáncer.
-
-## Ejemplo en Python: curva ROC y AUC
-
-```{python}
-#| label: ejemplo-roc-auc
-#| echo: true
-#| warning: false
-#| message: false
-
-import matplotlib.pyplot as plt
-from sklearn.metrics import RocCurveDisplay, roc_auc_score
-
-auc = roc_auc_score(y_test, probs)
-
-RocCurveDisplay.from_predictions(y_test, probs)
-plt.title(f"Curva ROC (AUC = {auc:.3f})")
-plt.show()
-```
-
-La curva ROC no fija un único umbral. En su lugar, muestra el comportamiento del modelo al variar el umbral. Esto permite elegir un punto de operación de acuerdo con las necesidades del problema.
-
-## Comparación con la curva Precision--Recall
-
-Aunque la presentación se centra en ROC y AUC, es importante mencionar una limitación: cuando la clase positiva es rara, la curva ROC puede presentar una visión demasiado optimista del desempeño. En estos casos, la curva Precision--Recall suele ser más sensible a los cambios en la detección de la clase minoritaria [@saito2015].
-
-::: {.callout-note appearance=“minimal”}
-Definición. La curva Precision--Recall representa el conjunto de puntos:
-$$
-\text{PR}
-=
-\left\{
-\left(
-\text{Recall}(\tau),
-\text{Precision}(\tau)
-\right)
-:
-\tau \in \mathbb{R}
-\right\}
-$$
-:::
-
-```{python}
-#| label: ejemplo-pr-curve
-#| echo: true
-#| warning: false
-#| message: false
-
-from sklearn.metrics import PrecisionRecallDisplay, average_precision_score
-
-ap = average_precision_score(y_test, probs)
-
-PrecisionRecallDisplay.from_predictions(y_test, probs)
-plt.title(f"Curva Precision-Recall (AP = {ap:.3f})")
-plt.show()
-```
-
-La métrica Average Precision resume el rendimiento bajo la curva Precision--Recall. A diferencia de ROC-AUC, su línea base depende de la prevalencia de la clase positiva. Si solo 15 % de las observaciones son positivas, una curva PR debe compararse contra esa prevalencia como referencia.
-
-## Flujo recomendado para evaluar clasificadores
-
-Una evaluación reproducible puede organizarse como un flujo de trabajo:
-
-1. Definir la clase positiva y el objetivo del modelo.
-2. Separar datos de prueba antes de ajustar hiperparámetros.
-3. Usar partición estratificada cuando haya desbalance.
-4. Entrenar modelos candidatos en entrenamiento.
-5. Seleccionar hiperparámetros con validación o validación cruzada.
-6. Evaluar una sola vez el modelo final sobre prueba.
-7. Reportar matriz de confusión y métricas alineadas con el problema.
-8. Analizar umbrales si el modelo produce probabilidades o puntuaciones.
-9. Documentar semillas, particiones, versiones de librerías y criterios de selección.
-
-En proyectos reales, esta documentación es tan importante como el valor de las métricas. Sin ella, los resultados son difíciles de reproducir y comparar.
-
-## Ejemplo final: evaluación completa en Python
-
-```{python}
-#| label: ejemplo-evaluacion-completa
-#| echo: true
-#| warning: false
-#| message: false
-
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    confusion_matrix,
-)
-
-def evaluar_clasificador(y_true, y_score, threshold=0.5):
-    y_pred = (y_score >= threshold).astype(int)
-
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-
-    return {
-        "threshold": threshold,
-        "TP": tp,
-        "TN": tn,
-        "FP": fp,
-        "FN": fn,
-        "accuracy": accuracy_score(y_true, y_pred),
-        "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, zero_division=0),
-        "recall": recall_score(y_true, y_pred),
-        "specificity": tn / (tn + fp),
-        "f1": f1_score(y_true, y_pred),
-        "auc": roc_auc_score(y_true, y_score),
+y después se reentrena con **todo** el conjunto de entrenamiento usando $\hat{\lambda}$. Una variante más conservadora es la **regla de un error estándar** [@hastie2009]: elegir el modelo **más simple** cuyo error de validación esté a menos de un error estándar del mínimo. Prefiere la simplicidad cuando la diferencia no es distinguible del ruido.
+
+$\Lambda$ puede recorrerse con una **rejilla** (todas las combinaciones de una lista de valores) o con **búsqueda aleatoria**, que muestrea combinaciones al azar. Cuando solo unos pocos hiperparámetros importan, la búsqueda aleatoria encuentra buenas configuraciones con muchas menos evaluaciones [@bergstra2012random].
+
+### Validación anidada
+
+Si no hay un conjunto de prueba separado y se quiere estimar el desempeño **del procedimiento completo** (incluida la selección de hiperparámetros), se usa **validación cruzada anidada**: un ciclo externo de $K$ pliegues estima el desempeño y, dentro de cada pliegue externo, un ciclo interno elige los hiperparámetros solo con los datos de entrenamiento de ese pliegue. El número del ciclo externo estima qué tan bien funciona «entrenar con búsqueda de hiperparámetros», no un modelo concreto.
+
+### Datos con estructura
+
+La validación cruzada supone que las observaciones son intercambiables. Dos casos frecuentes violan ese supuesto:
+
+- **Grupos.** Si hay varias filas por paciente, cliente o tienda, las filas del mismo grupo deben ir juntas al mismo pliegue (`GroupKFold`); si no, el modelo «reconoce» al paciente en lugar de aprender el patrón.
+- **Tiempo.** Con series temporales se entrena con el pasado y se valida con el futuro (`TimeSeriesSplit`). Mezclar al azar permite predecir el pasado con datos del futuro, algo imposible en producción.
+
+## Laboratorio: ¿cuánto se mueve la estimación?
+
+El laboratorio usa los 120 puntos de entrenamiento y 400 de prueba del capítulo introductorio y el clasificador $k$-NN. El panel izquierdo repite 200 veces cada método de validación con particiones aleatorias distintas y muestra la distribución de las estimaciones; la línea verde es el error del mismo modelo entrenado con todos los datos y medido en los 400 puntos de prueba, nuestra mejor aproximación al error real. El panel derecho usa validación cruzada de 10 pliegues para **elegir $k$ sin mirar la prueba**, la tarea que quedó pendiente en el capítulo introductorio.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="val-lab">
+  <p class="plab-eyebrow">Laboratorio · Validación</p>
+  <h3 class="plab-title">¿Cuánto se mueve la estimación y qué k elige la validación cruzada?</h3>
+  <p class="plab-sub">Elige un método de validación y observa la dispersión de sus estimaciones. Cambia el tamaño de la muestra y pide nuevas particiones.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Método de validación
+      <div class="plab-seg" id="val-method">
+        <button data-value="h30" aria-pressed="true">Holdout 30 %</button>
+        <button data-value="h50">Holdout 50 %</button>
+        <button data-value="k5">5 pliegues</button>
+        <button data-value="k10">10 pliegues</button>
+        <button data-value="loo">LOOCV</button>
+      </div>
+    </div>
+    <label>Vecinos k (panel izquierdo): <b id="val-k-v"></b><input type="range" id="val-k" min="1" max="39" step="2" value="5"></label>
+    <label>Tamaño de la muestra n: <b id="val-n-v"></b><input type="range" id="val-n" min="40" max="120" step="20" value="120"></label>
+    <div class="plab-field">Azar<button class="plab-btn" id="val-seed">Nuevas particiones</button></div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Promedio de las estimaciones</span><strong id="val-mean"></strong></div>
+    <div class="plab-stat"><span>Desviación estándar</span><strong id="val-sd"></strong></div>
+    <div class="plab-stat"><span>Error en los 400 de prueba</span><strong id="val-true"></strong></div>
+    <div class="plab-stat"><span>k elegido por 10 pliegues</span><strong id="val-kcv"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>200 estimaciones del error</h4>
+      <svg id="val-hist" role="img" aria-label="Histograma de las estimaciones del error obtenidas con particiones distintas"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>estimaciones</span><span><i style="background:var(--lab-s2)"></i>promedio</span><span><i style="background:var(--lab-s3)"></i>error en prueba</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Curva de validación (10 pliegues)</h4>
+      <svg id="val-curve" role="img" aria-label="Error de validación cruzada y error de prueba según k"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>validación cruzada</span><span><i style="background:var(--lab-s4)"></i>prueba (solo para comparar)</span><span><i class="dot" style="background:var(--lab-s2)"></i>mínimo CV</span><span><i class="dot" style="background:var(--lab-s3)"></i>regla de 1 error estándar</span></div>
+    </div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem">
+    <h4>Resumen de los cinco métodos (mismo k y n)</h4>
+    <div id="val-tab" class="plab-scroll"></div>
+  </div>
+  <p class="plab-note" id="val-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('val-lab');
+  const $ = s => root.querySelector(s);
+  const D = {"tr":[[5.12,9.5,1],[1.44,9.49,1],[3.12,4.23,0],[8.28,4.09,0],[5.5,0.28,0],[7.54,5.38,1],[3.3,7.88,1],[3.03,4.53,0],[1.34,4.03,0],[2.03,2.62,0],[7.5,2.8,0],[4.85,9.81,1],[9.62,7.25,1],[5.41,2.77,0],[1.61,9.7,1],[5.16,1.16,0],[6.23,7.77,1],[6.13,9.17,1],[0.4,5.29,1],[4.59,0.62,0],[6.41,8.53,1],[5.93,2.6,0],[8.4,5.09,0],[5.11,7.53,1],[1.48,8.2,1],[6.83,7.87,1],[1.92,8.02,1],[1.91,0.82,0],[8.55,8.61,1],[8.77,4.72,0],[2.74,0.07,0],[6.46,7.2,1],[8.36,2.82,0],[2.15,6.39,0],[8.05,9.64,1],[1.51,4.82,0],[8.95,4.23,0],[5.9,0.24,0],[6.73,9.19,1],[8.27,8.86,1],[6.6,2.46,0],[7.69,2.12,0],[8.31,0.63,0],[8.25,1.65,0],[3.75,3.17,1],[6.91,1.79,0],[3.96,0.06,0],[2.62,4.21,0],[1.06,6.33,0],[3.8,7.25,1],[6.54,4.31,1],[8.67,6.32,1],[8.1,3.42,0],[5.44,1.96,0],[9.96,2.43,0],[2.57,0.73,0],[2.58,7.63,1],[6.98,1.29,0],[3.76,4.21,1],[6.65,4.56,1],[5.87,8.4,1],[7.26,3.65,0],[4.48,3.68,0],[1.1,2.03,0],[2.84,3.14,0],[3.13,5.77,0],[9.72,7.75,0],[7.91,7.59,1],[5.97,9.18,1],[6.9,5.0,1],[0.77,4.88,0],[2.13,1.33,0],[5.06,7.85,1],[2.95,7.69,1],[5.26,1.49,0],[9.65,4.02,0],[2.95,8.47,1],[1.24,7.34,1],[1.88,3.92,0],[2.32,8.41,1],[3.9,9.75,1],[6.25,6.94,1],[5.22,3.09,0],[3.96,9.41,1],[2.01,9.88,1],[7.58,3.6,1],[6.42,3.81,1],[3.81,5.04,1],[0.17,4.94,1],[9.72,2.85,0],[7.48,4.43,1],[2.09,9.05,1],[0.17,3.04,0],[9.99,2.62,0],[8.49,6.06,1],[8.06,6.3,1],[3.63,7.61,1],[0.26,4.47,1],[3.72,4.77,0],[1.28,2.23,0],[5.62,3.88,1],[7.92,6.05,1],[8.61,7.32,1],[6.02,2.88,1],[7.83,2.51,0],[0.75,9.63,1],[5.4,7.74,1],[5.29,6.12,1],[0.34,1.87,0],[6.75,5.71,1],[1.59,9.52,1],[1.54,5.1,0],[1.44,7.17,1],[2.76,1.34,0],[0.46,1.75,0],[1.92,5.37,0],[4.51,9.57,1],[9.54,7.97,1],[6.72,8.45,1],[9.39,0.23,0]],"te":[[2.62,2.98,0],[8.14,0.92,0],[6.0,7.29,1],[1.88,0.55,0],[2.75,6.57,1],[5.62,1.5,0],[4.33,6.69,1],[4.23,6.33,1],[9.67,6.83,0],[3.92,1.87,0],[3.46,5.11,0],[8.91,7.76,1],[3.18,9.24,1],[4.71,6.94,1],[1.07,1.05,0],[2.02,8.84,1],[6.8,8.49,1],[6.44,4.07,1],[5.17,5.93,1],[8.62,4.38,0],[8.92,6.14,0],[8.29,4.98,0],[6.93,3.39,0],[5.23,2.16,0],[1.01,0.39,0],[7.02,4.56,0],[8.98,8.35,1],[3.85,9.74,1],[5.92,7.66,1],[4.07,1.96,1],[1.72,1.81,0],[6.04,1.13,0],[0.2,8.33,1],[0.99,4.51,0],[4.88,6.2,1],[5.04,9.37,1],[7.5,5.74,1],[6.17,5.07,1],[9.65,2.27,0],[6.89,5.55,1],[0.42,2.96,0],[9.27,7.85,1],[0.13,2.97,0],[0.1,8.27,1],[1.1,0.57,0],[9.82,4.46,0],[3.18,0.49,0],[3.9,3.66,0],[5.23,0.07,0],[1.48,2.1,0],[4.41,3.02,0],[6.13,2.85,0],[9.1,9.62,1],[0.59,2.09,0],[5.63,7.71,1],[0.64,1.85,0],[4.57,6.69,1],[9.03,8.67,1],[7.94,0.53,0],[9.77,6.15,0],[0.86,2.55,0],[6.21,3.86,1],[4.47,8.05,1],[8.24,5.47,0],[7.92,4.06,0],[9.74,6.05,0],[9.68,0.44,0],[8.83,5.59,1],[7.14,1.93,0],[5.49,2.89,0],[1.05,0.03,0],[9.07,6.71,1],[2.05,2.58,0],[4.66,8.18,1],[1.18,9.68,1],[9.44,2.45,0],[6.41,3.6,0],[6.97,0.87,0],[4.7,5.88,1],[6.26,6.93,1],[8.91,2.41,0],[1.53,3.91,0],[5.69,9.61,1],[7.11,7.38,1],[9.73,2.68,0],[2.59,4.23,0],[2.95,6.51,0],[9.52,1.54,0],[5.18,6.78,1],[4.93,9.14,1],[7.37,8.82,1],[1.12,1.96,0],[0.66,8.29,1],[9.63,0.14,0],[7.89,7.28,0],[9.08,2.7,0],[7.15,2.37,0],[0.76,7.45,1],[0.42,7.0,1],[2.83,4.87,0],[8.92,2.43,0],[4.68,3.55,0],[1.9,4.74,0],[1.82,7.99,1],[6.15,2.83,0],[9.73,3.45,0],[6.71,7.33,1],[2.65,0.12,0],[8.93,9.56,1],[1.7,1.54,0],[4.33,5.98,1],[9.89,9.63,1],[9.88,2.46,0],[5.99,4.36,1],[2.31,0.65,0],[1.69,3.58,0],[0.88,1.51,0],[0.45,6.23,1],[4.93,2.44,0],[5.26,4.24,1],[6.59,9.33,1],[3.53,6.45,1],[2.19,9.4,1],[6.18,1.59,0],[2.57,1.59,0],[1.79,3.07,0],[8.23,4.57,0],[2.77,4.19,0],[2.67,7.34,1],[0.59,2.89,0],[3.23,1.82,0],[7.38,1.8,0],[3.0,0.56,0],[7.56,3.64,0],[6.56,2.17,0],[0.22,3.22,0],[7.79,8.37,1],[3.49,8.47,1],[0.5,5.22,1],[2.57,4.39,0],[2.22,8.94,1],[3.02,9.45,1],[1.09,4.3,0],[4.43,7.09,1],[3.45,4.92,0],[0.7,3.11,0],[7.25,1.06,0],[4.63,2.37,0],[1.65,1.21,0],[8.14,6.87,1],[3.79,3.92,0],[7.28,6.04,1],[9.16,9.19,1],[4.82,6.59,1],[5.45,3.1,1],[4.54,7.21,1],[5.53,6.32,1],[4.87,9.53,1],[7.76,1.31,0],[8.14,9.18,1],[8.17,3.43,0],[3.68,2.43,0],[0.56,4.72,0],[8.5,7.69,1],[6.62,8.47,1],[6.59,2.23,0],[8.03,3.68,0],[8.9,3.26,0],[0.92,7.3,1],[1.08,8.7,1],[4.12,7.8,1],[0.53,5.44,0],[6.77,1.3,0],[6.08,1.43,0],[3.04,3.65,0],[6.2,1.3,0],[1.85,7.81,1],[7.16,4.54,1],[2.82,6.92,1],[4.68,3.12,0],[8.75,2.02,0],[8.04,6.18,0],[6.46,6.82,1],[7.48,8.81,1],[9.21,2.55,0],[1.64,8.96,1],[2.04,2.22,0],[8.05,9.66,1],[8.45,5.17,0],[3.76,9.89,1],[7.36,6.29,1],[0.11,1.95,0],[0.13,9.07,1],[2.36,1.71,0],[5.83,2.03,1],[5.47,9.5,1],[8.64,2.45,0],[9.16,3.99,0],[5.23,3.25,0],[10.0,3.07,0],[7.37,6.2,1],[6.89,1.04,0],[5.37,9.97,1],[5.63,1.97,0],[0.53,3.3,0],[7.46,0.25,0],[0.49,6.57,0],[8.82,4.39,0],[6.24,2.57,0],[2.73,4.75,0],[2.19,4.54,0],[1.48,9.24,1],[6.48,0.94,0],[1.93,8.29,1],[3.72,2.6,0],[0.23,6.75,1],[5.7,8.4,1],[1.7,7.52,1],[8.27,8.24,1],[7.46,4.42,1],[0.47,6.44,1],[0.26,0.86,0],[4.09,1.21,0],[4.52,8.51,1],[1.74,7.98,1],[9.98,0.37,0],[4.23,7.08,1],[7.32,2.8,0],[8.09,3.71,1],[2.01,5.18,0],[6.12,8.38,1],[6.64,0.83,0],[5.75,3.44,0],[7.05,0.45,0],[6.57,7.92,1],[0.4,0.15,0],[8.92,8.95,1],[1.77,9.22,1],[4.07,5.19,1],[4.71,3.35,1],[8.84,6.11,0],[9.32,6.22,0],[9.25,5.15,0],[4.75,5.71,1],[0.06,7.68,1],[1.4,9.44,1],[0.44,7.08,0],[7.69,5.42,0],[0.96,8.12,1],[3.21,2.88,0],[6.92,9.72,1],[0.96,4.36,0],[6.73,2.77,1],[9.25,6.03,0],[0.76,1.55,0],[1.43,4.56,0],[9.1,1.12,0],[1.51,2.12,0],[5.73,4.3,1],[4.18,1.45,0],[8.24,4.79,1],[8.66,0.3,0],[4.58,3.68,1],[8.41,6.92,0],[5.21,1.61,0],[6.83,8.96,1],[7.77,9.67,1],[5.91,3.14,1],[2.21,7.99,1],[8.12,6.35,0],[7.82,4.86,0],[8.52,6.95,1],[2.42,5.88,0],[6.56,2.03,0],[9.36,8.06,0],[1.45,2.2,0],[0.02,9.39,1],[1.74,8.34,1],[5.12,0.57,0],[2.11,2.58,0],[7.64,3.68,0],[1.42,9.46,1],[5.15,0.67,0],[9.73,6.75,0],[4.41,1.46,0],[6.93,0.97,0],[9.39,7.52,1],[7.13,7.7,1],[8.64,4.69,0],[8.12,1.1,0],[7.0,7.51,1],[2.11,1.11,0],[9.17,8.92,1],[1.1,5.89,0],[1.81,2.05,0],[9.29,6.63,0],[7.58,2.82,0],[7.76,6.69,1],[3.46,4.96,0],[2.49,5.95,0],[1.87,4.49,0],[8.55,6.58,1],[6.02,1.12,0],[8.22,6.2,1],[9.48,9.34,1],[9.32,5.34,0],[7.7,1.02,0],[0.45,7.86,1],[6.73,9.47,1],[3.04,4.95,0],[7.87,6.09,1],[8.49,3.95,0],[8.45,8.61,1],[9.03,3.98,0],[9.08,3.09,0],[5.94,9.8,1],[6.44,5.92,1],[3.61,5.14,0],[4.91,6.78,1],[5.4,3.18,0],[1.91,9.87,1],[6.19,1.73,0],[3.38,6.5,1],[2.39,8.95,1],[5.41,6.81,1],[6.64,1.62,0],[9.32,8.46,1],[1.46,5.7,0],[5.28,3.1,0],[3.75,2.59,0],[6.31,4.29,1],[1.0,2.27,0],[1.52,6.29,0],[5.54,3.93,1],[5.47,6.29,1],[2.17,0.56,0],[9.62,1.86,0],[2.42,7.04,1],[9.86,1.24,0],[4.02,8.56,1],[0.85,2.5,0],[6.14,8.29,1],[1.03,4.16,0],[5.92,5.47,1],[5.36,9.93,1],[9.84,2.1,0],[2.56,4.0,0],[1.01,1.46,0],[5.65,9.87,1],[2.94,1.98,0],[6.17,2.98,1],[0.14,0.94,0],[8.78,1.09,0],[6.41,4.19,1],[7.69,5.09,0],[2.31,2.11,0],[2.35,2.34,0],[2.51,2.99,0],[5.98,5.28,1],[0.69,4.21,0],[9.3,9.4,1],[3.2,1.56,0],[2.93,1.33,0],[2.59,9.25,1],[8.77,4.52,0],[5.5,7.01,1],[7.01,6.94,1],[7.36,5.91,1],[1.33,6.87,0],[6.69,1.62,0],[1.95,6.37,0],[3.86,8.11,1],[2.77,6.66,1],[6.15,1.11,1],[2.78,3.53,0],[3.02,0.91,0],[2.36,5.37,0],[2.26,6.36,0],[4.15,4.56,1],[2.07,7.87,1],[0.77,9.44,1],[5.89,9.44,1],[5.49,3.52,1],[3.7,9.29,1],[5.21,3.94,0],[1.56,1.52,0],[4.16,4.52,0],[8.04,1.22,0],[4.54,1.33,0],[2.54,4.93,0],[8.77,1.32,0],[1.74,7.06,0],[5.27,0.88,0],[6.81,9.58,1],[7.38,9.96,1],[7.43,3.29,1],[8.0,5.68,0],[0.91,3.62,0],[9.46,6.55,0],[3.7,7.09,1]]}, TR = D.tr, TE = D.te, N = TR.length;
+  // Orden de vecinos precalculado: para cada punto de entrenamiento, los demás ordenados por distancia.
+  const sortIdx = (a, b, pool) => pool.map(j => [(TR[j][0] - a) ** 2 + (TR[j][1] - b) ** 2, j]).sort((u, v) => u[0] - v[0] || u[1] - v[1]).map(u => u[1]);
+  const ALL = TR.map((_, j) => j);
+  const ORD = TR.map((p, i) => sortIdx(p[0], p[1], ALL.filter(j => j !== i)));
+  const TORD = TE.map(p => sortIdx(p[0], p[1], ALL));
+  // Predicción con k vecinos usando solo los puntos con inTr[j] verdadero.
+  function vote(ord, inTr, k) { let c = 0, s = 0; for (const j of ord) { if (!inTr[j]) continue; s += TR[j][2]; if (++c === k) break; } return s / c > 0.5 ? 1 : 0; }
+  // Votos acumulados para todos los k impares a la vez (curva de validación).
+  function errorsAllK(ord, inTr, kmax, y) { const out = []; let c = 0, s = 0; for (const j of ord) { if (!inTr[j]) continue; s += TR[j][2]; c++; if (c % 2 === 1) out.push((s / c > 0.5 ? 1 : 0) !== y ? 1 : 0); if (c >= kmax) break; } return out; }
+  function shuffle(n, r) { const a = [...Array(n).keys()]; for (let i = n - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  // Una estimación del error con el método m sobre los primeros n puntos.
+  function estimate(m, n, k, r) {
+    if (m === 'loo') { let e = 0; for (let i = 0; i < n; i++) { const inTr = ALL.map(j => j < n); e += vote(ORD[i], inTr, k) !== TR[i][2] ? 1 : 0; } return e / n; }
+    const perm = shuffle(n, r);
+    if (m === 'h30' || m === 'h50') {
+      const nv = Math.round(n * (m === 'h30' ? 0.3 : 0.5)), val = perm.slice(0, nv), inTr = ALL.map(() => false);
+      perm.slice(nv).forEach(j => { inTr[j] = true; });
+      return val.filter(i => vote(ORD[i], inTr, k) !== TR[i][2]).length / nv;
     }
+    const Kf = m === 'k5' ? 5 : 10, fold = Array(N).fill(-1); perm.forEach((j, p) => { fold[j] = p % Kf; });
+    let e = 0;
+    for (let f = 0; f < Kf; f++) { const inTr = ALL.map(j => j < n && fold[j] !== f); for (let i = 0; i < n; i++) if (fold[i] === f) e += vote(ORD[i], inTr, k) !== TR[i][2] ? 1 : 0; }
+    return e / n;
+  }
+  let seed = 1;
+  const methSeg = K.segmented($('#val-method'), render);
+  const NAMES = { h30: 'Holdout 30 %', h50: 'Holdout 50 %', k5: '5 pliegues', k10: '10 pliegues', loo: 'LOOCV' };
 
-for tau in [0.3, 0.5, 0.7]:
-    print(evaluar_clasificador(y_test, probs, threshold=tau))
+  function render() {
+    const m = methSeg.get(), k = +$('#val-k').value, n = +$('#val-n').value, R = 200;
+    $('#val-k-v').textContent = k; $('#val-n-v').textContent = n;
+    const inAll = ALL.map(j => j < n);
+    const trueErr = TE.filter((p, t) => vote(TORD[t], inAll, k) !== p[2]).length / TE.length;
+    const summary = {};
+    Object.keys(NAMES).forEach(mm => {
+      const r = K.rng(seed * 7919 + n), reps = mm === 'loo' ? 1 : R, est = [];
+      for (let i = 0; i < reps; i++) est.push(estimate(mm, n, k, r));
+      summary[mm] = { est, mean: K.mean(est), sd: est.length > 1 ? K.sd(est, 1) : 0 };
+    });
+    const S = summary[m];
+    $('#val-mean').textContent = K.fmt(S.mean, 3); $('#val-sd').textContent = K.fmt(S.sd, 3); $('#val-true').textContent = K.fmt(trueErr, 3);
+
+    // Histograma.
+    const B = 30, hi = 0.45, w = hi / B, cnt = Array(B).fill(0);
+    S.est.forEach(v => { cnt[Math.min(B - 1, Math.floor(v / w))]++; });
+    const top = Math.max(...cnt);
+    const c = K.chart($('#val-hist'), { width: 380, height: 250, x: [0, hi], y: [0, top * 1.12], margin: { left: 44, bottom: 40 } });
+    c.axes({ xTicks: 5, yTicks: 4, xLabel: 'error estimado', yLabel: m === 'loo' ? 'estimación única' : 'repeticiones', xFmt: v => K.fmt(v, 2), yFmt: v => K.fmt(v, 0) });
+    cnt.forEach((v, i) => { if (v) c.rect(i * w, 0, (i + 1) * w, v, 's1').style.fillOpacity = 0.55; });
+    c.line(S.mean, 0, S.mean, top * 1.08, 's2 line');
+    c.line(trueErr, 0, trueErr, top * 1.08, 's3 line dash');
+
+    // Curva de validación con 10 pliegues (una partición) frente al error de prueba.
+    const kmax = Math.min(39, n - Math.ceil(n / 10) - 1), ks = []; for (let kk = 1; kk <= kmax; kk += 2) ks.push(kk);
+    const r = K.rng(seed * 104729 + n), perm = shuffle(n, r), fold = Array(N).fill(-1); perm.forEach((j, p) => { fold[j] = p % 10; });
+    const foldErr = Array.from({ length: 10 }, () => Array(ks.length).fill(0)), foldN = Array(10).fill(0);
+    for (let f = 0; f < 10; f++) { const inTr = ALL.map(j => j < n && fold[j] !== f);
+      for (let i = 0; i < n; i++) if (fold[i] === f) { foldN[f]++; errorsAllK(ORD[i], inTr, kmax, TR[i][2]).forEach((e, q) => { if (q < ks.length) foldErr[f][q] += e; }); } }
+    const cv = ks.map((_, q) => K.sum(foldErr.map(fe => fe[q])) / n);
+    const se = ks.map((_, q) => K.sd(foldErr.map((fe, f) => fe[q] / foldN[f]), 1) / Math.sqrt(10));
+    const te = ks.map(kk => TE.filter((p, t) => vote(TORD[t], inAll, kk) !== p[2]).length / TE.length);
+    let qb = 0; cv.forEach((v, q) => { if (v < cv[qb] - 1e-12) qb = q; });
+    let q1 = qb; for (let q = ks.length - 1; q >= 0; q--) { if (cv[q] <= cv[qb] + se[qb] + 1e-12) { q1 = q; break; } }
+    const ymax = Math.max(0.3, ...cv, ...te) * 1.08;
+    const cc = K.chart($('#val-curve'), { width: 380, height: 250, x: [0, kmax + 1], y: [0, ymax], margin: { left: 44, bottom: 40 } });
+    cc.axes({ xTicks: 5, yTicks: 5, xLabel: 'k (vecinos)', yLabel: 'error', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 2) });
+    const band = ks.map((kk, q) => [kk, cv[q] + se[q]]).concat(ks.map((kk, q) => [kk, cv[q] - se[q]]).reverse());
+    K.el('path', { d: 'M' + band.map(p => `${cc.X(p[0]).toFixed(1)},${cc.Y(p[1]).toFixed(1)}`).join('L') + 'Z', class: 's1 soft' }, cc.g).style.stroke = 'none';
+    cc.path(ks.map((kk, q) => [kk, te[q]]), 's4 line dash');
+    cc.path(ks.map((kk, q) => [kk, cv[q]]), 's1 line');
+    cc.dot(ks[q1], cv[q1], 6, 's3 dot');
+    cc.dot(ks[qb], cv[qb], 6, 's2 dot');
+    $('#val-kcv').textContent = `${ks[qb]} (prueba ${K.fmt(te[qb], 3)})`;
+
+    $('#val-tab').innerHTML = '<table class="plab-table"><thead><tr><th>Método</th><th>Modelos entrenados</th><th>Promedio</th><th>Desv. est.</th><th>Sesgo vs. prueba</th></tr></thead><tbody>' +
+      Object.entries(NAMES).map(([mm, nm]) => { const s = summary[mm], fits = mm === 'loo' ? n : mm === 'k5' ? 5 * R : mm === 'k10' ? 10 * R : R;
+        return `<tr${mm === m ? ' class="hl"' : ''}><td>${nm}</td><td>${fits}</td><td>${K.fmt(s.mean, 3)}</td><td>${K.fmt(s.sd, 3)}</td><td>${s.mean - trueErr >= 0 ? '+' : ''}${K.fmt(s.mean - trueErr, 3)}</td></tr>`; }).join('') +
+      '</tbody></table><p class="plab-sub" style="margin:.4rem 0 0">Holdout y K pliegues: 200 repeticiones con particiones aleatorias. LOOCV es determinista. «Sesgo vs. prueba» compara el promedio con el error en los 400 puntos de prueba.</p>';
+
+    const note = $('#val-note'), sdH = summary.h30.sd, sdK = summary.k10.sd;
+    note.className = 'plab-note ' + (m.startsWith('h') ? 'warn' : 'good');
+    note.textContent = (m.startsWith('h')
+      ? `Con ${NAMES[m]} una sola estimación puede caer en cualquier lugar del histograma: su desviación estándar es ${K.fmt(S.sd, 3)}, frente a ${K.fmt(sdK, 3)} de 10 pliegues. `
+      : `Con ${NAMES[m]} cada punto se valida una vez; la dispersión es ${K.fmt(S.sd, 3)} frente a ${K.fmt(sdH, 3)} del holdout 30 %. `) +
+      `La validación cruzada elige k = ${ks[qb]} (la regla de un error estándar, k = ${ks[q1]}); su error en prueba es ${K.fmt(te[qb], 3)}, frente al mínimo de ${K.fmt(Math.min(...te), 3)} que solo se conocería haciendo trampa.`;
+  }
+  root.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', render));
+  $('#val-seed').addEventListener('click', () => { seed++; render(); });
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio repite 200 veces cada método de validación sobre los 120 puntos del capítulo introductorio con 5-NN y muestra la distribución de las estimaciones del error, y traza la curva de validación de 10 pliegues para elegir $k$. Valores de referencia: el error de 5-NN en los 400 puntos de prueba es 0.110 y la estimación LOOCV (determinista) es 0.108. La desviación estándar de las estimaciones con holdout del 30 % es de alrededor de 0.045, unas cinco veces la de 10 pliegues (0.009). Según la partición, la validación cruzada elige $k$ = 3, 5 o 7, con errores de prueba entre 0.110 y 0.123, frente al mínimo de 0.110.
+:::
+
+**Guía del laboratorio.**
+
+1. Con *Holdout 30 %*, observa el ancho del histograma. Si te tocara una sola de esas 200 estimaciones, ¿entre qué valores podría estar?
+2. Predice antes de mover: ¿qué método tendrá la menor desviación estándar, 5 o 10 pliegues? Compruébalo en la tabla de resumen.
+3. Compara el promedio de *Holdout 50 %* con el error de prueba. ¿Por qué el holdout del 50 % es pesimista? Pista: ¿con cuántos datos entrena cada modelo?
+4. Baja $n$ a 40. ¿Qué le pasa a la dispersión de todos los métodos? ¿Y a la curva de validación?
+5. Pulsa *Nuevas particiones* varias veces y anota el $k$ que elige la validación cruzada. ¿Cambia? ¿Cambia mucho el error de prueba del $k$ elegido?
+6. Explica por qué la curva morada (prueba) se muestra solo para comparar y no debe usarse para elegir $k$.
+
+## Implementación en Python
+
+### La validación cruzada a mano y con `scikit-learn`
+
+`cross_val_score` y `cross_val_predict` implementan la @eq-cv con cualquier esquema de partición. Reproducimos la @tbl-loocv-manual con `LeaveOneOut`:
+
+```{python}
+#| label: val-loocv-manual
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import LeaveOneOut, cross_val_predict, cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+
+clientes = pd.DataFrame({
+    "ingreso": [20, 25, 32, 38, 15, 30, 12, 22, 35, 28],
+    "deuda":   [20, 30, 25, 35, 40, 58, 55, 60, 62, 48],
+    "paga":    [1, 1, 1, 1, 1, 1, 0, 0, 0, 0],
+}, index=range(1, 11))
+X, y = clientes[["ingreso", "deuda"]], clientes["paga"]
+
+modelos = {"Tocón": DecisionTreeClassifier(max_depth=1, random_state=0),
+           "1-NN": KNeighborsClassifier(n_neighbors=1),
+           "3-NN": KNeighborsClassifier(n_neighbors=3)}
+pred = pd.DataFrame({nombre: cross_val_predict(m, X, y, cv=LeaveOneOut()) for nombre, m in modelos.items()},
+                    index=clientes.index)
+pred.insert(0, "real", y)
+print(pred.T.to_string())
+print("\nExactitud LOOCV:", {n: int((pred[n] == y).sum()) for n in modelos}, "de 10")
 ```
 
-Este patrón permite comparar explícitamente cómo cambian las métricas al modificar el umbral. También obliga a distinguir entre evaluación basada en clases predichas y evaluación basada en puntuaciones.
+### Varianza de las estimaciones
 
-## Conclusiones
+Con los datos del laboratorio comparamos la dispersión del holdout y de la validación cruzada repitiendo cada método con 200 semillas.
 
-Evaluar un modelo de clasificación requiere más que calcular accuracy. La primera decisión importante es cómo separar los datos para estimar la generalización. El holdout es simple y rápido, pero puede ser inestable si la partición no representa adecuadamente la distribución de los datos. La validación cruzada $K$-fold ofrece una estimación más robusta, especialmente en conjuntos pequeños, aunque incrementa el coste computacional.
+```{python}
+#| label: fig-val-varianza
+#| fig-cap: "Distribución de 200 estimaciones del error de 5-NN con holdout del 30 % y con validación cruzada de 10 pliegues repetida. La línea verde es el error del modelo entrenado con los 120 puntos y medido en los 400 de prueba."
+import plotly.graph_objects as go
+from sklearn.model_selection import train_test_split, KFold
 
-La matriz de confusión proporciona la base para entender los errores del clasificador. A partir de ella se derivan métricas como precisión, recall, especificidad, F1-score y exactitud balanceada. Cada métrica responde una pregunta diferente y debe elegirse según el objetivo del problema. En escenarios donde los falsos negativos son graves, como screening médico, puede priorizarse la sensibilidad. En escenarios donde los falsos positivos son costosos, puede priorizarse la precisión o la especificidad.
+def prob_clase1(X):
+    return 1 / (1 + np.exp(-1.6 * (X[:, 1] - 5 - 2 * np.sin(0.8 * X[:, 0]))))
 
-Finalmente, la curva ROC y el AUC permiten analizar el desempeño del modelo a través de distintos umbrales. Sin embargo, el umbral final debe seleccionarse con base en el coste de los errores y el contexto de aplicación. Una evaluación rigurosa no solo reporta métricas, sino que documenta cómo se obtuvieron, con qué particiones, bajo qué supuestos y con qué criterios de decisión.
+def generar(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.uniform(0, 10, size=(n, 2)).round(2)
+    return X, (rng.uniform(size=n) < prob_clase1(X)).astype(int)
+
+X_big, y_big = generar(120, 1)
+X_test, y_test = generar(400, 2)
+knn5 = KNeighborsClassifier(n_neighbors=5, algorithm="brute")
+error_real = 1 - knn5.fit(X_big, y_big).score(X_test, y_test)
+
+holdout, kfold = [], []
+for s in range(200):
+    Xa, Xb, ya, yb = train_test_split(X_big, y_big, test_size=0.3, random_state=s)
+    holdout.append(1 - knn5.fit(Xa, ya).score(Xb, yb))
+    kfold.append(1 - cross_val_score(knn5, X_big, y_big, cv=KFold(10, shuffle=True, random_state=s)).mean())
+loo = 1 - cross_val_score(knn5, X_big, y_big, cv=LeaveOneOut()).mean()
+
+fig = go.Figure()
+fig.add_trace(go.Histogram(x=holdout, name=f"holdout 30 % (desv. {np.std(holdout, ddof=1):.3f})", opacity=0.6, marker_color="#ea580c", xbins=dict(size=0.015)))
+fig.add_trace(go.Histogram(x=kfold, name=f"10 pliegues (desv. {np.std(kfold, ddof=1):.3f})", opacity=0.6, marker_color="#2563eb", xbins=dict(size=0.015)))
+fig.add_vline(x=error_real, line=dict(color="#16a34a", dash="dash"), annotation_text=f"prueba: {error_real:.3f}")
+fig.update_layout(barmode="overlay", xaxis_title="error estimado", yaxis_title="repeticiones", height=360,
+                  margin=dict(l=10, r=10, t=20, b=40), legend=dict(x=0.55, y=0.95))
+fig.show()
+print(f"LOOCV (determinista): {loo:.3f}")
+```
+
+### Curva de validación y curva de aprendizaje
+
+Una **curva de validación** grafica el error de entrenamiento y de validación cruzada contra un hiperparámetro; una **curva de aprendizaje**, contra el tamaño del entrenamiento. La primera diagnostica la complejidad; la segunda responde si conviene conseguir más datos: si las dos curvas ya convergieron, más datos no ayudarán; si siguen separadas, sí.
+
+```{python}
+#| label: fig-val-curvas
+#| fig-cap: "Izquierda: curva de validación de k-NN (10 pliegues estratificados). Derecha: curva de aprendizaje de 15-NN en los mismos datos ampliados a 520 puntos. La brecha entre entrenamiento y validación es la varianza; el nivel al que convergen, el sesgo más el error irreducible."
+from plotly.subplots import make_subplots
+from sklearn.model_selection import validation_curve, learning_curve, StratifiedKFold
+
+cv10 = StratifiedKFold(10, shuffle=True, random_state=0)
+ks = np.arange(1, 40, 2)
+tr_sc, va_sc = validation_curve(KNeighborsClassifier(algorithm="brute"), X_big, y_big,
+                                param_name="n_neighbors", param_range=ks, cv=cv10)
+X_all, y_all = np.vstack([X_big, X_test]), np.concatenate([y_big, y_test])
+tamanos, tr_lc, va_lc = learning_curve(KNeighborsClassifier(15), X_all, y_all, cv=cv10,
+                                       train_sizes=np.linspace(0.1, 1.0, 8), shuffle=True, random_state=0)
+
+fig = make_subplots(rows=1, cols=2, subplot_titles=("Curva de validación (k-NN)", "Curva de aprendizaje (15-NN)"))
+for col, x, a, b in [(1, ks, tr_sc, va_sc), (2, tamanos, tr_lc, va_lc)]:
+    fig.add_trace(go.Scatter(x=x, y=1 - a.mean(1), name="entrenamiento", line=dict(color="#2563eb"), showlegend=col == 1), row=1, col=col)
+    fig.add_trace(go.Scatter(x=x, y=1 - b.mean(1), name="validación cruzada", line=dict(color="#7c3aed"),
+                             error_y=dict(type="data", array=b.std(1) / np.sqrt(10)), showlegend=col == 1), row=1, col=col)
+fig.update_xaxes(title_text="k", row=1, col=1); fig.update_xaxes(title_text="tamaño del entrenamiento", row=1, col=2)
+fig.update_yaxes(title_text="error", row=1, col=1)
+fig.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=40), legend=dict(orientation="h", y=-0.25))
+fig.show()
+```
+
+### Búsqueda de hiperparámetros y validación anidada
+
+Usamos el conjunto *breast cancer* (569 tumores, 30 variables) y un *pipeline* que escala y aplica $k$-NN. `GridSearchCV` hace la validación cruzada interna; envolverlo en `cross_val_score` da la validación anidada.
+
+```{python}
+#| label: val-anidada
+from sklearn.datasets import load_breast_cancer
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from scipy.stats import randint
+
+Xc, yc = load_breast_cancer(return_X_y=True)
+pipe = make_pipeline(StandardScaler(), KNeighborsClassifier())
+rejilla = {"kneighborsclassifier__n_neighbors": list(range(1, 32, 2)),
+           "kneighborsclassifier__weights": ["uniform", "distance"]}
+interna, externa = StratifiedKFold(5, shuffle=True, random_state=1), StratifiedKFold(5, shuffle=True, random_state=2)
+
+busqueda = GridSearchCV(pipe, rejilla, cv=interna, scoring="balanced_accuracy").fit(Xc, yc)
+anidada = cross_val_score(GridSearchCV(pipe, rejilla, cv=interna, scoring="balanced_accuracy"),
+                          Xc, yc, cv=externa, scoring="balanced_accuracy")
+aleatoria = RandomizedSearchCV(pipe, {"kneighborsclassifier__n_neighbors": randint(1, 40),
+                                      "kneighborsclassifier__weights": ["uniform", "distance"]},
+                               n_iter=10, cv=interna, scoring="balanced_accuracy", random_state=0).fit(Xc, yc)
+
+print(f"Rejilla: {len(busqueda.cv_results_['params'])} configuraciones; mejor {busqueda.best_params_}")
+print(f"  mejor exactitud balanceada de validación (optimista): {busqueda.best_score_:.4f}")
+print(f"  validación anidada (honesta): {anidada.mean():.4f} ± {anidada.std(ddof=1) / np.sqrt(5):.4f}")
+print(f"Búsqueda aleatoria con 10 configuraciones: mejor {aleatoria.best_score_:.4f}")
+```
+
+La diferencia entre el mejor puntaje de la rejilla y la validación anidada es el optimismo de la selección. Aquí es pequeña porque la rejilla es pequeña y el problema fácil; con cientos de configuraciones y pocos datos puede ser de varios puntos porcentuales.
+
+## La fuga de datos
+
+La **fuga de datos** ocurre cuando información de los datos de validación o prueba se filtra al entrenamiento. Sus formas más comunes son:
+
+- **Preprocesar antes de separar**: escalar, imputar o seleccionar variables con todos los datos.
+- **Variables del futuro**: usar una columna que solo se conoce después del evento a predecir (la fecha de cierre de una cuenta para predecir si se cerrará).
+- **Duplicados o grupos** repartidos entre entrenamiento y prueba.
+- **Elegir con la prueba**: probar muchos modelos y reportar el mejor resultado de prueba.
+
+El siguiente experimento es un clásico [@hastie2009]. Generamos 100 casos con **5000 variables de puro ruido** y una clase al azar: ningún clasificador puede superar el 50 %. Si seleccionamos las 20 variables más correlacionadas con la clase **antes** de la validación cruzada, la estimación es espectacular; si la selección va **dentro** del *pipeline*, vuelve a la realidad.
+
+```{python}
+#| label: val-fuga
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.linear_model import LogisticRegression
+
+rng = np.random.default_rng(0)
+X_ruido = rng.normal(size=(100, 5000))
+y_ruido = rng.integers(0, 2, size=100)
+cv5 = StratifiedKFold(5, shuffle=True, random_state=0)
+
+# Mal: la selección ve todas las etiquetas, incluidas las de validación
+X_sel = SelectKBest(f_classif, k=20).fit_transform(X_ruido, y_ruido)
+mal = cross_val_score(LogisticRegression(max_iter=1000), X_sel, y_ruido, cv=cv5).mean()
+
+# Bien: la selección se reajusta dentro de cada pliegue
+bien = cross_val_score(make_pipeline(SelectKBest(f_classif, k=20), LogisticRegression(max_iter=1000)),
+                       X_ruido, y_ruido, cv=cv5).mean()
+print(f"Selección fuera del pipeline: exactitud CV = {mal:.3f}   <- fuga")
+print(f"Selección dentro del pipeline: exactitud CV = {bien:.3f}  <- honesta (azar = 0.5)")
+```
+
+La regla práctica: **todo paso que aprenda algo de los datos va dentro del *pipeline***, para que se reajuste en cada pliegue con los datos de entrenamiento de ese pliegue.
+
+## Clases desbalanceadas
+
+Cuando la clase positiva es rara, además de elegir bien la métrica (capítulo anterior) hay cuatro palancas:
+
+1. **Estratificar** todas las particiones.
+2. **Pesar las clases** en la función de pérdida (`class_weight="balanced"`), de modo que cada positivo cuente tanto como $n_-/n_+$ negativos.
+3. **Remuestrear** el entrenamiento: submuestrear la clase mayoritaria, sobremuestrear la minoritaria o generar positivos sintéticos con SMOTE, que interpola entre vecinos de la clase minoritaria [@chawla2002smote]. El remuestreo se aplica **solo dentro del entrenamiento de cada pliegue**; remuestrear antes de separar es otra forma de fuga.
+4. **Mover el umbral**, como en el capítulo de métricas.
+
+Con frecuencia, pesar las clases o mover el umbral logra lo mismo que remuestrear, sin alterar los datos:
+
+```{python}
+#| label: val-desbalance
+from sklearn.datasets import make_classification
+from sklearn.model_selection import cross_validate
+
+Xd, yd = make_classification(n_samples=3000, n_features=12, n_informative=6, n_redundant=2,
+                             weights=[0.95, 0.05], flip_y=0.01, class_sep=0.8, random_state=3)
+cv = StratifiedKFold(5, shuffle=True, random_state=0)
+metricas = ["accuracy", "balanced_accuracy", "recall", "precision", "average_precision"]
+filas = []
+for nombre, modelo in [("sin ajuste", LogisticRegression(max_iter=1000)),
+                       ("class_weight='balanced'", LogisticRegression(max_iter=1000, class_weight="balanced"))]:
+    r = cross_validate(make_pipeline(StandardScaler(), modelo), Xd, yd, cv=cv, scoring=metricas)
+    filas.append({"modelo": nombre, **{m: r[f"test_{m}"].mean() for m in metricas}})
+print(f"Prevalencia de la clase positiva: {yd.mean():.3f}")
+pd.DataFrame(filas).set_index("modelo").round(3)
+```
+
+Pesar las clases sube la sensibilidad y la exactitud balanceada a costa de precisión, mientras que la precisión promedio, que no depende del umbral, cambia poco: el ranking del modelo es casi el mismo; lo que cambia es dónde se corta.
+
+## Calibración de probabilidades
+
+Un clasificador está **calibrado** si, entre los casos a los que asigna probabilidad 0.3, alrededor del 30 % son positivos. La calibración importa cuando la probabilidad se usa como tal: para fijar precios, combinar modelos o aplicar el umbral teórico $C_{FP}/(C_{FP} + C_{FN})$. Se diagnostica con un **diagrama de calibración**: se agrupan los casos por probabilidad predicha y se grafica la fracción real de positivos de cada grupo; un modelo calibrado sigue la diagonal.
+
+Muchos clasificadores no están calibrados: Naive Bayes empuja las probabilidades a los extremos; los bosques aleatorios y las máquinas de soporte vectorial las concentran en el centro [@niculescu2005predicting]. Se corrigen con un **recalibrador** ajustado en datos de validación: la **escala de Platt** ajusta una regresión logística sobre el puntaje [@platt1999probabilistic] y la **regresión isotónica** ajusta una función escalonada creciente, más flexible pero más necesitada de datos.
+
+```{python}
+#| label: fig-val-calibracion
+#| fig-cap: "Diagrama de calibración en datos de prueba. Naive Bayes es demasiado extremo; tras la calibración isotónica (con validación cruzada interna), sus probabilidades siguen mucho mejor la diagonal y su puntaje de Brier baja."
+from sklearn.naive_bayes import GaussianNB
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.metrics import brier_score_loss
+
+Xk, yk = make_classification(n_samples=6000, n_features=20, n_informative=4, n_redundant=10,
+                             random_state=4)
+Xk_tr, Xk_te, yk_tr, yk_te = train_test_split(Xk, yk, test_size=0.5, random_state=0)
+modelos_cal = {"Naive Bayes": GaussianNB(),
+               "Naive Bayes calibrado (isotónico)": CalibratedClassifierCV(GaussianNB(), method="isotonic", cv=5),
+               "Regresión logística": LogisticRegression(max_iter=1000)}
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], line=dict(color="gray", dash="dash"), name="calibración perfecta"))
+for (nombre, m), color in zip(modelos_cal.items(), ["#ea580c", "#2563eb", "#16a34a"]):
+    p = m.fit(Xk_tr, yk_tr).predict_proba(Xk_te)[:, 1]
+    frac, media = calibration_curve(yk_te, p, n_bins=10)
+    fig.add_trace(go.Scatter(x=media, y=frac, mode="lines+markers", line=dict(color=color),
+                             name=f"{nombre} (Brier {brier_score_loss(yk_te, p):.3f})"))
+fig.update_layout(xaxis_title="probabilidad predicha (promedio del grupo)", yaxis_title="fracción real de positivos",
+                  height=400, margin=dict(l=10, r=10, t=20, b=40), legend=dict(x=0.01, y=0.99))
+fig.show()
+```
+
+## Comparar dos clasificadores
+
+Si el modelo A acierta 87 % y el B 85 % en el mismo conjunto de prueba, ¿A es mejor? Depende de cuántos casos haya y de **en qué casos** difieren. La **prueba de McNemar** [@mcnemar1947note] compara dos clasificadores evaluados en los mismos casos usando solo los desacuerdos. Supongamos 200 casos de prueba:
+
+| | B acierta | B falla |
+|---|---:|---:|
+| **A acierta** | 150 | $n_{10} = 25$ |
+| **A falla** | $n_{01} = 10$ | 15 |
+
+: Aciertos y fallos de dos clasificadores sobre los mismos 200 casos. {#tbl-mcnemar}
+
+Si ambos fueran igual de buenos, los 35 desacuerdos se repartirían mitad y mitad. El estadístico con corrección de continuidad es
+
+$$
+\chi^2 = \frac{(|n_{10} - n_{01}| - 1)^2}{n_{10} + n_{01}} = \frac{(15 - 1)^2}{35} = 5.6,
+$$
+
+mayor que 3.84, el valor crítico de una $\chi^2$ con un grado de libertad al 5 %: la diferencia es significativa. Observa que las exactitudes son $175/200 = 0.875$ y $160/200 = 0.80$, pero lo que decide es cómo se reparten los 35 casos en que discrepan.
+
+Para comparar **algoritmos** (no un par de modelos ya entrenados) con validación cruzada, la diferencia por pliegue tiene varianza subestimada porque los pliegues comparten datos; @dietterich1998approximate recomienda la prueba $5 \times 2$ CV o McNemar sobre un conjunto de prueba. En la práctica, además de la significancia hay que preguntarse si la diferencia **importa** al negocio.
+
+```{python}
+#| label: val-mcnemar
+from scipy.stats import chi2, binomtest
+n10, n01 = 25, 10
+estadistico = (abs(n10 - n01) - 1) ** 2 / (n10 + n01)
+print(f"McNemar: chi2 = {estadistico:.2f}, p = {chi2.sf(estadistico, df=1):.4f}")
+print(f"Versión exacta (binomial): p = {binomtest(n10, n10 + n01, 0.5).pvalue:.4f}")
+```
+
+## Lista de verificación
+
+1. Definir clase positiva, métrica y referencia **antes** de mirar resultados.
+2. Separar la prueba primero; estratificar; respetar grupos y tiempo.
+3. Meter todo el preprocesamiento en un *pipeline*.
+4. Elegir hiperparámetros, variables y umbral con validación cruzada sobre el entrenamiento.
+5. Reportar la estimación con su incertidumbre; usar validación anidada si no hay prueba independiente.
+6. Revisar calibración si las probabilidades se usarán como tales.
+7. Evaluar **una vez** en prueba y comparar con la referencia y con un modelo simple.
+
+## Resumen
+
+- Estimar, seleccionar y comparar exigen datos que el modelo no haya visto; cada decisión «gasta» los datos con que se tomó.
+- El holdout es simple pero de varianza alta. La validación cruzada de $K$ pliegues (5 o 10, estratificada) usa cada dato una vez para validar; LOOCV es el caso $K = n$.
+- Los hiperparámetros se eligen con validación cruzada; la regla de un error estándar prefiere el modelo más simple compatible con el mínimo. El mejor puntaje de una búsqueda es optimista: la validación anidada lo corrige.
+- La fuga de datos produce estimaciones espectaculares y falsas; todo lo que aprende de los datos va dentro del *pipeline*.
+- Con desbalance: estratificar, pesar clases o remuestrear dentro de cada pliegue, y mover el umbral.
+- La calibración se diagnostica con un diagrama de calibración y se corrige con Platt o regresión isotónica.
+- Para comparar dos clasificadores en los mismos casos, la prueba de McNemar usa solo los desacuerdos.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::
