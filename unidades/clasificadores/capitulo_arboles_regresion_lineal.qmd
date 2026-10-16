@@ -1,1300 +1,640 @@
 ---
-title: "Árboles de regresión lineal, ensambles y vecinos cercanos"
-description: "Desarrolla los árboles de regresión, sus criterios de división y poda, además de bagging, random forests, boosting y el algoritmo de vecinos más cercanos."
-pagetitle: "Árboles de regresión lineal, ensambles y vecinos cercanos"
+title: "Árboles de regresión y ensambles: bagging, bosques aleatorios y AdaBoost"
+pagetitle: "Árboles de regresión, bagging, bosques aleatorios y AdaBoost"
 open-graph:
-  description: "Desarrolla los árboles de regresión, sus criterios de división y poda, además de bagging, random forests, boosting y el algoritmo de vecinos más cercanos."
+  description: "Árboles de regresión y métodos de ensamble: por qué combinar modelos funciona, bootstrap y bagging, error fuera de la bolsa, bosques aleatorios, importancia de variables y AdaBoost, con desarrollo manual, laboratorios interactivos y Python."
 twitter-card:
-  description: "Desarrolla los árboles de regresión, sus criterios de división y poda, además de bagging, random forests, boosting y el algoritmo de vecinos más cercanos."
+  description: "Árboles de regresión y métodos de ensamble: por qué combinar modelos funciona, bootstrap y bagging, error fuera de la bolsa, bosques aleatorios, importancia de variables y AdaBoost, con desarrollo manual, laboratorios interactivos y Python."
+description: "Árboles de regresión y métodos de ensamble: por qué combinar modelos funciona, bootstrap y bagging, error fuera de la bolsa, bosques aleatorios, importancia de variables y AdaBoost, con desarrollo manual, laboratorios interactivos y Python."
 author: "Diego Villalba"
-date: today
 lang: es
 format:
   html:
     toc: true
     toc-depth: 3
     toc-title: "Contenido"
-    number-sections: true
     code-fold: true
     code-tools: true
     code-summary: "Mostrar código"
-    fig-align: center
     theme: cosmo
     highlight-style: github
-    smooth-scroll: true
-  pdf:
-    toc: true
-    toc-depth: 3
-    number-sections: true
-    documentclass: scrbook
-    papersize: letter
-    fontsize: 11pt
-    geometry: margin=2.5cm
-    keep-tex: false
 execute:
   echo: true
   warning: false
   message: false
-  cache: false
-bibliography: [referencias_arboles_regresion_lineal.bib, ../../references.bib]
-crossref:
-  fig-title: "Figura"
-  tbl-title: "Tabla"
-  eq-prefix: "Ec."
+bibliography: [referencias_fundamentos_clasificacion.bib, referencias_arboles_regresion_lineal.bib, ../../references.bib]
 jupyter: python3
 ---
 
-Los árboles de decisión constituyen una familia de métodos de aprendizaje supervisado basada en reglas. A diferencia de un modelo lineal global, que intenta describir todo el conjunto de datos mediante una sola ecuación, un árbol divide el espacio de variables en regiones más pequeñas y ajusta una predicción simple en cada una. Esta idea es especialmente útil cuando la relación entre las variables explicativas y la variable respuesta no es lineal, cambia por zonas o involucra interacciones difíciles de especificar manualmente [@breiman1984; @hastie2009].
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-En problemas de regresión, el objetivo es predecir una variable numérica. Por ejemplo, podríamos estimar el precio de una laptop a partir de su memoria RAM, el tamaño de pantalla, el procesador o la marca; o bien estimar el precio de una vivienda con base en su área, ubicación y antigüedad. Un árbol de regresión construye reglas del tipo “si una variable cae por debajo de cierto umbral, sigue una rama; en caso contrario, sigue otra”. Al final de cada rama se encuentra una hoja, donde la predicción suele ser el promedio de las observaciones de entrenamiento que llegaron a esa región.
+Los dos capítulos anteriores terminaron con la misma advertencia: un árbol de decisión es **inestable**. Basta cambiar unos cuantos ejemplos para que cambie la raíz y, con ella, todo el árbol. En el lenguaje del capítulo introductorio, los árboles profundos tienen poco sesgo y **mucha varianza**.
 
-Este capítulo desarrolla la lógica de los árboles de regresión, su interpretación como funciones por partes, el criterio de error usado para elegir divisiones, la poda para controlar el sobreajuste y las métricas básicas de evaluación. Posteriormente se introducen métodos de ensamble basados en árboles, en particular bagging, random forests y boosting. Finalmente se presenta el algoritmo de vecinos más cercanos como contraste con los árboles: un método supervisado basado en distancia y aprendizaje perezoso.
+Este capítulo convierte esa debilidad en una fortaleza. Si un árbol es ruidoso, entrenemos muchos árboles distintos y combinemos sus respuestas: los errores de unos compensan los de otros. Esa es la idea de los **métodos de ensamble** [@dietterich2000ensemble], que con árboles como base están entre los clasificadores más eficaces para datos tabulares. Estudiamos dos familias:
 
-## De la regresión lineal a modelos por regiones
+- **Promediar modelos independientes** para reducir la varianza: *bagging* y **bosques aleatorios**.
+- **Construir modelos en secuencia**, cada uno concentrado en los errores del anterior, para reducir el sesgo: **boosting**, con AdaBoost en este capítulo y *gradient boosting* y XGBoost en el siguiente.
 
-La regresión lineal múltiple modela una respuesta continua $y$ como combinación lineal de variables explicativas $x_1,\ldots,x_p$:
+Como varios de estos métodos se entienden mejor con una respuesta numérica, empezamos con los **árboles de regresión**, que además son la pieza básica del *gradient boosting*.
 
-$$
-y_i = \beta_0 + \beta_1 x_{i1}+\cdots+\beta_p x_{ip}+\varepsilon_i.
-$$
+## Árboles de regresión
 
-Su principal ventaja es la interpretabilidad de los coeficientes: cada $\beta_j$ mide el cambio esperado en $y$ ante un incremento unitario de $x_j$, manteniendo constantes las demás variables. Sin embargo, esta estructura impone una forma funcional global. Cuando la relación entre $X$ e $y$ cambia en distintas regiones del espacio, una sola ecuación puede resultar demasiado rígida.
-
-Los árboles de regresión responden a esta dificultad mediante particionamiento recursivo. En lugar de buscar una única superficie global, dividen el espacio de predictores en regiones y asignan una predicción constante a cada región. Esto produce un modelo no paramétrico, flexible e interpretable [@james2021].
-
-::: {.callout-note appearance=“minimal”}
-Definición. Un árbol de regresión es un modelo que particiona el espacio de predictores en regiones disjuntas $R_1,\ldots,R_J$ y predice un valor constante $c_h$ dentro de cada región:
-$$
-\hat f(x)=\sum_{h=1}^{J} c_h\,\mathbb{I}(x\in R_h).
-$$ {#eq-tree-piecewise}
-:::
-
-En esta expresión, $x$ representa una nueva observación; $R_h$ es una región del espacio de variables; $c_h$ es el valor asignado a esa región, usualmente el promedio de las respuestas observadas dentro de ella; y $\mathbb{I}(x\in R_h)$ es una función indicadora que vale uno si $x$ pertenece a la región $R_h$ y cero en caso contrario.
-
-::: {.callout-note appearance=“minimal”}
-Definición. La función indicadora de una región $R_h$ se define como:
-$$
-\mathbb{I}(x\in R_h)=
-\begin{cases}
-1, & \text{si } x\in R_h,\\
-0, & \text{si } x\notin R_h.
-\end{cases}
-$$ {#eq-indicator}
-:::
-
-
-## Clasificadores no lineales y modelos por partes
-
-En problemas de clasificación, un clasificador lineal separa clases mediante hiperplanos. Si los datos son linealmente separables, esta estrategia puede ser suficiente. Sin embargo, en muchos problemas reales las fronteras entre clases son curvas, fragmentadas o dependen de interacciones entre variables. En estos casos existen dos alternativas: mantener un clasificador lineal y aceptar ciertos errores, o usar clasificadores no lineales capaces de aproximar fronteras más flexibles.
-
-Una forma pedagógica de construir no linealidad es usar piezas lineales. La idea es dividir una clase en subclases o regiones locales y asignar a cada subregión un discriminante lineal. La frontera global resultante deja de ser un solo hiperplano y se convierte en una unión de segmentos o caras lineales. Esta lógica anticipa dos ideas que aparecen más adelante: los árboles, que dividen el espacio mediante cortes recursivos, y los vecinos cercanos, que llevan la idea local al extremo de tratar cada muestra como una referencia de decisión [@duda2001pattern; @hastie2009].
-
-::: {.callout-note appearance=“minimal”}
-Definición. Un clasificador lineal por partes asigna a cada clase $\omega_i$ un conjunto de subclases $\omega_i^1,\ldots,\omega_i^{\ell_i}$, cada una con un discriminante lineal $g_i^\ell(x)$, y define el discriminante de la clase como el máximo local:
-$$
-g_i(x)=\max_{\ell=1,\ldots,\ell_i} g_i^\ell(x),\qquad
-\hat y(x)=\arg\max_{i=1,\ldots,c} g_i(x).
-$$ {#eq-piecewise-linear-discriminant}
-:::
-
-Si se escribe $g_i^\ell(x)=w_{i\ell}^{\top}x+w_{i\ell,0}$, cada subclase aporta una frontera lineal. El operador máximo selecciona la subregión de la clase que mejor explica el punto $x$. Cuando el número de subclases aumenta, la frontera puede aproximar formas no lineales cada vez más complejas. No obstante, esta flexibilidad tiene un costo: se deben decidir cuántas subclases usar, cómo inicializarlas y cómo evitar que el modelo memorice ruido.
-
-Desde esta perspectiva, los árboles de decisión construyen una aproximación por partes, pero con piezas constantes en regresión y fronteras alineadas con los ejes. KNN, por su parte, puede verse como un caso extremadamente local: en lugar de aprender subclases explícitas, conserva los ejemplos de entrenamiento y decide usando distancias.
-
-## Funciones por escalones
-
-Un árbol de regresión produce una función por escalones. Para una sola variable $x$, un modelo simple podría definirse como:
+Un árbol de regresión parte el espacio de predictoras igual que CART, pero en cada hoja predice un **número**: el promedio de las respuestas de los ejemplos que llegan a ella. El modelo es una función escalonada
 
 $$
-\hat f(x)=
-\begin{cases}
-100, & x<10,\\
-200, & 10\le x<20,\\
-300, & x\ge 20.
-\end{cases}
-$$
+\hat{f}(\mathbf{x}) = \sum_{h=1}^{J} c_h\,\mathbb{1}[\mathbf{x} \in R_h], \qquad c_h = \frac{1}{|R_h|}\sum_{\mathbf{x}_i \in R_h} y_i,
+$$ {#eq-arbol-regresion}
 
-Este modelo no intenta ajustar una recta. En su lugar, divide el eje de $x$ en intervalos y asigna una predicción constante a cada intervalo. En dos variables, las regiones suelen ser rectángulos; en $p$ variables, se interpretan como hiperrectángulos. Por ejemplo, con edad, salario y experiencia, una regla podría ser:
+donde $R_1, \ldots, R_J$ son las regiones (hojas). El promedio es la constante que minimiza el error cuadrático dentro de cada hoja, y la impureza de un nodo es su **suma de cuadrados** $\text{SSE} = \sum_i (y_i - \bar{y})^2$. Cada corte se elige para reducirla lo más posible.
 
-$$
-\text{edad}<30 \quad \text{y} \quad \text{salario}>5000.
-$$
+### Ejemplo manual: precio de laptops según la RAM
 
-Este tipo de reglas es fácil de leer, lo que explica la popularidad de los árboles en contextos donde la interpretación es importante. No obstante, también implica una limitación geométrica: las fronteras de decisión son paralelas a los ejes, por lo que algunas relaciones oblicuas o altamente correlacionadas pueden necesitar muchos cortes para aproximarse bien [@hastie2009].
+| Laptop | A | B | C | D | E | F |
+|---|---:|---:|---:|---:|---:|---:|
+| RAM (GB) | 4 | 4 | 8 | 8 | 16 | 16 |
+| Precio ($) | 6 500 | 7 200 | 10 500 | 12 000 | 21 000 | 24 000 |
 
-## Predicción dentro de una región
+: Seis laptops. {#tbl-laptops-ram}
 
-Una vez que el árbol define una región $R_h$, la predicción óptima bajo pérdida cuadrática es el promedio de los valores reales dentro de esa región. Supongamos que en una región hay observaciones con respuestas $y_1,\ldots,y_{n_h}$. La predicción constante $c_h$ se elige minimizando la suma de errores cuadrados:
+Sin dividir, la predicción es el promedio, 13 533.33, y la suma de cuadrados es $266.43 \times 10^6$. Hay dos cortes posibles:
 
-$$
-\sum_{i:x_i\in R_h}(y_i-c_h)^2.
-$$
+| Corte | Izquierda (promedio) | Derecha (promedio) | SSE después | Reducción |
+|---|---|---|---:|---:|
+| RAM ≤ 6 | A, B (6 850) | C, D, E, F (16 875) | $132.43 \times 10^6$ | 50.3 % |
+| **RAM ≤ 12** | **A–D (9 050)** | **E, F (22 500)** | $\mathbf{25.23 \times 10^6}$ | **90.5 %** |
 
-La solución es el promedio muestral.
+: Los dos cortes candidatos. {#tbl-cortes-ram}
 
-::: {.callout-note appearance=“minimal”}
-Definición. La predicción de una hoja $R_h$ en un árbol de regresión, bajo error cuadrático, es el promedio de las respuestas que caen en esa hoja:
-$$
-\hat c_h = \frac{1}{|R_h|}\sum_{i:x_i\in R_h} y_i.
-$$ {#eq-leaf-mean}
-:::
+Por ejemplo, para RAM ≤ 12: $(6500 - 9050)^2 + (7200 - 9050)^2 + (10500 - 9050)^2 + (12000 - 9050)^2 + (21000 - 22500)^2 + (24000 - 22500)^2 = 25.23 \times 10^6$. El árbol de profundidad 1 dice: «si la RAM es de 12 GB o menos, 9 050; si no, 22 500».
 
-Por ejemplo, si una región contiene los valores reales $20,40,100,120$, su predicción antes de dividir es:
+Todo lo visto en CART se aplica sin cambios: el crecimiento voraz, la poda de costo-complejidad (ahora con la suma de cuadrados como $R(T)$) y la tendencia a sobreajustar si se deja crecer el árbol hasta tener una observación por hoja. El laboratorio de bagging muestra este sobreajuste con 40 puntos.
+
+## ¿Por qué funciona combinar modelos?
+
+### Intuición: el voto de cinco jueces
+
+Supongamos cinco clasificadores que aciertan cada uno el 70 % de las veces y cuyos errores son **independientes**. Si decidimos por mayoría, el ensamble acierta cuando al menos tres de los cinco aciertan:
 
 $$
-\hat c=\frac{20+40+100+120}{4}=70.
+P(\text{mayoría correcta}) = \sum_{k=3}^{5}\binom{5}{k} 0.7^k\, 0.3^{5-k} = 0.309 + 0.360 + 0.168 = 0.837.
 $$
 
-Si esa región se divide en dos grupos, $R_1=\{20,40\}$ y $R_2=\{100,120\}$, las nuevas predicciones son:
+Con 25 clasificadores así, la exactitud de la mayoría sube a 0.98. Es el **teorema del jurado de Condorcet**: si cada juez es mejor que el azar y sus errores son independientes, la mayoría se vuelve casi infalible. Dos condiciones hacen el trabajo: que cada modelo sea **mejor que el azar** y que sus errores sean **diversos**. Si los cinco cometieran exactamente los mismos errores, votar no serviría de nada.
+
+### Formalización: la varianza de un promedio
+
+Para predicciones numéricas, la misma idea se expresa con varianzas. Si $B$ modelos tienen cada uno varianza $\sigma^2$ y correlación $\rho$ entre sí, la varianza de su promedio es
 
 $$
-\hat c_1=30,\qquad \hat c_2=110.
-$$
+\operatorname{Var}\Big(\frac{1}{B}\sum_{b=1}^{B} \hat{f}_b(\mathbf{x})\Big) = \rho\,\sigma^2 + \frac{1 - \rho}{B}\,\sigma^2.
+$$ {#eq-varianza-promedio}
 
-La división es útil porque cada grupo queda descrito por un promedio más representativo de sus valores.
+Al aumentar $B$, el segundo término desaparece, pero el primero no: **la correlación entre modelos pone un piso** a la reducción de varianza. Toda la estrategia de los bosques aleatorios consiste en bajar $\rho$ sin subir demasiado $\sigma^2$. Como promediar no cambia el valor esperado, el **sesgo** del ensamble es el de sus modelos: por eso se promedian árboles profundos, de poco sesgo y mucha varianza.
 
-## Error total y criterio de división
+## Bagging
 
-El árbol decide sus cortes evaluando cuánto disminuye el error al dividir una región. Para regresión, el criterio más común es la suma de errores cuadrados dentro de las hojas, también conocida como residual sum of squares (RSS) [@breiman1984; @james2021].
+Si tuviéramos muchos conjuntos de entrenamiento independientes, entrenaríamos un árbol en cada uno y los promediaríamos. Solo tenemos uno. *Bagging* (*bootstrap aggregating*), propuesto por @breiman1996bagging, simula esos conjuntos con **muestras bootstrap**: muestras de tamaño $n$ tomadas **con reemplazo** del conjunto original.
 
-::: {.callout-note appearance=“minimal”}
-Definición. El error cuadrático total de un árbol con regiones $R_1,\ldots,R_J$ es:
-$$
-D(T)=\sum_{h=1}^{J}\sum_{i:x_i\in R_h}(y_i-\hat c_h)^2.
-$$ {#eq-tree-error}
-:::
+### Construcción paso a paso
 
-Cuando se propone dividir una región $R$ en dos subregiones $R_L$ y $R_R$, el árbol compara el error antes y después de la división. El error después de dividir es:
+**Paso 1. Una muestra bootstrap.** Con las seis laptops, un sorteo con reemplazo podría dar $\{A, A, C, D, F, F\}$: la laptop A y la F aparecen dos veces, y la B y la E **no aparecen**.
 
-$$
-D_{\text{split}} = \sum_{i:x_i\in R_L}(y_i-\hat c_L)^2+
-\sum_{i:x_i\in R_R}(y_i-\hat c_R)^2.
-$$
+**Paso 2. Un árbol con esa muestra.** El mejor corte vuelve a ser RAM ≤ 12, pero las hojas cambian: a la izquierda $(6500 + 6500 + 10500 + 12000)/4 = 8\,875$ y a la derecha $24\,000$.
 
-::: {.callout-note appearance=“minimal”}
-Definición. La ganancia de una división se define como la reducción de error producida por el corte:
-$$
-\text{Gain}=D_{\text{antes}}-D_{\text{después}}.
-$$ {#eq-gain}
-:::
+**Paso 3. Los ejemplos fuera de la bolsa.** B y E no participaron en este árbol, así que sirven para evaluarlo sin trampa. Sus errores son $7\,200 - 8\,875 = -1\,675$ y $21\,000 - 24\,000 = -3\,000$. Son los ejemplos **fuera de la bolsa** (*out-of-bag*, OOB).
 
-Una división es buena si reduce mucho el error. Si la reducción es pequeña, el corte puede no justificar el aumento de complejidad. Durante el entrenamiento, el algoritmo prueba muchas divisiones candidatas: por ejemplo, cortes en edad, salario o experiencia; y dentro de cada variable, varios umbrales posibles. Se elige la división que produce la mayor reducción de error.
-
-```{=html}
-<div id="rss-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Criterio de división RSS — explorador interactivo</span><br>
-    <span style="font-size:0.81em;color:#666;">Arrastra el umbral de corte y observa cómo cambia el RSS antes y después de la partición</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">Umbral RAM = <strong id="rss-tv">6.0</strong> GB</label>
-    <input id="rss-sl" type="range" min="4.5" max="15.5" step="0.5" value="6"
-           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
-  </div>
-  <div id="rss-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
-  <canvas id="rss-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-</div>
-<script>
-(function(){
-  const RAM=[4,4,8,8,16,16], Y=[6500,7200,10500,12000,21000,24000], N=6;
-  const cv=document.getElementById('rss-cv');
-  const W=680,H=260,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const LP={l:52,r:W/2-8,t:20,b:220},RP={l:W/2+8,r:W-10,t:20,b:220};
-  const LW=LP.r-LP.l,LH=LP.b-LP.t,RW=RP.r-RP.l,RH=RP.b-RP.t;
-  const xMn=2,xMx=18,yMn=0,yMx=26000;
-  const sx=x=>LP.l+(x-xMn)/(xMx-xMn)*LW;
-  const sy=y=>LP.t+LH-(y-yMn)/(yMx-yMn)*LH;
-  function rss(arr){const m=arr.reduce((s,v)=>s+v,0)/arr.length;return arr.reduce((s,v)=>s+(v-m)**2,0);}
-
-  function draw(t){
-    ctx.clearRect(0,0,W,H);
-    const yL=Y.filter((_,i)=>RAM[i]<t),yR=Y.filter((_,i)=>RAM[i]>=t);
-    const rssTotal=rss(Y),rssSplit=(yL.length?rss(yL):0)+(yR.length?rss(yR):0);
-    const gain=rssTotal-rssSplit;
-    const meanAll=Y.reduce((s,v)=>s+v,0)/N;
-    const meanL=yL.length?yL.reduce((s,v)=>s+v,0)/yL.length:null;
-    const meanR=yR.length?yR.reduce((s,v)=>s+v,0)/yR.length:null;
-
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW,LH);
-    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
-    [4,8,12,16].forEach(x=>{ctx.beginPath();ctx.moveTo(sx(x),LP.t);ctx.lineTo(sx(x),LP.b);ctx.stroke();});
-    [0,5000,10000,15000,20000,25000].forEach(y=>{ctx.beginPath();ctx.moveTo(LP.l,sy(y));ctx.lineTo(LP.r,sy(y));ctx.stroke();});
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(LP.l,LP.t);ctx.lineTo(LP.l,LP.b);ctx.lineTo(LP.r,LP.b);ctx.stroke();
-    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
-    [4,8,12,16].forEach(x=>ctx.fillText(x+'GB',sx(x),LP.b+13));
-    ctx.textAlign='right';
-    [0,10000,20000].forEach(y=>ctx.fillText((y/1000).toFixed(0)+'k',LP.l-4,sy(y)+3));
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Datos y predicción del árbol',LP.l+LW/2,LP.t-5);
-
-    ctx.strokeStyle='rgba(100,100,100,0.3)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
-    ctx.beginPath();ctx.moveTo(sx(xMn),sy(meanAll));ctx.lineTo(sx(xMx),sy(meanAll));ctx.stroke();
-    ctx.setLineDash([]);
-    if(meanL!==null){
-      ctx.strokeStyle='rgba(37,99,235,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
-      ctx.beginPath();ctx.moveTo(sx(xMn),sy(meanL));ctx.lineTo(sx(t),sy(meanL));ctx.stroke();
-      ctx.fillStyle='#2563eb';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
-      ctx.fillText('ĉ₁='+meanL.toFixed(0),sx((xMn+t)/2),sy(meanL)-7);
-    }
-    if(meanR!==null){
-      ctx.strokeStyle='rgba(220,38,38,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
-      ctx.beginPath();ctx.moveTo(sx(t),sy(meanR));ctx.lineTo(sx(xMx),sy(meanR));ctx.stroke();
-      ctx.fillStyle='#dc2626';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
-      ctx.fillText('ĉ₂='+meanR.toFixed(0),sx((t+xMx)/2),sy(meanR)-7);
-    }
-    ctx.setLineDash([]);
-    if(t>xMn&&t<xMx){
-      ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;
-      ctx.beginPath();ctx.moveTo(sx(t),LP.t);ctx.lineTo(sx(t),LP.b);ctx.stroke();
-      ctx.fillStyle='#f59e0b';ctx.font='bold 10px Georgia,serif';ctx.textAlign='left';
-      ctx.fillText('t='+t,sx(t)+4,LP.t+12);
-    }
-    RAM.forEach((r,i)=>{
-      const inL=r<t;
-      ctx.beginPath();ctx.arc(sx(r)+(i%2===0?-5:5),sy(Y[i]),6,0,2*Math.PI);
-      ctx.fillStyle=inL?'#2563ebcc':'#dc2626cc';ctx.fill();
-      ctx.strokeStyle=inL?'#1d4ed8':'#b91c1c';ctx.lineWidth=1.5;ctx.stroke();
-    });
-
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Comparación RSS',RP.l+RW/2,RP.t-5);
-    const bars=[{lbl:'RSS sin\ndividir',val:rssTotal,col:'#9ca3af'},{lbl:'RSS con\ndivisión',val:rssSplit,col:gain>0?'#16a34a':'#dc2626'}];
-    const maxRSS=rssTotal*1.1,bW=RW*0.22;
-    bars.forEach((b,i)=>{
-      const bx=RP.l+RW*(i+1)/(bars.length+1)-bW/2;
-      const bh=(b.val/maxRSS)*(RH-40),by=RP.b-bh-4;
-      ctx.fillStyle=b.col+'bb';ctx.fillRect(bx,by,bW,bh);
-      ctx.strokeStyle=b.col;ctx.lineWidth=1.5;ctx.strokeRect(bx,by,bW,bh);
-      ctx.fillStyle='#1a2e45';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
-      const v=b.val>=1e6?(b.val/1e6).toFixed(2)+'M':(b.val/1e3).toFixed(0)+'k';
-      ctx.fillText(v,bx+bW/2,by-5);
-      ctx.fillStyle=b.col;ctx.font='10px Georgia,serif';
-      b.lbl.split('\n').forEach((l,j)=>ctx.fillText(l,bx+bW/2,RP.b+13+j*12));
-    });
-    const gainPct=(gain/rssTotal*100).toFixed(1);
-    const gc=gain>rssTotal*0.3?'#16a34a':gain>0?'#ca8a04':'#dc2626';
-    ctx.fillStyle=gc;ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Ganancia: '+gainPct+'%',RP.l+RW/2,RP.t+RH*0.5);
-    document.getElementById('rss-info').innerHTML=
-      `RSS sin dividir = <strong>${(rssTotal/1e6).toFixed(3)}M</strong>&ensp;·&ensp;`+
-      `RSS con división = <strong>${(rssSplit/1e6).toFixed(3)}M</strong>&ensp;·&ensp;`+
-      `Ganancia = <strong style="color:${gc}">${gainPct}%</strong>`+
-      (yL.length===0||yR.length===0?' &ensp;<em style="color:#aaa">(sin datos en una región)</em>':'');
-  }
-  document.getElementById('rss-sl').addEventListener('input',function(){
-    const v=parseFloat(this.value);
-    document.getElementById('rss-tv').textContent=v.toFixed(1);
-    draw(v);
-  });
-  draw(6);
-})();
-</script>
-```
-
-## Particionamiento recursivo
-
-El entrenamiento de un árbol se realiza de forma codiciosa. Primero se busca el mejor corte para todo el conjunto de entrenamiento. Luego, dentro de cada región resultante, se vuelve a buscar el mejor corte local. Este procedimiento se repite hasta que se cumple un criterio de parada: profundidad máxima, número mínimo de observaciones por hoja, reducción mínima de error o tamaño mínimo de nodo.
-
-El algoritmo básico puede resumirse así:
-
-1. Comenzar con todos los datos en una sola región.
-2. Para cada variable y cada punto de corte candidato, calcular el error después de dividir.
-3. Elegir la división que más reduzca el error.
-4. Repetir el proceso dentro de cada subregión.
-5. Detener el crecimiento del árbol según reglas de control de complejidad.
-
-El enfoque es eficiente y produce reglas interpretables, pero no garantiza encontrar el árbol globalmente óptimo. La búsqueda exacta del mejor árbol es combinatoriamente costosa, por lo que los algoritmos prácticos usan heurísticas codiciosas [@breiman1984].
-
-## Ejemplo manual: precio de laptops según RAM
-
-Consideremos un conjunto de datos pequeño donde se desea predecir el precio de una laptop a partir de la memoria RAM.
-
-| Laptop | RAM | Precio real |
-|---|---:|---:|
-| A | 4 GB | 6500 |
-| B | 4 GB | 7200 |
-| C | 8 GB | 10500 |
-| D | 8 GB | 12000 |
-| E | 16 GB | 21000 |
-| F | 16 GB | 24000 |
-
-Si no se divide el árbol, la predicción para todas las laptops es el promedio global:
+**Paso 4. Repetir y promediar.** Con $B$ muestras bootstrap se obtienen $B$ árboles distintos. La predicción de *bagging* es el promedio (en regresión) o el voto mayoritario (en clasificación):
 
 $$
-\bar y=\frac{6500+7200+10500+12000+21000+24000}{6}=13533.33.
-$$
-
-El error sin dividir es:
-
-$$
-D_{\text{sin dividir}}=\sum_i(y_i-\bar y)^2=266{,}433{,}333.33.
-$$
-
-Ahora se propone el corte:
-
-$$
-\text{RAM}<12.
-$$
-
-Esto genera dos regiones:
-
-$$
-R_1=\{6500,7200,10500,12000\},\qquad R_2=\{21000,24000\}.
-$$
-
-Las predicciones de cada hoja son:
-
-$$
-\hat c_1=\frac{6500+7200+10500+12000}{4}=9050,
-$$
-
-$$
-\hat c_2=\frac{21000+24000}{2}=22500.
-$$
-
-El error después de dividir es:
-
-$$
-D_{\text{con división}}=
-(6500-9050)^2+(7200-9050)^2+(10500-9050)^2+(12000-9050)^2
-+(21000-22500)^2+(24000-22500)^2.
-$$
-
-Al calcular:
-
-$$
-D_{\text{con división}}=25{,}230{,}000.
-$$
-
-La mejora relativa es:
-
-$$
-\frac{D_{\text{sin dividir}}-D_{\text{con división}}}{D_{\text{sin dividir}}}
-=\frac{266{,}433{,}333.33-25{,}230{,}000}{266{,}433{,}333.33}
-\approx 0.9053.
-$$
-
-Por tanto, el corte reduce el error aproximadamente en $90.53\%$. El árbol resultante tiene una regla clara: si la RAM es menor que 12 GB, predice 9050; si es mayor o igual que 12 GB, predice 22500.
-
-## Implementación en Python
-
-El siguiente ejemplo reproduce la idea anterior con `scikit-learn`. Aunque el conjunto de datos es muy pequeño, permite observar cómo un árbol de regresión aprende divisiones por umbral.
-
-```{python}
-import numpy as np
-import pandas as pd
-from sklearn.tree import DecisionTreeRegressor, export_text
-from sklearn.metrics import mean_squared_error, r2_score
-
-# Datos de ejemplo
-X = pd.DataFrame({
-    "RAM_GB": [4, 4, 8, 8, 16, 16]
-})
-y = np.array([6500, 7200, 10500, 12000, 21000, 24000])
-
-# Árbol pequeño de regresión
-tree = DecisionTreeRegressor(max_depth=1, random_state=42)
-tree.fit(X, y)
-
-pred = tree.predict(X)
-
-print(export_text(tree, feature_names=list(X.columns)))
-print("Predicciones:", pred)
-print("MSE:", mean_squared_error(y, pred))
-print("R2:", r2_score(y, pred))
-```
-
-El árbol de profundidad uno aprende un único corte. En un problema real se usaría una división entrenamiento-prueba o validación cruzada para estimar el desempeño fuera de muestra.
-
-```{python}
-import matplotlib.pyplot as plt
-
-ram_grid = np.linspace(3, 17, 200).reshape(-1, 1)
-pred_grid = tree.predict(pd.DataFrame(ram_grid, columns=["RAM_GB"]))
-
-plt.figure()
-plt.scatter(X["RAM_GB"], y, label="Datos reales")
-plt.plot(ram_grid, pred_grid, label="Árbol de regresión")
-plt.xlabel("RAM (GB)")
-plt.ylabel("Precio")
-plt.legend()
-plt.show()
-```
-
-## Sobreajuste y poda
-
-Un árbol puede seguir dividiendo hasta que cada hoja contenga muy pocas observaciones. En el extremo, podría memorizar los datos de entrenamiento. Esto reduce el error dentro de la muestra, pero aumenta el riesgo de fallar con datos nuevos. Este fenómeno se conoce como sobreajuste.
-
-Para evitarlo, se controla la complejidad del árbol. Una estrategia clásica es la poda por costo-complejidad, que penaliza el número de hojas del árbol [@breiman1984; @pedregosa2011].
-
-::: {.callout-note appearance=“minimal”}
-Definición. El criterio de costo-complejidad penaliza el error total del árbol más un término proporcional al número de hojas:
-$$
-C_{\alpha}(T)=\sum_{h=1}^{J}D_h+\alpha J.
-$$ {#eq-cost-complexity}
-:::
-
-Aquí $D_h$ es el error de la hoja $h$, $J$ es el número de hojas y $\alpha\ge 0$ controla la penalización por complejidad. Si $\alpha$ es pequeño, se permite un árbol más grande; si $\alpha$ es grande, se castigan más las divisiones.
-
-Consideremos dos árboles:
-
-| Modelo | Error | Número de hojas $J$ | $\alpha$ | Costo total |
-|---|---:|---:|---:|---:|
-| Árbol pequeño | 500 | 3 | 20 | $500+20(3)=560$ |
-| Árbol grande | 300 | 20 | 20 | $300+20(20)=700$ |
-
-Aunque el árbol grande tiene menor error de entrenamiento, su costo total es mayor debido a la penalización por complejidad. Bajo este criterio, se preferiría el árbol pequeño.
-
-En `scikit-learn`, este control puede implementarse mediante el parámetro `ccp_alpha`.
-
-```{python}
-from sklearn.model_selection import train_test_split
-from sklearn.datasets import fetch_california_housing
-from sklearn.metrics import mean_absolute_error
-
-housing = fetch_california_housing(as_frame=True)
-X = housing.data
-y = housing.target
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, random_state=42
-)
-
-for alpha in [0.0, 0.001, 0.01, 0.05]:
-    model = DecisionTreeRegressor(random_state=42, ccp_alpha=alpha)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    print({
-        "ccp_alpha": alpha,
-        "n_leaves": model.get_n_leaves(),
-        "MAE": mean_absolute_error(y_test, y_pred),
-        "R2": r2_score(y_test, y_pred)
-    })
-```
-
-```{=html}
-<div id="td-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Profundidad del árbol y sobreajuste</span><br>
-    <span style="font-size:0.81em;color:#666;">Aumenta la profundidad máxima y observa cómo el árbol memoriza los datos de entrenamiento</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">Profundidad máx = <strong id="td-dv">2</strong></label>
-    <input id="td-sl" type="range" min="1" max="7" step="1" value="2"
-           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
-  </div>
-  <div id="td-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
-  <canvas id="td-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-</div>
-<script>
-(function(){
-  const RAW=[[0.3,8.1],[0.7,9.8],[1.1,7.4],[1.6,11.2],[2.0,9.6],[2.5,13.1],
-             [3.0,10.8],[3.4,14.5],[3.9,11.9],[4.3,15.2],[4.7,12.6],[5.1,16.3],
-             [5.5,13.4],[5.9,17.1],[6.3,14.2],[6.7,18.0],[7.0,8.2],[7.4,9.5]];
-  const cv=document.getElementById('td-cv');
-  const W=680,H=300,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const PAD={l:52,r:20,t:24,b:34};
-  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
-  const xMn=0,xMx=8,yMn=5,yMx=20;
-  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
-  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
-
-  function rss(pts){
-    if(!pts.length)return 0;
-    const m=pts.reduce((s,p)=>s+p[1],0)/pts.length;
-    return pts.reduce((s,p)=>s+(p[1]-m)**2,0);
-  }
-
-  function buildTree(pts,depth){
-    if(depth===0||pts.length<2)return{leaf:true,val:pts.reduce((s,p)=>s+p[1],0)/(pts.length||1)};
-    let best=null,bestRSS=Infinity;
-    const xs=pts.map(p=>p[0]).sort((a,b)=>a-b);
-    for(let i=0;i<xs.length-1;i++){
-      const t=(xs[i]+xs[i+1])/2;
-      const L=pts.filter(p=>p[0]<=t),R=pts.filter(p=>p[0]>t);
-      if(!L.length||!R.length)continue;
-      const r=rss(L)+rss(R);
-      if(r<bestRSS){bestRSS=r;best={t,L,R};}
-    }
-    if(!best)return{leaf:true,val:pts.reduce((s,p)=>s+p[1],0)/pts.length};
-    return{leaf:false,split:best.t,left:buildTree(best.L,depth-1),right:buildTree(best.R,depth-1)};
-  }
-
-  function predict(tree,x){
-    if(tree.leaf)return tree.val;
-    return x<=tree.split?predict(tree.left,x):predict(tree.right,x);
-  }
-
-  function countLeaves(tree){
-    if(tree.leaf)return 1;
-    return countLeaves(tree.left)+countLeaves(tree.right);
-  }
-
-  function depthColor(d){
-    const t=Math.min((d-1)/6,1);
-    const r=Math.round(37+t*(220-37)),g=Math.round(150+t*(38-150)),b=Math.round(60+t*(38-60));
-    return`rgb(${r},${g},${b})`;
-  }
-
-  function draw(depth){
-    const tree=buildTree(RAW,depth);
-    const leaves=countLeaves(tree);
-    const trainRSS=RAW.reduce((s,p)=>s+(p[1]-predict(tree,p[0]))**2,0);
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
-    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.7;
-    [2,4,6,8].forEach(x=>{ctx.beginPath();ctx.moveTo(sx(x),PAD.t);ctx.lineTo(sx(x),PAD.t+CH);ctx.stroke();});
-    [5,10,15,20].forEach(y=>{ctx.beginPath();ctx.moveTo(PAD.l,sy(y));ctx.lineTo(PAD.l+CW,sy(y));ctx.stroke();});
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
-    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
-    [0,2,4,6,8].forEach(x=>ctx.fillText(x.toFixed(0),sx(x),PAD.t+CH+13));
-    ctx.textAlign='right';
-    [5,10,15,20].forEach(y=>ctx.fillText(y.toFixed(0),PAD.l-5,sy(y)+3));
-    const col=depthColor(depth);
-    const step=0.03;
-    ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.beginPath();
-    let first=true;
-    for(let x=xMn;x<=xMx;x+=step){
-      const yp=predict(tree,x);
-      if(first){ctx.moveTo(sx(x),sy(yp));first=false;}else ctx.lineTo(sx(x),sy(yp));
-    }
-    ctx.stroke();
-    RAW.forEach(p=>{
-      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5,0,2*Math.PI);
-      ctx.fillStyle='#1a3a5c';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
-    });
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Ajuste del árbol de regresión',PAD.l+CW/2,PAD.t-7);
-    const overfit=depth>=5?'⚠️ Posible sobreajuste':depth>=3?'Ajuste razonable':'Modelo simple';
-    document.getElementById('td-info').innerHTML=
-      `Profundidad = <strong>${depth}</strong>&ensp;·&ensp;`+
-      `Hojas = <strong>${leaves}</strong>&ensp;·&ensp;`+
-      `RSS entrenamiento = <strong>${trainRSS.toFixed(2)}</strong>&ensp;·&ensp;`+
-      `<span style="color:${depth>=5?'#dc2626':depth>=3?'#ca8a04':'#16a34a'}">${overfit}</span>`;
-  }
-  document.getElementById('td-sl').addEventListener('input',function(){
-    const d=parseInt(this.value);
-    document.getElementById('td-dv').textContent=d;
-    draw(d);
-  });
-  draw(2);
-})();
-</script>
-```
-
-## Evaluación de árboles de regresión
-
-En regresión, una métrica frecuente es el coeficiente de determinación $R^2$. Este compara el error del modelo con el error de un modelo base que siempre predice el promedio de la variable respuesta.
-
-::: {.callout-note appearance=“minimal”}
-Definición. El coeficiente de determinación $R^2$ se define como:
-$$
-R^2=1-\frac{SSE}{SS_{TOT}},
-$$
-con
-$$
-SSE=\sum_i(y_i-\hat y_i)^2,
-\qquad
-SS_{TOT}=\sum_i(y_i-\bar y)^2.
-$$ {#eq-r2}
-:::
-
-Un valor $R^2=0.90$ indica que el modelo explica aproximadamente el 90% de la variabilidad de la respuesta respecto al promedio. Un valor cercano a cero indica que el modelo no mejora sustancialmente frente a predecir siempre la media. En conjuntos de prueba, un $R^2$ negativo también es posible: significa que el modelo generaliza peor que el predictor promedio.
-
-Además de $R^2$, se suelen reportar el error absoluto medio (MAE), el error cuadrático medio (MSE) y la raíz del error cuadrático medio (RMSE). La selección de métrica depende del problema. Si se desea penalizar mucho los errores grandes, RMSE puede ser adecuado; si se busca una medida más robusta ante valores extremos, MAE suele ser más interpretable.
-
-## Ventajas y limitaciones de los árboles
-
-Los árboles de regresión tienen varias ventajas. Son fáciles de entender porque se parecen a diagramas de decisión; producen reglas explícitas; pueden capturar relaciones no lineales e interacciones; requieren poca preparación de variables; y pueden trabajar con distintos criterios de error [@james2021]. Algunos algoritmos de árboles también incorporan estrategias para tratar datos faltantes, como divisiones sustitutas o *surrogate splits* [@breiman1984].
-
-Sus limitaciones también son importantes. Primero, tienden a sobreajustarse si crecen demasiado. Segundo, sus particiones rectangulares pueden ser ineficientes cuando la verdadera relación entre variables es suave u oblicua. Tercero, son inestables: pequeños cambios en los datos pueden producir árboles muy distintos. Cuarto, pueden ser sensibles al ruido y a valores atípicos. Finalmente, si llegan nuevos datos, normalmente se reentrena el árbol completo.
-
-Estas debilidades motivan el uso de métodos de ensamble, donde se combinan muchos árboles para obtener predicciones más estables y precisas.
-
-## Bagging: agregación por bootstrap
-
-Bagging, abreviatura de *bootstrap aggregating*, fue propuesto por Breiman como una técnica para mejorar la estabilidad y precisión de predictores inestables [@breiman1996bagging]. La idea consiste en entrenar muchos modelos sobre muestras bootstrap del conjunto original y combinar sus predicciones.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Una muestra bootstrap de tamaño $n$ se obtiene seleccionando $n$ observaciones con reemplazo a partir del conjunto de entrenamiento original.
-$$
-\mathcal{D}^{*(b)}=\{(x_1^{*(b)},y_1^{*(b)}),\ldots,(x_n^{*(b)},y_n^{*(b)})\}.
-$$ {#eq-bootstrap-sample}
-:::
-
-El procedimiento general es:
-
-1. Generar muchas muestras bootstrap del conjunto de entrenamiento.
-2. Entrenar un árbol independiente en cada muestra.
-3. Combinar las predicciones de todos los árboles.
-
-En regresión, la combinación suele ser el promedio:
-
-::: {.callout-note appearance=“minimal”}
-Definición. La predicción bagging para regresión es el promedio de las predicciones de $B$ modelos entrenados sobre muestras bootstrap:
-$$
-\hat f_{bag}(x)=\frac{1}{B}\sum_{b=1}^{B}\hat f^{*(b)}(x).
+\hat{f}_{\text{bag}}(\mathbf{x}) = \frac{1}{B}\sum_{b=1}^{B} \hat{f}^{*b}(\mathbf{x}).
 $$ {#eq-bagging}
+
+### El error fuera de la bolsa
+
+La probabilidad de que una observación concreta **no** salga en ninguna de las $n$ extracciones es
+
+$$
+\Big(1 - \frac{1}{n}\Big)^n \xrightarrow[n \to \infty]{} e^{-1} \approx 0.368.
+$$ {#eq-oob}
+
+Con $n = 6$ es $(5/6)^6 = 0.335$. Es decir, cada árbol deja fuera alrededor de un tercio de los datos. Prediciendo cada observación solo con los árboles que **no** la vieron y promediando esos errores se obtiene el **error OOB**, una estimación del error de generalización casi gratuita, comparable a una validación cruzada, sin entrenar modelos adicionales.
+
+## Bosques aleatorios
+
+En *bagging* los árboles son distintos, pero no tanto: si hay una variable muy predictiva, casi todos la usan en la raíz y sus predicciones están muy correlacionadas, de modo que el piso $\rho\sigma^2$ de la @eq-varianza-promedio es alto. Los **bosques aleatorios** de @breiman2001random añaden una segunda fuente de azar: **en cada nodo**, el mejor corte se busca solo entre $m$ variables elegidas al azar de las $p$ disponibles. Así, otras variables tienen oportunidad de ocupar las preguntas importantes, los árboles se parecen menos y su promedio es más estable.
+
+Los hiperparámetros principales son:
+
+| Hiperparámetro | `scikit-learn` | Valor habitual | Efecto |
+|---|---|---|---|
+| Número de árboles $B$ | `n_estimators` | 200–1000 | Más árboles nunca sobreajustan; solo cuestan tiempo |
+| Variables por nodo $m$ | `max_features` | $\sqrt{p}$ (clasificación), $p/3$ (regresión) | Menor $m$: árboles menos correlacionados pero más débiles |
+| Tamaño de hoja | `min_samples_leaf` | 1–5 | Hojas más grandes: menos varianza por árbol |
+| Profundidad | `max_depth` | sin límite | Normalmente se dejan crecer |
+
+: Hiperparámetros de un bosque aleatorio. {#tbl-hiper-rf}
+
+Con $m = p$ el bosque es exactamente *bagging*. Una propiedad práctica importante: aumentar $B$ no produce sobreajuste; el error converge y basta elegir $B$ suficientemente grande.
+
+### Importancia de las variables
+
+Un bosque pierde la interpretabilidad de un árbol único, pero ofrece dos medidas de importancia:
+
+- **Disminución media de impureza** (MDI): la suma de las reducciones de Gini de cada variable en todos los árboles. Es gratuita, pero está sesgada a favor de variables numéricas o con muchas categorías, que tienen más cortes donde «encontrar» reducciones por azar [@strobl2007bias].
+- **Importancia por permutación**: se desordena al azar una columna en los datos de prueba (o en los OOB) y se mide cuánto empeora el desempeño. Si la variable importa, desordenarla destruye información; si no, el error casi no cambia. Es más fiable, aunque reparte la importancia entre variables muy correlacionadas.
+
+## Laboratorio: bagging de árboles de regresión
+
+Cuarenta puntos generados con $y = 2\sin x + 0.3x + \varepsilon$, con ruido de desviación 0.6 (varianza 0.36, el error irreducible). El estado inicial es un **único** árbol sin límite de profundidad: memoriza los datos. Al pasar a *Bootstrap* y aumentar el número de árboles, el promedio se suaviza.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="bag-lab">
+  <p class="plab-eyebrow">Laboratorio · Bagging</p>
+  <h3 class="plab-title">¿Cuántos árboles ruidosos hacen falta para una buena predicción?</h3>
+  <p class="plab-sub">Cada línea tenue es un árbol entrenado con una muestra bootstrap; la línea gruesa es su promedio. Compara el error en prueba con el de un solo árbol y con el error irreducible.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Muestreo
+      <div class="plab-seg" id="bag-mode"><button data-value="none" aria-pressed="true">Sin remuestreo</button><button data-value="boot">Bootstrap</button></div>
+    </div>
+    <label>Número de árboles B: <b id="bag-b-v"></b><input type="range" id="bag-b" min="1" max="100" step="1" value="1"></label>
+    <label>Profundidad máxima: <b id="bag-d-v"></b><input type="range" id="bag-d" min="1" max="9" step="1" value="9"></label>
+    <div class="plab-field">Azar<button class="plab-btn" id="bag-seed">Nuevas muestras</button></div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>ECM entrenamiento</span><strong id="bag-tr"></strong></div>
+    <div class="plab-stat"><span>ECM prueba (300 puntos)</span><strong id="bag-te"></strong></div>
+    <div class="plab-stat"><span>ECM fuera de la bolsa</span><strong id="bag-oob"></strong></div>
+    <div class="plab-stat"><span>Error irreducible σ²</span><strong>0.360</strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Árboles y su promedio</h4>
+      <svg id="bag-svg" role="img" aria-label="Datos, función real, árboles individuales y su promedio"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>entrenamiento</span><span><i style="background:var(--lab-s3)"></i>función real</span><span><i style="background:var(--lab-s2);opacity:.4"></i>árboles</span><span><i style="background:var(--lab-s2)"></i>promedio</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Error en prueba según el número de árboles</h4>
+      <svg id="bag-curve" role="img" aria-label="Error cuadrático medio en prueba del promedio de los primeros B árboles"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s4)"></i>promedio de B árboles</span><span><i style="background:var(--lab-axis)"></i>un árbol (todos los datos)</span><span><i style="background:var(--lab-s3)"></i>σ² irreducible</span></div>
+    </div>
+  </div>
+  <p class="plab-note" id="bag-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('bag-lab');
+  const $ = s => root.querySelector(s);
+  const D = {"tr":[[0.29,0.87],[0.7,1.65],[0.83,2.38],[1.29,1.54],[1.29,1.91],[1.3,1.81],[1.38,1.34],[1.48,2.51],[1.48,2.75],[2.02,1.96],[2.05,3.22],[2.17,2.8],[2.35,2.5],[2.75,1.83],[2.77,2.13],[3.53,-0.5],[3.69,0.43],[4.3,-0.18],[4.67,-1.66],[4.84,-0.32],[4.99,-0.58],[5.11,0.16],[5.12,-0.56],[5.49,0.21],[5.54,0.51],[5.92,0.54],[6.01,1.62],[6.22,1.68],[6.63,2.96],[6.7,2.51],[6.73,3.53],[7.88,4.73],[8.02,4.27],[8.17,4.73],[8.67,4.73],[8.96,4.66],[9.01,2.56],[9.28,3.6],[9.48,3.01],[9.81,2.14]],"te":[[0.02,0.33],[0.03,0.62],[0.03,0.42],[0.07,0.83],[0.07,0.39],[0.07,0.21],[0.1,-0.9],[0.13,0.03],[0.2,1.44],[0.23,0.65],[0.35,1.32],[0.36,0.74],[0.38,0.5],[0.41,2.2],[0.43,1.23],[0.46,1.97],[0.46,1.39],[0.54,1.06],[0.56,-0.07],[0.57,1.35],[0.57,0.36],[0.64,0.1],[0.68,2.26],[0.71,2.0],[0.71,1.95],[0.74,1.65],[0.77,1.65],[0.77,1.93],[0.78,1.78],[0.82,1.8],[0.82,2.2],[0.85,0.33],[0.91,2.43],[0.98,1.62],[0.99,2.53],[1.02,2.76],[1.02,1.55],[1.07,2.59],[1.08,2.6],[1.15,1.78],[1.21,1.94],[1.22,2.33],[1.24,0.94],[1.26,2.03],[1.27,2.41],[1.3,2.06],[1.34,1.4],[1.35,2.13],[1.35,3.27],[1.37,3.17],[1.42,2.34],[1.45,1.94],[1.5,2.44],[1.5,2.46],[1.63,2.08],[1.7,2.3],[1.71,2.87],[1.79,3.05],[1.8,1.03],[1.85,3.07],[1.88,2.55],[1.89,3.16],[1.89,2.46],[1.89,2.73],[1.89,3.45],[1.92,0.67],[1.93,3.41],[1.97,2.55],[1.99,1.33],[2.01,0.81],[2.02,2.6],[2.11,1.73],[2.19,2.89],[2.19,2.42],[2.22,2.18],[2.22,2.86],[2.24,2.36],[2.31,2.62],[2.36,2.62],[2.37,2.3],[2.41,2.53],[2.44,2.5],[2.45,1.19],[2.49,1.8],[2.51,1.86],[2.57,1.63],[2.58,0.89],[2.59,1.49],[2.6,2.02],[2.62,1.9],[2.71,2.56],[2.77,1.19],[2.83,1.2],[2.83,1.12],[2.86,1.22],[2.89,1.0],[2.91,0.21],[2.93,1.51],[2.94,1.88],[2.95,1.94],[2.95,0.61],[3.03,1.02],[3.1,2.12],[3.14,0.88],[3.24,0.99],[3.32,0.55],[3.42,1.08],[3.47,0.98],[3.5,1.75],[3.5,0.65],[3.69,0.33],[3.85,-0.87],[3.94,-0.5],[4.01,-0.74],[4.04,-0.55],[4.05,-1.15],[4.06,0.36],[4.08,-1.02],[4.09,-0.23],[4.13,-1.19],[4.17,-0.25],[4.19,0.52],[4.19,-0.97],[4.24,-0.29],[4.33,-0.6],[4.35,-0.39],[4.35,-0.31],[4.37,-0.95],[4.49,-0.71],[4.54,-0.96],[4.55,-1.1],[4.58,-1.35],[4.61,-0.03],[4.68,-1.04],[4.69,-0.19],[4.76,-0.24],[4.79,-1.16],[4.79,0.07],[4.8,-1.07],[4.85,-0.15],[4.85,0.35],[4.86,-0.95],[4.89,-1.06],[4.94,-1.03],[4.99,0.95],[4.99,-0.65],[5.0,-1.18],[5.04,0.11],[5.17,-0.35],[5.21,-0.22],[5.35,-0.6],[5.36,-1.33],[5.39,-0.38],[5.41,-0.54],[5.43,-0.85],[5.43,-0.54],[5.46,-0.4],[5.58,0.86],[5.58,0.8],[5.65,0.81],[5.66,0.2],[5.76,-0.03],[5.79,0.96],[5.8,1.08],[5.93,1.68],[6.0,1.22],[6.0,1.16],[6.03,1.49],[6.06,0.81],[6.1,0.98],[6.16,1.98],[6.2,0.93],[6.23,1.71],[6.47,2.78],[6.49,2.49],[6.53,2.7],[6.62,1.98],[6.62,2.57],[6.7,2.65],[6.71,3.2],[6.8,3.28],[6.81,3.07],[6.81,4.19],[6.81,3.38],[6.83,2.92],[6.83,2.73],[6.86,3.13],[6.87,2.83],[6.87,4.16],[6.91,3.6],[6.92,3.09],[6.95,2.94],[6.95,2.69],[6.96,3.19],[6.96,4.14],[6.97,3.88],[7.09,3.55],[7.11,3.7],[7.15,2.57],[7.21,4.23],[7.21,3.65],[7.21,4.6],[7.29,3.79],[7.4,3.75],[7.43,4.2],[7.47,3.73],[7.48,4.93],[7.51,4.33],[7.51,4.38],[7.53,4.38],[7.63,4.05],[7.64,4.56],[7.64,4.38],[7.65,5.33],[7.7,4.35],[7.72,4.55],[7.75,4.07],[7.78,4.14],[7.79,4.19],[7.8,5.15],[7.82,4.44],[7.85,4.98],[7.87,4.25],[7.9,4.2],[7.9,3.26],[7.91,4.92],[7.93,5.66],[7.93,4.29],[7.95,5.29],[8.01,4.94],[8.03,4.02],[8.04,4.89],[8.06,3.9],[8.06,4.25],[8.19,5.14],[8.25,4.48],[8.25,3.68],[8.28,5.21],[8.28,3.71],[8.31,4.25],[8.35,4.12],[8.36,4.22],[8.41,3.77],[8.54,3.19],[8.57,5.25],[8.58,3.56],[8.6,3.58],[8.66,2.58],[8.71,4.04],[8.72,4.74],[8.72,4.81],[8.79,5.54],[8.8,4.77],[8.8,4.12],[8.81,3.87],[8.82,4.71],[8.86,3.77],[8.86,3.91],[8.89,3.18],[8.89,3.81],[8.92,4.89],[8.93,3.65],[8.96,3.89],[8.97,2.19],[8.98,4.42],[8.98,3.84],[9.01,4.42],[9.03,3.68],[9.03,3.02],[9.06,2.67],[9.1,3.72],[9.15,3.32],[9.16,2.73],[9.19,3.22],[9.21,2.85],[9.23,3.62],[9.28,2.86],[9.34,2.26],[9.35,2.92],[9.37,2.6],[9.38,3.8],[9.42,2.57],[9.43,2.04],[9.46,2.74],[9.47,2.6],[9.47,2.91],[9.47,2.87],[9.49,2.09],[9.52,2.62],[9.62,2.42],[9.67,1.68],[9.68,2.03],[9.81,2.29],[9.83,1.18],[9.87,1.42],[9.9,1.74],[9.93,1.92],[9.95,2.25],[9.96,1.11],[9.96,2.1]]}, TR = D.tr, TE = D.te, n = TR.length;
+  const freal = x => 2 * Math.sin(x) + 0.3 * x;
+  // Árbol de regresión (cortes en puntos medios, mayor reducción de suma de cuadrados).
+  function build(pts, depth, maxD) {
+    const m = K.mean(pts.map(p => p[1]));
+    if (depth >= maxD || pts.length < 2) return { m };
+    const s = [...pts].sort((a, b) => a[0] - b[0]), N = s.length;
+    const tot = K.sum(s.map(p => p[1])), tot2 = K.sum(s.map(p => p[1] * p[1])), sse0 = tot2 - tot * tot / N;
+    let best = null, L = 0, L2 = 0;
+    for (let k = 0; k < N - 1; k++) {
+      L += s[k][1]; L2 += s[k][1] ** 2;
+      if (s[k][0] === s[k + 1][0]) continue;
+      const nl = k + 1, nr = N - nl, R = tot - L, R2 = tot2 - L2;
+      const sse = (L2 - L * L / nl) + (R2 - R * R / nr);
+      if (!best || sse < best.sse - 1e-9) best = { sse, t: (s[k][0] + s[k + 1][0]) / 2 };
+    }
+    if (!best || best.sse >= sse0 - 1e-12) return { m };
+    return { t: best.t, L: build(s.filter(p => p[0] <= best.t), depth + 1, maxD), R: build(s.filter(p => p[0] > best.t), depth + 1, maxD) };
+  }
+  const pred = (t, x) => { while (t.L) t = x <= t.t ? t.L : t.R; return t.m; };
+  const mse = (f, set) => K.mean(set.map(p => (f(p[0]) - p[1]) ** 2));
+  let seed = 3;
+  const modeSeg = K.segmented($('#bag-mode'), render);
+  const GRID = Array.from({ length: 201 }, (_, i) => i * 0.05);
+
+  function render() {
+    const B = +$('#bag-b').value, dv = +$('#bag-d').value, maxD = dv === 9 ? 99 : dv, boot = modeSeg.get() === 'boot';
+    $('#bag-b-v').textContent = B; $('#bag-d-v').textContent = dv === 9 ? 'sin límite' : dv;
+    const r = K.rng(seed), trees = [], bags = [];
+    for (let b = 0; b < 100; b++) {
+      const idx = boot ? Array.from({ length: n }, () => Math.floor(r() * n)) : TR.map((_, i) => i);
+      bags.push(new Set(idx)); trees.push(build(idx.map(i => TR[i]), 0, maxD));
+    }
+    const use = trees.slice(0, B), avg = x => K.mean(use.map(t => pred(t, x)));
+    const single = build(TR, 0, maxD), mseSingle = mse(x => pred(single, x), TE);
+    const mTr = mse(avg, TR), mTe = mse(avg, TE);
+    // Error fuera de la bolsa con los primeros B árboles.
+    let oobS = 0, oobN = 0;
+    TR.forEach((p, i) => { const ts = use.filter((t, b) => !bags[b].has(i)); if (ts.length) { oobS += (K.mean(ts.map(t => pred(t, p[0]))) - p[1]) ** 2; oobN++; } });
+    $('#bag-tr').textContent = K.fmt(mTr, 3); $('#bag-te').textContent = K.fmt(mTe, 3);
+    $('#bag-oob').textContent = boot && oobN ? `${K.fmt(oobS / oobN, 3)} (${oobN}/40)` : '—';
+
+    const c = K.chart($('#bag-svg'), { width: 380, height: 280, x: [0, 10], y: [-3, 6], margin: { left: 40, bottom: 40 } });
+    c.axes({ xTicks: 5, yTicks: 5, xLabel: 'x', yLabel: 'y', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 0) });
+    use.slice(0, 25).forEach(t => { const pth = c.path(GRID.map(x => [x, pred(t, x)]), 's2 line thin'); pth.style.strokeOpacity = B > 1 ? 0.22 : 0.9; });
+    c.path(GRID.map(x => [x, freal(x)]), 's3 line dash');
+    if (B > 1) c.path(GRID.map(x => [x, avg(x)]), 's2 line');
+    TR.forEach(p => c.dot(p[0], p[1], 3.5, 's1 dot'));
+
+    const curve = []; const acc = TE.map(() => 0);
+    trees.forEach((t, b) => { TE.forEach((p, i) => { acc[i] += pred(t, p[0]); }); curve.push([b + 1, K.mean(TE.map((p, i) => (acc[i] / (b + 1) - p[1]) ** 2))]); });
+    const ymax = Math.max(1.0, mseSingle * 1.15, ...curve.map(u => u[1]));
+    const cc = K.chart($('#bag-curve'), { width: 380, height: 280, x: [0, 100], y: [0, ymax], margin: { left: 44, bottom: 40 } });
+    cc.axes({ xTicks: 5, yTicks: 5, xLabel: 'número de árboles B', yLabel: 'ECM en prueba', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    cc.line(0, mseSingle, 100, mseSingle, 'muted line dash thin');
+    cc.line(0, 0.36, 100, 0.36, 's3 line dash thin');
+    cc.path(curve, 's4 line');
+    cc.dot(B, mTe, 6, 's2 dot');
+
+    const note = $('#bag-note');
+    if (!boot && B > 1) { note.className = 'plab-note bad'; note.textContent = `Sin remuestreo los ${B} árboles son idénticos: su promedio es el mismo árbol (ECM ${K.fmt(mTe, 3)}). Promediar solo ayuda si los modelos son diversos.`; }
+    else if (B === 1) { note.className = 'plab-note warn'; note.textContent = `Un solo árbol${dv === 9 ? ' sin límite de profundidad sigue cada punto (ECM de entrenamiento ' + K.fmt(mTr, 3) + ')' : ''}: su ECM en prueba es ${K.fmt(mTe, 3)}, lejos del irreducible 0.360. Cambia a Bootstrap y sube B.`; }
+    else { note.className = 'plab-note good'; note.textContent = `El promedio de ${B} árboles bootstrap tiene ECM ${K.fmt(mTe, 3)} en prueba, frente a ${K.fmt(mseSingle, 3)} del árbol único. El error fuera de la bolsa (${K.fmt(oobS / oobN, 3)}) lo estima sin usar la prueba. La curva se aplana: más árboles ya no ayudan, pero tampoco sobreajustan.`; }
+  }
+  root.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', render));
+  $('#bag-seed').addEventListener('click', () => { seed++; render(); });
+  render();
+})();
+</script>
+```
 :::
 
-Bagging reduce la varianza sin aumentar demasiado el sesgo. Es especialmente útil con árboles de decisión, porque los árboles individuales pueden variar mucho ante cambios pequeños en los datos.
-
-```{python}
-from sklearn.ensemble import BaggingRegressor
-
-bag = BaggingRegressor(
-    estimator=DecisionTreeRegressor(random_state=42),
-    n_estimators=100,
-    random_state=42,
-    n_jobs=-1
-)
-
-bag.fit(X_train, y_train)
-y_pred_bag = bag.predict(X_test)
-
-print("MAE bagging:", mean_absolute_error(y_test, y_pred_bag))
-print("R2 bagging:", r2_score(y_test, y_pred_bag))
-```
-
-## Random forests
-
-Random forest extiende bagging introduciendo aleatoriedad adicional en la construcción de cada árbol. Además de entrenar cada árbol con una muestra bootstrap, en cada división se considera solo un subconjunto aleatorio de variables candidatas [@breiman2001]. Esto disminuye la correlación entre árboles y mejora la reducción de varianza.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Un random forest es un ensamble de árboles entrenados sobre muestras bootstrap, donde cada división se elige considerando solo un subconjunto aleatorio de variables.
-$$
-\hat f_{RF}(x)=\frac{1}{B}\sum_{b=1}^{B}\hat f_b(x).
-$$ {#eq-random-forest}
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio promedia árboles de regresión entrenados con muestras bootstrap. Valores de referencia: un único árbol sin límite de profundidad tiene ECM de prueba cercano a 0.62 (el error irreducible es 0.36); con profundidad 4, 0.554. El promedio de 100 árboles bootstrap profundos baja el ECM de prueba a cerca de 0.50, y el error fuera de la bolsa da una estimación parecida sin usar la prueba.
 :::
 
-El modelo conserva parte de la interpretabilidad de los árboles, por ejemplo mediante medidas de importancia de variables, pero su estructura global ya no se resume en un único diagrama. A cambio, suele ofrecer mejor desempeño predictivo y menor inestabilidad.
+**Guía del laboratorio.**
 
-```{python}
-from sklearn.ensemble import RandomForestRegressor
+1. En el estado inicial, ¿por qué el ECM de entrenamiento es casi 0 y el de prueba ronda 0.62? Compara la escalera con la función real (verde).
+2. Predice antes de mover: con *Sin remuestreo* y $B = 50$, ¿mejorará el error de prueba? Compruébalo y explica.
+3. Cambia a *Bootstrap* y sube $B$ de 1 a 100. ¿Dónde se aplana la curva? ¿Llega al error irreducible?
+4. Con $B = 100$, baja la profundidad a 1. ¿Por qué ahora el bagging casi no mejora al árbol único? Relaciónalo con la @eq-varianza-promedio y con el sesgo.
+5. Compara el error fuera de la bolsa con el de prueba para varias semillas. ¿Es una buena estimación?
 
-rf = RandomForestRegressor(
-    n_estimators=300,
-    max_features="sqrt",
-    random_state=42,
-    n_jobs=-1
-)
+## Boosting y AdaBoost
 
-rf.fit(X_train, y_train)
-y_pred_rf = rf.predict(X_test)
+*Bagging* entrena modelos en paralelo y los trata por igual. **Boosting** los entrena **en secuencia**: cada modelo nuevo se concentra en los casos que los anteriores clasificaron mal, y al final se combinan con pesos según su calidad. La pregunta que lo originó fue teórica [@schapire1990strength]: ¿se puede convertir un **clasificador débil**, apenas mejor que el azar, en uno arbitrariamente preciso? AdaBoost [@freund1997decision] fue la respuesta práctica.
 
-print("MAE random forest:", mean_absolute_error(y_test, y_pred_rf))
-print("R2 random forest:", r2_score(y_test, y_pred_rf))
+### Construcción paso a paso
 
-importances = pd.Series(rf.feature_importances_, index=X_train.columns)
-importances.sort_values(ascending=False).head(10)
+Diez puntos sobre una recta con etiquetas $+1$ y $-1$:
+
+| $x$ | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| $y$ | + | + | + | − | − | − | + | + | + | − |
+
+: Diez puntos que ningún corte único separa. {#tbl-ada-datos}
+
+El clasificador débil será un **tocón**: un solo corte «$x \le t$ ⇒ clase». Ningún tocón separa estos datos; el mejor comete 3 errores.
+
+**Ronda 1.** Todos los pesos valen $w_i = 1/10$. El mejor tocón es «$x \le 3.5$ ⇒ +, si no −», que falla en $x = 7, 8, 9$. Su **error ponderado** es $\varepsilon_1 = 0.3$ y su **peso** en el ensamble es
+
+$$
+\alpha_1 = \tfrac{1}{2}\ln\frac{1 - \varepsilon_1}{\varepsilon_1} = \tfrac{1}{2}\ln\frac{0.7}{0.3} = 0.424.
+$$
+
+Ahora se **repesan** los ejemplos: los mal clasificados se multiplican por $e^{\alpha_1} = 1.528$ y los bien clasificados por $e^{-\alpha_1} = 0.655$; después se normaliza para que sumen 1. Los tres errores pasan a pesar $0.1667$ cada uno y los siete aciertos $0.0714$. Observa que los mal clasificados suman ahora exactamente $0.5$: para el siguiente tocón, el anterior es tan bueno como lanzar una moneda.
+
+**Ronda 2.** Con esos pesos, el mejor tocón es «$x \le 9.5$ ⇒ +, si no −», que falla en $x = 4, 5, 6$: $\varepsilon_2 = 3 \times 0.0714 = 0.214$ y $\alpha_2 = \frac{1}{2}\ln(0.786/0.214) = 0.650$. Ese tocón casi no tendría sentido por sí solo; tiene sentido **porque** los puntos 7, 8 y 9 ahora pesan mucho.
+
+**Ronda 3.** El mejor tocón es «$x \le 6.5$ ⇒ −, si no +», que falla en $x = 1, 2, 3$ y $10$, ahora livianos: $\varepsilon_3 = 0.182$ y $\alpha_3 = 0.752$.
+
+**El ensamble.** La predicción es el signo de la suma ponderada de los tres tocones:
+
+$$
+F(x) = 0.424\,h_1(x) + 0.650\,h_2(x) + 0.752\,h_3(x), \qquad \hat{y} = \operatorname{signo}(F(x)).
+$$
+
+| $x$ | $h_1$ | $h_2$ | $h_3$ | $F(x)$ | $\hat{y}$ | $y$ |
+|---|---:|---:|---:|---:|---|---|
+| 1–3 | + | + | − | $0.424 + 0.650 - 0.752 = 0.321$ | + | + |
+| 4–6 | − | + | − | $-0.424 + 0.650 - 0.752 = -0.526$ | − | − |
+| 7–9 | − | + | + | $-0.424 + 0.650 + 0.752 = 0.978$ | + | + |
+| 10 | − | − | + | $-0.424 - 0.650 + 0.752 = -0.321$ | − | − |
+
+: El ensamble de tres tocones clasifica bien los diez puntos. {#tbl-ada-ensamble}
+
+Tres clasificadores que fallan, cada uno, tres o cuatro de diez puntos producen juntos un clasificador perfecto en entrenamiento. Ninguno de ellos podía dibujar la frontera con tres cambios de clase; su suma sí.
+
+### Formalización
+
+Con etiquetas $y_i \in \{-1, +1\}$, pesos iniciales $w_i = 1/n$ y $M$ rondas, AdaBoost repite:
+
+1. Entrenar el clasificador débil $h_m$ minimizando el error ponderado $\varepsilon_m = \sum_i w_i\,\mathbb{1}[h_m(\mathbf{x}_i) \neq y_i]$.
+2. Calcular $\alpha_m = \frac{1}{2}\ln\frac{1 - \varepsilon_m}{\varepsilon_m}$, positivo si $\varepsilon_m < 0.5$.
+3. Actualizar $w_i \leftarrow w_i \exp\!\big(-\alpha_m\, y_i\, h_m(\mathbf{x}_i)\big)$ y normalizar.
+
+La predicción es $\operatorname{signo}\big(\sum_m \alpha_m h_m(\mathbf{x})\big)$. @friedman2000additive mostraron que AdaBoost minimiza, paso a paso, la **pérdida exponencial** $\sum_i e^{-y_i F(\mathbf{x}_i)}$ sobre modelos aditivos $F$; cada ronda agrega el término que más la reduce. Esta lectura como **optimización por etapas** es la que generaliza el *gradient boosting* del capítulo siguiente a cualquier pérdida.
+
+Dos consecuencias prácticas:
+
+- El error de entrenamiento cae exponencialmente rápido mientras cada $\varepsilon_m$ esté por debajo de 0.5. Pero la pérdida exponencial castiga sin límite a los puntos muy mal clasificados, de modo que AdaBoost es **sensible a etiquetas erróneas y atípicos**: termina concentrando todo el peso en ellos.
+- Boosting reduce sobre todo el **sesgo** (combina modelos débiles, de mucho sesgo) y puede sobreajustar si se usan demasiadas rondas o modelos base demasiado fuertes. El número de rondas y la complejidad del modelo base se eligen con validación.
+
+`scikit-learn` implementa la variante SAMME, que usa $\alpha_m = \ln\frac{1 - \varepsilon_m}{\varepsilon_m}$ (el doble) y solo aumenta el peso de los errores; tras normalizar, los pesos y las predicciones son idénticos a los de la versión clásica.
+
+## Laboratorio: AdaBoost ronda por ronda
+
+El tamaño de cada punto es proporcional a su peso **al inicio** de la ronda elegida. El modo *Diez puntos* reproduce las tablas anteriores. El modo *Círculo* usa 150 puntos de entrenamiento y 300 de prueba en el plano; la clase $+1$ está dentro de un círculo y un 3 % de las etiquetas están invertidas; los tocones solo pueden hacer cortes verticales u horizontales.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="ada-lab">
+  <p class="plab-eyebrow">Laboratorio · Boosting</p>
+  <h3 class="plab-title">¿Cómo aprenden juntos clasificadores que por separado fallan?</h3>
+  <p class="plab-sub">Avanza las rondas. Observa qué puntos ganan peso, qué tocón se elige y cómo cambia la frontera del ensamble.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="ada-mode"><button data-value="d1" aria-pressed="true">Diez puntos</button><button data-value="d2">Círculo (2D)</button></div>
+    </div>
+    <label>Ronda m: <b id="ada-m-v"></b><input type="range" id="ada-m" min="1" max="10" step="1" value="1"></label>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Tocón de la ronda</span><strong id="ada-h"></strong></div>
+    <div class="plab-stat"><span>Error ponderado ε</span><strong id="ada-eps"></strong></div>
+    <div class="plab-stat"><span>Peso α</span><strong id="ada-alpha"></strong></div>
+    <div class="plab-stat"><span>Errores del ensamble</span><strong id="ada-err"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4 id="ada-plot-t">Pesos y ensamble</h4>
+      <svg id="ada-svg" role="img" aria-label="Puntos con tamaño proporcional a su peso, tocón actual y predicción del ensamble"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>clase +1</span><span><i class="dot" style="background:var(--lab-s2)"></i>clase −1</span><span><i style="background:var(--lab-s5)"></i>tocón de la ronda</span><span id="ada-leg-f"><i style="background:var(--lab-s4)"></i>F(x) del ensamble</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Error del ensamble por ronda</h4>
+      <svg id="ada-curve" role="img" aria-label="Error de entrenamiento y de prueba del ensamble según el número de rondas"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>entrenamiento</span><span id="ada-leg-te"><i style="background:var(--lab-s4)"></i>prueba</span><span><i class="dot" style="background:var(--lab-s2)"></i>ronda actual</span></div>
+    </div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem"><h4>Rondas</h4><div id="ada-tab" class="plab-scroll"></div></div>
+  <p class="plab-note" id="ada-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('ada-lab');
+  const $ = s => root.querySelector(s);
+  const C = {"tr":[[6.9,6.4,1],[1.3,1.1,-1],[6.5,8.5,-1],[2.0,2.2,-1],[7.2,4.7,1],[4.2,3.5,1],[0.6,4.5,-1],[3.0,3.9,1],[5.4,6.8,1],[6.2,7.4,1],[0.2,6.5,-1],[5.4,8.5,-1],[9.4,0.1,-1],[8.3,2.5,-1],[6.2,7.6,1],[8.5,9.4,-1],[6.3,8.6,-1],[5.0,2.3,1],[1.6,5.0,-1],[7.5,4.5,1],[6.8,1.3,-1],[9.7,4.7,-1],[8.3,7.3,-1],[7.8,3.8,-1],[1.1,4.6,-1],[3.3,4.0,1],[9.9,3.1,-1],[7.8,1.7,-1],[5.9,3.5,1],[2.4,3.9,1],[9.3,5.8,-1],[5.2,8.0,-1],[5.0,1.1,1],[1.3,7.2,-1],[4.7,2.1,1],[9.7,2.7,-1],[7.8,3.2,-1],[7.5,5.3,1],[0.4,7.1,-1],[2.9,4.3,1],[7.1,10.0,-1],[4.5,6.7,1],[4.9,6.7,1],[1.6,9.9,-1],[1.4,6.7,-1],[0.7,0.9,-1],[8.7,7.5,-1],[1.0,2.8,-1],[0.7,9.4,-1],[8.5,7.8,-1],[7.0,6.7,1],[0.3,0.6,-1],[3.0,5.8,1],[8.3,4.4,-1],[2.5,6.3,-1],[9.5,4.9,-1],[5.6,2.9,1],[7.5,1.5,-1],[6.7,2.2,-1],[6.8,5.0,1],[8.2,5.7,-1],[9.1,4.5,-1],[0.2,9.8,-1],[7.7,8.2,-1],[8.3,1.3,-1],[8.7,0.8,-1],[3.1,1.6,-1],[4.8,1.9,-1],[2.1,5.8,-1],[1.6,4.8,-1],[6.9,0.2,-1],[8.8,7.5,-1],[7.5,7.2,-1],[9.6,1.4,-1],[0.8,7.4,-1],[0.2,6.3,-1],[6.2,9.2,-1],[1.0,3.5,-1],[7.6,3.5,-1],[2.9,1.8,1],[0.2,5.3,-1],[0.6,4.7,-1],[7.3,4.2,1],[6.1,9.5,-1],[1.8,6.4,-1],[6.7,5.1,1],[3.4,1.6,-1],[3.8,5.5,1],[9.7,2.7,-1],[8.6,7.9,-1],[3.7,5.8,1],[0.3,9.8,-1],[4.9,1.5,-1],[7.9,8.7,-1],[7.4,9.8,-1],[2.8,5.5,1],[4.4,6.4,1],[2.8,6.8,1],[4.7,3.8,1],[7.0,2.7,-1],[3.3,10.0,-1],[3.9,3.4,1],[9.6,9.4,-1],[9.2,1.0,-1],[8.0,2.1,-1],[6.5,8.6,-1],[7.5,0.6,-1],[5.9,1.7,-1],[8.3,2.3,-1],[2.1,3.6,-1],[5.5,9.0,-1],[1.8,8.4,-1],[4.2,9.9,-1],[6.4,2.2,-1],[5.1,7.4,-1],[8.3,4.7,-1],[3.8,7.4,1],[1.0,7.1,-1],[4.0,6.9,1],[0.9,2.5,-1],[2.9,3.0,1],[9.7,8.5,-1],[0.9,5.8,-1],[9.5,8.1,-1],[0.5,7.4,-1],[7.8,9.0,-1],[5.8,4.4,1],[1.8,5.9,-1],[2.8,2.9,-1],[5.3,0.7,-1],[4.9,2.5,1],[4.6,1.9,-1],[7.5,8.6,-1],[6.9,8.9,-1],[8.8,5.9,-1],[7.5,1.4,-1],[5.6,9.7,-1],[7.4,9.7,-1],[3.1,1.5,-1],[0.6,0.2,-1],[5.9,7.1,1],[1.7,9.5,-1],[2.8,2.4,-1],[7.1,0.3,-1],[4.7,6.7,1],[5.6,2.3,1],[8.1,5.5,-1],[5.7,3.9,1],[9.8,0.6,-1],[2.5,7.2,-1]],"te":[[3.7,2.0,-1],[0.9,6.5,-1],[4.6,9.9,-1],[8.5,8.4,-1],[0.5,5.6,-1],[6.1,0.5,-1],[4.8,3.3,1],[2.2,8.0,1],[4.2,1.0,-1],[3.7,9.1,-1],[3.9,1.9,-1],[0.7,5.1,-1],[6.7,4.1,1],[8.5,5.2,-1],[8.0,5.7,-1],[5.9,4.1,1],[1.1,7.0,-1],[8.6,7.3,-1],[4.2,0.9,-1],[1.9,5.5,-1],[6.6,0.3,1],[9.4,7.1,-1],[7.2,9.9,-1],[6.2,4.9,1],[2.2,6.9,-1],[7.0,9.5,-1],[9.3,4.9,-1],[8.5,9.6,-1],[4.2,6.1,1],[5.9,4.8,1],[4.7,2.2,1],[1.9,3.1,-1],[5.9,6.6,1],[8.2,2.9,-1],[5.2,4.5,1],[1.7,9.8,-1],[3.4,6.9,1],[6.9,7.7,-1],[8.3,9.5,-1],[3.2,6.7,1],[3.2,3.0,1],[7.9,7.5,-1],[7.3,1.2,-1],[9.7,6.3,-1],[4.6,9.1,-1],[1.1,3.0,-1],[1.4,3.3,-1],[7.9,1.5,-1],[7.6,6.0,1],[3.3,8.5,-1],[0.4,2.4,-1],[5.0,4.0,1],[3.8,10.0,-1],[5.5,6.6,1],[4.6,2.0,-1],[1.0,7.6,-1],[7.2,9.9,-1],[2.5,3.9,1],[3.8,5.7,1],[0.5,8.0,-1],[7.3,0.9,-1],[7.1,3.4,1],[4.3,2.0,-1],[6.9,5.8,-1],[0.2,1.5,-1],[7.3,1.3,-1],[4.7,6.7,1],[1.7,5.0,-1],[4.2,1.4,-1],[7.9,0.8,-1],[8.3,3.3,-1],[3.6,2.2,-1],[8.5,10.0,-1],[1.9,6.3,-1],[0.4,4.0,-1],[2.2,6.3,-1],[2.0,6.1,-1],[9.6,2.5,-1],[1.3,8.6,-1],[0.5,7.4,-1],[8.9,1.3,-1],[5.2,9.8,-1],[1.5,8.3,-1],[6.7,0.7,-1],[1.7,9.2,-1],[0.7,3.6,-1],[0.3,2.6,-1],[2.1,7.9,-1],[0.8,1.1,-1],[5.4,2.0,-1],[5.2,0.5,-1],[1.9,3.4,-1],[7.2,8.3,-1],[1.9,5.1,-1],[8.6,5.3,-1],[7.9,8.5,-1],[3.3,6.1,1],[5.4,2.0,-1],[7.2,8.7,-1],[0.4,9.5,-1],[0.5,4.0,-1],[0.8,3.8,-1],[5.7,5.0,1],[3.5,5.2,-1],[7.0,6.5,1],[1.5,5.6,-1],[0.7,6.4,-1],[0.4,5.6,-1],[2.3,0.5,-1],[4.9,3.1,1],[0.6,7.8,-1],[2.3,6.6,-1],[4.2,7.9,-1],[3.0,1.3,-1],[3.4,6.8,1],[3.1,8.2,1],[3.5,1.9,-1],[5.8,5.7,1],[5.8,0.3,-1],[5.3,5.9,1],[1.5,0.5,-1],[4.7,6.3,-1],[0.3,7.9,-1],[3.3,2.7,1],[5.8,0.9,-1],[8.1,9.0,-1],[0.2,3.4,1],[0.8,1.2,-1],[7.9,6.9,-1],[2.3,0.0,-1],[6.3,4.6,1],[7.2,7.7,-1],[8.3,4.5,-1],[6.0,9.3,-1],[4.1,5.0,1],[3.4,6.5,1],[5.8,7.4,1],[7.8,1.2,-1],[8.7,7.5,-1],[1.1,4.0,-1],[2.9,7.0,1],[10.0,4.1,-1],[3.4,4.9,1],[8.6,1.8,-1],[7.2,3.1,1],[6.9,8.7,-1],[3.6,8.7,-1],[6.3,5.6,1],[6.2,1.3,-1],[1.9,6.3,-1],[9.0,0.9,-1],[5.8,9.3,-1],[6.8,7.8,-1],[8.5,5.0,-1],[5.5,8.9,-1],[0.7,6.9,-1],[7.5,8.4,-1],[5.4,8.2,1],[9.3,0.5,-1],[0.1,1.5,-1],[6.9,1.6,-1],[0.3,6.4,-1],[2.1,2.1,-1],[6.8,5.5,1],[7.0,3.5,1],[6.3,6.4,1],[0.1,5.9,-1],[4.8,5.1,1],[4.4,10.0,-1],[5.6,2.0,-1],[9.5,0.4,-1],[2.9,7.9,-1],[6.7,1.9,-1],[7.4,3.0,-1],[6.0,3.9,1],[4.8,6.2,1],[0.8,7.5,-1],[2.8,0.6,-1],[2.1,1.1,-1],[1.1,7.3,-1],[1.2,6.1,-1],[8.5,0.4,-1],[3.7,8.3,-1],[3.6,5.0,1],[3.6,7.4,1],[7.5,4.2,1],[0.0,8.7,-1],[2.1,7.1,-1],[8.6,3.7,-1],[1.2,4.0,-1],[1.7,1.9,-1],[9.3,8.5,-1],[2.1,5.2,1],[4.9,0.4,-1],[9.8,1.6,-1],[0.5,9.2,-1],[5.9,10.0,-1],[0.3,3.4,-1],[6.9,4.3,1],[9.7,1.0,-1],[7.4,5.2,1],[1.4,3.5,-1],[2.6,8.1,-1],[3.5,6.9,-1],[7.7,9.3,-1],[3.3,3.8,1],[9.2,1.0,-1],[2.9,8.9,-1],[2.6,4.0,1],[0.5,7.7,-1],[2.9,4.2,1],[0.7,0.4,-1],[1.7,3.6,-1],[2.5,3.3,-1],[2.4,9.4,-1],[2.5,6.2,1],[5.1,6.9,1],[8.7,7.8,-1],[2.9,4.4,1],[3.1,7.7,-1],[2.5,4.7,1],[7.6,4.4,1],[7.0,6.1,1],[2.9,3.8,1],[5.8,4.7,1],[7.2,6.8,1],[1.4,1.5,-1],[0.9,3.2,-1],[0.2,5.0,-1],[3.4,1.0,-1],[8.4,0.7,-1],[6.9,2.2,-1],[7.1,8.6,-1],[2.7,7.1,-1],[4.7,7.4,1],[1.2,0.1,-1],[5.6,5.5,1],[0.5,5.5,-1],[5.4,1.1,-1],[6.0,2.3,1],[9.2,5.8,-1],[3.8,4.5,1],[4.2,4.7,1],[6.8,7.9,-1],[4.4,8.6,-1],[8.3,9.7,-1],[6.2,6.1,1],[1.0,0.9,-1],[9.1,5.2,-1],[7.6,6.7,-1],[9.9,3.3,-1],[7.0,7.4,-1],[0.2,6.7,-1],[1.6,3.8,-1],[1.8,0.2,-1],[2.4,5.0,1],[7.6,5.1,-1],[8.4,2.3,-1],[1.0,7.9,-1],[3.1,1.9,-1],[1.3,0.9,1],[7.2,1.6,-1],[8.1,5.4,-1],[0.4,4.8,-1],[2.8,5.6,-1],[9.3,5.9,-1],[9.5,6.8,1],[7.6,8.3,-1],[3.4,5.5,1],[3.6,8.4,-1],[8.3,6.1,-1],[5.7,2.7,1],[3.9,2.5,1],[6.6,1.2,-1],[2.0,6.9,-1],[5.1,6.2,-1],[0.7,3.9,-1],[9.9,4.7,-1],[7.8,2.9,-1],[8.7,3.6,-1],[2.4,0.3,-1],[0.5,3.8,-1],[9.0,2.2,-1],[4.2,8.8,-1],[9.6,7.6,-1],[3.3,6.3,1],[2.1,6.1,-1],[5.6,8.2,-1],[4.1,4.2,1],[3.6,9.0,-1],[9.1,1.9,-1],[8.7,2.4,-1],[7.0,5.1,1],[9.5,1.8,-1],[0.9,8.6,-1],[3.0,2.7,-1],[4.0,3.1,1],[6.9,6.0,1],[9.3,7.8,-1],[9.3,7.5,-1]]};
+  const SETS = {
+    d1: { tr: [1, 1, 1, -1, -1, -1, 1, 1, 1, -1].map((y, i) => [i + 1, 0, y]), te: null, dims: [0], M: 10 },
+    d2: { tr: C.tr, te: C.te, dims: [0, 1], M: 100 }
+  };
+  // Mejor tocón ponderado: recorre variables, cortes (incluidos los extremos) y sentido.
+  function stump(pts, w, dims) {
+    let best = null;
+    dims.forEach(f => {
+      const v = [...new Set(pts.map(p => p[f]))].sort((a, b) => a - b);
+      const cuts = [v[0] - 0.5, ...v.slice(0, -1).map((a, i) => (a + v[i + 1]) / 2), v[v.length - 1] + 0.5];
+      cuts.forEach(t => [1, -1].forEach(s => {
+        let e = 0; pts.forEach((p, i) => { const h = p[f] <= t ? s : -s; if (h !== p[2]) e += w[i]; });
+        if (!best || e < best.e - 1e-12) best = { f, t, s, e };
+      }));
+    });
+    return best;
+  }
+  const hval = (st, p) => (p[st.f] <= st.t ? st.s : -st.s);
+  const cache = {};
+  function run(key) {
+    if (cache[key]) return cache[key];
+    const S = SETS[key], n = S.tr.length; let w = Array(n).fill(1 / n); const rounds = [];
+    for (let m = 0; m < S.M; m++) {
+      const st = stump(S.tr, w, S.dims), e = Math.max(st.e, 1e-10), a = 0.5 * Math.log((1 - e) / e);
+      rounds.push({ ...st, e: st.e, a, w: [...w] });
+      w = w.map((wi, i) => wi * Math.exp(-a * S.tr[i][2] * hval(st, S.tr[i]))); const z = K.sum(w); w = w.map(x => x / z);
+    }
+    const F = (p, m) => { let s = 0; for (let k = 0; k < m; k++) s += rounds[k].a * hval(rounds[k], p); return s; };
+    const errs = set => rounds.map((_, m) => set.filter(p => Math.sign(F(p, m + 1)) !== p[2]).length / set.length);
+    return (cache[key] = { rounds, F, errTr: errs(S.tr), errTe: S.te ? errs(S.te) : null });
+  }
+  const modeSeg = K.segmented($('#ada-mode'), () => { const S = SETS[modeSeg.get()]; $('#ada-m').max = S.M; if (+$('#ada-m').value > S.M) $('#ada-m').value = 3; render(); });
+  const fmtSt = (st, key) => key === 'd1' ? `x ≤ ${K.fmt(st.t, 1)} ⇒ ${st.s > 0 ? '+' : '−'}` : `x${st.f ? '₂' : '₁'} ≤ ${K.fmt(st.t, 2)} ⇒ ${st.s > 0 ? '+' : '−'}`;
+
+  function render() {
+    const key = modeSeg.get(), S = SETS[key], m = +$('#ada-m').value, R = run(key), rd = R.rounds[m - 1];
+    $('#ada-m-v').textContent = m;
+    $('#ada-h').textContent = fmtSt(rd, key); $('#ada-eps').textContent = K.fmt(rd.e, 3); $('#ada-alpha').textContent = K.fmt(rd.a, 3);
+    const nErr = Math.round(R.errTr[m - 1] * S.tr.length);
+    $('#ada-err').textContent = `${nErr}/${S.tr.length}` + (S.te ? ` · prueba ${K.fmt(R.errTe[m - 1], 3)}` : '');
+    $('#ada-leg-te').style.display = S.te ? '' : 'none';
+    const wmax = Math.max(...rd.w);
+    if (key === 'd1') {
+      $('#ada-plot-t').textContent = 'Pesos (tamaño) y puntaje F(x) del ensamble';
+      const c = K.chart($('#ada-svg'), { width: 380, height: 280, x: [0.3, 10.7], y: [-2.2, 2.2], margin: { left: 40, bottom: 40 } });
+      c.axes({ xTicks: 10, yTicks: 4, xLabel: 'x', yLabel: 'F(x)', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+      c.zeroLines(); c.line(0.3, 0, 10.7, 0, 'muted line thin');
+      const steps = []; for (let x = 0.5; x <= 10.5; x += 0.5) steps.push([x, R.F([x], m)]);
+      const fp = []; steps.forEach((s, i) => { fp.push(s); if (i + 1 < steps.length) fp.push([steps[i + 1][0], s[1]]); });
+      c.path(fp, 's4 line');
+      c.line(rd.t, -2.2, rd.t, 2.2, 's5 line dash');
+      c.text(rd.t, 2.0, rd.s > 0 ? '← +   − →' : '← −   + →', { 'text-anchor': 'middle', class: 'strong' });
+      S.tr.forEach((p, i) => { const d = c.dot(p[0], p[2] > 0 ? 1.2 : -1.2, 3 + 14 * Math.sqrt(rd.w[i] / wmax) , (p[2] > 0 ? 's1' : 's2') + ' dot');
+        d.style.fillOpacity = 0.75; if (Math.sign(R.F(p, m)) !== p[2]) { d.style.stroke = 'var(--lab-text)'; d.style.strokeWidth = 2; } });
+      $('#ada-leg-f').style.display = '';
+    } else {
+      $('#ada-plot-t').textContent = 'Región del ensamble y pesos de los puntos';
+      const c = K.chart($('#ada-svg'), { width: 380, height: 380, x: [0, 10], y: [0, 10], margin: { left: 40, right: 12, top: 12, bottom: 40 } });
+      const G = 40, st = 10 / G;
+      for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) { const p = [(i + 0.5) * st, (j + 0.5) * st]; const r = c.rect(p[0] - st / 2, p[1] - st / 2, p[0] + st / 2, p[1] + st / 2, R.F(p, m) >= 0 ? 's1' : 's2'); r.style.fillOpacity = 0.14; r.style.stroke = 'none'; }
+      c.axes({ xTicks: 5, yTicks: 5, xLabel: 'x₁', yLabel: 'x₂', grid: false, xFmt: v => K.fmt(v, 0) });
+      const circ = []; for (let k = 0; k <= 64; k++) circ.push([5 + 3 * Math.cos(k / 32 * Math.PI), 5 + 3 * Math.sin(k / 32 * Math.PI)]); c.path(circ, 's3 line dash thin');
+      if (rd.f === 0) c.line(rd.t, 0, rd.t, 10, 's5 line dash'); else c.line(0, rd.t, 10, rd.t, 's5 line dash');
+      S.tr.forEach((p, i) => { const d = c.dot(p[0], p[1], 2 + 9 * Math.sqrt(rd.w[i] / wmax), (p[2] > 0 ? 's1' : 's2') + ' dot');
+        if (Math.sign(R.F(p, m)) !== p[2]) { d.style.stroke = 'var(--lab-text)'; d.style.strokeWidth = 1.8; } });
+      $('#ada-leg-f').style.display = 'none';
+    }
+    const M = S.M, ymax = Math.max(0.4, ...R.errTr, ...(R.errTe || [])) * 1.05;
+    const cc = K.chart($('#ada-curve'), { width: 380, height: 260, x: [0, M + 0.5], y: [0, ymax], margin: { left: 44, bottom: 40 } });
+    cc.axes({ xTicks: Math.min(M, 5), yTicks: 4, xLabel: 'rondas', yLabel: 'error', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 2) });
+    cc.path(R.errTr.map((e, k) => [k + 1, e]), 's1 line');
+    if (R.errTe) cc.path(R.errTe.map((e, k) => [k + 1, e]), 's4 line');
+    cc.dot(m, R.errTr[m - 1], 6, 's2 dot');
+    const show = R.rounds.slice(Math.max(0, m - 8), m);
+    $('#ada-tab').innerHTML = '<table class="plab-table"><thead><tr><th>Ronda</th><th>Tocón</th><th>ε</th><th>α</th><th>Errores del ensamble</th></tr></thead><tbody>' +
+      show.map((r, k) => { const idx = Math.max(0, m - 8) + k; return `<tr${idx === m - 1 ? ' class="hl"' : ''}><td>${idx + 1}</td><td>${fmtSt(r, key)}</td><td>${K.fmt(r.e, 4)}</td><td>${K.fmt(r.a, 4)}</td><td>${Math.round(R.errTr[idx] * S.tr.length)}/${S.tr.length}</td></tr>`; }).join('') + '</tbody></table>';
+    const note = $('#ada-note');
+    if (key === 'd1') { note.className = nErr ? 'plab-note warn' : 'plab-note good';
+      note.textContent = nErr ? `Tras ${m} ronda(s) el ensamble aún falla ${nErr} punto(s). Los puntos grandes son los que la ronda ${m} debe atender: los errores anteriores pesan en conjunto 0.5.` : `Con ${m} tocones el ensamble clasifica bien los diez puntos, aunque cada tocón falla tres o cuatro. Las rondas posteriores siguen repesando, pero el error ya no cambia.`; }
+    else { const best = R.errTe.indexOf(Math.min(...R.errTe)); note.className = 'plab-note ' + (m > 60 && R.errTe[m - 1] > Math.min(...R.errTe) + 0.02 ? 'warn' : 'good');
+      note.textContent = `Ronda ${m}: error de entrenamiento ${K.fmt(R.errTr[m - 1], 3)} y de prueba ${K.fmt(R.errTe[m - 1], 3)}. La frontera circular se aproxima con escalones. Los puntos con etiqueta invertida acumulan peso ronda tras ronda: AdaBoost es sensible al ruido.`; }
+  }
+  $('#ada-m').addEventListener('input', render);
+  render();
+})();
+</script>
 ```
-
-## Boosting
-
-Boosting también combina varios modelos, pero a diferencia de bagging, los entrena de forma secuencial. Cada nuevo modelo intenta corregir los errores cometidos por los modelos anteriores. La intuición es construir un predictor fuerte a partir de muchos aprendices débiles [@freund1997decision; @schapire1990strength].
-
-En clasificación, algunos métodos de boosting asignan mayor peso a las observaciones mal clasificadas. En regresión, una forma muy influyente es gradient boosting, donde cada nuevo árbol se ajusta a los residuos o, más generalmente, a la dirección de descenso del gradiente de una función de pérdida [@friedman2001greedy].
-
-::: {.callout-note appearance=“minimal”}
-Definición. En gradient boosting para regresión con pérdida cuadrática, el modelo se construye aditivamente:
-$$
-F_M(x)=F_0(x)+\sum_{m=1}^{M}\nu h_m(x),
-$$
-donde cada $h_m$ se ajusta a los residuos del modelo anterior y $\nu$ es la tasa de aprendizaje.
-$$ {#eq-gradient-boosting}
 :::
 
-El procedimiento conceptual es:
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio recorre AdaBoost ronda por ronda. Valores de referencia con los diez puntos: ronda 1, tocón $x \le 3.5 ⇒ +$, $\varepsilon = 0.300$, $\alpha = 0.424$; ronda 2, $x \le 9.5 ⇒ +$, $\varepsilon = 0.214$, $\alpha = 0.650$; ronda 3, $x \le 6.5 ⇒ −$, $\varepsilon = 0.182$, $\alpha = 0.752$, y el ensamble ya no comete errores. En el modo *Círculo* el error de prueba baja de 0.27 con un tocón a cerca de 0.08 con 30 rondas y después se estabiliza, mientras el de entrenamiento sigue bajando.
+:::
 
-1. Entrenar un primer modelo simple.
-2. Calcular los errores o residuos.
-3. Entrenar un nuevo modelo para explicar esos errores.
-4. Repetir el proceso varias veces.
-5. Combinar los modelos, usualmente con pesos o una tasa de aprendizaje.
+**Guía del laboratorio.**
 
-Boosting puede alcanzar alta precisión, pero suele ser más sensible al ruido, a valores atípicos y al sobreajuste. Por ello requiere controlar hiperparámetros como número de estimadores, profundidad de los árboles, tasa de aprendizaje y regularización.
-
-```{python}
-from sklearn.ensemble import GradientBoostingRegressor
-
-gb = GradientBoostingRegressor(
-    n_estimators=300,
-    learning_rate=0.05,
-    max_depth=3,
-    random_state=42
-)
-
-gb.fit(X_train, y_train)
-y_pred_gb = gb.predict(X_test)
-
-print("MAE gradient boosting:", mean_absolute_error(y_test, y_pred_gb))
-print("R2 gradient boosting:", r2_score(y_test, y_pred_gb))
-```
-
-Entre las implementaciones modernas de boosting se encuentran XGBoost, LightGBM y CatBoost. Estas bibliotecas agregan optimizaciones computacionales y regularización avanzada, y son comunes en competencias y aplicaciones tabulares de alto rendimiento [@chen2016xgboost; @ke2017lightgbm; @prokhorenkova2018catboost].
+1. Con *Diez puntos*, recorre las rondas 1 a 3 y comprueba $\varepsilon$, $\alpha$ y los pesos contra la construcción paso a paso.
+2. En la ronda 2, ¿por qué el tocón elegido deja mal a los puntos 4, 5 y 6? ¿Cuánto pesan en ese momento?
+3. Predice antes de mover: en la ronda 4, ¿qué tocón se elegirá? Pista: compara los pesos de los grupos.
+4. Cambia a *Círculo*. ¿Cuántas rondas hacen falta para que la región se parezca al círculo? ¿El error de prueba sigue bajando todo el tiempo?
+5. Localiza un punto con etiqueta invertida (un punto azul lejos del círculo o naranja dentro) y observa su tamaño en rondas avanzadas. ¿Qué dice esto de AdaBoost con datos ruidosos?
 
 ## Bagging frente a boosting
 
-Bagging y boosting combinan modelos, pero responden a problemas distintos.
-
-| Característica | Bagging | Boosting |
+| | Bagging y bosques aleatorios | Boosting |
 |---|---|---|
-| Entrenamiento | Modelos independientes | Modelos secuenciales |
-| Objetivo principal | Reducir varianza | Reducir sesgo y mejorar precisión |
-| Manejo de errores | Las muestras se tratan de forma similar | Se enfoca en errores previos |
-| Paralelización | Naturalmente paralelizable | Menos paralelizable por dependencia secuencial |
-| Ruido y atípicos | Más robusto | Más sensible |
-| Ejemplos | Bagging, Random Forest | AdaBoost, Gradient Boosting, XGBoost, LightGBM, CatBoost |
+| Entrenamiento | En paralelo, independiente | En secuencia, dependiente |
+| Modelo base | Fuerte e inestable (árbol profundo) | Débil (tocón, árbol poco profundo) |
+| Qué reduce | Varianza | Sesgo (y algo de varianza) |
+| Combinación | Promedio o voto simple | Suma ponderada |
+| Riesgo de sobreajuste al agregar modelos | No | Sí: se controla el número de rondas |
+| Ruido en las etiquetas | Robusto | Sensible (AdaBoost) |
+| Ajuste de hiperparámetros | Poco necesario | Importante |
 
-Como regla práctica, bagging es recomendable cuando el modelo base tiene alta varianza y tendencia al sobreajuste, como ocurre con árboles profundos. Boosting es útil cuando se busca mayor precisión y el modelo base todavía subajusta patrones relevantes, aunque debe regularizarse cuidadosamente.
+: Comparación de las dos familias de ensambles. {#tbl-bagging-boosting}
 
-## Clasificación del vecino más cercano
+Como regla práctica, un bosque aleatorio con valores por defecto es una referencia excelente y difícil de batir con poco esfuerzo; el *boosting* bien ajustado (capítulo siguiente) suele ganar por un margen pequeño cuando hay tiempo para validar sus hiperparámetros.
 
-El algoritmo del vecino más cercano pertenece a otra familia de métodos supervisados. En lugar de construir reglas explícitas como un árbol, almacena los datos de entrenamiento y clasifica un nuevo punto según las observaciones más parecidas. Por ello se considera un método basado en memoria o *lazy learning*: el “aprendizaje” ocurre principalmente al guardar los casos, mientras que el esfuerzo computacional se desplaza al momento de predecir [@cover1967nearest; @duda2001pattern].
+## Implementación en Python
 
-Sea un conjunto de entrenamiento
-
-$$
-S_N=\{(x_1,\theta_1),(x_2,\theta_2),\ldots,(x_N,\theta_N)\},
-$$
-
-donde $x_i\in\mathbb{R}^p$ es el vector de atributos y $\theta_i\in\{1,\ldots,c\}$ es la etiqueta de clase. Dada una métrica o función de distancia $d(x,z)$, el clasificador de vecino más cercano busca el punto de entrenamiento más próximo a una nueva observación $x$.
-
-::: {.callout-note appearance=“minimal”}
-Definición. En el clasificador de vecino más cercano, una nueva observación $x$ recibe la clase de la observación de entrenamiento más cercana bajo una métrica de distancia $d$:
-$$
-\hat y(x)=\theta_{i^*},\qquad i^*=\arg\min_{i=1,\ldots,N} d(x,x_i).
-$$ {#eq-nearest-neighbor}
-:::
-
-También puede formularse mediante funciones discriminantes. Para cada clase $\omega_j$, se calcula la distancia mínima entre $x$ y los ejemplos de esa clase; se asigna la clase cuya distancia mínima sea menor.
-
-::: {.callout-note appearance=“minimal”}
-Definición. El discriminante de distancia mínima para la clase $\omega_j$ es:
-$$
-g_j(x)=\min_{i:\theta_i=j} d(x,x_i),\qquad
-\hat y(x)=\arg\min_{j=1,
-\ldots,c} g_j(x).
-$$ {#eq-nn-discriminant}
-:::
-
-Esta formulación muestra la conexión con los clasificadores por partes: si cada muestra de entrenamiento se trata como una subclase, entonces la regla de decisión se reduce a escoger la muestra más cercana.
-
-## Métricas de distancia para vecinos cercanos
-
-La elección de la distancia es crucial. KNN no “entiende” directamente el significado semántico de las variables; solo compara puntos mediante una métrica. Por eso, variables medidas en escalas grandes pueden dominar la decisión si no se normalizan o estandarizan. Además, distintas métricas inducen geometrías distintas: la distancia euclidiana produce vecindades esféricas, mientras que la distancia Manhattan produce vecindades con forma de rombo en dos dimensiones.
-
-::: {.callout-note appearance=“minimal”}
-Definición. La distancia de Minkowski de orden $s\geq 1$ entre $x,z\in\mathbb{R}^p$ se define como:
-$$
-d_s(x,z)=\left(\sum_{j=1}^{p}|x_j-z_j|^s\right)^{1/s}.
-$$ {#eq-minkowski-distance}
-:::
-
-Casos particulares importantes son la distancia Manhattan ($s=1$) y la distancia euclidiana ($s=2$).
-
-::: {.callout-note appearance=“minimal”}
-Definición. La distancia Manhattan o taxicab entre $x$ y $z$ es:
-$$
-d_1(x,z)=\sum_{j=1}^{p}|x_j-z_j|.
-$$ {#eq-manhattan-distance}
-:::
-
-::: {.callout-note appearance=“minimal”}
-Definición. La distancia euclidiana entre $x$ y $z$ es:
-$$
-d_2(x,z)=\sqrt{\sum_{j=1}^{p}(x_j-z_j)^2}.
-$$ {#eq-euclidean-distance}
-:::
-
-Otra opción es la distancia de Chebyshev, que mide la máxima diferencia coordenada a coordenada.
-
-::: {.callout-note appearance=“minimal”}
-Definición. La distancia de Chebyshev entre $x$ y $z$ es:
-$$
-d_{\infty}(x,z)=\max_{j=1,
-\ldots,p}|x_j-z_j|.
-$$ {#eq-chebyshev-distance}
-:::
-
-También se usan distancias cuadráticas ponderadas, útiles cuando las variables tienen distinta escala o correlación. Si $Q$ es una matriz simétrica definida positiva, entonces
-
-::: {.callout-note appearance=“minimal”}
-Definición. Una distancia cuadrática ponderada entre $x$ y $z$ puede escribirse como:
-$$
-d_Q(x,z)=(x-z)^{\top}Q(x-z).
-$$ {#eq-quadratic-distance}
-:::
-
-Un caso relevante es la distancia de Mahalanobis, donde $Q=\Sigma^{-1}$ y $\Sigma$ es la matriz de covarianza. Esta distancia corrige por escala y correlación entre variables [@duda2001pattern].
+### Árbol de regresión y bagging
 
 ```{python}
+#| label: ens-laptops
 import numpy as np
-
-x = np.array([30, 25])
-z = np.array([28, 24])
-
-manhattan = np.sum(np.abs(x - z))
-euclidean = np.sqrt(np.sum((x - z)**2))
-chebyshev = np.max(np.abs(x - z))
-
-print({
-    "Manhattan": manhattan,
-    "Euclidiana": euclidean,
-    "Chebyshev": chebyshev
-})
-```
-
-```{=html}
-<div id="mk-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Bola unitaria de Minkowski — explorador interactivo</span><br>
-    <span style="font-size:0.81em;color:#666;">Arrastra p para ver cómo cambia la forma de la bola: diamante (p=1), círculo (p=2), cuadrado (p→∞)</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">p = <strong id="mk-pv">2</strong> &ensp;<span id="mk-name" style="color:#1a3a5c;font-style:italic;"></span></label>
-    <input id="mk-sl" type="range" min="1" max="20" step="1" value="2"
-           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
-  </div>
-  <canvas id="mk-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-</div>
-<script>
-(function(){
-  const cv=document.getElementById('mk-cv');
-  const W=680,H=360,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const CX=W/2,CY=H/2,SCALE=140;
-
-  function ballR(theta,p){
-    const ac=Math.abs(Math.cos(theta)),as=Math.abs(Math.sin(theta));
-    if(p>=18)return 1/Math.max(ac,as);
-    return 1/Math.pow(Math.pow(ac,p)+Math.pow(as,p),1/p);
-  }
-
-  function drawBall(p,col,alpha,lw){
-    ctx.beginPath();
-    const N=720;
-    for(let i=0;i<=N;i++){
-      const th=i/N*2*Math.PI;
-      const r=ballR(th,p);
-      const x=CX+r*Math.cos(th)*SCALE,y=CY-r*Math.sin(th)*SCALE;
-      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
-    }
-    ctx.closePath();
-    ctx.strokeStyle=col;ctx.globalAlpha=alpha;ctx.lineWidth=lw;ctx.stroke();
-    ctx.globalAlpha=1;
-  }
-
-  function draw(p){
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(0,0,W,H);
-    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
-    [-1,1].forEach(v=>{
-      ctx.beginPath();ctx.moveTo(CX+v*SCALE,CY-SCALE*1.35);ctx.lineTo(CX+v*SCALE,CY+SCALE*1.35);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(CX-SCALE*1.35,CY+v*SCALE);ctx.lineTo(CX+SCALE*1.35,CY+v*SCALE);ctx.stroke();
-    });
-    ctx.strokeStyle='#c9d0de';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(CX-SCALE*1.35,CY);ctx.lineTo(CX+SCALE*1.35,CY);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(CX,CY-SCALE*1.35);ctx.lineTo(CX,CY+SCALE*1.35);ctx.stroke();
-    ctx.fillStyle='#aaa';ctx.font='10px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('1',CX+SCALE,CY+13);ctx.fillText('-1',CX-SCALE,CY+13);
-    ctx.fillText('1',CX+6,CY-SCALE+5);ctx.fillText('-1',CX+8,CY+SCALE+5);
-    drawBall(1,'#dc2626',0.35,1.5);
-    drawBall(2,'#16a34a',0.35,1.5);
-    ctx.fillStyle='#dc2626';ctx.font='10px Georgia,serif';ctx.textAlign='left';
-    ctx.globalAlpha=0.55;ctx.fillText('p=1 (Manhattan)',CX+SCALE*0.72+4,CY-SCALE*0.12);ctx.globalAlpha=1;
-    ctx.fillStyle='#16a34a';
-    ctx.globalAlpha=0.55;ctx.fillText('p=2 (Euclídea)',CX+SCALE*0.72+4,CY-SCALE*0.12+14);ctx.globalAlpha=1;
-    const col=p<=1?'#dc2626':p<=2?'#2563eb':p<=5?'#7c3aed':p>=18?'#0f172a':'#1a3a5c';
-    ctx.fillStyle=col+'22';
-    ctx.beginPath();
-    const N=720;
-    for(let i=0;i<=N;i++){
-      const th=i/N*2*Math.PI;
-      const r=ballR(th,p);
-      const x=CX+r*Math.cos(th)*SCALE,y=CY-r*Math.sin(th)*SCALE;
-      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
-    }
-    ctx.closePath();ctx.fill();
-    drawBall(p,col,0.9,2.5);
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Bola unitaria Minkowski (p='+p+')',CX,22);
-    const name=p<=1?'Distancia Manhattan (L¹)':p===2?'Distancia Euclídea (L²)':p>=18?'Distancia Chebyshev (L∞)':'Distancia Minkowski (L'+p+')';
-    document.getElementById('mk-name').textContent=name;
-  }
-
-  document.getElementById('mk-sl').addEventListener('input',function(){
-    const p=parseInt(this.value);
-    document.getElementById('mk-pv').textContent=p>=18?'∞':p;
-    draw(p);
-  });
-  draw(2);
-  document.getElementById('mk-name').textContent='Distancia Euclídea (L²)';
-})();
-</script>
-```
-
-## De 1-NN a k-NN
-
-La regla 1-NN puede generar regiones de clasificación muy fragmentadas, pues una sola observación ruidosa puede modificar la frontera local. Para reducir esa sensibilidad, se generaliza el método considerando los $k$ vecinos más cercanos. En clasificación, cada vecino vota por su clase; en regresión, se promedian sus respuestas.
-
-::: {.callout-note appearance=“minimal”}
-Definición. En $k$-NN para clasificación, si $N_k(x)$ es el conjunto de índices de los $k$ vecinos más cercanos de $x$, el discriminante de la clase $j$ es el número de vecinos que pertenecen a esa clase:
-$$
-g_j(x)=\sum_{i\in N_k(x)}\mathbb{I}(\theta_i=j),\qquad
-\hat y(x)=\arg\max_{j=1,
-\ldots,c}g_j(x).
-$$ {#eq-knn-classification}
-:::
-
-::: {.callout-note appearance=“minimal”}
-Definición. En $k$-NN para regresión, la predicción es el promedio de las respuestas de los $k$ vecinos más cercanos:
-$$
-\hat f(x)=\frac{1}{k}\sum_{i\in N_k(x)}y_i.
-$$ {#eq-knn-regression}
-:::
-
-La elección de $k$ controla el equilibrio sesgo-varianza. Con $k=1$, el modelo tiene bajo sesgo local, pero alta varianza: puede adaptarse demasiado a puntos individuales. Con un $k$ grande, la frontera se suaviza y la varianza disminuye, pero aumenta el sesgo porque se promedian observaciones que pueden pertenecer a regiones distintas [@hastie2009]. En aplicaciones prácticas, $k$ suele elegirse mediante validación cruzada. Para clasificación binaria, a menudo se usan valores impares de $k$ para reducir empates.
-
-```{python}
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, classification_report
 import pandas as pd
+from sklearn.tree import DecisionTreeRegressor, export_text
 
-clientes = pd.DataFrame({
-    "edad": [25, 28, 32, 35, 29, 31, 40, 22],
-    "ingreso": [20, 24, 26, 30, 23, 27, 35, 18],
-    "compra": ["No compra", "No compra", "Compra", "Compra", "No compra", "Compra", "Compra", "No compra"]
-})
+ram = pd.DataFrame({"RAM": [4, 4, 8, 8, 16, 16]}, index=list("ABCDEF"))
+precio = np.array([6500, 7200, 10500, 12000, 21000, 24000])
+arbol = DecisionTreeRegressor(max_depth=1).fit(ram, precio)
+print(export_text(arbol, feature_names=["RAM"]))
 
-X_cls = clientes[["edad", "ingreso"]]
-y_cls = clientes["compra"]
-
-knn = Pipeline([
-    ("scaler", StandardScaler()),
-    ("model", KNeighborsClassifier())
-])
-
-param_grid = {"model__n_neighbors": [1, 3, 5]}
-search = GridSearchCV(knn, param_grid=param_grid, cv=2)
-search.fit(X_cls, y_cls)
-
-nuevo_cliente = pd.DataFrame({"edad": [30], "ingreso": [25]})
-print("Mejor k:", search.best_params_)
-print("Predicción:", search.predict(nuevo_cliente))
+# La muestra bootstrap del texto: {A, A, C, D, F, F}; fuera de la bolsa: B y E
+boot = ["A", "A", "C", "D", "F", "F"]
+arbol_b = DecisionTreeRegressor(max_depth=1).fit(ram.loc[boot], pd.Series(precio, index=ram.index).loc[boot])
+oob = ["B", "E"]
+print("Predicciones OOB:", dict(zip(oob, arbol_b.predict(ram.loc[oob]))))
+print(f"Probabilidad de quedar fuera de una muestra bootstrap: n=6 → {(5/6)**6:.3f}; n grande → {np.exp(-1):.3f}")
 ```
 
-```{=html}
-<div id="knn-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">k-NN clasificador — explorador interactivo</span><br>
-    <span style="font-size:0.81em;color:#666;">Haz clic en el canvas para consultar un punto; ajusta k para ver cómo cambia la frontera de decisión</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">k = <strong id="knn-kv">3</strong></label>
-    <input id="knn-sl" type="range" min="1" max="15" step="1" value="3"
-           style="flex:1;min-width:150px;accent-color:#1a3a5c;">
-  </div>
-  <div id="knn-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;">Haz clic en el canvas para clasificar un punto</div>
-  <canvas id="knn-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;cursor:crosshair;"></canvas>
-</div>
-<script>
-(function(){
-  const TRAIN=[
-    {x:[1.2,3.8],y:'A'},{x:[1.8,4.5],y:'A'},{x:[2.3,3.2],y:'A'},{x:[1.5,5.1],y:'A'},
-    {x:[2.8,4.8],y:'A'},{x:[3.1,3.6],y:'A'},{x:[0.9,4.2],y:'A'},{x:[2.0,5.5],y:'A'},
-    {x:[3.5,5.0],y:'A'},{x:[1.3,2.9],y:'A'},{x:[2.6,4.1],y:'A'},{x:[3.8,4.4],y:'A'},
-    {x:[4.5,1.2],y:'B'},{x:[5.0,0.8],y:'B'},{x:[5.8,2.1],y:'B'},{x:[4.2,1.8],y:'B'},
-    {x:[6.1,1.5],y:'B'},{x:[5.5,2.8],y:'B'},{x:[4.8,0.5],y:'B'},{x:[6.5,2.5],y:'B'},
-    {x:[5.2,1.0],y:'B'},{x:[4.0,2.5],y:'B'},{x:[6.8,1.0],y:'B'},{x:[5.7,3.2],y:'B'}
-  ];
-  const cv=document.getElementById('knn-cv');
-  const W=680,H=380,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const PAD={l:44,r:16,t:16,b:30};
-  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
-  const xMn=0,xMx=8,yMn=0,yMx=7;
-  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
-  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
-  const ix=px=>(px-PAD.l)/CW*(xMx-xMn)+xMn;
-  const iy=py=>yMx-(py-PAD.t)/CH*(yMx-yMn);
-  const COL={A:'#2563eb',B:'#dc2626'};
-  let query=null,k=3;
-
-  function dist(a,bq){return Math.sqrt((a.x[0]-bq[0])**2+(a.x[1]-bq[1])**2);}
-  function knn(q,k){
-    const ranked=[...TRAIN].map(t=>({...t,d:dist(t,[q.x,q.y])})).sort((a,b)=>a.d-b.d);
-    const nbrs=ranked.slice(0,k);
-    const votes={A:0,B:0};nbrs.forEach(n=>votes[n.y]++);
-    const pred=votes.A>=votes.B?'A':'B';
-    return{nbrs,pred,votes};
-  }
-
-  function drawBg(k){
-    const step=12;
-    for(let px=PAD.l;px<PAD.l+CW;px+=step){
-      for(let py=PAD.t;py<PAD.t+CH;py+=step){
-        const qx=ix(px),qy=iy(py);
-        const {pred}=knn({x:qx,y:qy},k);
-        ctx.fillStyle=pred==='A'?'rgba(37,99,235,0.08)':'rgba(220,38,38,0.08)';
-        ctx.fillRect(px,py,step,step);
-      }
-    }
-  }
-
-  function draw(){
-    ctx.clearRect(0,0,W,H);
-    drawBg(k);
-    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.7;
-    [0,2,4,6,8].forEach(x=>{ctx.beginPath();ctx.moveTo(sx(x),PAD.t);ctx.lineTo(sx(x),PAD.t+CH);ctx.stroke();});
-    [0,2,4,6].forEach(y=>{ctx.beginPath();ctx.moveTo(PAD.l,sy(y));ctx.lineTo(PAD.l+CW,sy(y));ctx.stroke();});
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
-    ctx.fillStyle='#888';ctx.font='10px Georgia,serif';ctx.textAlign='center';
-    [0,2,4,6,8].forEach(x=>ctx.fillText(x,sx(x),PAD.t+CH+13));
-    ctx.textAlign='right';
-    [0,2,4,6].forEach(y=>ctx.fillText(y,PAD.l-5,sy(y)+3));
-
-    let result=null;
-    if(query){
-      result=knn(query,k);
-      const kDist=result.nbrs[result.nbrs.length-1].d;
-      ctx.beginPath();ctx.arc(sx(query.x),sy(query.y),kDist/(xMx-xMn)*CW,0,2*Math.PI);
-      ctx.strokeStyle='rgba(100,100,100,0.35)';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);ctx.stroke();ctx.setLineDash([]);
-      result.nbrs.forEach((n,i)=>{
-        ctx.strokeStyle=COL[n.y]+'99';ctx.lineWidth=1.2;
-        ctx.beginPath();ctx.moveTo(sx(query.x),sy(query.y));ctx.lineTo(sx(n.x[0]),sy(n.x[1]));ctx.stroke();
-        ctx.fillStyle=COL[n.y];ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
-        const mx=(sx(query.x)+sx(n.x[0]))/2,my=(sy(query.y)+sy(n.x[1]))/2;
-        ctx.fillText(i+1,mx,my);
-      });
-    }
-
-    TRAIN.forEach(t=>{
-      ctx.beginPath();ctx.arc(sx(t.x[0]),sy(t.x[1]),6,0,2*Math.PI);
-      ctx.fillStyle=COL[t.y]+'cc';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
-      ctx.fillStyle=COL[t.y];ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
-      ctx.fillText(t.y,sx(t.x[0]),sy(t.x[1])+3);
-    });
-
-    if(query){
-      const col=result?COL[result.pred]:'#666';
-      const S=sx(query.x),Sy=sy(query.y),R=9;
-      ctx.beginPath();
-      ctx.moveTo(S,Sy-R);ctx.lineTo(S+R*0.35,Sy-R*0.35);ctx.lineTo(S+R,Sy);
-      ctx.lineTo(S+R*0.35,Sy+R*0.35);ctx.lineTo(S,Sy+R);
-      ctx.lineTo(S-R*0.35,Sy+R*0.35);ctx.lineTo(S-R,Sy);
-      ctx.lineTo(S-R*0.35,Sy-R*0.35);ctx.closePath();
-      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
-      if(result){
-        document.getElementById('knn-info').innerHTML=
-          `Consulta (${query.x.toFixed(2)}, ${query.y.toFixed(2)}) → `+
-          `<strong style="color:${col}">Clase ${result.pred}</strong>&ensp;·&ensp;`+
-          `Votos: A=${result.votes.A}, B=${result.votes.B}&ensp;·&ensp;`+
-          `k=${k} vecinos más cercanos`;
-      }
-    }
-  }
-
-  cv.addEventListener('click',function(e){
-    const rect=cv.getBoundingClientRect();
-    const px=e.clientX-rect.left,py=e.clientY-rect.top;
-    query={x:ix(px),y:iy(py)};
-    draw();
-  });
-  document.getElementById('knn-sl').addEventListener('input',function(){
-    k=parseInt(this.value);
-    document.getElementById('knn-kv').textContent=k;
-    draw();
-  });
-  draw();
-})();
-</script>
-```
-
-## Error asintótico de vecinos cercanos
-
-Una razón histórica de la importancia de NN es que posee garantías teóricas simples. En el límite de muchas observaciones independientes e idénticamente distribuidas, el error asintótico de 1-NN está acotado por el error de Bayes, que es el menor error posible si se conocieran las distribuciones verdaderas de las clases [@cover1967nearest].
-
-::: {.callout-note appearance=“minimal”}
-Definición. Si $P^*$ es el error de Bayes y $P_1$ es el error asintótico de 1-NN con $c$ clases, entonces:
-$$
-P^*\leq P_1\leq P^*\left(2-\frac{c}{c-1}P^*\right).
-$$ {#eq-cover-hart-bound}
-:::
-
-Como consecuencia, para dos o más clases se suele resumir la cota como $P_1\leq 2P^*$. Es decir, bajo los supuestos del resultado, 1-NN no es arbitrariamente malo en el límite: su error asintótico es, a lo más, aproximadamente el doble del error óptimo de Bayes.
-
-Para $k$-NN, si $N\to\infty$, $k\to\infty$ y $k/N\to 0$, el método puede aproximar el rendimiento óptimo de Bayes. La condición $k/N\to 0$ expresa que el vecindario debe crecer en número de puntos, pero seguir siendo local en relación con el tamaño total de la muestra [@stone1977consistent; @hastie2009].
-
-::: {.callout-note appearance=“minimal”}
-Definición. Una condición clásica de consistencia para $k$-NN es:
-$$
-N\to\infty,\qquad k\to\infty,\qquad \frac{k}{N}\to 0.
-$$ {#eq-knn-consistency-condition}
-:::
-
-Estas conclusiones dependen de que los vecinos cercanos sean realmente cercanos en el espacio de atributos. En alta dimensión, esta condición puede fallar: incluso el vecino más cercano puede quedar lejos en términos geométricos. Este fenómeno forma parte de la llamada maldición de la dimensionalidad.
-
-## Maldición de la dimensionalidad
-
-KNN funciona mejor cuando la dimensión efectiva del problema no es demasiado alta y existe una noción de cercanía significativa. En espacios de alta dimensión, las distancias tienden a concentrarse: la diferencia entre el vecino más cercano y el más lejano puede volverse pequeña en relación con la escala total. Como resultado, la noción de “vecino” pierde poder discriminativo y se requieren muchas más muestras para cubrir el espacio [@hastie2009; @bellman1961adaptive].
-
-::: {.callout-note appearance=“minimal”}
-Definición. En un hipercubo unitario de dimensión $p$, una región con fracción lineal $r$ en cada coordenada ocupa una fracción de volumen:
-$$
-V(r,p)=r^p.
-$$ {#eq-curse-volume}
-:::
-
-Esta expresión muestra por qué la dimensión importa. Si $r=0.1$ y $p=10$, el volumen relativo es $10^{-10}$. Para cubrir localmente un espacio de alta dimensión se necesitaría una cantidad enorme de datos. Por ello, antes de aplicar KNN conviene considerar selección de variables, reducción de dimensionalidad, escalamiento adecuado y validación cuidadosa.
-
-## Métodos mejorados para vecinos cercanos
-
-El método NN básico tiene tres limitaciones principales: debe almacenar todos los datos, debe comparar una consulta contra muchas observaciones y es sensible al ruido. Existen variantes que atacan estas dificultades.
-
-### Búsqueda eficiente: branch and bound
-
-Los algoritmos de búsqueda rápida reducen el tiempo de predicción mediante preparación fuera de línea. La idea general es organizar las muestras en una estructura jerárquica y descartar regiones completas cuando no pueden contener al vecino más cercano. Esta lógica aparece en métodos *branch and bound*, árboles k-d y árboles de bolas [@friedman1977algorithm; @fukunaga1975branch].
-
-Supongamos que un nodo $p$ contiene un subconjunto de muestras $\mathcal{X}_p$, con centro $M_p$ y radio $r_p$ definido como la máxima distancia desde el centro a una muestra del nodo.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Para un nodo $p$ con muestras $\mathcal{X}_p$, su centro y radio pueden definirse como:
-$$
-M_p=\frac{1}{N_p}\sum_{x_i\in\mathcal{X}_p}x_i,
-\qquad
-r_p=\max_{x_i\in\mathcal{X}_p}d(x_i,M_p).
-$$ {#eq-node-center-radius}
-:::
-
-Si $B$ es la mejor distancia encontrada hasta el momento para una consulta $x$, se puede descartar un nodo cuando, por desigualdad triangular, ningún punto del nodo puede mejorar esa distancia. Una forma intuitiva de la regla es: si el centro del nodo está demasiado lejos de $x$ en comparación con su radio, no vale la pena explorar ese nodo.
-
-::: {.callout-note appearance=“minimal”}
-Definición. Una regla de descarte por cota inferior para un nodo $p$ es:
-$$
-d(x,M_p)-r_p>B.
-$$ {#eq-branch-bound-prune}
-:::
-
-Si se cumple @eq-branch-bound-prune, entonces incluso el punto más favorable dentro del nodo estaría a una distancia mayor que $B$, por lo que el nodo puede descartarse.
-
-### Edición de vecinos cercanos
-
-La edición de vecinos cercanos busca eliminar muestras ambiguas o ruidosas, especialmente en regiones donde las clases se traslapan. La intuición es que ciertos puntos mal etiquetados o ubicados en zonas de conflicto pueden fragmentar la frontera de decisión y perjudicar la generalización [@wilson1972asymptotic].
-
-Un procedimiento típico consiste en preclasificar cada muestra usando sus vecinos; si una muestra es clasificada incorrectamente por el resto del conjunto, se marca como candidata a eliminar. Este proceso puede repetirse varias rondas si se cuenta con suficientes datos. La edición puede mejorar robustez, aunque también puede eliminar casos difíciles pero legítimos, por lo que debe evaluarse con validación.
-
-::: {.callout-note appearance=“minimal”}
-Definición. La edición por preclasificación elimina una muestra $(x_i,y_i)$ si su etiqueta no coincide con la predicción obtenida al clasificarla usando el conjunto de entrenamiento sin esa muestra:
-$$
-(x_i,y_i)\text{ se elimina si } \hat y_{-i}(x_i)\neq y_i.
-$$ {#eq-edited-nn-rule}
-:::
-
-### Condensed nearest neighbor
-
-El método *condensed nearest neighbor* busca reducir memoria y cómputo conservando solo un subconjunto representativo de muestras [@hart1968condensed]. Se separa el conjunto original en dos partes: un conjunto almacenado $\mathcal{S}$ y un conjunto restante $\mathcal{G}$. Se comienza con pocas muestras en $\mathcal{S}$; luego se revisan las muestras de $\mathcal{G}$. Si una muestra se clasifica correctamente usando $\mathcal{S}$, no se agrega; si se clasifica mal, se incorpora a $\mathcal{S}$. Al final, solo $\mathcal{S}$ se usa para clasificar.
-
-::: {.callout-note appearance=“minimal”}
-Definición. El conjunto condensado $\mathcal{S}$ busca ser un subconjunto del entrenamiento tal que el clasificador 1-NN construido con $\mathcal{S}$ preserve, aproximadamente, las decisiones obtenidas con el conjunto completo:
-$$
-\mathcal{S}\subseteq S_N,
-\qquad
-\hat y_{\mathcal{S}}(x_i)\approx \hat y_{S_N}(x_i).
-$$ {#eq-condensed-nn}
-:::
+Los datos del laboratorio y el efecto de promediar:
 
 ```{python}
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.datasets import make_moons
-from sklearn.model_selection import cross_val_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+#| label: fig-ens-bagging
+#| fig-cap: "Error cuadrático medio en prueba de bagging y de un bosque aleatorio según el número de árboles, frente a un árbol único y al error irreducible (0.36). En una sola variable, el bosque aleatorio coincide con bagging."
+import plotly.graph_objects as go
+from sklearn.ensemble import BaggingRegressor
+from sklearn.metrics import mean_squared_error
 
-X_demo, y_demo = make_moons(n_samples=300, noise=0.25, random_state=42)
+def f_real(x):
+    return 2 * np.sin(x) + 0.3 * x
 
-scores = []
-for k in [1, 3, 5, 11, 21, 51]:
-    model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("knn", KNeighborsClassifier(n_neighbors=k))
-    ])
-    acc = cross_val_score(model, X_demo, y_demo, cv=5, scoring="accuracy").mean()
-    scores.append({"k": k, "accuracy_cv": acc})
+def generar_reg(n, semilla):
+    rng = np.random.default_rng(semilla)
+    x = np.sort(rng.uniform(0, 10, n)).round(2)
+    return x, (f_real(x) + rng.normal(0, 0.6, n)).round(2)
 
-pd.DataFrame(scores)
+x_tr, y_tr = generar_reg(40, 11)
+x_te, y_te = generar_reg(300, 12)
+X_tr, X_te = x_tr.reshape(-1, 1), x_te.reshape(-1, 1)
+
+for prof in [1, 2, 4, None]:
+    t = DecisionTreeRegressor(max_depth=prof, random_state=0).fit(X_tr, y_tr)
+    print(f"Árbol único (profundidad {prof}): ECM entrenamiento {mean_squared_error(y_tr, t.predict(X_tr)):.3f}, "
+          f"prueba {mean_squared_error(y_te, t.predict(X_te)):.3f}")
+
+Bs = [1, 2, 5, 10, 20, 50, 100, 200]
+ecm_bag = [mean_squared_error(y_te, BaggingRegressor(DecisionTreeRegressor(), n_estimators=B, random_state=0)
+                              .fit(X_tr, y_tr).predict(X_te)) for B in Bs]
+bag_oob = BaggingRegressor(DecisionTreeRegressor(), n_estimators=200, oob_score=True, random_state=0).fit(X_tr, y_tr)
+print(f"Bagging con 200 árboles: ECM prueba {ecm_bag[-1]:.3f}, ECM fuera de la bolsa "
+      f"{mean_squared_error(y_tr, bag_oob.oob_prediction_):.3f}")
+
+fig = go.Figure(go.Scatter(x=Bs, y=ecm_bag, mode="lines+markers", name="bagging", line=dict(color="#7c3aed")))
+fig.add_hline(y=mean_squared_error(y_te, DecisionTreeRegressor(random_state=0).fit(X_tr, y_tr).predict(X_te)),
+              line=dict(color="gray", dash="dash"), annotation_text="árbol único")
+fig.add_hline(y=0.36, line=dict(color="#16a34a", dash="dot"), annotation_text="error irreducible")
+fig.update_layout(xaxis=dict(type="log", title="número de árboles"), yaxis_title="ECM en prueba",
+                  height=340, margin=dict(l=10, r=10, t=20, b=40))
+fig.show()
 ```
 
-## Cuándo usar KNN
+### AdaBoost: el ejemplo manual
 
-KNN es una buena opción cuando el tamaño de muestra es razonable, la dimensión no es demasiado alta, las variables pueden escalarse de forma significativa y se desea una decisión basada en casos similares. Su interpretación es natural: “este punto se clasifica así porque se parece a estos ejemplos”. Sin embargo, no es ideal cuando hay millones de observaciones, demasiadas variables irrelevantes, datos muy ruidosos o necesidad de predicción en tiempo real sin estructuras de búsqueda especializadas.
-
-## Comparación conceptual: árboles y vecinos cercanos
-
-Los árboles y KNN son métodos no lineales, pero su lógica es distinta. Los árboles construyen particiones explícitas mediante reglas jerárquicas; KNN define vecindades alrededor del punto a predecir. Los árboles generan modelos relativamente rápidos al momento de predecir, porque basta recorrer una ruta desde la raíz hasta una hoja. KNN puede ser más costoso en predicción, porque debe calcular distancias con respecto a muchos puntos de entrenamiento, salvo que se usen estructuras de búsqueda eficientes.
-
-Desde el punto de vista pedagógico, ambos métodos ayudan a entender que el aprendizaje supervisado no se reduce a ajustar rectas. Un modelo puede aproximar una función mediante regiones constantes, mediante promedios locales o mediante combinaciones de muchos modelos simples.
-
-## Buenas prácticas de modelado
-
-Para usar árboles, ensambles o KNN en un flujo reproducible de ciencia de datos, conviene seguir algunas reglas:
-
-1. Separar datos de entrenamiento, validación y prueba, o usar validación cruzada.
-2. Comparar contra modelos base simples, como predecir siempre el promedio en regresión.
-3. Reportar métricas adecuadas al problema, no solo una métrica global.
-4. Controlar hiperparámetros con validación, no con el conjunto de prueba.
-5. Documentar semillas aleatorias, versiones de paquetes y criterios de evaluación.
-6. Interpretar el modelo considerando sus supuestos geométricos: regiones rectangulares en árboles, distancias en KNN y reducción de varianza o sesgo en ensambles.
-
-El siguiente ejemplo muestra una comparación breve entre árbol individual, random forest y gradient boosting.
+`AdaBoostClassifier` con tocones reproduce las tres rondas. Sus `estimator_weights_` son el doble de los $\alpha_m$ clásicos (variante SAMME).
 
 ```{python}
-from sklearn.model_selection import cross_validate
+#| label: ens-adaboost-manual
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.tree import DecisionTreeClassifier
 
-models = {
-    "Árbol": DecisionTreeRegressor(random_state=42),
-    "Random Forest": RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1),
-    "Gradient Boosting": GradientBoostingRegressor(random_state=42)
+x10 = np.arange(1, 11).reshape(-1, 1)
+y10 = np.array([1, 1, 1, -1, -1, -1, 1, 1, 1, -1])
+ada = AdaBoostClassifier(DecisionTreeClassifier(max_depth=1), n_estimators=3, random_state=0).fit(x10, y10)
+
+pd.DataFrame({
+    "corte": [e.tree_.threshold[0] for e in ada.estimators_],
+    "ε": ada.estimator_errors_,
+    "α clásico (½ ln)": ada.estimator_weights_ / 2,
+    "errores del ensamble": [int((p != y10).sum()) for p in ada.staged_predict(x10)],
+}, index=[1, 2, 3]).round(4)
+```
+
+### Comparación en un problema real
+
+Comparamos un árbol, *bagging*, un bosque aleatorio, AdaBoost y *gradient boosting* en el conjunto *breast cancer* (569 tumores, 30 variables) con validación cruzada estratificada repetida.
+
+```{python}
+#| label: ens-comparacion
+from sklearn.datasets import load_breast_cancer
+from sklearn.ensemble import BaggingClassifier, RandomForestClassifier, GradientBoostingClassifier
+from sklearn.model_selection import RepeatedStratifiedKFold, cross_validate, train_test_split
+
+X, y = load_breast_cancer(return_X_y=True, as_frame=True)
+cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=3, random_state=0)
+modelos = {
+    "Árbol (sin poda)": DecisionTreeClassifier(random_state=0),
+    "Bagging (300 árboles)": BaggingClassifier(DecisionTreeClassifier(), n_estimators=300, random_state=0, n_jobs=-1),
+    "Bosque aleatorio (300)": RandomForestClassifier(n_estimators=300, random_state=0, n_jobs=-1),
+    "AdaBoost (300 tocones)": AdaBoostClassifier(DecisionTreeClassifier(max_depth=1), n_estimators=300, random_state=0),
+    "Gradient boosting": GradientBoostingClassifier(random_state=0),
 }
-
-results = []
-for name, model in models.items():
-    cv = cross_validate(
-        model,
-        X,
-        y,
-        cv=5,
-        scoring={"r2": "r2", "neg_mae": "neg_mean_absolute_error"},
-        n_jobs=-1
-    )
-    results.append({
-        "modelo": name,
-        "R2_promedio": cv["test_r2"].mean(),
-        "MAE_promedio": -cv["test_neg_mae"].mean()
-    })
-
-pd.DataFrame(results).sort_values("R2_promedio", ascending=False)
+filas = []
+for nombre, m in modelos.items():
+    r = cross_validate(m, X, y, cv=cv, scoring=["accuracy", "roc_auc"])
+    filas.append({"modelo": nombre, "exactitud": r["test_accuracy"].mean(), "desv.": r["test_accuracy"].std(),
+                  "AUC": r["test_roc_auc"].mean()})
+pd.DataFrame(filas).set_index("modelo").round(3)
 ```
 
-## Conclusiones
+### Error fuera de la bolsa e importancia de variables
 
-Los árboles de regresión son modelos supervisados que reemplazan una ecuación global por una colección de reglas locales. Su predicción es constante dentro de cada región y se calcula como el promedio de las observaciones que caen en la hoja correspondiente. El entrenamiento se basa en particionamiento recursivo: se prueban cortes y se elige aquel que reduce más el error, usualmente medido como suma de cuadrados.
+```{python}
+#| label: fig-ens-importancia
+#| fig-cap: "Diez variables más importantes del bosque aleatorio según la disminución de impureza (MDI, en el entrenamiento) y según la permutación (en prueba). Ambas coinciden en las variables principales, pero la MDI reparte importancia entre variables muy correlacionadas que la permutación considera casi intercambiables."
+from sklearn.inspection import permutation_importance
+from plotly.subplots import make_subplots
 
-Su principal fortaleza es la interpretabilidad, pero también presentan riesgos: sobreajuste, sensibilidad al ruido, inestabilidad y fronteras rectangulares. La poda y el criterio de costo-complejidad ayudan a controlar árboles individuales. Los métodos de ensamble, como bagging, random forests y boosting, buscan superar estas limitaciones combinando muchos árboles. Bagging reduce varianza mediante entrenamiento paralelo sobre muestras bootstrap; boosting entrena modelos secuencialmente para corregir errores y suele obtener alta precisión bajo una buena regularización.
+X_tr2, X_te2, y_tr2, y_te2 = train_test_split(X, y, test_size=0.3, stratify=y, random_state=0)
+rf = RandomForestClassifier(n_estimators=500, oob_score=True, random_state=0, n_jobs=-1).fit(X_tr2, y_tr2)
+print(f"Exactitud fuera de la bolsa: {rf.oob_score_:.3f} · exactitud en prueba: {rf.score(X_te2, y_te2):.3f}")
 
-Finalmente, el vecino más cercano muestra otra forma de razonamiento no lineal: predecir a partir de casos similares. Mientras los árboles dividen el espacio mediante reglas, KNN usa distancias. En conjunto, estos métodos ofrecen una introducción poderosa al modelado predictivo moderno y preparan el terreno para técnicas más avanzadas de aprendizaje automático.
+mdi = pd.Series(rf.feature_importances_, index=X.columns)
+perm = pd.Series(permutation_importance(rf, X_te2, y_te2, n_repeats=20, random_state=0).importances_mean, index=X.columns)
+top = mdi.sort_values(ascending=False).index[:10][::-1]
+fig = make_subplots(rows=1, cols=2, subplot_titles=("MDI (impureza)", "Permutación (prueba)"), shared_yaxes=True)
+fig.add_trace(go.Bar(x=mdi[top], y=top, orientation="h", marker_color="#2563eb"), row=1, col=1)
+fig.add_trace(go.Bar(x=perm[top], y=top, orientation="h", marker_color="#ea580c"), row=1, col=2)
+fig.update_layout(height=420, showlegend=False, margin=dict(l=10, r=10, t=40, b=30))
+fig.show()
+```
+
+## Resumen
+
+- Un **árbol de regresión** predice el promedio de cada hoja y elige cortes que reducen la suma de cuadrados.
+- Combinar modelos funciona si cada uno es mejor que el azar y sus errores son **diversos**; la correlación entre modelos limita la reducción de varianza ($\rho\sigma^2$).
+- **Bagging** promedia árboles entrenados con muestras bootstrap; cada árbol deja fuera ≈ 36.8 % de los datos, lo que da el **error fuera de la bolsa** sin costo adicional.
+- Los **bosques aleatorios** eligen cada corte entre $m$ variables al azar para decorrelacionar los árboles; más árboles no sobreajustan. La importancia por permutación es más fiable que la MDI.
+- **AdaBoost** entrena clasificadores débiles en secuencia, repesando los errores y combinándolos con pesos $\alpha_m = \frac{1}{2}\ln\frac{1 - \varepsilon_m}{\varepsilon_m}$; minimiza la pérdida exponencial y es sensible al ruido.
+- *Bagging* reduce varianza; *boosting*, sesgo. El capítulo siguiente generaliza el *boosting* a cualquier pérdida con el **gradient boosting** y su implementación más popular, XGBoost.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

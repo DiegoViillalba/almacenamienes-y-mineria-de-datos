@@ -2,8 +2,9 @@
 
 Esta guía explica cómo están hechos los laboratorios interactivos del libro y cómo
 crear otros nuevos con el mismo estilo. Está escrita para docentes, colaboradores y
-agentes de IA. Los ejemplos de referencia están en la unidad de preprocesamiento
-(`unidades/preprocesamiento/4-*.qmd`).
+agentes de IA. Los ejemplos de referencia están en las unidades de preprocesamiento
+(`unidades/preprocesamiento/4-*.qmd`), extracción de patrones y clasificación
+(`unidades/clasificadores/`).
 
 **Archivos clave**
 
@@ -256,3 +257,18 @@ el navegador suele servir versiones en caché.
 | `5-3b-cerrados-maximales.qmd` | Frecuentes, cerrados y maximales | Retícula clasificada con flechas de clausura, recuperación de conteos, tickets editables con casillas en CSS grid |
 | `5-3c-patrones-secuenciales.qmd` | Base proyectada de PrefixSpan | Prefijo que se extiende con botones, resaltado de la aparición más a la izquierda, lista de patrones clicable, sesiones editables con `input` de texto saneado |
 | `5-4-clasificacion-asociativa.qmd` | Clasificador CBA | Validación cruzada LOOCV en el navegador, matriz de confusión, predicción con `select` |
+| `6-0-introduccion-clasificacion.qmd` | Complejidad y generalización | Regiones de decisión en rejilla, curva de error frente a k, error de Bayes con la probabilidad real conocida, datos incrustados desde Python |
+| `6-0b-vecinos-cercanos.qmd` | Vecindario de k-NN; maldición de la dimensionalidad | Punto consultado arrastrable, «bolas» de Minkowski, voto ponderado; simulación de distancias en alta dimensión |
+| `6-2-metricas_clasificacion.qmd` | Umbral, prevalencia y curvas | Modo discreto (20 pacientes) y modo binormal analítico (Φ por aproximación), ROC y PR enlazadas, umbral de mínimo costo |
+| `capitulo_evaluacion_modelos_clasificacion.qmd` | Varianza de la estimación | 200 repeticiones de holdout y K pliegues con vecinos precalculados, curva de validación con regla de un error estándar |
+| `6-1-clasificacion_arboles.qmd` | Construye el árbol (ID3/C4.5/Gini) | Árbol SVG con nodos seleccionables, profundidad como pre-poda, LOOCV en el navegador, atributo identificador |
+| `6-1-clasificacion_cart.qmd` | CART en el plano | Partición rectangular, búsqueda del primer corte, ruta de poda de costo-complejidad (eslabón más débil) |
+| `capitulo_arboles_regresion_lineal.qmd` | Bagging; AdaBoost ronda por ronda | Árboles de regresión bootstrap con error fuera de la bolsa; pesos como tamaño de punto, tocones ponderados en 1D y 2D |
+| `capitulo_xgboost.qmd` | Gradient boosting paso a paso | Árboles sobre gradientes con pesos −G/(H+λ), residuos y próximo árbol, curva de entrenamiento/prueba por ronda |
+| `capitulo_regresion_clasificadores_lineales.qmd` | Mínimos cuadrados; Fisher; perceptrón | Puntos arrastrables y mapa de la SSE; cociente J frente al ángulo; perceptrón por pasos y épocas (XOR) |
+| `capitulo_regresion_logistica.qmd` | Ajustar la logística | Pérdida por punto, mapa de log-loss con trayectoria de descenso de gradiente, separabilidad y L2 |
+| `capitulo_svm.qmd` | Margen, C y núcleos | SMO simplificado en el navegador, vectores de soporte, núcleo RBF, puntos arrastrables |
+| `capitulo_clasificadores_bayesianos.qmd` | Monty Hall; prior y posterior; Naive Bayes; frontera gaussiana; CpG; riesgo mínimo | Simulación con semilla, `select` para un caso nuevo con suavizado de Laplace, regiones con costos asimétricos |
+| `capitulo_gmm.qmd` | EM paso a paso | Pasos E y M separados, color por responsabilidad (`color-mix`), log-verosimilitud monótona |
+| `capitulo_redes_neuronales.qmd` | Entrena una red en el navegador | MLP de una capa oculta con retropropagación en JS, animación con `setInterval`, cuatro conjuntos 2D |
+| `capitulo_pytorch_jax.qmd` | Los cinco pasos de PyTorch | `.plab-steps` con texto y demostración de la acumulación de gradientes sin `zero_grad()` |

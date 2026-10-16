@@ -44,6 +44,9 @@ crossref:
 jupyter: python3
 ---
 
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+
 Las Máquinas de Soporte Vectorial (SVM, del inglés *Support Vector Machines*) son uno de los algoritmos de aprendizaje supervisado más elegantes y teóricamente sólidos que existen. Desarrolladas por Vapnik y colaboradores en los años noventa [@vapnik1995nature; @cortes1995support], combinan tres ideas fundamentales: la búsqueda de un hiperplano de margen máximo, la reformulación del problema mediante dualidad de Lagrange, y el llamado *kernel trick*, que permite operar en espacios de alta dimensión sin calcular explícitamente las coordenadas en ese espacio.
 
 A diferencia de métodos como la regresión logística, que buscan cualquier frontera de decisión que separe bien los datos, las SVM buscan la frontera *óptima*: aquella que maximiza la distancia mínima a los puntos de entrenamiento. Esta propiedad geométrica tiene consecuencias profundas sobre la capacidad de generalización del modelo, vinculando la clasificación a nociones de la teoría estadística del aprendizaje [@hastie2009].
@@ -381,6 +384,37 @@ fig.update_layout(
     legend=dict(orientation='h', yanchor='top', y=-0.18, xanchor='center', x=0.5)
 )
 fig.show()
+```
+
+### Un ejemplo a mano
+
+Cuatro puntos: los negativos $\mathbf{x}_1 = (1, 2)$ y $\mathbf{x}_2 = (2, 1)$, y los positivos $\mathbf{x}_3 = (3, 3)$ y $\mathbf{x}_4 = (4, 4)$. Por simetría respecto a la diagonal, la frontera óptima debe ser perpendicular a $(1, 1)$: $\mathbf{w} = (a, a)$. Los puntos más cercanos a la frontera serán $\mathbf{x}_1$, $\mathbf{x}_2$ (que dan el mismo valor $\mathbf{w}^\top\mathbf{x} = 3a$) y $\mathbf{x}_3$ ($6a$). Si son vectores de soporte, cumplen las restricciones con igualdad:
+
+$$
+-(3a + b) = 1, \qquad 6a + b = 1 \quad\Longrightarrow\quad a = \tfrac{2}{3}, \quad b = -3.
+$$
+
+La frontera es $\frac{2}{3}x_1 + \frac{2}{3}x_2 - 3 = 0$, es decir, $x_1 + x_2 = 4.5$, justo a la mitad entre $x_1 + x_2 = 3$ y $x_1 + x_2 = 6$. El margen es $2/\|\mathbf{w}\| = 2/(\frac{2}{3}\sqrt{2}) = 2.12$, la distancia entre las dos rectas paralelas que tocan a los vectores de soporte. El punto $\mathbf{x}_4$ cumple $\frac{2}{3}(8) - 3 = 2.33 > 1$: está fuera del margen y no influye.
+
+Los multiplicadores se obtienen de $\mathbf{w} = \sum_i \alpha_i y_i \mathbf{x}_i$ y $\sum_i \alpha_i y_i = 0$. Por simetría $\alpha_1 = \alpha_2 = \alpha$; la segunda condición da $\alpha_3 = 2\alpha$ y la primera, $-\alpha(1, 2) - \alpha(2, 1) + 2\alpha(3, 3) = (3\alpha, 3\alpha) = (\frac{2}{3}, \frac{2}{3})$, de donde
+
+$$
+\alpha_1 = \alpha_2 = \tfrac{2}{9} \approx 0.222, \qquad \alpha_3 = \tfrac{4}{9} \approx 0.444, \qquad \alpha_4 = 0.
+$$
+
+Es la condición KKT en acción: el único punto con $\alpha = 0$ es el que no toca el margen. Si se moviera $\mathbf{x}_4$ a cualquier lugar lejos de la frontera, la solución no cambiaría; si se agregara un punto negativo cerca, por ejemplo en $(3.5, 1.5)$, la frontera giraría por completo. El laboratorio permite comprobarlo.
+
+```{python}
+#| label: svm-manual
+import numpy as np
+from sklearn.svm import SVC
+
+X4 = np.array([[1, 2], [2, 1], [3, 3], [4, 4]], dtype=float)
+y4 = np.array([-1, -1, 1, 1])
+svm4 = SVC(kernel="linear", C=1e6).fit(X4, y4)
+print("w =", svm4.coef_.round(3), " b =", svm4.intercept_.round(3))
+print("vectores de soporte:", svm4.support_ + 1, " α·y =", svm4.dual_coef_.round(3))
+print(f"margen 2/||w|| = {2 / np.linalg.norm(svm4.coef_):.3f}")
 ```
 
 ## SVM de margen suave (datos no separables)
@@ -1028,6 +1062,149 @@ for r in [1, 2]:
         fig.update_yaxes(title_text='Característica 2', row=r, col=c)
 fig.show()
 ```
+
+## Laboratorio: margen, C y núcleos
+
+El laboratorio resuelve el problema dual con una versión simplificada de SMO. Las líneas discontinuas son las bandas $f(\mathbf{x}) = \pm 1$; los puntos con anillo son vectores de soporte. Arrastra los puntos para ver qué cambia la solución y qué no. El estado inicial reproduce el ejemplo a mano.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="svm-lab">
+  <p class="plab-eyebrow">Laboratorio · Máquinas de soporte vectorial</p>
+  <h3 class="plab-title">¿Qué puntos sostienen la frontera?</h3>
+  <p class="plab-sub">Arrastra cualquier punto. Cambia C para pasar de margen duro a margen suave y el núcleo para obtener fronteras no lineales.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="svm-data"><button data-value="cuatro" aria-pressed="true">Cuatro puntos</button><button data-value="traslape">Traslape (30)</button><button data-value="anillo">Anillo (40)</button></div>
+    </div>
+    <div class="plab-field">Núcleo
+      <div class="plab-seg" id="svm-kern"><button data-value="lin" aria-pressed="true">Lineal</button><button data-value="rbf">RBF</button></div>
+    </div>
+    <label>C (escala log): <b id="svm-c-v"></b><input type="range" id="svm-c" min="-2" max="3" step="0.1" value="3"></label>
+    <label id="svm-g-wrap">γ del RBF (escala log): <b id="svm-g-v"></b><input type="range" id="svm-g" min="-2" max="1.5" step="0.1" value="-0.5"></label>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Vectores de soporte</span><strong id="svm-nsv"></strong></div>
+    <div class="plab-stat"><span>Ancho del margen 2/‖w‖</span><strong id="svm-m"></strong></div>
+    <div class="plab-stat"><span>Errores de entrenamiento</span><strong id="svm-err"></strong></div>
+    <div class="plab-stat"><span>Holgura total Σξ</span><strong id="svm-xi"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Frontera y margen</h4>
+      <svg id="svm-svg" style="overflow:hidden" role="img" aria-label="Puntos arrastrables, frontera de la SVM, bandas del margen y vectores de soporte"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>y = +1</span><span><i class="dot" style="background:var(--lab-s2)"></i>y = −1</span><span><i style="background:var(--lab-s4)"></i>f(x) = 0</span><span><i style="background:var(--lab-axis)"></i>f(x) = ±1</span><span><i class="dot" style="background:transparent;border:2px solid var(--lab-text)"></i>vector de soporte</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Multiplicadores α de cada punto</h4>
+      <div id="svm-tab" class="plab-scroll"></div>
+    </div>
+  </div>
+  <p class="plab-note" id="svm-note" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('svm-lab');
+  const $ = s => root.querySelector(s);
+  const r1 = K.rng(12), tras = [];
+  for (let k = 0; k < 15; k++) tras.push([K.clamp(2.2 + r1.normal() * 0.9, 0.2, 5.8), K.clamp(2.2 + r1.normal() * 0.9, 0.2, 5.8), -1]);
+  for (let k = 0; k < 15; k++) tras.push([K.clamp(3.8 + r1.normal() * 0.9, 0.2, 5.8), K.clamp(3.8 + r1.normal() * 0.9, 0.2, 5.8), 1]);
+  const r2 = K.rng(5), anillo = [];
+  for (let k = 0; k < 40; k++) { const inner = k < 18, rad = inner ? r2() * 1.1 : 1.9 + r2() * 0.9, t = r2() * 2 * Math.PI; anillo.push([3 + rad * Math.cos(t), 3 + rad * Math.sin(t), inner ? 1 : -1]); }
+  const BASE = { cuatro: [[1, 2, -1], [2, 1, -1], [3, 3, 1], [4, 4, 1]], traslape: tras, anillo };
+  let P = BASE.cuatro.map(p => p.slice());
+  const dataSeg = K.segmented($('#svm-data'), () => { P = BASE[dataSeg.get()].map(p => p.slice()); if (dataSeg.get() === 'anillo') kSeg.set('rbf'); else render(); });
+  const kSeg = K.segmented($('#svm-kern'), render);
+  // SMO simplificado (Platt) con elección determinista de j: máximo |Ei − Ej|.
+  function train(C, kern, gam) {
+    const n = P.length, Kf = (a, b) => kern === 'lin' ? a[0] * b[0] + a[1] * b[1] : Math.exp(-gam * ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2));
+    const Km = P.map(a => P.map(b => Kf(a, b))), al = Array(n).fill(0); let b = 0;
+    const f = i => { let s = b; for (let k = 0; k < n; k++) if (al[k]) s += al[k] * P[k][2] * Km[k][i]; return s; };
+    const tol = 1e-4;
+    // Optimiza el par (i, j); devuelve true si hubo progreso.
+    function takeStep(i, j) {
+      if (i === j) return false;
+      const yi = P[i][2], yj = P[j][2], ai = al[i], aj = al[j], Ei = f(i) - yi, Ej = f(j) - yj;
+      let L, H; if (yi !== yj) { L = Math.max(0, aj - ai); H = Math.min(C, C + aj - ai); } else { L = Math.max(0, ai + aj - C); H = Math.min(C, ai + aj); }
+      if (H - L < 1e-12) return false;
+      const eta = 2 * Km[i][j] - Km[i][i] - Km[j][j]; if (eta >= -1e-12) return false;
+      const nj = K.clamp(aj - yj * (Ei - Ej) / eta, L, H); if (Math.abs(nj - aj) < 1e-10 * (nj + aj + 1e-10)) return false;
+      const ni = ai + yi * yj * (aj - nj);
+      const b1 = b - Ei - yi * (ni - ai) * Km[i][i] - yj * (nj - aj) * Km[i][j], b2 = b - Ej - yi * (ni - ai) * Km[i][j] - yj * (nj - aj) * Km[j][j];
+      al[i] = ni; al[j] = nj; b = (ni > 1e-12 && ni < C - 1e-12) ? b1 : (nj > 1e-12 && nj < C - 1e-12) ? b2 : (b1 + b2) / 2;
+      return true;
+    }
+    for (let it = 0; it < 400; it++) {
+      let changed = 0;
+      for (let i = 0; i < n; i++) {
+        const Ei = f(i) - P[i][2], yi = P[i][2];
+        if (!((yi * Ei < -tol && al[i] < C - 1e-12) || (yi * Ei > tol && al[i] > 1e-12))) continue;
+        // Candidatos j: primero el de mayor |Ei − Ej|, luego todos los demás en orden.
+        const order = P.map((_, k) => [Math.abs(Ei - (f(k) - P[k][2])), k]).sort((u, v) => v[0] - u[0]).map(u => u[1]);
+        for (const j of order) if (takeStep(i, j)) { changed++; break; }
+      }
+      if (!changed) break;
+    }
+    const w = [0, 0]; P.forEach((p, k) => { w[0] += al[k] * p[2] * p[0]; w[1] += al[k] * p[2] * p[1]; });
+    const dec = x => { let s = b; P.forEach((p, k) => { if (al[k] > 1e-9) s += al[k] * p[2] * Kf(p, x); }); return s; };
+    return { al, b, w, dec };
+  }
+  function render() {
+    const C = 10 ** +$('#svm-c').value, gam = 10 ** +$('#svm-g').value, kern = kSeg.get();
+    $('#svm-c-v').textContent = C >= 100 ? K.fmt(C, 0) : K.fmt(C, 2); $('#svm-g-v').textContent = K.fmt(gam, 2);
+    $('#svm-g-wrap').style.display = kern === 'rbf' ? '' : 'none';
+    const M = train(C, kern, gam), sv = M.al.map(a => a > 1e-6);
+    const fs = P.map(p => M.dec(p)), xi = fs.map((v, k) => Math.max(0, 1 - P[k][2] * v)), errs = fs.filter((v, k) => P[k][2] * v <= 0).length;
+    $('#svm-nsv').textContent = `${sv.filter(Boolean).length} de ${P.length}`;
+    $('#svm-m').textContent = kern === 'lin' ? K.fmt(2 / Math.hypot(M.w[0], M.w[1]), 3) : '— (RBF)';
+    $('#svm-err').textContent = errs; $('#svm-xi').textContent = K.fmt(K.sum(xi), 2);
+    const c = K.chart($('#svm-svg'), { width: 380, height: 380, x: [0, 6], y: [0, 6], margin: { left: 34, bottom: 34, right: 10, top: 10 } });
+    const G = 48, st = 6 / G;
+    for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) { const x = [(i + 0.5) * st, (j + 0.5) * st], v = M.dec(x);
+      const rc = c.rect(x[0] - st / 2, x[1] - st / 2, x[0] + st / 2, x[1] + st / 2, v >= 0 ? 's1' : 's2'); rc.style.stroke = 'none'; rc.style.fillOpacity = Math.abs(v) < 1 ? 0.07 : 0.17; }
+    c.axes({ xTicks: 6, yTicks: 6, xLabel: 'x₁', yLabel: 'x₂', grid: false, xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 0) });
+    if (kern === 'lin' && Math.abs(M.w[1]) + Math.abs(M.w[0]) > 1e-9) {
+      [0, 1, -1].forEach(lv => { const cls = lv ? 'muted line dash thin' : 's4 line';
+        if (Math.abs(M.w[1]) > 1e-9) c.line(0, (lv - M.b) / M.w[1], 6, (lv - M.b - 6 * M.w[0]) / M.w[1], cls); else c.line((lv - M.b) / M.w[0], 0, (lv - M.b) / M.w[0], 6, cls); });
+    } else {
+      // Contornos aproximados: marca las celdas donde f cambia de signo o cruza ±1.
+      for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) { const x = [(i + 0.5) * st, (j + 0.5) * st], v = M.dec(x), vr = M.dec([x[0] + st, x[1]]), vu = M.dec([x[0], x[1] + st]);
+        [[0, 's4'], [1, 'muted'], [-1, 'muted']].forEach(([lv, cl]) => { if ((v - lv) * (vr - lv) < 0 || (v - lv) * (vu - lv) < 0) c.dot(x[0] + st / 2, x[1] + st / 2, lv ? 0.9 : 1.5, cl); }); }
+    }
+    P.forEach((p, k) => { const d = c.dot(p[0], p[1], 6, (p[2] > 0 ? 's1' : 's2') + ' dot drag'); d.dataset.i = k;
+      if (sv[k]) { const ring = c.dot(p[0], p[1], 10, 'muted'); ring.style.fill = 'none'; ring.style.stroke = 'var(--lab-text)'; ring.style.strokeWidth = 1.6; } });
+    if (dataSeg.get() === 'cuatro') P.forEach((p, k) => c.text(p[0], p[1], 'x' + (k + 1), { dx: 9, dy: -8, class: 'strong' }));
+    const rows = P.map((p, k) => ({ k, a: M.al[k], f: fs[k], xi: xi[k] })).filter(o => o.a > 1e-6 || P.length <= 6).sort((u, v) => v.a - u.a).slice(0, 10);
+    $('#svm-tab').innerHTML = '<table class="plab-table"><thead><tr><th>Punto</th><th>y</th><th>α</th><th>y·f(x)</th><th>ξ</th></tr></thead><tbody>' +
+      rows.map(o => `<tr${o.a > 1e-6 ? ' class="hl"' : ''}><td>x${o.k + 1}</td><td>${P[o.k][2] > 0 ? '+1' : '−1'}</td><td>${K.fmt(o.a, 3)}</td><td>${K.fmt(P[o.k][2] * o.f, 3)}</td><td>${K.fmt(o.xi, 3)}</td></tr>`).join('') +
+      `</tbody></table><p class="plab-sub" style="margin:.4rem 0 0">${P.length > 6 ? 'Se muestran los vectores de soporte con mayor α. ' : ''}Los puntos con α = 0 no influyen en la frontera. α = C indica un punto dentro del margen o mal clasificado.</p>`;
+    const note = $('#svm-note'), nsv = sv.filter(Boolean).length;
+    if (kern === 'lin' && dataSeg.get() === 'anillo') { note.className = 'plab-note bad'; note.textContent = 'Ninguna recta separa un anillo: cambia al núcleo RBF.'; }
+    else if (C >= 100 && errs === 0) { note.className = 'plab-note good'; note.textContent = `Margen duro: ${nsv} vectores de soporte sostienen la frontera${kern === 'lin' ? ` con margen ${K.fmt(2 / Math.hypot(M.w[0], M.w[1]), 3)}` : ''}. Arrastra un punto que no sea vector de soporte: mientras no entre en la banda, la frontera no se mueve.`; }
+    else { note.className = 'plab-note'; note.textContent = `Con C = ${K.fmt(C, 2)} se tolera holgura (Σξ = ${K.fmt(K.sum(xi), 2)}): ${nsv} vectores de soporte, ${errs} error(es) de entrenamiento. Un C pequeño ensancha el margen y hace la frontera más estable; uno grande la ajusta a cada punto.`; }
+  }
+  const svg = $('#svm-svg'); let drag = -1;
+  svg.addEventListener('pointerdown', e => { const t = e.target.closest('[data-i]'); if (t) { drag = +t.dataset.i; svg.setPointerCapture(e.pointerId); } });
+  svg.addEventListener('pointermove', e => { if (drag < 0) return; const [x, y] = svg.__chart.pointer(e); P[drag] = [K.clamp(Math.round(x * 10) / 10, 0.1, 5.9), K.clamp(Math.round(y * 10) / 10, 0.1, 5.9), P[drag][2]]; render(); });
+  svg.addEventListener('pointerup', () => { drag = -1; });
+  root.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+En la versión web, este laboratorio resuelve la SVM con SMO y permite arrastrar los puntos. Valores de referencia con los cuatro puntos y C = 1000: tres vectores de soporte con $\alpha = 0.222, 0.222, 0.444$, $\mathbf{w} = (0.667, 0.667)$, $b = -3$ y margen 2.12. Con datos en anillo, solo el núcleo RBF produce una frontera adecuada.
+:::
+
+**Guía del laboratorio.**
+
+1. Comprueba en la tabla los multiplicadores del ejemplo a mano y el margen 2.12.
+2. Predice antes de mover: si arrastras $\mathbf{x}_4$ hacia $(5, 5)$, ¿cambia la frontera? ¿Y si lo arrastras a $(3.2, 2.0)$?
+3. Arrastra $\mathbf{x}_2$ hasta $(3.5, 1.5)$. ¿Cuánto gira la frontera? Compara con el resultado de `scikit-learn` en el texto.
+4. Con *Traslape*, baja C de 1000 a 0.01. ¿Qué pasa con el número de vectores de soporte, el margen y los errores de entrenamiento?
+5. Con *Anillo* y RBF, sube γ hasta el máximo. ¿Qué forma toma la frontera? ¿Por qué un γ grande sobreajusta?
 
 ## SVM para regresión (SVR)
 
