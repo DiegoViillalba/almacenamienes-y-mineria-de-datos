@@ -1,0 +1,513 @@
+---
+title: "Práctica integradora: segmentar pingüinos"
+pagetitle: "Práctica integradora de aprendizaje no supervisado: segmentación de los pingüinos de Palmer"
+open-graph:
+  description: "Un análisis no supervisado completo con los pingüinos del archipiélago Palmer: preparación, tendencia de agrupamiento, reducción de dimensionalidad, elección del número de grupos, comparación de algoritmos, validación interna, externa y por estabilidad, perfilado, anomalías y datos mixtos, con laboratorio interactivo."
+twitter-card:
+  description: "Un análisis no supervisado completo con los pingüinos del archipiélago Palmer: preparación, tendencia de agrupamiento, reducción de dimensionalidad, elección del número de grupos, comparación de algoritmos, validación interna, externa y por estabilidad, perfilado, anomalías y datos mixtos, con laboratorio interactivo."
+description: "Un análisis no supervisado completo con los pingüinos del archipiélago Palmer: preparación, tendencia de agrupamiento, reducción de dimensionalidad, elección del número de grupos, comparación de algoritmos, validación interna, externa y por estabilidad, perfilado, anomalías y datos mixtos, con laboratorio interactivo."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../intro_mineria/referencias_eda.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+Los capítulos anteriores estudiaron cada herramienta por separado y con ejemplos pequeños. Esta práctica las reúne en un análisis completo, siguiendo el flujo de trabajo del capítulo introductorio: propósito, preparación, representación, algoritmos, validación e interpretación. Usaremos los datos de los **pingüinos del archipiélago Palmer**, en la Antártida, recolectados por la Dra. Kristen Gorman entre 2007 y 2009 [@gorman2014structural; @horst2020palmerpenguins], que ya aparecieron en el capítulo de clasificación asociativa.
+
+Los datos traen la **especie** de cada pingüino. La guardaremos bajo llave: el análisis no la usará en ningún momento y solo al final la sacaremos para comparar. Así reproducimos la situación de un biólogo que mide animales sin saber cuántas especies hay, y podemos comprobar, por una vez, qué tan bien funcionan los métodos.
+
+## 1. Propósito y datos
+
+**Pregunta.** A partir de cuatro medidas corporales, ¿existen grupos naturales de pingüinos? ¿Cuántos? ¿Cómo se describen?
+
+```{python}
+#| label: pg-carga
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+pinguinos = pd.read_csv("../../docs/data/penguins.csv")
+medidas = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm", "body_mass_g"]
+nombres = {"bill_length_mm": "largo del pico (mm)", "bill_depth_mm": "alto del pico (mm)",
+           "flipper_length_mm": "aleta (mm)", "body_mass_g": "masa (g)"}
+
+print(pinguinos.shape)
+print(pinguinos.isna().sum().to_dict())
+print(pinguinos.sex.value_counts(dropna=False).to_dict())
+```
+
+Hay 344 pingüinos. Dos no tienen ninguna medida y nueve más no tienen el sexo registrado. Como el sexo servirá para una validación posterior, conservamos los 333 registros completos y separamos las variables que **no** se usarán para agrupar.
+
+```{python}
+#| label: pg-preparacion
+datos = pinguinos.dropna(subset=medidas + ["sex"]).query("sex in ['MALE', 'FEMALE']").reset_index(drop=True)
+X = datos[medidas]
+bajo_llave = datos[["species", "island", "sex"]]       # solo para validar al final
+print(len(datos), "pingüinos")
+print(X.describe().round(1).T[["mean", "std", "min", "max"]])
+```
+
+## 2. Preparación: la escala
+
+Las cuatro medidas tienen unidades muy distintas: la masa ronda los 4 000 g con una desviación de 800 g, mientras que el alto del pico tiene una desviación de 2 mm. Como vimos en el capítulo introductorio, sin escalar, la masa dominaría cualquier distancia. Estandarizamos.
+
+```{python}
+#| label: pg-escala
+from sklearn.preprocessing import StandardScaler
+
+escala = StandardScaler().fit(X)
+Z = escala.transform(X)
+aporte = X.var() / X.var().sum()
+print("proporción de la varianza total por variable, sin escalar:")
+print(aporte.round(4).to_dict())
+```
+
+Sin escalar, la masa aporta el 99.96 % de la varianza: un análisis en unidades originales sería un análisis de la masa.
+
+```{python}
+#| label: fig-pg-pares
+#| fig-cap: "Diagramas de dispersión de las cuatro medidas estandarizadas, sin colores: así es como ve los datos el análisis no supervisado. Ya se adivinan al menos dos grupos, muy claros en las combinaciones con la aleta o el alto del pico."
+fig, axes = plt.subplots(4, 4, figsize=(9, 9))
+for i in range(4):
+    for j in range(4):
+        ax = axes[i, j]
+        if i == j:
+            ax.hist(Z[:, i], bins=25, color="#9aa3b5")
+        else:
+            ax.scatter(Z[:, j], Z[:, i], s=4, color="#2563eb", alpha=0.6)
+        ax.set_xticks([]); ax.set_yticks([])
+        if j == 0: ax.set_ylabel(nombres[medidas[i]], fontsize=8)
+        if i == 3: ax.set_xlabel(nombres[medidas[j]], fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+## 3. ¿Hay grupos? Tendencia de agrupamiento
+
+```{python}
+#| label: pg-hopkins
+from sklearn.neighbors import NearestNeighbors
+
+def hopkins(X, fraccion=0.1, repeticiones=20, semilla=0):
+    rng = np.random.default_rng(semilla)
+    nn = NearestNeighbors(n_neighbors=2).fit(X)
+    m = max(1, int(fraccion * len(X)))
+    valores = []
+    for _ in range(repeticiones):
+        u = nn.kneighbors(rng.uniform(X.min(axis=0), X.max(axis=0), (m, X.shape[1])), n_neighbors=1)[0].ravel()
+        w = nn.kneighbors(X[rng.choice(len(X), m, replace=False)], n_neighbors=2)[0][:, 1]
+        valores.append(u.sum() / (u.sum() + w.sum()))
+    return np.mean(valores)
+
+print(f"Hopkins (pingüinos estandarizados): {hopkins(Z):.2f}")
+print(f"Hopkins (ruido uniforme del mismo tamaño): {hopkins(np.random.default_rng(1).uniform(size=Z.shape)):.2f}")
+```
+
+Un valor de Hopkins muy por encima de 0.5 confirma que vale la pena buscar grupos.
+
+## 4. Representación: PCA y UMAP
+
+Con solo cuatro variables podríamos agrupar directamente, pero una representación de dos dimensiones ayuda a ver la estructura y a revisar los resultados.
+
+```{python}
+#| label: fig-pg-mapas
+#| fig-cap: "Los pingüinos en dos dimensiones: PCA (izquierda; las dos primeras componentes explican la mayor parte de la varianza) y UMAP (derecha). Ambos muestran un grupo muy separado y una masa mayor que parece contener dos subgrupos."
+from sklearn.decomposition import PCA
+import umap
+
+pca = PCA().fit(Z)
+P2 = pca.transform(Z)[:, :2]
+U2 = umap.UMAP(n_neighbors=20, min_dist=0.2, random_state=0).fit_transform(Z)
+print("varianza explicada por componente:", pca.explained_variance_ratio_.round(3))
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+axes[0].scatter(*P2.T, s=8, color="#2563eb"); axes[0].set_title("PCA"); axes[0].set_xlabel("CP1"); axes[0].set_ylabel("CP2")
+axes[1].scatter(*U2.T, s=8, color="#2563eb"); axes[1].set_title("UMAP"); axes[1].set_xticks([]); axes[1].set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+## 5. ¿Cuántos grupos?
+
+Calculamos los criterios del capítulo de validación para $k$ de 2 a 7 con $k$-medias, y el BIC con mezclas gaussianas.
+
+```{python}
+#| label: fig-pg-k
+#| fig-cap: "Criterios para elegir el número de grupos. La silueta, Calinski-Harabasz y Davies-Bouldin favorecen k = 2 (un grupo muy separado frente al resto) y el codo de W es suave; el BIC de la mezcla gaussiana tiene su mínimo en k = 3."
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score, adjusted_rand_score
+
+filas = []
+for k in range(2, 8):
+    km = KMeans(n_clusters=k, n_init=20, random_state=0).fit(Z)
+    gm = GaussianMixture(n_components=k, covariance_type="full", n_init=3, random_state=0).fit(Z)
+    filas.append({"k": k, "W": km.inertia_, "silueta": silhouette_score(Z, km.labels_),
+                  "CH": calinski_harabasz_score(Z, km.labels_), "DB": davies_bouldin_score(Z, km.labels_), "BIC (GMM)": gm.bic(Z)})
+criterios = pd.DataFrame(filas).set_index("k")
+print(criterios.round(3))
+
+fig, axes = plt.subplots(1, 5, figsize=(15, 2.8))
+for ax, col in zip(axes, criterios.columns):
+    ax.plot(criterios.index, criterios[col], "o-", color="#2563eb"); ax.set_title(col); ax.set_xlabel("k"); ax.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+Los criterios no coinciden, y eso es información: hay un nivel de estructura muy claro con **dos** grupos y otro, más sutil, con **tres**. Antes de decidir, revisemos la estabilidad.
+
+```{python}
+#| label: pg-estabilidad
+def estabilidad(Z, k, repeticiones=40, fraccion=0.8, semilla=0):
+    rng = np.random.default_rng(semilla)
+    n, m = len(Z), int(fraccion * len(Z))
+    aris = []
+    for r in range(repeticiones):
+        a, b = rng.choice(n, m, replace=False), rng.choice(n, m, replace=False)
+        comunes = np.intersect1d(a, b)
+        ka = KMeans(n_clusters=k, n_init=5, random_state=2 * r).fit(Z[a])
+        kb = KMeans(n_clusters=k, n_init=5, random_state=2 * r + 1).fit(Z[b])
+        aris.append(adjusted_rand_score(ka.predict(Z[comunes]), kb.predict(Z[comunes])))
+    return np.mean(aris), np.std(aris)
+
+for k in range(2, 7):
+    media, de = estabilidad(Z, k)
+    print(f"k = {k}: ARI entre submuestras = {media:.3f} ± {de:.3f}")
+```
+
+Con $k = 2$ la partición es idéntica en todas las submuestras y con $k = 3$ es muy estable. Con $k = 4$ la estabilidad baja y varía mucho: el cuarto grupo se forma de manera distinta cada vez. Con $k = 5$ vuelve a subir, una pista de que existe otro nivel de estructura (la sección 9 mostrará cuál) y un recordatorio de que la estabilidad es una condición necesaria, no suficiente. Tomamos $k = 3$ como hipótesis principal, sin olvidar que el nivel de dos grupos es el más evidente.
+
+## 6. Comparar algoritmos
+
+```{python}
+#| label: pg-algoritmos
+from sklearn.cluster import AgglomerativeClustering, HDBSCAN, SpectralClustering
+
+modelos = {
+    "k-medias (k = 3)": KMeans(n_clusters=3, n_init=20, random_state=0),
+    "Ward (k = 3)": AgglomerativeClustering(n_clusters=3, linkage="ward"),
+    "Enlace promedio (k = 3)": AgglomerativeClustering(n_clusters=3, linkage="average"),
+    "Mezcla gaussiana (k = 3)": GaussianMixture(n_components=3, covariance_type="full", n_init=5, random_state=0),
+    "Espectral (k = 3)": SpectralClustering(n_clusters=3, affinity="nearest_neighbors", n_neighbors=15, random_state=0),
+    "HDBSCAN (mín. 15)": HDBSCAN(min_cluster_size=15),
+}
+etiquetas = {}
+for nombre, modelo in modelos.items():
+    etiquetas[nombre] = modelo.fit_predict(Z)
+
+resumen = pd.DataFrame({nombre: {
+    "grupos": len(set(lab) - {-1}),
+    "ruido": np.mean(lab == -1),
+    "silueta": silhouette_score(Z[lab >= 0], lab[lab >= 0]),
+} for nombre, lab in etiquetas.items()}).T
+print(resumen.round(3))
+```
+
+Con los criterios internos, todos los métodos parecen razonables, y HDBSCAN, que decide solo el número de grupos, encuentra **dos**. Sin la especie, aquí terminaría la evidencia numérica y empezaría la interpretación.
+
+## 7. Abrir la caja: validación externa
+
+Ahora sí sacamos la especie y el sexo. Recordemos que ninguno se usó para agrupar.
+
+```{python}
+#| label: pg-externa
+externa = pd.DataFrame({nombre: {
+    "ARI con la especie": adjusted_rand_score(bajo_llave.species, lab),
+    "ARI con el sexo": adjusted_rand_score(bajo_llave.sex, lab),
+    "ARI con la isla": adjusted_rand_score(bajo_llave.island, lab),
+} for nombre, lab in etiquetas.items()}).T
+print(externa.round(3))
+```
+
+```{python}
+#| label: pg-contingencia
+for nombre in ["k-medias (k = 3)", "Mezcla gaussiana (k = 3)"]:
+    print(f"\n{nombre}")
+    print(pd.crosstab(etiquetas[nombre], bajo_llave.species, rownames=["grupo"], colnames=["especie"]))
+```
+
+Varios hallazgos:
+
+- La **mezcla gaussiana** con covarianza completa recupera las especies casi a la perfección. Las especies son nubes **elípticas** inclinadas (las medidas están correlacionadas dentro de cada especie), justo lo que supone ese modelo.
+- **$k$-medias** separa perfectamente a los Gentoo, pero confunde a una parte de los Adelia con los Barbijo (*Chinstrap*): su supuesto de grupos esféricos y de tamaño parecido no encaja, porque los Barbijo son pocos (68) y se traslapan con los Adelia en tres de las cuatro medidas.
+- **HDBSCAN** ve dos grupos: Gentoo contra el resto. Desde la densidad, Adelia y Barbijo forman una sola región continua.
+- Ningún método se acerca al **sexo**: la estructura dominante en estas medidas es la especie. La asociación moderada con la **isla** (ARI cercano a 0.35) es indirecta: los Gentoo solo viven en una isla (ejercicio 4).
+
+## 8. Perfilar los grupos
+
+Para comunicar los grupos se describen en unidades originales. Usamos la mezcla gaussiana.
+
+```{python}
+#| label: pg-perfil
+grupo = etiquetas["Mezcla gaussiana (k = 3)"]
+perfil = X.assign(grupo=grupo).groupby("grupo").agg(["mean"]).round(1)
+perfil.columns = [nombres[c] for c, _ in perfil.columns]
+perfil["pingüinos"] = pd.Series(grupo).value_counts().sort_index().values
+print(perfil)
+```
+
+Un biólogo describiría los grupos así: uno de pingüinos **grandes** con aletas largas y pico **bajo** (los Gentoo); otro de pico **corto y alto** (Adelia); y otro de pico **largo y alto**, de tamaño similar al anterior (Barbijo). La variable que distingue a los dos últimos es el largo del pico, que en el diagrama de pares se veía como una separación sutil.
+
+```{python}
+#| label: fig-pg-perfil
+#| fig-cap: "Perfil de los tres grupos de la mezcla gaussiana: media estandarizada de cada medida. Las barras resumen en una sola figura lo que distingue a cada grupo."
+medias_z = pd.DataFrame(Z, columns=[nombres[c] for c in medidas]).assign(grupo=grupo).groupby("grupo").mean()
+ax = medias_z.T.plot.bar(figsize=(8, 3.5), color=["#2563eb", "#ea580c", "#16a34a"], rot=0)
+ax.axhline(0, color="black", lw=0.8); ax.set_ylabel("media estandarizada"); ax.legend(title="grupo")
+plt.tight_layout()
+plt.show()
+```
+
+## 9. Estructura dentro de los grupos
+
+El clustering jerárquico sugería que la estructura es anidada. ¿Hay subgrupos dentro de cada especie? Agrupamos con $k = 2$ dentro de cada grupo, estandarizando de nuevo con los datos del propio grupo.
+
+```{python}
+#| label: pg-subgrupos
+for g in sorted(set(grupo)):
+    sub = X[grupo == g]
+    Zs = StandardScaler().fit_transform(sub)
+    lab = KMeans(n_clusters=2, n_init=20, random_state=0).fit_predict(Zs)
+    sexo = bajo_llave.sex[grupo == g]
+    print(f"grupo {g} ({len(sub)} pingüinos): ARI de los subgrupos con el sexo = {adjusted_rand_score(sexo, lab):.2f}")
+```
+
+Dentro de cada especie, los dos subgrupos corresponden aproximadamente a **machos y hembras**: los machos son más grandes en todas las medidas. El sexo no aparecía en el análisis global porque la diferencia entre especies es mucho mayor que la diferencia entre sexos, pero emerge al mirar dentro de cada grupo. Es un ejemplo de por qué conviene explorar varios niveles de una jerarquía.
+
+## 10. Casos raros
+
+```{python}
+#| label: pg-anomalias
+from sklearn.neighbors import LocalOutlierFactor
+
+lof = LocalOutlierFactor(n_neighbors=20).fit(Z)
+puntuacion = -lof.negative_outlier_factor_
+raros = datos.assign(LOF=puntuacion.round(2)).sort_values("LOF", ascending=False).head(5)
+print(raros[medidas + ["species", "sex", "LOF"]])
+```
+
+Los pingüinos con mayor LOF tienen combinaciones inusuales para su grupo, por ejemplo un pico excepcionalmente largo para su tamaño. Antes de descartarlos habría que verificar con el equipo de campo si son errores de medición o individuos genuinamente atípicos: una anomalía es una hipótesis, no un veredicto.
+
+## 11. ¿Y si agregamos variables categóricas?
+
+La isla y el sexo son categóricos. Con la distancia de Gower del capítulo de similitud se pueden combinar con las medidas. Al agregar el sexo con el mismo peso que cada medida, el resultado cambia por completo:
+
+```{python}
+#| label: pg-gower
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
+
+def gower(df, numericas, categoricas, pesos):
+    total = np.zeros((len(df), len(df)))
+    for col, w in zip(numericas + categoricas, pesos):
+        x = df[col].to_numpy()
+        if col in numericas:
+            d = np.abs(x[:, None] - x[None, :]) / (x.max() - x.min())
+        else:
+            d = (x[:, None] != x[None, :]).astype(float)
+        total += w * d
+    return total / sum(pesos)
+
+mixto = datos[medidas + ["sex"]]
+for etiqueta, pesos in [("solo medidas", [1, 1, 1, 1, 0]), ("medidas + sexo (peso 1)", [1, 1, 1, 1, 1]), ("medidas + sexo (peso 0.25)", [1, 1, 1, 1, 0.25])]:
+    G = gower(mixto, medidas, ["sex"], pesos)
+    lab = fcluster(linkage(squareform(G, checks=False), method="average"), t=3, criterion="maxclust")
+    print(f"{etiqueta:>28}: ARI especie = {adjusted_rand_score(bajo_llave.species, lab):.2f}, "
+          f"ARI sexo = {adjusted_rand_score(bajo_llave.sex, lab):.2f}")
+```
+
+Con peso 1, el sexo, que es binario y aporta un desacuerdo completo de 1 a la mitad de los pares, se vuelve la variable dominante. Es el mismo fenómeno que vimos con Ana y sus vecinos: **la elección de variables y pesos decide qué estructura se encuentra**.
+
+## Laboratorio: las variables deciden los grupos
+
+Elige qué medidas entran al análisis (siempre estandarizadas), el algoritmo y el número de grupos. Las tablas cruzan los grupos con la especie y con el sexo, que el algoritmo nunca ve. El estado inicial usa las cuatro medidas con $k$-medias y $k = 3$, como en la sección 7.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="pg-lab">
+  <p class="plab-eyebrow">Laboratorio · Práctica integradora</p>
+  <h3 class="plab-title">¿Qué grupos encuentras con cada selección de variables?</h3>
+  <p class="plab-sub">Los colores del diagrama son los grupos encontrados; la especie solo aparece en las tablas de validación.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Variables para agrupar
+      <div id="pg-vars" style="display:flex;flex-wrap:wrap;gap:.2rem .9rem;color:var(--lab-text)"></div>
+    </div>
+    <div class="plab-field">Algoritmo
+      <div class="plab-seg" id="pg-alg"><button data-value="km" aria-pressed="true">k-medias</button><button data-value="ward">Ward</button></div>
+    </div>
+    <label>Grupos k: <b id="pg-k-v"></b><input type="range" id="pg-k" min="2" max="6" step="1" value="3"></label>
+  </div>
+  <div class="plab-controls">
+    <label>Eje horizontal<select id="pg-x"></select></label>
+    <label>Eje vertical<select id="pg-y"></select></label>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Silueta</span><strong id="pg-sil"></strong></div>
+    <div class="plab-stat"><span>ARI con la especie</span><strong id="pg-ari-sp"></strong></div>
+    <div class="plab-stat"><span>ARI con el sexo</span><strong id="pg-ari-sx"></strong></div>
+    <div class="plab-stat"><span>Tamaños de los grupos</span><strong id="pg-sizes"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Pingüinos por grupo encontrado</h4><svg id="pg-svg" role="img" aria-label="Pingüinos en dos medidas elegidas, coloreados por el grupo encontrado"></svg></div>
+    <div class="plab-panel"><h4>Validación (variables bajo llave)</h4><div id="pg-tab1" class="plab-scroll"></div><div id="pg-tab2" class="plab-scroll" style="margin-top:.6rem"></div></div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem"><h4>Perfil de los grupos (medias en unidades originales)</h4><div id="pg-prof" class="plab-scroll"></div></div>
+  <p class="plab-note" id="pg-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con las cuatro medidas, compara k-medias y Ward con k = 3. ¿Cuál separa mejor a los Barbijo? Revisa la tabla cruzada.</li>
+    <li>Quita la masa. <strong>Predice</strong> si el ARI con la especie subirá o bajará, y compruébalo.</li>
+    <li>Busca la combinación de variables y k que maximice el ARI con el sexo. ¿Qué variables usa? ¿Por qué el sexo nunca domina con las cuatro medidas?</li>
+    <li>Usa solo el largo del pico con k = 2 y luego con k = 3. ¿Qué especies quedan juntas en cada caso?</li>
+  </ol>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('pg-lab');
+  const $ = s => root.querySelector(s);
+  // Datos: largo y alto del pico, aleta, masa, especie (0 Adelia, 1 Barbijo, 2 Gentoo), sexo (0 hembra, 1 macho).
+  const RAW = [[39.1,18.7,181,3750,0,1],[39.5,17.4,186,3800,0,0],[40.3,18,195,3250,0,0],[36.7,19.3,193,3450,0,0],[39.3,20.6,190,3650,0,1],[38.9,17.8,181,3625,0,0],[39.2,19.6,195,4675,0,1],[41.1,17.6,182,3200,0,0],[38.6,21.2,191,3800,0,1],[34.6,21.1,198,4400,0,1],[36.6,17.8,185,3700,0,0],[38.7,19,195,3450,0,0],[42.5,20.7,197,4500,0,1],[34.4,18.4,184,3325,0,0],[46,21.5,194,4200,0,1],[37.8,18.3,174,3400,0,0],[37.7,18.7,180,3600,0,1],[35.9,19.2,189,3800,0,0],[38.2,18.1,185,3950,0,1],[38.8,17.2,180,3800,0,1],[35.3,18.9,187,3800,0,0],[40.6,18.6,183,3550,0,1],[40.5,17.9,187,3200,0,0],[37.9,18.6,172,3150,0,0],[40.5,18.9,180,3950,0,1],[39.5,16.7,178,3250,0,0],[37.2,18.1,178,3900,0,1],[39.5,17.8,188,3300,0,0],[40.9,18.9,184,3900,0,1],[36.4,17,195,3325,0,0],[39.2,21.1,196,4150,0,1],[38.8,20,190,3950,0,1],[42.2,18.5,180,3550,0,0],[37.6,19.3,181,3300,0,0],[39.8,19.1,184,4650,0,1],[36.5,18,182,3150,0,0],[40.8,18.4,195,3900,0,1],[36,18.5,186,3100,0,0],[44.1,19.7,196,4400,0,1],[37,16.9,185,3000,0,0],[39.6,18.8,190,4600,0,1],[41.1,19,182,3425,0,1],[36,17.9,190,3450,0,0],[42.3,21.2,191,4150,0,1],[39.6,17.7,186,3500,0,0],[40.1,18.9,188,4300,0,1],[35,17.9,190,3450,0,0],[42,19.5,200,4050,0,1],[34.5,18.1,187,2900,0,0],[41.4,18.6,191,3700,0,1],[39,17.5,186,3550,0,0],[40.6,18.8,193,3800,0,1],[36.5,16.6,181,2850,0,0],[37.6,19.1,194,3750,0,1],[35.7,16.9,185,3150,0,0],[41.3,21.1,195,4400,0,1],[37.6,17,185,3600,0,0],[41.1,18.2,192,4050,0,1],[36.4,17.1,184,2850,0,0],[41.6,18,192,3950,0,1],[35.5,16.2,195,3350,0,0],[41.1,19.1,188,4100,0,1],[35.9,16.6,190,3050,0,0],[41.8,19.4,198,4450,0,1],[33.5,19,190,3600,0,0],[39.7,18.4,190,3900,0,1],[39.6,17.2,196,3550,0,0],[45.8,18.9,197,4150,0,1],[35.5,17.5,190,3700,0,0],[42.8,18.5,195,4250,0,1],[40.9,16.8,191,3700,0,0],[37.2,19.4,184,3900,0,1],[36.2,16.1,187,3550,0,0],[42.1,19.1,195,4000,0,1],[34.6,17.2,189,3200,0,0],[42.9,17.6,196,4700,0,1],[36.7,18.8,187,3800,0,0],[35.1,19.4,193,4200,0,1],[37.3,17.8,191,3350,0,0],[41.3,20.3,194,3550,0,1],[36.3,19.5,190,3800,0,1],[36.9,18.6,189,3500,0,0],[38.3,19.2,189,3950,0,1],[38.9,18.8,190,3600,0,0],[35.7,18,202,3550,0,0],[41.1,18.1,205,4300,0,1],[34,17.1,185,3400,0,0],[39.6,18.1,186,4450,0,1],[36.2,17.3,187,3300,0,0],[40.8,18.9,208,4300,0,1],[38.1,18.6,190,3700,0,0],[40.3,18.5,196,4350,0,1],[33.1,16.1,178,2900,0,0],[43.2,18.5,192,4100,0,1],[35,17.9,192,3725,0,0],[41,20,203,4725,0,1],[37.7,16,183,3075,0,0],[37.8,20,190,4250,0,1],[37.9,18.6,193,2925,0,0],[39.7,18.9,184,3550,0,1],[38.6,17.2,199,3750,0,0],[38.2,20,190,3900,0,1],[38.1,17,181,3175,0,0],[43.2,19,197,4775,0,1],[38.1,16.5,198,3825,0,0],[45.6,20.3,191,4600,0,1],[39.7,17.7,193,3200,0,0],[42.2,19.5,197,4275,0,1],[39.6,20.7,191,3900,0,0],[42.7,18.3,196,4075,0,1],[38.6,17,188,2900,0,0],[37.3,20.5,199,3775,0,1],[35.7,17,189,3350,0,0],[41.1,18.6,189,3325,0,1],[36.2,17.2,187,3150,0,0],[37.7,19.8,198,3500,0,1],[40.2,17,176,3450,0,0],[41.4,18.5,202,3875,0,1],[35.2,15.9,186,3050,0,0],[40.6,19,199,4000,0,1],[38.8,17.6,191,3275,0,0],[41.5,18.3,195,4300,0,1],[39,17.1,191,3050,0,0],[44.1,18,210,4000,0,1],[38.5,17.9,190,3325,0,0],[43.1,19.2,197,3500,0,1],[36.8,18.5,193,3500,0,0],[37.5,18.5,199,4475,0,1],[38.1,17.6,187,3425,0,0],[41.1,17.5,190,3900,0,1],[35.6,17.5,191,3175,0,0],[40.2,20.1,200,3975,0,1],[37,16.5,185,3400,0,0],[39.7,17.9,193,4250,0,1],[40.2,17.1,193,3400,0,0],[40.6,17.2,187,3475,0,1],[32.1,15.5,188,3050,0,0],[40.7,17,190,3725,0,1],[37.3,16.8,192,3000,0,0],[39,18.7,185,3650,0,1],[39.2,18.6,190,4250,0,1],[36.6,18.4,184,3475,0,0],[36,17.8,195,3450,0,0],[37.8,18.1,193,3750,0,1],[36,17.1,187,3700,0,0],[41.5,18.5,201,4000,0,1],[46.5,17.9,192,3500,1,0],[50,19.5,196,3900,1,1],[51.3,19.2,193,3650,1,1],[45.4,18.7,188,3525,1,0],[52.7,19.8,197,3725,1,1],[45.2,17.8,198,3950,1,0],[46.1,18.2,178,3250,1,0],[51.3,18.2,197,3750,1,1],[46,18.9,195,4150,1,0],[51.3,19.9,198,3700,1,1],[46.6,17.8,193,3800,1,0],[51.7,20.3,194,3775,1,1],[47,17.3,185,3700,1,0],[52,18.1,201,4050,1,1],[45.9,17.1,190,3575,1,0],[50.5,19.6,201,4050,1,1],[50.3,20,197,3300,1,1],[58,17.8,181,3700,1,0],[46.4,18.6,190,3450,1,0],[49.2,18.2,195,4400,1,1],[42.4,17.3,181,3600,1,0],[48.5,17.5,191,3400,1,1],[43.2,16.6,187,2900,1,0],[50.6,19.4,193,3800,1,1],[46.7,17.9,195,3300,1,0],[52,19,197,4150,1,1],[50.5,18.4,200,3400,1,0],[49.5,19,200,3800,1,1],[46.4,17.8,191,3700,1,0],[52.8,20,205,4550,1,1],[40.9,16.6,187,3200,1,0],[54.2,20.8,201,4300,1,1],[42.5,16.7,187,3350,1,0],[51,18.8,203,4100,1,1],[49.7,18.6,195,3600,1,1],[47.5,16.8,199,3900,1,0],[47.6,18.3,195,3850,1,0],[52,20.7,210,4800,1,1],[46.9,16.6,192,2700,1,0],[53.5,19.9,205,4500,1,1],[49,19.5,210,3950,1,1],[46.2,17.5,187,3650,1,0],[50.9,19.1,196,3550,1,1],[45.5,17,196,3500,1,0],[50.9,17.9,196,3675,1,0],[50.8,18.5,201,4450,1,1],[50.1,17.9,190,3400,1,0],[49,19.6,212,4300,1,1],[51.5,18.7,187,3250,1,1],[49.8,17.3,198,3675,1,0],[48.1,16.4,199,3325,1,0],[51.4,19,201,3950,1,1],[45.7,17.3,193,3600,1,0],[50.7,19.7,203,4050,1,1],[42.5,17.3,187,3350,1,0],[52.2,18.8,197,3450,1,1],[45.2,16.6,191,3250,1,0],[49.3,19.9,203,4050,1,1],[50.2,18.8,202,3800,1,1],[45.6,19.4,194,3525,1,0],[51.9,19.5,206,3950,1,1],[46.8,16.5,189,3650,1,0],[45.7,17,195,3650,1,0],[55.8,19.8,207,4000,1,1],[43.5,18.1,202,3400,1,0],[49.6,18.2,193,3775,1,1],[50.8,19,210,4100,1,1],[50.2,18.7,198,3775,1,0],[46.1,13.2,211,4500,2,0],[50,16.3,230,5700,2,1],[48.7,14.1,210,4450,2,0],[50,15.2,218,5700,2,1],[47.6,14.5,215,5400,2,1],[46.5,13.5,210,4550,2,0],[45.4,14.6,211,4800,2,0],[46.7,15.3,219,5200,2,1],[43.3,13.4,209,4400,2,0],[46.8,15.4,215,5150,2,1],[40.9,13.7,214,4650,2,0],[49,16.1,216,5550,2,1],[45.5,13.7,214,4650,2,0],[48.4,14.6,213,5850,2,1],[45.8,14.6,210,4200,2,0],[49.3,15.7,217,5850,2,1],[42,13.5,210,4150,2,0],[49.2,15.2,221,6300,2,1],[46.2,14.5,209,4800,2,0],[48.7,15.1,222,5350,2,1],[50.2,14.3,218,5700,2,1],[45.1,14.5,215,5000,2,0],[46.5,14.5,213,4400,2,0],[46.3,15.8,215,5050,2,1],[42.9,13.1,215,5000,2,0],[46.1,15.1,215,5100,2,1],[47.8,15,215,5650,2,1],[48.2,14.3,210,4600,2,0],[50,15.3,220,5550,2,1],[47.3,15.3,222,5250,2,1],[42.8,14.2,209,4700,2,0],[45.1,14.5,207,5050,2,0],[59.6,17,230,6050,2,1],[49.1,14.8,220,5150,2,0],[48.4,16.3,220,5400,2,1],[42.6,13.7,213,4950,2,0],[44.4,17.3,219,5250,2,1],[44,13.6,208,4350,2,0],[48.7,15.7,208,5350,2,1],[42.7,13.7,208,3950,2,0],[49.6,16,225,5700,2,1],[45.3,13.7,210,4300,2,0],[49.6,15,216,4750,2,1],[50.5,15.9,222,5550,2,1],[43.6,13.9,217,4900,2,0],[45.5,13.9,210,4200,2,0],[50.5,15.9,225,5400,2,1],[44.9,13.3,213,5100,2,0],[45.2,15.8,215,5300,2,1],[46.6,14.2,210,4850,2,0],[48.5,14.1,220,5300,2,1],[45.1,14.4,210,4400,2,0],[50.1,15,225,5000,2,1],[46.5,14.4,217,4900,2,0],[45,15.4,220,5050,2,1],[43.8,13.9,208,4300,2,0],[45.5,15,220,5000,2,1],[43.2,14.5,208,4450,2,0],[50.4,15.3,224,5550,2,1],[45.3,13.8,208,4200,2,0],[46.2,14.9,221,5300,2,1],[45.7,13.9,214,4400,2,0],[54.3,15.7,231,5650,2,1],[45.8,14.2,219,4700,2,0],[49.8,16.8,230,5700,2,1],[49.5,16.2,229,5800,2,1],[43.5,14.2,220,4700,2,0],[50.7,15,223,5550,2,1],[47.7,15,216,4750,2,0],[46.4,15.6,221,5000,2,1],[48.2,15.6,221,5100,2,1],[46.5,14.8,217,5200,2,0],[46.4,15,216,4700,2,0],[48.6,16,230,5800,2,1],[47.5,14.2,209,4600,2,0],[51.1,16.3,220,6000,2,1],[45.2,13.8,215,4750,2,0],[45.2,16.4,223,5950,2,1],[49.1,14.5,212,4625,2,0],[52.5,15.6,221,5450,2,1],[47.4,14.6,212,4725,2,0],[50,15.9,224,5350,2,1],[44.9,13.8,212,4750,2,0],[50.8,17.3,228,5600,2,1],[43.4,14.4,218,4600,2,0],[51.3,14.2,218,5300,2,1],[47.5,14,212,4875,2,0],[52.1,17,230,5550,2,1],[47.5,15,218,4950,2,0],[52.2,17.1,228,5400,2,1],[45.5,14.5,212,4750,2,0],[49.5,16.1,224,5650,2,1],[44.5,14.7,214,4850,2,0],[50.8,15.7,226,5200,2,1],[49.4,15.8,216,4925,2,1],[46.9,14.6,222,4875,2,0],[48.4,14.4,203,4625,2,0],[51.1,16.5,225,5250,2,1],[48.5,15,219,4850,2,0],[55.9,17,228,5600,2,1],[47.2,15.5,215,4975,2,0],[49.1,15,228,5500,2,1],[46.8,16.1,215,5500,2,1],[41.7,14.7,210,4700,2,0],[53.4,15.8,219,5500,2,1],[43.3,14,208,4575,2,0],[48.1,15.1,209,5500,2,1],[50.5,15.2,216,5000,2,0],[49.8,15.9,229,5950,2,1],[43.5,15.2,213,4650,2,0],[51.5,16.3,230,5500,2,1],[46.2,14.1,217,4375,2,0],[55.1,16,230,5850,2,1],[48.8,16.2,222,6000,2,1],[47.2,13.7,214,4925,2,0],[46.8,14.3,215,4850,2,0],[50.4,15.7,222,5750,2,1],[45.2,14.8,212,5200,2,0],[49.9,16.1,213,5400,2,1]];
+  const VARS = ['largo del pico (mm)', 'alto del pico (mm)', 'aleta (mm)', 'masa (g)'];
+  const SP = ['Adelia', 'Barbijo', 'Gentoo'], SX = ['hembra', 'macho'], CLS = ['s1', 's2', 's3', 's4', 's5', 'muted'];
+  const mean = [0, 1, 2, 3].map(j => K.mean(RAW.map(r => r[j]))), sd = [0, 1, 2, 3].map(j => K.sd(RAW.map(r => r[j])));
+  const Z = RAW.map(r => [0, 1, 2, 3].map(j => (r[j] - mean[j]) / sd[j]));
+  $('#pg-vars').innerHTML = VARS.map((v, j) => `<label style="display:inline-flex;gap:.3rem;align-items:center;flex-direction:row;min-width:0"><input type="checkbox" data-j="${j}" checked> ${v}</label>`).join('');
+  ['#pg-x', '#pg-y'].forEach((s, a) => { $(s).innerHTML = VARS.map((v, j) => `<option value="${j}"${j === [0, 1][a] ? ' selected' : ''}>${v}</option>`).join(''); });
+  const alg = K.segmented($('#pg-alg'), render);
+  const d2 = (a, b, J) => K.sum(J.map(j => (a[j] - b[j]) ** 2));
+  function kmeans(J, k) {
+    const r = K.rng(7); let best = null;
+    for (let rep = 0; rep < 10; rep++) {
+      const C = [Z[Math.floor(r() * Z.length)].slice()];
+      while (C.length < k) { const D = Z.map(p => Math.min(...C.map(c => d2(p, c, J)))), t = K.sum(D); let u = r() * t, i = 0; while (i < Z.length - 1 && (u -= D[i]) > 0) i++; C.push(Z[i].slice()); }
+      let L = null;
+      for (let s = 0; s < 100; s++) {
+        const nl = Z.map(p => { let b = 0; C.forEach((c, j) => { if (d2(p, c, J) < d2(p, C[b], J)) b = j; }); return b; });
+        if (L && nl.every((v, i) => v === L[i])) break; L = nl;
+        C.forEach((c, j) => { const m = Z.filter((_, i) => L[i] === j); if (m.length) J.forEach(q => c[q] = K.mean(m.map(p => p[q]))); });
+      }
+      const W = K.sum(Z.map((p, i) => d2(p, C[L[i]], J)));
+      if (!best || W < best.W) best = { L, W };
+    }
+    return best.L;
+  }
+  // Ward con Lance-Williams sobre distancias al cuadrado (n = 333).
+  function ward(J, k) {
+    const n = Z.length; let act = Z.map((_, i) => i), size = Array(n).fill(1);
+    const D = Z.map(a => Z.map(b => d2(a, b, J)));
+    const memb = Z.map((_, i) => [i]);
+    while (act.length > k) {
+      let bi = -1, bj = -1, bv = Infinity;
+      for (let x = 0; x < act.length; x++) for (let y = x + 1; y < act.length; y++) { const v = D[act[x]][act[y]]; if (v < bv) { bv = v; bi = act[x]; bj = act[y]; } }
+      act.forEach(q => { if (q === bi || q === bj) return; const T = size[bi] + size[bj] + size[q]; const v = ((size[bi] + size[q]) * D[bi][q] + (size[bj] + size[q]) * D[bj][q] - size[q] * bv) / T; D[bi][q] = D[q][bi] = v; });
+      size[bi] += size[bj]; memb[bi] = memb[bi].concat(memb[bj]); act = act.filter(q => q !== bj);
+    }
+    const L = Array(n).fill(0); act.forEach((c, g) => memb[c].forEach(i => L[i] = g)); return L;
+  }
+  function relabel(L) { const ks = [...new Set(L)]; const m = ks.map(c => [c, K.mean(RAW.filter((_, i) => L[i] === c).map(r => r[3]))]).sort((a, b) => b[1] - a[1]); const map = {}; m.forEach(([c], g) => map[c] = g); return L.map(l => map[l]); }
+  function ari(a, b) {
+    const ka = [...new Set(a)], kb = [...new Set(b)], n = a.length, C2 = x => x * (x - 1) / 2;
+    let sij = 0; const ai = ka.map(() => 0), bj = kb.map(() => 0);
+    ka.forEach((x, i) => kb.forEach((y, j) => { const c = a.filter((v, t) => v === x && b[t] === y).length; sij += C2(c); ai[i] += c; bj[j] += c; }));
+    const sa = K.sum(ai.map(C2)), sb = K.sum(bj.map(C2)), e = sa * sb / C2(n), mx = (sa + sb) / 2;
+    return mx === e ? 1 : (sij - e) / (mx - e);
+  }
+  function silhouette(L, J) {
+    const ks = [...new Set(L)]; if (ks.length < 2) return NaN;
+    const dist = (a, b) => Math.sqrt(d2(a, b, J));
+    return K.mean(Z.map((p, i) => {
+      const own = Z.filter((_, j) => j !== i && L[j] === L[i]); if (!own.length) return 0;
+      const a = K.mean(own.map(q => dist(p, q)));
+      const b = Math.min(...ks.filter(c => c !== L[i]).map(c => K.mean(Z.filter((_, j) => L[j] === c).map(q => dist(p, q)))));
+      return (b - a) / Math.max(a, b);
+    }));
+  }
+  const cache = {};
+  function render() {
+    const J = [...root.querySelectorAll('#pg-vars input')].filter(c => c.checked).map(c => +c.dataset.j);
+    const k = +$('#pg-k').value; $('#pg-k-v').textContent = k;
+    const note = $('#pg-note');
+    if (!J.length) { note.className = 'plab-note bad'; note.textContent = 'Elige al menos una variable.'; return; }
+    const key = alg.get() + J.join('') + k;
+    const L = cache[key] = cache[key] || relabel(alg.get() === 'km' ? kmeans(J, k) : ward(J, k));
+    const sp = RAW.map(r => r[4]), sx = RAW.map(r => r[5]);
+    const aSp = ari(sp, L), aSx = ari(sx, L), sil = silhouette(L, J);
+    const xv = +$('#pg-x').value, yv = +$('#pg-y').value;
+    const lo = j => Math.min(...RAW.map(r => r[j])), hi = j => Math.max(...RAW.map(r => r[j]));
+    const pad = j => 0.05 * (hi(j) - lo(j));
+    const c = K.chart($('#pg-svg'), { width: 380, height: 320, x: [lo(xv) - pad(xv), hi(xv) + pad(xv)], y: [lo(yv) - pad(yv), hi(yv) + pad(yv)], margin: { left: 50, right: 10, top: 10, bottom: 40 } });
+    c.axes({ xTicks: 5, yTicks: 5, xLabel: VARS[xv], yLabel: VARS[yv], xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 0) });
+    RAW.forEach((r, i) => c.dot(r[xv], r[yv], 3.4, CLS[L[i] % 6] + ' dot'));
+    const groups = [...Array(k).keys()];
+    const sw = g => `<span style="color:var(--lab-${CLS[g % 6] === 'muted' ? 'axis' : CLS[g % 6]})">●</span> ${g + 1}`;
+    const ct = (lab, names) => '<table class="plab-table"><thead><tr><th>Grupo</th>' + names.map(n => `<th>${n}</th>`).join('') + '</tr></thead><tbody>' +
+      groups.map(g => `<tr><td>${sw(g)}</td>` + names.map((_, s) => { const v = RAW.filter((r, i) => L[i] === g && lab[i] === s).length; const tot = RAW.filter((_, i) => L[i] === g).length; return `<td${tot && v / tot > 0.8 ? ' class="hl"' : ''}>${v}</td>`; }).join('') + '</tr>').join('') + '</tbody></table>';
+    $('#pg-tab1').innerHTML = ct(sp, SP); $('#pg-tab2').innerHTML = ct(sx, SX);
+    $('#pg-prof').innerHTML = '<table class="plab-table"><thead><tr><th>Grupo</th><th>n</th>' + VARS.map(v => `<th>${v}</th>`).join('') + '</tr></thead><tbody>' +
+      groups.map(g => { const m = RAW.filter((_, i) => L[i] === g); return `<tr><td>${sw(g)}</td><td>${m.length}</td>` + [0, 1, 2, 3].map(j => `<td${J.includes(j) ? '' : ' style="opacity:.55"'}>${K.fmt(K.mean(m.map(r => r[j])), j < 2 ? 1 : 0)}</td>`).join('') + '</tr>'; }).join('') + '</tbody></table>';
+    $('#pg-sil').textContent = K.fmt(sil, 3); $('#pg-ari-sp').textContent = K.fmt(aSp, 3); $('#pg-ari-sx').textContent = K.fmt(aSx, 3);
+    $('#pg-sizes').textContent = groups.map(g => L.filter(l => l === g).length).join(' · ');
+    let msg = `${alg.get() === 'km' ? 'k-medias' : 'Ward'} con ${J.map(j => VARS[j].split(' (')[0]).join(', ')} y k = ${k}: ARI con la especie ${K.fmt(aSp, 2)}, con el sexo ${K.fmt(aSx, 2)}. `;
+    let cls = '';
+    if (aSp > 0.85) { msg += 'Los grupos reproducen casi exactamente las especies, sin haberlas visto.'; cls = 'good'; }
+    else if (aSx > 0.2) { msg += 'Con estas variables aparece estructura asociada al sexo: los machos son más grandes, pero la especie sigue mezclada.'; cls = 'warn'; }
+    else if (aSp > 0.6) msg += 'Los grupos capturan parte de las especies; revisa en la tabla cuáles se mezclan.';
+    else { msg += 'Los grupos casi no corresponden a ninguna variable externa: con esta selección, las medidas no separan bien las especies.'; cls = 'warn'; }
+    note.className = 'plab-note ' + cls; note.textContent = msg;
+  }
+  root.querySelectorAll('#pg-vars input').forEach(c => c.addEventListener('change', render));
+  ['#pg-k', '#pg-x', '#pg-y'].forEach(s => $(s).addEventListener(s === '#pg-k' ? 'input' : 'change', render));
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* Con las cuatro medidas estandarizadas, $k$-medias con $k = 3$ obtiene un ARI de 0.80 con la especie y prácticamente 0 con el sexo; usando solo largo del pico, alto del pico y aleta, el ARI con la especie sube a 0.92. La combinación de alto del pico y masa con $k = 3$ es la que más se asocia con el sexo (ARI de 0.23).
+:::
+
+## 12. Lo que aprendimos
+
+| Etapa | Decisión | Por qué importó |
+|---|---|---|
+| Preparación | estandarizar | sin escalar, la masa explicaba el 99.96 % de la varianza |
+| Tendencia | Hopkins | confirmó que había estructura antes de agrupar |
+| Número de grupos | combinar criterios y estabilidad | la silueta veía 2 grupos; el BIC, 3; ambos niveles eran reales |
+| Algoritmo | comparar supuestos | la mezcla gaussiana (elipses) superó a $k$-medias (esferas) |
+| Validación | variables «bajo llave» | permitió medir qué estructura se había encontrado: especie, no sexo ni isla |
+| Interpretación | perfiles en unidades originales | convirtió etiquetas numéricas en descripciones biológicas |
+| Jerarquía | agrupar dentro de los grupos | reveló el sexo como segundo nivel de estructura |
+| Datos mixtos | pesos explícitos en Gower | el peso de una variable binaria cambió por completo el resultado |
+
+: Decisiones del análisis y su efecto. {#tbl-pg-lecciones}
+
+En un problema real no tendríamos la especie para comprobar. Lo que sí tendríamos son las herramientas que nos llevaron a la respuesta correcta antes de verla: escalar con cuidado, verificar la tendencia, mirar varios criterios y la estabilidad, comparar algoritmos con supuestos distintos, explorar varios niveles de la jerarquía, perfilar los grupos y **contrastarlos con el conocimiento del dominio**.
+
+## Ejercicios
+
+1. Repite la sección 6 sin estandarizar. ¿Qué algoritmo se ve más afectado? Explica con la tabla de varianzas de la sección 2.
+2. Ajusta mezclas gaussianas con los cuatro tipos de covarianza (`full`, `tied`, `diag`, `spherical`) y $k = 3$. Compara su BIC y su ARI con la especie. ¿Qué tipo de covarianza se parece a $k$-medias?
+3. Aplica DBSCAN a las medidas estandarizadas eligiendo $\varepsilon$ con el gráfico de $k$-distancias. ¿Cuántos grupos encuentra? ¿Por qué coincide con HDBSCAN?
+4. Usa la isla como variable de validación externa en lugar de la especie. ¿Qué relación hay entre isla y especie en estos datos? (Pista: haz una tabla cruzada.)
+5. Repite la sección 9 con clustering jerárquico de Ward y dibuja el dendrograma de cada especie. ¿El corte en dos grupos es claro?
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

@@ -3,8 +3,8 @@
 Esta guía explica cómo están hechos los laboratorios interactivos del libro y cómo
 crear otros nuevos con el mismo estilo. Está escrita para docentes, colaboradores y
 agentes de IA. Los ejemplos de referencia están en las unidades de preprocesamiento
-(`unidades/preprocesamiento/4-*.qmd`), extracción de patrones y clasificación
-(`unidades/clasificadores/`).
+(`unidades/preprocesamiento/4-*.qmd`), extracción de patrones, clasificación
+(`unidades/clasificadores/`) y aprendizaje no supervisado (`unidades/clustering/`).
 
 **Archivos clave**
 
@@ -272,3 +272,13 @@ el navegador suele servir versiones en caché.
 | `capitulo_gmm.qmd` | EM paso a paso | Pasos E y M separados, color por responsabilidad (`color-mix`), log-verosimilitud monótona |
 | `capitulo_redes_neuronales.qmd` | Entrena una red en el navegador | MLP de una capa oculta con retropropagación en JS, animación con `setInterval`, cuatro conjuntos 2D |
 | `capitulo_pytorch_jax.qmd` | Los cinco pasos de PyTorch | `.plab-steps` con texto y demostración de la acumulación de gradientes sin `zero_grad()` |
+| `7-0-introduccion-no-supervisado.qmd` | La escala crea la estructura | Peso de una variable en escala logarítmica con atajos (`.plab-seg` sincronizado con un deslizador), k-medias con K-Means++ y reinicios, plano «que ve el algoritmo» con ejes de igual escala, curva del codo |
+| `capitulo_clustering_intro.qmd` | La forma de la distancia | Puntos arrastrables con selección por clic, bolas de Minkowski, elipse de Mahalanobis con covarianza muestral, sector del coseno, matriz de distancias sombreada con `color-mix` |
+| `capitulo_kmeans.qmd` | Algoritmo de Lloyd | Pasos asignar/mover, regiones de Voronoi en rejilla, centros arrastrables con trayectoria, K-Means++ con puntos escalados por D², mejor W de 30 reinicios como referencia |
+| `7-3-validacion-clustering.qmd` | Silueta punto por punto | a(i) y b(i) dibujados como líneas, gráfico de silueta por grupos, curvas de silueta/CH/DB según k, estadístico de Hopkins promediado |
+| `capitulo_jerarquico.qmd` | Construye el dendrograma | Aglomerativo con Lance-Williams (Ward con la convención de scipy), dendrograma progresivo, corte con unión-búsqueda, par que define cada fusión, correlación cofenética |
+| `capitulo_dbscan.qmd` | DBSCAN paso a paso; gráfico de alcanzabilidad | Recorrido con cola visible, núcleo/borde/ruido, gráfico de k-distancias; OPTICS con orden y alcanzabilidad, extracción tipo DBSCAN por umbral |
+| `7-6-deteccion-anomalias.qmd` | Cuatro detectores | Mapa de puntuación en rejilla, Mahalanobis clásica y robusta (pasos C del MCD), k vecinos, LOF, Isolation Forest con 100 árboles, contaminación y precisión con anomalías plantadas |
+| `7-7-mds-isomap.qmd` | Desenrollar una espiral | Grafo de k vecinos con atajos resaltados, Floyd-Warshall, MDS clásico por iteración de potencias, componentes conexas, correlación de rangos |
+| `capitulo_tsne_umap.qmd` | t-SNE en el navegador | t-SNE exacto (búsqueda binaria de σ, exageración temprana, momento y ganancias), animación con `setInterval`, KL por iteración, proporciones de distancia y dispersión |
+| `7-9-practica-segmentacion.qmd` | Las variables deciden los grupos | 333 pingüinos incrustados desde Python, casillas de variables, k-medias y Ward, ARI y tablas cruzadas con variables «bajo llave», perfiles en unidades originales |

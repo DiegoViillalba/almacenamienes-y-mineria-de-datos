@@ -1,372 +1,574 @@
 ---
 title: "Clustering jerárquico"
-description: "Desarrolla el clustering jerárquico aglomerativo y divisivo, la construcción del dendrograma y los criterios de enlace entre grupos."
-pagetitle: "Clustering jerárquico"
+pagetitle: "Clustering jerárquico: enlace simple, completo, promedio y Ward, dendrogramas y correlación cofenética"
 open-graph:
-  description: "Desarrolla el clustering jerárquico aglomerativo y divisivo, la construcción del dendrograma y los criterios de enlace entre grupos."
+  description: "Clustering jerárquico aglomerativo paso a paso: matriz de distancias, criterios de enlace simple, completo, promedio y Ward, fórmula de Lance-Williams, lectura y corte del dendrograma, correlación cofenética, efecto cadena, relación con el árbol de expansión mínima y escalabilidad, con desarrollo manual, laboratorio interactivo y código en Python."
 twitter-card:
-  description: "Desarrolla el clustering jerárquico aglomerativo y divisivo, la construcción del dendrograma y los criterios de enlace entre grupos."
+  description: "Clustering jerárquico aglomerativo paso a paso: matriz de distancias, criterios de enlace simple, completo, promedio y Ward, fórmula de Lance-Williams, lectura y corte del dendrograma, correlación cofenética, efecto cadena, relación con el árbol de expansión mínima y escalabilidad, con desarrollo manual, laboratorio interactivo y código en Python."
+description: "Clustering jerárquico aglomerativo paso a paso: matriz de distancias, criterios de enlace simple, completo, promedio y Ward, fórmula de Lance-Williams, lectura y corte del dendrograma, correlación cofenética, efecto cadena, relación con el árbol de expansión mínima y escalabilidad, con desarrollo manual, laboratorio interactivo y código en Python."
 author: "Diego Villalba"
-date: today
 lang: es
 format:
   html:
     toc: true
     toc-depth: 3
     toc-title: "Contenido"
-    number-sections: true
     code-fold: true
     code-tools: true
     code-summary: "Mostrar código"
-    fig-align: center
     theme: cosmo
     highlight-style: github
-    smooth-scroll: true
-  pdf:
-    toc: true
-    toc-depth: 3
-    number-sections: true
-    documentclass: scrbook
-    papersize: letter
-    fontsize: 11pt
-    geometry: margin=2.5cm
-    keep-tex: false
 execute:
   echo: true
   warning: false
   message: false
-  cache: false
-bibliography: [referencias_clustering.bib, ../../references.bib]
-crossref:
-  fig-title: "Figura"
-  tbl-title: "Tabla"
-  eq-prefix: "Ec."
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../../references.bib]
 jupyter: python3
 ---
 
-El clustering jerárquico construye una jerarquía anidada de agrupaciones en vez de producir una única partición. Esta jerarquía se representa como un árbol binario llamado dendrograma, en el que las hojas son las observaciones individuales y la raíz es un único grupo que contiene a todas. El analista puede cortar el dendrograma a cualquier altura para obtener una partición con el número de grupos deseado.
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-Esta propiedad hace que el clustering jerárquico sea especialmente útil cuando no se conoce de antemano el número de grupos, o cuando se desea explorar estructuras a distintos niveles de granularidad. Además, el dendrograma proporciona una representación visual rica de la estructura de los datos que facilita la interpretación.
+$k$-medias obliga a decidir el número de grupos antes de empezar y entrega una única partición. Muchas estructuras reales, en cambio, son **anidadas**: las especies se agrupan en géneros y los géneros en familias; los clientes de un segmento «familias jóvenes» se dividen en «con hijos pequeños» y «con adolescentes». El **clustering jerárquico** construye toda una familia de particiones anidadas, desde una en la que cada caso es su propio grupo hasta otra en la que todos forman uno solo, y la resume en un diagrama de árbol llamado **dendrograma**. El número de grupos se elige **después**, mirando el árbol.
 
-Existen dos enfoques principales: el método aglomerativo, que comienza con cada observación como su propio grupo y va fusionando los más similares; y el método divisivo, que parte de un único grupo y lo va partiendo recursivamente. El método aglomerativo es más común en la práctica y está mejor estudiado teóricamente [@hastie2009; @aggarwal2013].
+La versión más usada es la **aglomerativa** (de abajo hacia arriba): empieza con $n$ grupos de un caso y, en cada paso, fusiona los dos grupos más cercanos. Todo depende de una decisión: **¿qué significa que dos grupos estén cerca?** Las distintas respuestas, llamadas criterios de **enlace**, producen árboles muy diferentes. En este capítulo las calcularemos a mano sobre cinco puntos.
 
-## Método aglomerativo
+## Intuición: cinco sucursales
 
-El algoritmo aglomerativo genérico opera sobre la matriz de distancias entre grupos.
+Una cadena tiene cinco sucursales en una ciudad, con coordenadas en kilómetros, y quiere organizarlas en zonas de supervisión.
 
-::: {.callout-note appearance="minimal"}
-**Algoritmo aglomerativo.**
+| Sucursal | A | B | C | D | E |
+|---|---:|---:|---:|---:|---:|
+| $x$ (km) | 3 | 6 | 2.5 | 7 | 7 |
+| $y$ (km) | 0 | 0 | 4 | 5 | 6 |
 
-**Entrada:** observaciones $\mathbf{x}_1,\dots,\mathbf{x}_n$, función de enlace $d$.
+: Cinco sucursales. {#tbl-sucursales}
 
-1. Inicializar $n$ grupos $C_i=\{\mathbf{x}_i\}$ para $i=1,\dots,n$.
-2. Calcular la matriz de distancias $D$ de tamaño $n\times n$ con $D_{ij}=d(\mathbf{x}_i,\mathbf{x}_j)$.
-3. Repetir hasta que quede un solo grupo:
-   a. Encontrar el par $(i,j)$ con $D_{ij}$ mínima.
-   b. Fusionar $C_i$ y $C_j$ en un nuevo grupo $C_{ij}$.
-   c. Actualizar $D$ con las distancias del nuevo grupo a todos los demás.
-4. Registrar la secuencia de fusiones y sus alturas.
+Las distancias euclidianas entre ellas son:
 
-**Salida:** dendrograma con todas las fusiones.
-:::
+| | A | B | C | D | E |
+|---|---:|---:|---:|---:|---:|
+| A | 0 | 3.00 | 4.03 | 6.40 | 7.21 |
+| B | 3.00 | 0 | 5.32 | 5.10 | 6.08 |
+| C | 4.03 | 5.32 | 0 | 4.61 | 4.92 |
+| D | 6.40 | 5.10 | 4.61 | 0 | 1.00 |
+| E | 7.21 | 6.08 | 4.92 | 1.00 | 0 |
 
-La diferencia entre las variantes del método aglomerativo está en cómo se define la distancia $d$ entre grupos —el criterio de enlace.
+: Matriz de distancias entre las sucursales. {#tbl-suc-distancias}
 
-## Criterios de enlace
+D y E están casi juntas; A y B también, a 3 km. La sucursal C es el caso dudoso: está a 4.03 km de A, pero a 4.61 km de D. ¿Pertenece a la zona de A y B o a la de D y E? Veremos que la respuesta depende del criterio de enlace.
 
-El criterio de enlace determina la distancia entre dos grupos como función de las distancias entre sus elementos. Los criterios más usados son los siguientes.
+## Construcción paso a paso
 
-::: {.callout-note appearance="minimal"}
-**Enlace simple (single linkage).** La distancia entre dos grupos es la distancia mínima entre cualquier par de observaciones, una de cada grupo:
+### Paso 1. Las dos primeras fusiones
+
+El par más cercano de toda la matriz es (D, E), a distancia 1: se fusiona en el grupo $\{D, E\}$. Para continuar necesitamos la distancia de $\{D, E\}$ a cada uno de los demás, y aquí entra el criterio de enlace:
+
+- **Enlace simple** (*single*): la distancia entre dos grupos es la de su par de puntos **más cercano**.
+- **Enlace completo** (*complete*): la de su par **más lejano**.
+- **Enlace promedio** (*average*, UPGMA): el **promedio** de todas las distancias entre un punto de un grupo y uno del otro.
+
+| Distancia a $\{D, E\}$ desde | A | B | C |
+|---|---:|---:|---:|
+| Simple: $\min$ | 6.40 | 5.10 | 4.61 |
+| Completo: $\max$ | 7.21 | 6.08 | 4.92 |
+| Promedio | 6.81 | 5.59 | 4.77 |
+
+: Distancias del grupo {D, E} a los demás puntos según el enlace. {#tbl-suc-paso1}
+
+En los tres criterios, el par más cercano que queda es (A, B), a 3: se fusiona en $\{A, B\}$. Hasta aquí, todos los criterios coinciden. Las dos primeras fusiones son las «obvias».
+
+### Paso 2. La decisión sobre C
+
+Quedan tres grupos: $\{A, B\}$, $\{C\}$ y $\{D, E\}$. Las distancias entre ellos son
+
+| Criterio | $d(\{A,B\}, C)$ | $d(C, \{D,E\})$ | $d(\{A,B\}, \{D,E\})$ | Fusión elegida |
+|---|---:|---:|---:|---|
+| Simple | $\min(4.03, 5.32) = \mathbf{4.03}$ | $\min(4.61, 4.92) = 4.61$ | $5.10$ | C con $\{A, B\}$ |
+| Completo | $\max(4.03, 5.32) = 5.32$ | $\max(4.61, 4.92) = \mathbf{4.92}$ | $7.21$ | C con $\{D, E\}$ |
+| Promedio | $(4.03 + 5.32)/2 = \mathbf{4.67}$ | $(4.61 + 4.92)/2 = 4.77$ | $6.20$ | C con $\{A, B\}$ |
+
+: Tercera fusión según el criterio de enlace. {#tbl-suc-paso2}
+
+El **enlace simple** mira solo el vecino más cercano de C, que es A, y lo une a $\{A, B\}$. El **enlace completo** mira el peor caso: unir C con $\{A, B\}$ significaría tener en el mismo grupo dos sucursales a 5.32 km (C y B), mientras que unirla con $\{D, E\}$ solo exige 4.92 km. Así que la une a $\{D, E\}$. El **promedio** queda entre ambos y, por poco ($4.67$ contra $4.77$), coincide con el simple.
+
+### Paso 3. La última fusión y las alturas
+
+Con el enlace simple, la última fusión une $\{A, B, C\}$ con $\{D, E\}$ a la altura $\min(\ldots) = 4.61$ (la distancia entre C y D). Con el completo, une $\{A, B\}$ con $\{C, D, E\}$ a la altura $7.21$ (entre A y E). Con el promedio, a $5.72$, el promedio de las seis distancias entre $\{A, B, C\}$ y $\{D, E\}$.
+
+| Fusión | Simple | Completo | Promedio |
+|---|---|---|---|
+| 1 | $\{D,E\}$ a 1.00 | $\{D,E\}$ a 1.00 | $\{D,E\}$ a 1.00 |
+| 2 | $\{A,B\}$ a 3.00 | $\{A,B\}$ a 3.00 | $\{A,B\}$ a 3.00 |
+| 3 | $\{A,B,C\}$ a 4.03 | $\{C,D,E\}$ a 4.92 | $\{A,B,C\}$ a 4.67 |
+| 4 | todos a 4.61 | todos a 7.21 | todos a 5.72 |
+
+: Historia de fusiones y alturas para cada criterio. {#tbl-suc-historia}
+
+### Paso 4. El dendrograma y su corte
+
+El **dendrograma** dibuja esta historia: las hojas son los casos y cada fusión es un trazo horizontal a la altura en que ocurrió. Para obtener una partición se **corta** el árbol con una línea horizontal: cada rama que cruza la línea es un grupo. Con el enlace simple, cortar a la altura 4.3 deja dos grupos, $\{A, B, C\}$ y $\{D, E\}$; con el completo, cortar a 6 deja $\{A, B\}$ y $\{C, D, E\}$. Cortar más abajo, entre 3 y 4, da tres grupos en ambos casos: $\{A, B\}$, $\{C\}$, $\{D, E\}$.
+
+Un buen lugar para cortar es donde hay un **salto grande** de altura entre fusiones consecutivas: significa que se empezaron a unir grupos que estaban lejos. Con el completo, el salto de 4.92 a 7.21 sugiere dos grupos. Con el simple, las alturas $1, 3, 4.03, 4.61$ crecen sin un salto claro: el enlace simple no ve dos zonas bien separadas, porque C hace de **puente** entre ellas.
+
+### Paso 5. Ward: fusionar lo que menos empeora
+
+El criterio de **Ward** [@ward1963] no mide distancias entre puntos, sino el **aumento de la suma de cuadrados dentro de los grupos** $W$ al fusionar: el mismo criterio de $k$-medias, aplicado de forma ávida. Al unir los grupos $G$ y $H$, con $n_G$ y $n_H$ casos y centroides $\bar{\mathbf{x}}_G$ y $\bar{\mathbf{x}}_H$, $W$ aumenta en
+
 $$
-d_{\text{simple}}(C_i,C_j) = \min_{\mathbf{x}\in C_i,\mathbf{y}\in C_j} d(\mathbf{x},\mathbf{y}).
-$$ {#eq-single-linkage}
-:::
+\Delta(G, H) = \frac{n_G\, n_H}{n_G + n_H}\, \lVert \bar{\mathbf{x}}_G - \bar{\mathbf{x}}_H \rVert^2.
+$$ {#eq-ward}
+
+Al fusionar D y E: $\Delta = \tfrac{1}{2} \cdot 1^2 = 0.5$. Al fusionar A y B: $\tfrac{1}{2} \cdot 3^2 = 4.5$. Para C, con $\{A, B\}$ de centroide $(4.5, 0)$ y $\{D, E\}$ de centroide $(7, 5.5)$:
+
+$$
+\Delta(C, \{A,B\}) = \tfrac{2}{3}\big[(2.5 - 4.5)^2 + (4 - 0)^2\big] = \tfrac{2}{3}(20) = 13.33, \qquad
+\Delta(C, \{D,E\}) = \tfrac{2}{3}\big[(2.5 - 7)^2 + (4 - 5.5)^2\big] = \tfrac{2}{3}(22.5) = 15.
+$$
+
+Ward une C con $\{A, B\}$. El factor $\tfrac{n_G n_H}{n_G + n_H}$ hace que fusionar dos grupos grandes cueste más que agregar un punto suelto; por eso Ward tiende a producir grupos de **tamaño parecido** y forma redondeada, como $k$-medias. `scipy` reporta como altura $\sqrt{2\Delta}$, de modo que la primera fusión de dos puntos aparece a la altura de su distancia euclidiana: las alturas de Ward son $1, 3, 5.16$ y $8.11$.
+
+## Formalización
+
+### El algoritmo aglomerativo
 
 ::: {.callout-note appearance="minimal"}
-**Enlace completo (complete linkage).** La distancia entre dos grupos es la distancia máxima entre cualquier par de observaciones, una de cada grupo:
-$$
-d_{\text{completo}}(C_i,C_j) = \max_{\mathbf{x}\in C_i,\mathbf{y}\in C_j} d(\mathbf{x},\mathbf{y}).
-$$ {#eq-complete-linkage}
+**Clustering jerárquico aglomerativo.** Entrada: una matriz de distancias $\mathbf{D}$ entre $n$ casos y un criterio de enlace.
+
+1. Empezar con $n$ grupos, uno por caso.
+2. Encontrar el par de grupos $(G, H)$ con la menor distancia de enlace $d(G, H)$.
+3. Fusionarlos en $G \cup H$ y registrar la altura $d(G, H)$.
+4. Actualizar las distancias del nuevo grupo a todos los demás.
+5. Repetir 2–4 hasta que quede un solo grupo ($n - 1$ fusiones).
 :::
 
-::: {.callout-note appearance="minimal"}
-**Enlace promedio (average linkage / UPGMA).** La distancia entre dos grupos es el promedio de todas las distancias por pares:
+Los criterios de enlace más usados, para grupos $G$ y $H$:
+
+| Enlace | $d(G, H)$ | Forma de los grupos |
+|---|---|---|
+| Simple | $\min_{i \in G, j \in H} d(i, j)$ | alargados, en cadena |
+| Completo | $\max_{i \in G, j \in H} d(i, j)$ | compactos, de diámetro parecido |
+| Promedio (UPGMA) | $\frac{1}{n_G n_H} \sum_{i \in G} \sum_{j \in H} d(i, j)$ | intermedio |
+| Centroide | $\lVert \bar{\mathbf{x}}_G - \bar{\mathbf{x}}_H \rVert$ | puede producir inversiones |
+| Ward | $\sqrt{2\Delta(G, H)}$, con $\Delta$ de la @eq-ward | compactos, de tamaño parecido |
+
+: Criterios de enlace. {#tbl-enlaces}
+
+Simple, completo y promedio aceptan **cualquier** matriz de distancias (Gower, Jaccard, edición); centroide y Ward requieren distancias euclidianas, porque usan promedios de vectores.
+
+### Una fórmula para todos: Lance-Williams
+
+Recalcular la distancia del nuevo grupo a los demás desde los puntos originales sería costoso. @lance1967general observaron que todos estos criterios se pueden actualizar con una sola fórmula que usa solo las distancias entre grupos ya conocidas. Si se fusionan $G$ y $H$, la distancia del nuevo grupo a otro grupo $Q$ es
+
 $$
-d_{\text{prom}}(C_i,C_j) = \frac{1}{|C_i||C_j|}\sum_{\mathbf{x}\in C_i}\sum_{\mathbf{y}\in C_j}d(\mathbf{x},\mathbf{y}).
-$$ {#eq-average-linkage}
-:::
+d(G \cup H, Q) = \alpha_G\, d(G, Q) + \alpha_H\, d(H, Q) + \beta\, d(G, H) + \gamma\, |d(G, Q) - d(H, Q)|,
+$$ {#eq-lance-williams}
 
-::: {.callout-note appearance="minimal"}
-**Enlace de Ward.** Fusiona los dos grupos cuya unión produce el menor incremento en la suma de cuadrados intra-grupo [@ward1963]:
-$$
-d_{\text{Ward}}(C_i,C_j) = \frac{|C_i||C_j|}{|C_i|+|C_j|}\|\boldsymbol{\mu}_i-\boldsymbol{\mu}_j\|^2,
-$$ {#eq-ward-linkage}
-donde $\boldsymbol{\mu}_i$ y $\boldsymbol{\mu}_j$ son los centroides de $C_i$ y $C_j$.
-:::
+con coeficientes según el criterio:
 
-El enlace simple tiende a producir dendrogramas con efecto de encadenamiento: grupos alargados en los que se van añadiendo puntos uno por uno. El enlace completo produce grupos más compactos pero puede ser sensible a outliers. El enlace de Ward minimiza la varianza intra-grupo en cada fusión, por lo que tiende a producir grupos de tamaño parecido y es el más usado en la práctica.
+| Enlace | $\alpha_G$ | $\alpha_H$ | $\beta$ | $\gamma$ |
+|---|---|---|---|---|
+| Simple | $1/2$ | $1/2$ | 0 | $-1/2$ |
+| Completo | $1/2$ | $1/2$ | 0 | $1/2$ |
+| Promedio | $\frac{n_G}{n_G + n_H}$ | $\frac{n_H}{n_G + n_H}$ | 0 | 0 |
+| Ward (sobre $d^2$) | $\frac{n_G + n_Q}{n_G + n_H + n_Q}$ | $\frac{n_H + n_Q}{n_G + n_H + n_Q}$ | $\frac{-n_Q}{n_G + n_H + n_Q}$ | 0 |
 
+: Coeficientes de Lance-Williams. {#tbl-lance-williams}
+
+Por ejemplo, para el enlace completo con $G = A$, $H = B$, $Q = C$: $\tfrac12(4.03) + \tfrac12(5.32) + \tfrac12|4.03 - 5.32| = 2.015 + 2.66 + 0.645 = 5.32$, que es el máximo, como debía. El truco es que $\tfrac12(a + b) \pm \tfrac12|a - b|$ es $\max(a, b)$ o $\min(a, b)$.
+
+### Monotonía e inversiones
+
+Con enlace simple, completo, promedio y Ward, las alturas de las fusiones **nunca bajan**: cada fusión ocurre a una altura mayor o igual que la anterior. Por eso el dendrograma se puede cortar con una línea horizontal sin ambigüedad. El enlace de **centroide** no tiene esta propiedad: al fusionar dos grupos, el centroide nuevo puede quedar más cerca de un tercero que los centroides anteriores, y aparece una **inversión** (una fusión más baja que la anterior), que hace al dendrograma difícil de leer.
+
+### La distancia cofenética
+
+El dendrograma define una nueva distancia entre casos: la **distancia cofenética** $c(i, j)$ es la altura a la que $i$ y $j$ quedan por primera vez en el mismo grupo. Con el enlace simple en las sucursales, $c(A, B) = 3$, $c(A, C) = c(B, C) = 4.03$, $c(D, E) = 1$ y la distancia cofenética entre cualquier sucursal de $\{A, B, C\}$ y cualquiera de $\{D, E\}$ es 4.61. Esta distancia es una **ultramétrica**: cumple $c(i, k) \le \max\{c(i, j), c(j, k)\}$, una versión más fuerte de la desigualdad triangular en la que todo triángulo es isósceles con los dos lados mayores iguales.
+
+¿Qué tan fielmente representa el árbol a los datos? La **correlación cofenética** [@sokal1962comparison] es la correlación de Pearson entre las $n(n-1)/2$ distancias originales $d(i, j)$ y las cofenéticas $c(i, j)$. En las sucursales vale $0.88$ con enlace simple, $0.87$ con completo, $0.89$ con promedio y $0.87$ con Ward. El enlace promedio suele dar la correlación cofenética más alta, porque precisamente promedia distancias. Valores por encima de $0.8$ indican que el árbol resume bien las distancias, pero una correlación alta no garantiza grupos útiles.
+
+### El efecto cadena y el árbol de expansión mínima
+
+El enlace simple tiene una propiedad notable: sus fusiones son exactamente las aristas del **árbol de expansión mínima** (MST)[^mst] de los datos, agregadas de menor a mayor peso. Cortar el dendrograma de enlace simple a la altura $h$ equivale a borrar del MST las aristas de peso mayor que $h$: los grupos son las componentes que quedan conectadas. Por eso el enlace simple puede encontrar grupos de **cualquier forma** (medias lunas, anillos), pero también sufre el **efecto cadena**: una fila de puntos intermedios, como la sucursal C, une dos grupos que deberían estar separados. Esta conexión con el MST reaparecerá en HDBSCAN, en el siguiente capítulo.
+
+### Clustering divisivo
+
+La alternativa **divisiva** (de arriba hacia abajo) empieza con todos los casos en un grupo y lo parte sucesivamente. DIANA [@kaufman1990] separa en cada paso el caso más «inconforme» de su grupo y le va sumando los casos que están más cerca de él que del resto; $k$-medias bisectante, mencionado en el capítulo anterior, es otro ejemplo. Los métodos divisivos son atractivos cuando interesan sobre todo las primeras divisiones (pocos grupos grandes), pero son más costosos y menos usados.
+
+### Costo y escalabilidad
+
+El algoritmo aglomerativo necesita la matriz de distancias completa: $O(n^2)$ de memoria. Con $n = 50\,000$ son más de mil millones de distancias, unos 10 GB en doble precisión. El algoritmo ingenuo cuesta $O(n^3)$ en tiempo; con estructuras adecuadas se reduce a $O(n^2 \log n)$ y, para el enlace simple (algoritmo SLINK) y Ward, a $O(n^2)$ [@murtagh2012algorithms]. En la práctica, el clustering jerárquico es cómodo hasta unas decenas de miles de casos. Para más, se agrupa una muestra, se usan restricciones de **conectividad** (solo se permite fusionar grupos vecinos en un grafo de $k$ vecinos), o se combina con $k$-medias: primero cientos de microgrupos, luego un árbol sobre sus centros.
+
+## Laboratorio: construye el dendrograma
+
+Avanza fusión por fusión y observa el dendrograma crecer. En el plano, el segmento resaltado muestra **qué par de puntos** decide la última fusión: el par más cercano en el enlace simple, el más lejano en el completo; en el promedio y en Ward, que dependen de todos los puntos, se dibuja como referencia la línea entre los centroides de los dos grupos. Mueve la línea de corte para obtener una partición. El estado inicial reproduce las cinco sucursales con enlace simple.
+
+::: {.content-visible when-format="html"}
 ```{=html}
-<div id="hc-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Clustering jerárquico — dendrograma interactivo</span><br>
-    <span style="font-size:0.81em;color:#666;">Selecciona el criterio de enlace y mueve el umbral de corte para ver los grupos resultantes</span>
+<div class="plab" id="hc-lab">
+  <p class="plab-eyebrow">Laboratorio · Clustering jerárquico</p>
+  <h3 class="plab-title">¿Qué grupos se fusionan, y a qué altura?</h3>
+  <p class="plab-sub">Cambia el criterio de enlace y compara los árboles. La línea discontinua del dendrograma es el corte: cada rama que la cruza es un grupo.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="hc-data">
+        <button data-value="cinco" aria-pressed="true">Cinco sucursales</button>
+        <button data-value="tres">Tres grupos</button>
+        <button data-value="puente">Puente</button>
+        <button data-value="anillo">Anillo y centro</button>
+      </div>
+    </div>
+    <div class="plab-field">Enlace
+      <div class="plab-seg" id="hc-link">
+        <button data-value="single" aria-pressed="true">Simple</button>
+        <button data-value="complete">Completo</button>
+        <button data-value="average">Promedio</button>
+        <button data-value="ward">Ward</button>
+      </div>
+    </div>
   </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">Enlace:</label>
-    <select id="hc-link" style="font-size:0.83em;padding:3px 8px;border:1px solid #d0d7e3;border-radius:5px;background:#fff;">
-      <option value="ward">Ward</option>
-      <option value="complete">Completo</option>
-      <option value="single">Simple</option>
-      <option value="average">Promedio</option>
-    </select>
-    <label style="font-size:0.83em;color:#444;margin-left:12px;">Umbral = <strong id="hc-tv">1.8</strong></label>
-    <input id="hc-tsl" type="range" min="0" max="100" step="1" value="45" style="flex:1;min-width:120px;accent-color:#1a3a5c;">
+  <div class="plab-controls">
+    <div class="plab-field">Fusiones
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        <button class="plab-btn primary" id="hc-next">Siguiente fusión</button>
+        <button class="plab-btn" id="hc-all">Todas</button>
+        <button class="plab-btn" id="hc-reset">Reiniciar</button>
+      </div>
+    </div>
+    <label>Altura de corte: <b id="hc-cut-v"></b><input type="range" id="hc-cut" min="0" max="1" step="0.002" value="0.6"></label>
   </div>
-  <div id="hc-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
-  <canvas id="hc-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Fusiones hechas</span><strong id="hc-done"></strong></div>
+    <div class="plab-stat"><span>Última fusión (altura)</span><strong id="hc-last"></strong></div>
+    <div class="plab-stat"><span>Grupos bajo el corte</span><strong id="hc-k"></strong></div>
+    <div class="plab-stat"><span>Correlación cofenética</span><strong id="hc-coph"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Plano: grupos en el corte</h4>
+      <svg id="hc-svg" role="img" aria-label="Puntos coloreados por grupo y segmento que define la última fusión"></svg>
+    </div>
+    <div class="plab-panel">
+      <h4>Dendrograma</h4>
+      <svg id="hc-dendro" role="img" aria-label="Dendrograma con las fusiones realizadas y la línea de corte"></svg>
+    </div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem"><h4>Historia de fusiones</h4><div id="hc-tab" class="plab-scroll"></div></div>
+  <p class="plab-note" id="hc-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con las cinco sucursales, avanza fusión por fusión con enlace simple y luego con completo. Comprueba las alturas de la tabla del Paso 3 y la fusión distinta de C.</li>
+    <li>Calcula a mano la altura de la tercera fusión con enlace promedio y compruébala.</li>
+    <li>En «Puente», <strong>predice</strong> qué enlace separará los dos grupos con dos ramas claras y cuál los encadenará. Compara las correlaciones cofenéticas.</li>
+    <li>En «Anillo y centro», ¿qué enlace separa el anillo del grupo central cortando en dos grupos? ¿Por qué Ward no puede?</li>
+  </ol>
 </div>
 <script>
-(function(){
-  const PTS=[
-    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],
-    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],
-    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4]
-  ];
-  const N=PTS.length;
-  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2','#be185d','#0f766e'];
-  const cv=document.getElementById('hc-cv');
-  const W=680,H=380,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-
-  function eucl(a,b){return Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2);}
-
-  function buildDendrogram(link){
-    const clusters=PTS.map((_,i)=>({pts:[i],height:0,left:null,right:null,id:i}));
-    const merges=[];
-    while(clusters.length>1){
-      let minD=Infinity,bi=-1,bj=-1;
-      for(let i=0;i<clusters.length;i++)for(let j=i+1;j<clusters.length;j++){
-        const d=linkDist(clusters[i],clusters[j],link);
-        if(d<minD){minD=d;bi=i;bj=j;}
+(() => {
+  const K = window.LabKit, root = document.getElementById('hc-lab');
+  const $ = s => root.querySelector(s);
+  const CLS = ['s1', 's2', 's3', 's4', 's5', 'muted'];
+  const g = K.rng(4), N = () => g.normal();
+  const tres = [], puente = [], anillo = [];
+  [[-2.2, -1.2], [2.2, -1.2], [0, 2.4]].forEach(([a, b]) => { for (let i = 0; i < 8; i++) tres.push([a + 0.55 * N(), b + 0.55 * N()]); });
+  [[-2.6, 0], [2.6, 0]].forEach(([a, b]) => { for (let i = 0; i < 10; i++) puente.push([a + 0.5 * N(), b + 0.5 * N()]); });
+  for (let i = 0; i < 6; i++) puente.push([-1.5 + 0.6 * i, 0.12 * N()]);
+  for (let i = 0; i < 22; i++) { const t = 2 * Math.PI * i / 22; anillo.push([2.6 * Math.cos(t) + 0.15 * N(), 2.6 * Math.sin(t) + 0.15 * N()]); }
+  for (let i = 0; i < 8; i++) anillo.push([0.4 * N(), 0.4 * N()]);
+  const SETS = {
+    cinco: { X: [[3, 0], [6, 0], [2.5, 4], [7, 5], [7, 6]], lim: [1.5, 8.5, -1, 7], names: 'ABCDE', cut: 0.5 },
+    tres: { X: tres, lim: [-4, 4, -3, 4.2], cut: 0.6 }, puente: { X: puente, lim: [-4.2, 4.2, -2.2, 2.2], cut: 0.6 }, anillo: { X: anillo, lim: [-3.4, 3.4, -3.4, 3.4], cut: 0.6 }
+  };
+  let S, Z, done, cutFrac;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  // Aglomerativo ingenuo con Lance-Williams; Ward con la convención de scipy.
+  function linkage(X, method) {
+    const n = X.length; let D = X.map(a => X.map(b => dist(a, b)));
+    if (method === 'ward') D = D.map(r => r.map(v => v * v));
+    let act = X.map((_, i) => ({ id: i, size: 1, members: [i] }));
+    const dmap = new Map(); const key = (a, b) => a < b ? a + ',' + b : b + ',' + a;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) dmap.set(key(i, j), D[i][j]);
+    const out = []; let next = n;
+    while (act.length > 1) {
+      let best = null;
+      for (let i = 0; i < act.length; i++) for (let j = i + 1; j < act.length; j++) {
+        const v = dmap.get(key(act[i].id, act[j].id));
+        if (!best || v < best.v - 1e-12) best = { i, j, v };
       }
-      const newC={pts:[...clusters[bi].pts,...clusters[bj].pts],height:minD,left:clusters[bi],right:clusters[bj],id:N+merges.length};
-      merges.push({c1:clusters[bi],c2:clusters[bj],h:minD,merged:newC});
-      clusters.splice(bj,1);clusters.splice(bi,1);clusters.push(newC);
+      const G = act[best.i], H = act[best.j], nid = next++;
+      const h = method === 'ward' ? Math.sqrt(best.v) : best.v;
+      out.push({ a: G.id, b: H.id, h, size: G.size + H.size, ga: G.members.slice(), gb: H.members.slice() });
+      act.forEach(Q => {
+        if (Q === G || Q === H) return;
+        const dg = dmap.get(key(G.id, Q.id)), dh = dmap.get(key(H.id, Q.id)), dgh = best.v; let v;
+        if (method === 'single') v = Math.min(dg, dh);
+        else if (method === 'complete') v = Math.max(dg, dh);
+        else if (method === 'average') v = (G.size * dg + H.size * dh) / (G.size + H.size);
+        else { const T = G.size + H.size + Q.size; v = ((G.size + Q.size) * dg + (H.size + Q.size) * dh - Q.size * dgh) / T; }
+        dmap.set(key(nid, Q.id), v);
+      });
+      act = act.filter(Q => Q !== G && Q !== H); act.push({ id: nid, size: G.size + H.size, members: G.members.concat(H.members) });
     }
-    return{root:clusters[0],merges};
+    return out;
   }
-
-  function linkDist(ca,cb,link){
-    const pairs=[];
-    ca.pts.forEach(i=>cb.pts.forEach(j=>pairs.push(eucl(PTS[i],PTS[j]))));
-    if(link==='single')return Math.min(...pairs);
-    if(link==='complete')return Math.max(...pairs);
-    if(link==='average')return pairs.reduce((s,v)=>s+v,0)/pairs.length;
-    if(link==='ward'){
-      const na=ca.pts.length,nb=cb.pts.length;
-      const muA=ca.pts.reduce((s,i)=>[s[0]+PTS[i][0],s[1]+PTS[i][1]],[0,0]).map(v=>v/na);
-      const muB=cb.pts.reduce((s,i)=>[s[0]+PTS[i][0],s[1]+PTS[i][1]],[0,0]).map(v=>v/nb);
-      return(na*nb)/(na+nb)*eucl(muA,muB)**2;
+  // Orden de hojas y posición x de cada nodo del árbol.
+  function layout(Zl, n) {
+    const order = [], pos = {};
+    const rec = id => { if (id < n) { order.push(id); return; } const m = Zl[id - n]; rec(m.a); rec(m.b); };
+    rec(n + Zl.length - 1);
+    order.forEach((id, i) => pos[id] = i);
+    Zl.forEach((m, t) => pos[n + t] = (pos[m.a] + pos[m.b]) / 2);
+    return { order, pos };
+  }
+  function cophCorr(X, Zl) {
+    const n = X.length, C = X.map(() => Array(n).fill(0));
+    Zl.forEach(m => m.ga.forEach(i => m.gb.forEach(j => { C[i][j] = C[j][i] = m.h; })));
+    const a = [], b = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { a.push(dist(X[i], X[j])); b.push(C[i][j]); }
+    const ma = K.mean(a), mb = K.mean(b);
+    return K.sum(a.map((v, k) => (v - ma) * (b[k] - mb))) / Math.sqrt(K.sum(a.map(v => (v - ma) ** 2)) * K.sum(b.map(v => (v - mb) ** 2)));
+  }
+  // Par de puntos (o centroides) que define una fusión, según el enlace.
+  function definingPair(m, method) {
+    const P = S.X;
+    if (method === 'single' || method === 'complete') {
+      let best = null;
+      m.ga.forEach(i => m.gb.forEach(j => { const d = dist(P[i], P[j]); if (!best || (method === 'single' ? d < best.d : d > best.d)) best = { d, p: P[i], q: P[j] }; }));
+      return [best.p, best.q];
     }
-    return 0;
+    const cen = ids => [K.mean(ids.map(i => P[i][0])), K.mean(ids.map(i => P[i][1]))];
+    return [cen(m.ga), cen(m.gb)];
   }
-
-  function assignColors(root,threshold){
-    const labels=new Array(N).fill(0);
-    let ci=0;
-    function visit(node){
-      if(node.height<=threshold||(!node.left&&!node.right)){
-        node.pts.forEach(i=>labels[i]=ci);ci++;
-      } else {if(node.left)visit(node.left);if(node.right)visit(node.right);}
-    }
-    visit(root);
-    return{labels,nGroups:ci};
+  const dataSeg = K.segmented($('#hc-data'), () => setup(true));
+  const linkSeg = K.segmented($('#hc-link'), () => setup(false));
+  function setup(newData) {
+    S = SETS[dataSeg.get()]; Z = linkage(S.X, linkSeg.get());
+    if (newData) { done = 0; $('#hc-cut').value = S.cut; }
+    done = Math.min(done, Z.length);
+    render();
   }
-
-  function leafOrder(node){
-    if(!node.left&&!node.right)return[node.id];
-    return[...leafOrder(node.left),...leafOrder(node.right)];
-  }
-
-  let dend=buildDendrogram('ward');
-
-  function draw(threshold){
-    const{labels,nGroups}=assignColors(dend.root,threshold);
-    ctx.clearRect(0,0,W,H);
-
-    // Left: scatter
-    const LP={l:44,r:W/2-8,t:16,b:H-28};
-    const LW=LP.r-LP.l,LH=LP.b-LP.t;
-    const xMn=0,xMx=9,yMn=0,yMx=7;
-    const sx=x=>LP.l+(x-xMn)/xMx*LW,sy=y=>LP.t+LH*(1-(y-yMn)/yMx);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW,LH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(LP.l,LP.t,LW,LH);
-    PTS.forEach((p,i)=>{
-      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),6,0,2*Math.PI);
-      ctx.fillStyle=COLS[labels[i]%COLS.length]+'cc';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+  $('#hc-next').addEventListener('click', () => { done = Math.min(Z.length, done + 1); render(); });
+  $('#hc-all').addEventListener('click', () => { done = Z.length; render(); });
+  $('#hc-reset').addEventListener('click', () => { done = 0; render(); });
+  $('#hc-cut').addEventListener('input', render);
+  function render() {
+    const n = S.X.length, maxH = Z[Z.length - 1].h * 1.08, cut = +$('#hc-cut').value * maxH;
+    $('#hc-cut-v').textContent = K.fmt(cut, 2);
+    // Grupos: fusiones hechas y por debajo del corte.
+    const parent = S.X.map((_, i) => i), find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+    Z.slice(0, done).forEach(m => { if (m.h <= cut) find(m.ga[0]) !== find(m.gb[0]) && (parent[find(m.ga[0])] = find(m.gb[0])); });
+    const roots = [...new Set(S.X.map((_, i) => find(i)))];
+    const sizes = roots.map(r => S.X.filter((_, i) => find(i) === r).length);
+    const rootOrder = roots.map((r, k) => [r, sizes[k], Math.min(...S.X.map((_, i) => i).filter(i => find(i) === r))]).sort((a, b) => b[1] - a[1] || a[2] - b[2]);
+    const color = {}; rootOrder.forEach(([r, sz], k) => color[r] = sz > 1 ? CLS[Math.min(k, 4)] : 'muted');
+    // Plano.
+    const L = S.lim, c = K.chart($('#hc-svg'), { width: 340, height: Math.round(296 * (L[3] - L[2]) / (L[1] - L[0])) + 44, x: [L[0], L[1]], y: [L[2], L[3]], margin: { left: 34, right: 10, top: 10, bottom: 34 } });
+    c.axes({ xTicks: 5, yTicks: 5 });
+    if (done > 0) { const [p, q] = definingPair(Z[done - 1], linkSeg.get()); c.line(p[0], p[1], q[0], q[1], 's5 line'); if (linkSeg.get() === 'average' || linkSeg.get() === 'ward') { c.dot(p[0], p[1], 3, 's5'); c.dot(q[0], q[1], 3, 's5'); } }
+    S.X.forEach((p, i) => { c.dot(p[0], p[1], S.names ? 7 : 4.5, color[find(i)] + ' dot'); if (S.names) c.text(p[0], p[1], S.names[i], { dx: 9, dy: -8, class: 'strong' }); });
+    // Dendrograma.
+    const { order, pos } = layout(Z, n);
+    const cd = K.chart($('#hc-dendro'), { width: 340, height: 300, x: [-0.8, n - 0.2], y: [0, maxH], margin: { left: 40, right: 10, top: 10, bottom: S.names ? 30 : 16 } });
+    cd.axes({ xTicks: 0, yTicks: 5, yLabel: 'altura', yFmt: v => K.fmt(v, maxH < 10 ? 1 : 0), grid: false, xCats: S.names ? order.map((id, i) => [i, S.names[id]]) : null });
+    const hOf = id => id < n ? 0 : Z[id - n].h;
+    Z.slice(0, done).forEach((m, t) => {
+      const cls = m.h <= cut ? color[find(m.ga[0])] : 'muted';
+      const xa = pos[m.a], xb = pos[m.b];
+      cd.line(xa, hOf(m.a), xa, m.h, cls + ' line thin'); cd.line(xb, hOf(m.b), xb, m.h, cls + ' line thin'); cd.line(xa, m.h, xb, m.h, cls + ' line thin');
+      if (t === done - 1) cd.dot((xa + xb) / 2, m.h, 3.5, 's5');
     });
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Scatter ('+nGroups+' grupos)',LP.l+LW/2,LP.t-4);
-
-    // Right: dendrogram
-    const RP={l:W/2+8,r:W-10,t:16,b:H-28};
-    const RW=RP.r-RP.l,RH=RP.b-RP.t;
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
-    const order=leafOrder(dend.root).filter(id=>id<N);
-    const maxH=dend.root.height*1.1||1;
-    const dx=RW/(N+1);
-    const dendY=h=>RP.b-4-h/maxH*(RH-20);
-    const leafX=new Map();
-    order.forEach((id,i)=>leafX.set(id,RP.l+dx*(i+1)));
-
-    function drawNode(node,col){
-      if(!node.left&&!node.right){
-        const x=leafX.get(node.id);
-        ctx.beginPath();ctx.arc(x,dendY(0),3,0,2*Math.PI);
-        ctx.fillStyle=COLS[labels[node.id]%COLS.length];ctx.fill();
-        ctx.fillStyle='#555';ctx.font='8px Georgia,serif';ctx.textAlign='center';
-        ctx.fillText(node.id+1,x,RP.b+10);
-        return x;
+    if (!S.names) order.forEach((id, i) => cd.dot(i, 0, 2, color[find(id)]));
+    cd.line(-0.8, cut, n - 0.2, cut, 's5 line dash thin');
+    const nm = i => S.names ? S.names[i] : '#' + (i + 1);
+    const grp = ids => ids.length > 4 && !S.names ? `${ids.length} puntos` : '{' + ids.map(nm).join(', ') + '}';
+    $('#hc-done').textContent = `${done} de ${Z.length}`;
+    $('#hc-last').textContent = done ? K.fmt(Z[done - 1].h, 2) : '—';
+    $('#hc-k').textContent = roots.length;
+    const r = cophCorr(S.X, Z); $('#hc-coph').textContent = K.fmt(r, 3);
+    const rows = Z.slice(0, done).map((m, t) => `<tr${t === done - 1 ? ' class="hl"' : ''}><td>${t + 1}</td><td>${grp(m.ga)}</td><td>${grp(m.gb)}</td><td>${K.fmt(m.h, 2)}</td></tr>`).slice(-8);
+    $('#hc-tab').innerHTML = done ? '<table class="plab-table"><thead><tr><th>Fusión</th><th>Grupo 1</th><th>Grupo 2</th><th>Altura</th></tr></thead><tbody>' + rows.join('') + '</tbody></table>' : '<p class="plab-sub" style="margin:0">Aún no hay fusiones: cada punto es su propio grupo.</p>';
+    const lk = { single: 'simple', complete: 'completo', average: 'promedio', ward: 'Ward' }[linkSeg.get()];
+    let msg, cls = '';
+    if (!done) msg = `Enlace ${lk}: ${n} grupos de un punto. Pulsa «Siguiente fusión».`;
+    else {
+      const m = Z[done - 1];
+      msg = `Fusión ${done}: ${grp(m.ga)} con ${grp(m.gb)} a la altura ${K.fmt(m.h, 2)}. `;
+      if (done === Z.length) {
+        const hs = Z.map(z => z.h), jumps = hs.slice(1).map((h, i) => h - hs[i]), jmax = Math.max(...jumps), kj = Z.length - jumps.indexOf(jmax);
+        msg += `Árbol completo (correlación cofenética ${K.fmt(r, 3)}). El mayor salto de altura (${K.fmt(jmax, 2)}) sugiere cortar en ${kj} grupos.`;
+        cls = 'good';
       }
-      const lx=drawNode(node.left,col);
-      const rx=drawNode(node.right,col);
-      const my=dendY(node.height);
-      const isAbove=node.height>threshold;
-      const c=isAbove?'#94a3b8':COLS[labels[node.pts[0]]%COLS.length];
-      ctx.strokeStyle=c;ctx.lineWidth=isAbove?1.2:2;
-      ctx.beginPath();ctx.moveTo(lx,dendY(node.left.height));ctx.lineTo(lx,my);ctx.lineTo(rx,my);ctx.lineTo(rx,dendY(node.right.height));ctx.stroke();
-      return(lx+rx)/2;
     }
-    drawNode(dend.root,'#1a3a5c');
-
-    // Threshold line
-    const ty=dendY(threshold);
-    ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.setLineDash([6,3]);
-    ctx.beginPath();ctx.moveTo(RP.l+2,ty);ctx.lineTo(RP.r-2,ty);ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle='#f59e0b';ctx.font='bold 9px Georgia,serif';ctx.textAlign='right';
-    ctx.fillText('umbral='+threshold.toFixed(2),RP.r-4,ty-4);
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Dendrograma',RP.l+RW/2,RP.t-4);
-
-    document.getElementById('hc-info').innerHTML=
-      `Enlace: <strong>${document.getElementById('hc-link').value}</strong>&ensp;·&ensp;`+
-      `Umbral = <strong>${threshold.toFixed(2)}</strong>&ensp;·&ensp;`+
-      `Grupos = <strong>${nGroups}</strong>`;
+    if (dataSeg.get() === 'puente' && done === Z.length && linkSeg.get() === 'single') { msg += ' Los puntos del puente encadenan los dos grupos: con enlace simple no hay un salto claro.'; cls = 'warn'; }
+    if (dataSeg.get() === 'anillo' && done === Z.length) msg += linkSeg.get() === 'single' ? ' El enlace simple sigue el anillo punto a punto y lo separa del centro.' : ' Este enlace prefiere grupos compactos: parte el anillo en trozos en lugar de separarlo del centro.';
+    const note = $('#hc-note'); note.className = 'plab-note ' + cls; note.textContent = msg;
   }
-
-  function update(){
-    const link=document.getElementById('hc-link').value;
-    dend=buildDendrogram(link);
-    const t01=parseFloat(document.getElementById('hc-tsl').value)/100;
-    const threshold=t01*dend.root.height*1.1;
-    document.getElementById('hc-tv').textContent=threshold.toFixed(2);
-    draw(threshold);
-  }
-
-  document.getElementById('hc-link').addEventListener('change',update);
-  document.getElementById('hc-tsl').addEventListener('input',function(){
-    const t01=parseFloat(this.value)/100;
-    const threshold=t01*dend.root.height*1.1;
-    document.getElementById('hc-tv').textContent=threshold.toFixed(2);
-    draw(threshold);
-  });
-  update();
+  setup(true);
 })();
 </script>
 ```
-
-## El dendrograma
-
-El dendrograma es una representación en árbol de la historia de fusiones. En el eje vertical se grafica la distancia (o altura) a la que se realiza cada fusión; en el eje horizontal se ubican las observaciones individuales. Una línea horizontal a altura $h$ divide el dendrograma en los grupos que existían en ese momento.
-
-Para extraer un número de grupos específico se corta el dendrograma con una línea horizontal. El número de ramas que esa línea intersecta es el número de grupos resultantes. La altura del corte puede elegirse visualmente buscando el mayor salto vertical en el dendrograma, lo que corresponde a fusiones que unen grupos bien separados.
-
-## Correlación cofenética
-
-La correlación cofenética mide qué tan fielmente el dendrograma representa las distancias originales. La distancia cofenética entre dos puntos $\mathbf{x}_i$ y $\mathbf{x}_j$ es la altura a la que se fusionan por primera vez en el dendrograma.
-
-::: {.callout-note appearance="minimal"}
-Definición. La correlación cofenética $r_c$ es la correlación de Pearson entre la matriz de distancias originales y la matriz de distancias cofenéticas:
-$$
-r_c = \text{corr}(d_{ij}, c_{ij}),
-$$ {#eq-cophenetic}
-donde $d_{ij}$ es la distancia original y $c_{ij}$ es la distancia cofenética entre $\mathbf{x}_i$ y $\mathbf{x}_j$.
 :::
 
-Un valor de $r_c$ cercano a 1 indica que el dendrograma preserva bien la estructura de distancias. El enlace promedio suele producir los mayores valores de correlación cofenética.
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* Con las cinco sucursales, las alturas de las fusiones son $1, 3, 4.03, 4.61$ (simple), $1, 3, 4.92, 7.21$ (completo), $1, 3, 4.67, 5.72$ (promedio) y $1, 3, 5.16, 8.11$ (Ward). Solo el enlace completo une la sucursal C con $\{D, E\}$. Las correlaciones cofenéticas son $0.884$, $0.865$, $0.891$ y $0.868$.
+:::
+
+## Implementación en Python
+
+### El ejemplo con `scipy`
+
+`scipy.cluster.hierarchy.linkage` devuelve la matriz de enlace $\mathbf{Z}$, de $n - 1$ filas: cada fila contiene los dos grupos fusionados (los índices mayores o iguales a $n$ se refieren a grupos creados antes), la altura y el tamaño del nuevo grupo.
 
 ```{python}
+#| label: hc-sucursales
 import numpy as np
-from sklearn.datasets import make_blobs
-from scipy.cluster.hierarchy import linkage, dendrogram, cophenet
+import pandas as pd
+from scipy.cluster.hierarchy import linkage, dendrogram, fcluster, cophenet
 from scipy.spatial.distance import pdist
 
-X, y_true = make_blobs(n_samples=80, centers=3, cluster_std=0.8, random_state=42)
+suc = np.array([[3, 0], [6, 0], [2.5, 4], [7, 5], [7, 6]], dtype=float)
+nombres = list("ABCDE")
+D = pdist(suc)
 
-for method in ["single", "complete", "average", "ward"]:
-    Z = linkage(X, method=method)
-    c, _ = cophenet(Z, pdist(X))
-    print(f"{method:10s}  r_cofenética = {c:.4f}")
+for metodo in ["single", "complete", "average", "ward"]:
+    Z = linkage(suc, method=metodo)
+    r, _ = cophenet(Z, D)
+    dos = fcluster(Z, t=2, criterion="maxclust")
+    print(f"{metodo:>8}: alturas {np.round(Z[:, 2], 2)}, dos grupos {dict(zip(nombres, dos))}, cofenética {r:.3f}")
 ```
 
 ```{python}
+#| label: fig-hc-dendrogramas
+#| fig-cap: "Dendrogramas de las cinco sucursales con cuatro criterios de enlace. Solo el enlace completo une C con D y E. El enlace completo y Ward muestran un salto grande antes de la última fusión (dos grupos claros); el simple no."
 import matplotlib.pyplot as plt
-from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
-import numpy as np
-from sklearn.datasets import make_blobs
 
-X, _ = make_blobs(n_samples=80, centers=4, cluster_std=0.7, random_state=0)
-
-Z = linkage(X, method="ward")
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-
-dendrogram(Z, ax=ax1, truncate_mode="lastp", p=20, leaf_rotation=90,
-           color_threshold=0.7 * max(Z[:, 2]))
-ax1.set_title("Dendrograma (Ward)")
-ax1.set_xlabel("Muestra o grupo")
-ax1.set_ylabel("Distancia")
-
-labels = fcluster(Z, t=4, criterion="maxclust")
-ax2.scatter(X[:, 0], X[:, 1], c=labels, cmap="tab10", s=30, edgecolors="white", linewidths=0.5)
-ax2.set_title("Partición con k=4 grupos")
+fig, axes = plt.subplots(1, 4, figsize=(13, 3.2), sharey=False)
+for ax, metodo in zip(axes, ["single", "complete", "average", "ward"]):
+    dendrogram(linkage(suc, method=metodo), labels=nombres, ax=ax, color_threshold=0, above_threshold_color="#2563eb")
+    ax.set_title(metodo); ax.set_ylabel("altura")
 plt.tight_layout()
 plt.show()
 ```
 
-## Complejidad y escalabilidad
+### Lance-Williams desde cero
 
-El algoritmo aglomerativo ingenuo requiere $O(n^2)$ espacio para la matriz de distancias y $O(n^3)$ tiempo para las $n-1$ fusiones, ya que en cada paso debe recalcular las distancias entre el nuevo grupo y los demás. Para enlace simple y completo existen algoritmos como SLINK y CLINK con complejidad $O(n^2)$ en tiempo y $O(n)$ en espacio.
-
-Para conjuntos de datos grandes ($n > 10\,000$), el clustering jerárquico estándar se vuelve poco práctico. Algunas alternativas son:
-
-- **BIRCH**: construye un resumen compacto de los datos (CF-tree) y luego aplica clustering jerárquico sobre los resúmenes.
-- **Clustering jerárquico aproximado**: usando índices de vecinos más cercanos aproximados para reducir el número de comparaciones.
-- **Mini-batch clustering**: submuestrear el conjunto de datos y extrapolar la estructura jerárquica.
+La implementación siguiente aplica la @eq-lance-williams y reproduce las alturas de `scipy`, incluida la convención de Ward ($\sqrt{2\Delta}$, aplicando la fórmula sobre distancias al cuadrado).
 
 ```{python}
-from sklearn.datasets import make_blobs
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics import silhouette_score
-import numpy as np
+#| label: hc-lance-williams
+def aglomerativo(X, metodo):
+    n = len(X)
+    D = {(i, j): d for (i, j), d in zip([(i, j) for i in range(n) for j in range(i + 1, n)], pdist(X))}
+    if metodo == "ward":
+        D = {k: v ** 2 for k, v in D.items()}
+    tam = {i: 1 for i in range(n)}
+    dist = lambda a, b: D[(min(a, b), max(a, b))]
+    alturas, nuevo = [], n
+    while len(tam) > 1:
+        (g, h), dgh = min(D.items(), key=lambda kv: kv[1])
+        for q in [q for q in tam if q not in (g, h)]:
+            dg, dh, ng, nh, nq = dist(g, q), dist(h, q), tam[g], tam[h], tam[q]
+            if metodo == "single":     v = 0.5 * dg + 0.5 * dh - 0.5 * abs(dg - dh)
+            elif metodo == "complete": v = 0.5 * dg + 0.5 * dh + 0.5 * abs(dg - dh)
+            elif metodo == "average":  v = (ng * dg + nh * dh) / (ng + nh)
+            else:                      v = ((ng + nq) * dg + (nh + nq) * dh - nq * dgh) / (ng + nh + nq)
+            D[(q, nuevo)] = v
+        D = {k: v for k, v in D.items() if g not in k and h not in k}
+        tam[nuevo] = tam.pop(g) + tam.pop(h)
+        alturas.append(np.sqrt(dgh) if metodo == "ward" else dgh)
+        nuevo += 1
+    return np.round(alturas, 3)
 
-X, y_true = make_blobs(n_samples=300, centers=4, cluster_std=0.8, random_state=0)
-
-for linkage in ["ward", "complete", "average", "single"]:
-    model = AgglomerativeClustering(n_clusters=4, linkage=linkage)
-    labels = model.fit_predict(X)
-    sil = silhouette_score(X, labels)
-    print(f"{linkage:10s}  silueta = {sil:.4f}")
+for metodo in ["single", "complete", "average", "ward"]:
+    print(f"{metodo:>8}:", aglomerativo(suc, metodo))
 ```
 
-## Aplicaciones del clustering jerárquico
+### El efecto cadena y las formas no convexas
 
-El clustering jerárquico se usa extensamente en bioinformática para agrupar genes o muestras en experimentos de expresión génica, donde el dendrograma permite visualizar tanto la agrupación de genes similares como su grado de similitud a distintas escalas. En análisis de texto, se usa para construir taxonomías temáticas. En finanzas, para clasificar activos con comportamientos similares.
+```{python}
+#| label: fig-hc-formas
+#| fig-cap: "Enlace simple frente a Ward cortando en dos grupos. Arriba, dos grupos unidos por un puente de puntos: el enlace simple separa un punto aislado y junta todo lo demás (efecto cadena), mientras que Ward separa los dos grupos. Abajo, dos medias lunas: el enlace simple las recupera y Ward las corta."
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.datasets import make_moons
 
-Una ventaja clave sobre K-Means es que no requiere especificar el número de grupos de antemano. El dendrograma muestra de forma explícita las estructuras a distintos niveles, lo que facilita la toma de decisiones sobre la granularidad apropiada para el problema.
+rng = np.random.default_rng(2)
+puente = np.vstack([rng.normal([-2.6, 0], 0.5, (60, 2)), rng.normal([2.6, 0], 0.5, (60, 2)),
+                    np.c_[np.linspace(-1.6, 1.6, 12), rng.normal(0, 0.08, 12)]])
+lunas, _ = make_moons(n_samples=240, noise=0.05, random_state=0)
+
+fig, axes = plt.subplots(2, 2, figsize=(9, 6))
+for fila, X in enumerate([puente, lunas]):
+    for col, metodo in enumerate(["single", "ward"]):
+        lab = AgglomerativeClustering(n_clusters=2, linkage=metodo).fit_predict(X)
+        axes[fila, col].scatter(X[:, 0], X[:, 1], s=9, c=np.array(["#2563eb", "#ea580c"])[lab])
+        axes[fila, col].set_title(f"enlace {metodo}"); axes[fila, col].set_xticks([]); axes[fila, col].set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+### Restricciones de conectividad
+
+`AgglomerativeClustering` acepta un grafo de **conectividad**: solo se fusionan grupos que son vecinos en él. Con un grafo de $k$ vecinos, incluso Ward respeta formas alargadas, y el cálculo se acelera porque solo se consideran fusiones locales.
+
+```{python}
+#| label: fig-hc-conectividad
+#| fig-cap: "Ward sin restricciones (izquierda) y con un grafo de 10 vecinos como restricción de conectividad (derecha), sobre dos medias lunas. La restricción obliga a fusionar solo grupos contiguos."
+from sklearn.neighbors import kneighbors_graph
+
+conect = kneighbors_graph(lunas, n_neighbors=10, include_self=False)
+fig, axes = plt.subplots(1, 2, figsize=(9, 3.2))
+for ax, (titulo, c) in zip(axes, [("Ward", None), ("Ward + conectividad", conect)]):
+    lab = AgglomerativeClustering(n_clusters=2, linkage="ward", connectivity=c).fit_predict(lunas)
+    ax.scatter(lunas[:, 0], lunas[:, 1], s=9, c=np.array(["#2563eb", "#ea580c"])[lab])
+    ax.set_title(titulo); ax.set_xticks([]); ax.set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+### Agrupar variables: un mapa de correlaciones ordenado
+
+El clustering jerárquico no solo agrupa casos. Con la distancia $1 - |r|$ entre variables, el dendrograma reúne las variables que miden cosas parecidas, y su orden de hojas sirve para reordenar una matriz de correlaciones y hacer visibles los bloques.
+
+```{python}
+#| label: fig-hc-variables
+#| fig-cap: "Dendrograma de las 13 variables del conjunto wine con distancia 1 − |r| y enlace promedio (izquierda) y matriz de correlaciones reordenada según las hojas del dendrograma (derecha). Los bloques de variables correlacionadas aparecen juntos."
+from sklearn.datasets import load_wine
+from scipy.spatial.distance import squareform
+
+wine = load_wine(as_frame=True).frame.drop(columns="target")
+R = wine.corr().to_numpy()
+Zv = linkage(squareform(1 - np.abs(R), checks=False), method="average")
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), gridspec_kw={"width_ratios": [1, 1.2]})
+hojas = dendrogram(Zv, labels=wine.columns.tolist(), orientation="left", ax=ax1, color_threshold=0.75)["leaves"][::-1]
+ax1.set_xlabel("1 − |r|")
+im = ax2.imshow(R[np.ix_(hojas, hojas)], cmap="RdBu_r", vmin=-1, vmax=1)
+ax2.set_xticks(range(len(hojas))); ax2.set_xticklabels(wine.columns[hojas], rotation=90, fontsize=8)
+ax2.set_yticks(range(len(hojas))); ax2.set_yticklabels(wine.columns[hojas], fontsize=8)
+fig.colorbar(im, ax=ax2, fraction=0.046)
+plt.tight_layout()
+plt.show()
+```
+
+## Cómo leer (y no leer) un dendrograma
+
+- La información está en la **altura** de las fusiones, no en la distancia horizontal entre hojas. Dos hojas vecinas en el dibujo pueden estar muy lejos: el orden de las hojas es en parte arbitrario (cada fusión se puede «voltear»).
+- Un **salto grande** entre alturas consecutivas sugiere un buen corte; varios saltos parecidos indican que no hay un número de grupos claramente mejor.
+- Las ramas largas y aisladas suelen ser **atípicos**: casos que se unen muy tarde a todo lo demás.
+- El dendrograma **siempre** existe, aunque los datos no tengan estructura jerárquica. La correlación cofenética y la validación del capítulo anterior siguen siendo necesarias.
+
+## Resumen
+
+- El clustering jerárquico aglomerativo fusiona en cada paso los dos grupos más cercanos y registra la altura; el resultado es un **dendrograma**, que se corta para obtener grupos.
+- El **criterio de enlace** define la distancia entre grupos: simple (par más cercano), completo (más lejano), promedio y Ward (aumento de la suma de cuadrados). Con las cinco sucursales, solo el enlace completo unió C con D y E.
+- La fórmula de **Lance-Williams** actualiza todas estas distancias con cuatro coeficientes.
+- El enlace simple equivale al **árbol de expansión mínima**: encuentra formas arbitrarias pero sufre el efecto cadena. Completo y Ward producen grupos compactos.
+- La **correlación cofenética** mide qué tan bien el árbol conserva las distancias originales.
+- Necesita $O(n^2)$ de memoria; para muchos datos se usan muestras, restricciones de conectividad o combinaciones con $k$-medias.
+
+El siguiente capítulo toma otro camino: definir los grupos como **regiones densas** separadas por zonas vacías, sin fijar $k$ y reconociendo explícitamente el ruido.
+
+[^mst]: Un **árbol de expansión mínima** de un grafo con pesos es un conjunto de aristas que conecta todos los vértices sin formar ciclos y cuya suma de pesos es la menor posible. Aquí el grafo es completo: cada par de casos está unido por una arista cuyo peso es su distancia. El algoritmo de Kruskal lo construye agregando aristas de menor a mayor peso siempre que no cierren un ciclo, que es exactamente lo que hace el enlace simple.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

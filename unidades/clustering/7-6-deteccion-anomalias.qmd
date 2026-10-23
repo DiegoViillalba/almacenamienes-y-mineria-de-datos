@@ -1,0 +1,541 @@
+---
+title: "Detección de anomalías"
+pagetitle: "Detección de anomalías: Mahalanobis, k vecinos, LOF e Isolation Forest"
+open-graph:
+  description: "Detección de anomalías no supervisada paso a paso: tipos de anomalías, puntuación z y cercas de Tukey, distancia de Mahalanobis y enmascaramiento, covarianza robusta (MCD), distancia a los k vecinos, factor de anomalía local (LOF), Isolation Forest y evaluación con pocas etiquetas, con cálculos a mano, laboratorio interactivo y código en Python."
+twitter-card:
+  description: "Detección de anomalías no supervisada paso a paso: tipos de anomalías, puntuación z y cercas de Tukey, distancia de Mahalanobis y enmascaramiento, covarianza robusta (MCD), distancia a los k vecinos, factor de anomalía local (LOF), Isolation Forest y evaluación con pocas etiquetas, con cálculos a mano, laboratorio interactivo y código en Python."
+description: "Detección de anomalías no supervisada paso a paso: tipos de anomalías, puntuación z y cercas de Tukey, distancia de Mahalanobis y enmascaramiento, covarianza robusta (MCD), distancia a los k vecinos, factor de anomalía local (LOF), Isolation Forest y evaluación con pocas etiquetas, con cálculos a mano, laboratorio interactivo y código en Python."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../intro_mineria/referencias_eda.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+Una **anomalía** (*outlier*, valor atípico) es un caso que se aparta tanto del resto que hace sospechar que lo generó un mecanismo distinto: un fraude entre miles de compras legítimas, una falla incipiente en las lecturas de un sensor, un error de captura en una base de datos, un intruso en el tráfico de una red. Detectarlas es una de las tareas más valiosas de la minería de datos, y casi siempre es **no supervisada**: las anomalías son raras, cambian con el tiempo y casi nunca vienen etiquetadas [@chandola2009anomaly].
+
+Ya nos hemos topado con ellas varias veces. En el análisis exploratorio usamos el rango intercuartílico para marcar valores extremos de **una** variable. En $k$-medias vimos que un solo punto lejano puede quedarse con un centro completo. DBSCAN etiqueta como **ruido** a los puntos en zonas vacías. Este capítulo convierte esas observaciones en métodos: cada uno define «raro» de una manera distinta, y la pregunta central es **¿raro respecto a qué?**
+
+## Intuición: una lectura que no está fuera de rango
+
+Una máquina registra la **temperatura** (°C) y la **presión** (kPa) de un proceso. Las dos variables se mueven juntas: al subir la temperatura, sube la presión. Estas son diez lecturas; la décima llegó esta mañana.
+
+| Lectura | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | **10** |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Temperatura (°C) | 60 | 62 | 64 | 66 | 68 | 70 | 72 | 74 | 76 | **69** |
+| Presión (kPa) | 120 | 125 | 127 | 133 | 135 | 141 | 143 | 149 | 151 | **126** |
+
+: Diez lecturas de un sensor. {#tbl-sensor}
+
+Ni 69 °C ni 126 kPa son valores extremos: ambos están dentro del rango habitual. Pero 69 °C suele venir con unos 137 kPa, no con 126. Una presión baja para esa temperatura puede indicar una fuga. ¿Qué métodos la detectan?
+
+## Construcción paso a paso
+
+### Paso 1. Una variable a la vez
+
+La **puntuación $z$** mide a cuántas desviaciones estándar está un valor de la media de su variable. Con las diez lecturas, la temperatura tiene media $68.1$ y desviación $5.17$, y la presión media $135$ y desviación $10.68$. Para la lectura 10:
+
+$$
+z_{\text{temp}} = \frac{69 - 68.1}{5.17} = 0.17, \qquad z_{\text{pres}} = \frac{126 - 135}{10.68} = -0.84.
+$$
+
+La regla habitual marca como atípico un $|z| > 3$ (o $> 2$, siendo más estrictos). La lectura 10 pasa sin problema; de hecho, las lecturas 1 y 9 tienen puntuaciones más extremas ($\pm 1.5$). Las **cercas de Tukey** del capítulo de EDA, $[Q_1 - 1.5\,\text{RIC},\ Q_3 + 1.5\,\text{RIC}]$, dan $[54, 82]$ para la temperatura y $[101.9, 166.9]$ para la presión: tampoco la marcan. Los métodos univariados **no pueden** ver una anomalía que solo existe en la relación entre variables.
+
+### Paso 2. La distancia de Mahalanobis con todos los datos
+
+La distancia de @mahalanobis1936, vista en el capítulo de similitud, mide la distancia al centro de los datos **teniendo en cuenta su forma**: su escala y su correlación. Con las diez lecturas, la correlación es $0.93$ y la distancia de la lectura 10 al centro resulta $d_M = 2.76$.
+
+¿Es mucho? Si los datos fueran normales en $p$ dimensiones, $d_M^2$ seguiría aproximadamente una distribución $\chi^2$ con $p$ grados de libertad[^chi2]. Con $p = 2$, el percentil 97.5 de $\chi^2_2$ es $7.38$, es decir, $d_M = 2.72$. La lectura 10 apenas supera el umbral. Algo no cuadra: en la gráfica salta a la vista que está fuera de la nube.
+
+### Paso 3. El enmascaramiento: estimar sin el sospechoso
+
+El problema es que la media y la covarianza se calcularon **incluyendo** a la lectura 10. Al estar fuera de la tendencia, ella misma ensancha la covarianza en su dirección y reduce la correlación (de 0.996 a 0.93): la anomalía **se esconde a sí misma**. A esto se le llama **enmascaramiento** (*masking*).
+
+Si estimamos el modelo con las nueve lecturas de referencia, la media es $\bar{\mathbf{x}} = (68, 136)$ y
+
+$$
+\mathbf{S} = \begin{pmatrix} 30 & 59 \\ 59 & 117 \end{pmatrix}, \qquad
+\mathbf{S}^{-1} = \frac{1}{30 \cdot 117 - 59^2}\begin{pmatrix} 117 & -59 \\ -59 & 30 \end{pmatrix} = \frac{1}{29}\begin{pmatrix} 117 & -59 \\ -59 & 30 \end{pmatrix}.
+$$
+
+Para la lectura 10, la diferencia con la media es $\boldsymbol{\delta} = (1, -10)$ y
+
+$$
+d_M^2 = \boldsymbol{\delta}^\top \mathbf{S}^{-1} \boldsymbol{\delta} = \frac{117(1)^2 - 2(59)(1)(-10) + 30(-10)^2}{29} = \frac{117 + 1180 + 3000}{29} = 148.2, \qquad d_M = 12.17.
+$$
+
+Ahora la lectura está a más de doce «desviaciones» del comportamiento normal, cuatro veces el umbral. El término dominante es el cruzado, $+1180$: la temperatura sube un poco mientras la presión baja mucho, justo lo contrario de lo que dice la correlación. Este es el principio de los estimadores **robustos** de covarianza: calcular la media y la covarianza con la parte de los datos que parece «limpia», para que las anomalías no contaminen la referencia.
+
+### Paso 4. Anomalías locales: el factor LOF
+
+Mahalanobis supone una sola nube elíptica. Con varios grupos de densidades distintas se necesita otra idea. Consideremos siete valores en una recta: un grupo **denso** $\{0, 0.2, 0.4\}$, un grupo **disperso** $\{5, 7, 9\}$ y un punto $p = 1.4$.
+
+Una primera medida de rareza es la **distancia al $k$-ésimo vecino**: lejos de todos, raro. Con $k = 2$:
+
+| Punto | 0 | 0.2 | 0.4 | **1.4** | 5 | 7 | 9 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Distancia al 2.º vecino | 0.4 | 0.2 | 0.4 | **1.2** | 3.6 | 2.0 | 4.0 |
+
+: Distancia al segundo vecino más cercano. {#tbl-knn-dist}
+
+Según esta medida, los más raros son 9, 5 y 7, y $p$ ocupa el cuarto lugar. Pero 5, 7 y 9 son un grupo normal, solo que disperso; en cambio, $p$ está a 1 de su vecino más cercano cuando en su vecindario los puntos están a 0.2 unos de otros. Es raro **para su zona**.
+
+El **factor de anomalía local** (LOF) [@breunig2000lof] compara la densidad de cada punto con la de sus vecinos:
+
+1. **Distancia de alcanzabilidad** de $p$ a su vecino $o$: $\text{reach}_k(p, o) = \max\{k\text{-dist}(o),\ d(p, o)\}$, la misma idea que en OPTICS. Para $p$ y sus dos vecinos, 0.4 y 0.2: $\text{reach}(p, 0.4) = \max\{0.4, 1.0\} = 1.0$ y $\text{reach}(p, 0.2) = \max\{0.2, 1.2\} = 1.2$.
+2. **Densidad local de alcanzabilidad**: el inverso de la alcanzabilidad promedio, $\text{lrd}(p) = 1 / \tfrac{1.0 + 1.2}{2} = 0.909$. Para el punto 0, con vecinos 0.2 y 0.4: alcanzabilidades $\max\{0.2, 0.2\} = 0.2$ y $\max\{0.4, 0.4\} = 0.4$, así que $\text{lrd}(0) = 1/0.3 = 3.33$. De la misma forma, $\text{lrd}(0.2) = 2.5$ y $\text{lrd}(0.4) = 3.33$.
+3. **LOF**: el promedio de las densidades de los vecinos dividido entre la densidad propia,
+$$
+\text{LOF}(p) = \frac{\tfrac12\big[\text{lrd}(0.4) + \text{lrd}(0.2)\big]}{\text{lrd}(p)} = \frac{(3.33 + 2.5)/2}{0.909} = 3.21.
+$$
+
+| Punto | 0 | 0.2 | 0.4 | **1.4** | 5 | 7 | 9 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| lrd | 3.33 | 2.50 | 3.33 | 0.91 | 0.36 | 0.26 | 0.33 |
+| LOF | 0.88 | 1.33 | 0.88 | **3.21** | 1.64 | 1.31 | 0.93 |
+
+: Densidad local y factor LOF con k = 2. {#tbl-lof}
+
+Un LOF cercano a 1 significa «tan denso como mis vecinos»: normal, sea cual sea la densidad de la zona. Mayor que 1, menos denso que ellos. Ahora $p$ es, con diferencia, el más anómalo, y el grupo disperso tiene valores cercanos a 1.
+
+### Paso 5. Aislar en lugar de medir: Isolation Forest
+
+@liu2008isolation partieron de otra observación: las anomalías son **pocas y diferentes**, así que son **fáciles de aislar**. Si partimos el intervalo $[0, 9]$ con un corte al azar, el punto 9 queda solo cuando el corte cae entre 7 y 9, con probabilidad $2/9 \approx 0.22$ en el primer intento. Para aislar el punto 0.2, en cambio, hacen falta varios cortes muy precisos. Repitiendo muchos árboles de cortes aleatorios, la **profundidad promedio** a la que se aísla cada punto es
+
+| Punto | 0 | 0.2 | 0.4 | 1.4 | 5 | 7 | 9 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Profundidad promedio $\mathbb{E}[h]$ | 3.43 | 4.10 | 3.81 | 2.93 | 2.80 | 2.86 | **2.14** |
+| Puntuación $s$ | 0.46 | 0.39 | 0.42 | 0.51 | 0.53 | 0.52 | **0.61** |
+
+: Profundidad promedio de aislamiento (20 000 árboles simulados) y puntuación de Isolation Forest. {#tbl-iforest}
+
+La puntuación $s = 2^{-\mathbb{E}[h]/c(n)}$ normaliza la profundidad (la fórmula está en la formalización): cerca de 1 es anómalo y por debajo de 0.5, normal. Isolation Forest señala al punto 9, el más alejado de todo, y no distingue mucho a $p$ del grupo disperso. Como la distancia al $k$-ésimo vecino, es un método más bien **global**. Cada detector tiene su idea de rareza.
+
+## Formalización
+
+### Tipos de anomalía y de problema
+
+- **Puntual**: un caso raro respecto al resto (la lectura 10).
+- **Contextual**: raro solo en un contexto. 30 °C es normal en mayo y anómalo en enero en la misma ciudad; las variables de contexto (fecha, ubicación) se usan para definir con quién comparar.
+- **Colectiva**: un conjunto de casos que solo es anómalo junto, como una secuencia de transacciones pequeñas que juntas forman un patrón de fraude.
+
+Según la información disponible, el problema puede ser:
+
+| Escenario | Datos de entrenamiento | Enfoque |
+|---|---|---|
+| Supervisado | etiquetas de normal y anómalo | clasificación con clases muy desbalanceadas (parte de clasificación) |
+| Semisupervisado (*novelty detection*) | solo casos normales | aprender lo normal y medir el alejamiento de casos nuevos |
+| No supervisado (*outlier detection*) | datos mezclados, sin etiquetas | suponer que las anomalías son pocas y diferentes |
+
+: Escenarios de detección de anomalías. {#tbl-escenarios}
+
+El Paso 3 fue semisupervisado: usamos nueve lecturas que sabíamos normales. El Paso 2, no supervisado, sufrió enmascaramiento.
+
+### Métodos estadísticos
+
+**Univariados.** La puntuación $z$, su versión **robusta** con la mediana y la desviación absoluta mediana[^mad], $z^{*} = 0.6745\,(x - \text{mediana})/\text{MAD}$, y las cercas de Tukey. Son simples y explicables, pero solo ven una variable a la vez.
+
+**Mahalanobis.** Para datos aproximadamente normales con media $\boldsymbol{\mu}$ y covarianza $\boldsymbol{\Sigma}$,
+
+$$
+d_M(\mathbf{x})^2 = (\mathbf{x} - \boldsymbol{\mu})^\top \boldsymbol{\Sigma}^{-1} (\mathbf{x} - \boldsymbol{\mu}) \sim \chi^2_p,
+$$ {#eq-maha-chi2}
+
+y se marca como anómalo un caso con $d_M^2 > \chi^2_{p, 1-\alpha}$. Los contornos de igual $d_M$ son elipses alineadas con la nube.
+
+**Robustez: el determinante de covarianza mínimo (MCD).** Para evitar el enmascaramiento, el estimador MCD busca el subconjunto de $h$ casos (por ejemplo, el 75 %) cuya matriz de covarianza tiene el **menor determinante**, es decir, la nube más compacta, y estima la media y la covarianza solo con ellos [@rousseeuw1999fastmcd]. El algoritmo FAST-MCD alterna «pasos C»: calcular la media y la covarianza de un subconjunto, ordenar todos los casos por su distancia de Mahalanobis a ese modelo y quedarse con los $h$ más cercanos. Cada paso C reduce el determinante, igual que cada paso de Lloyd reduce $W$ en $k$-medias. En `scikit-learn` se usa con `MinCovDet` o `EllipticEnvelope`.
+
+### Métodos basados en distancia y densidad
+
+**Distancia a los $k$ vecinos** [@ramaswamy2000efficient]: la puntuación es la distancia al $k$-ésimo vecino (o el promedio de las distancias a los $k$ vecinos). No supone ninguna forma, pero usa una escala **global**: confunde grupos dispersos con anomalías.
+
+**LOF** [@breunig2000lof]. Con $N_k(p)$ los $k$ vecinos de $p$:
+
+$$
+\text{reach}_k(p, o) = \max\{k\text{-dist}(o), d(p, o)\}, \qquad
+\text{lrd}_k(p) = \left(\frac{1}{k} \sum_{o \in N_k(p)} \text{reach}_k(p, o)\right)^{-1}, \qquad
+\text{LOF}_k(p) = \frac{1}{k} \sum_{o \in N_k(p)} \frac{\text{lrd}_k(o)}{\text{lrd}_k(p)}.
+$$ {#eq-lof}
+
+Usar $k\text{-dist}(o)$ en la alcanzabilidad suaviza la estimación: todos los puntos muy cercanos a $o$ reciben la misma alcanzabilidad. Un LOF de 1 es normal; valores de 1.5 o 2 suelen considerarse sospechosos, pero el umbral depende de los datos. El parámetro $k$ define qué tan «local» es la comparación: valores entre 10 y 50 son habituales.
+
+**Ruido de DBSCAN y GLOSH.** Los puntos de ruido de DBSCAN son anomalías con una regla binaria; HDBSCAN produce una puntuación continua (GLOSH) basada en la densidad a la que cada punto abandona su grupo.
+
+### Isolation Forest
+
+Un **árbol de aislamiento** se construye sobre una submuestra de $\psi$ casos (por omisión, 256): en cada nodo se elige una variable al azar y un punto de corte uniforme entre el mínimo y el máximo de esa variable en el nodo, hasta aislar cada caso o alcanzar una profundidad máxima de $\lceil \log_2 \psi \rceil$. La **longitud de camino** $h(\mathbf{x})$ es el número de cortes hasta llegar a la hoja de $\mathbf{x}$, más una corrección si la hoja tiene varios casos. Para comparar entre tamaños de muestra se normaliza con la longitud promedio de una búsqueda fallida en un árbol binario de búsqueda de $n$ elementos:
+
+$$
+c(n) = 2H(n - 1) - \frac{2(n - 1)}{n}, \qquad H(i) \approx \ln i + 0.5772,
+$$
+
+y la puntuación es
+
+$$
+s(\mathbf{x}, n) = 2^{-\mathbb{E}[h(\mathbf{x})] / c(n)}.
+$$ {#eq-iforest}
+
+Si $\mathbb{E}[h] \to 0$, $s \to 1$ (anómalo); si $\mathbb{E}[h] = c(n)$, $s = 0.5$. Para $n = 7$, $c(7) = 3.02$; para $\psi = 256$, $c(256) = 10.24$. Isolation Forest no calcula distancias, escala linealmente con $n$, funciona bien con muchas variables y no le afecta la escala de cada variable por separado. Submuestrear es parte del diseño: con pocos casos, las anomalías agrupadas no se enmascaran unas a otras.
+
+### Otros enfoques
+
+- **One-Class SVM** [@scholkopf2001estimating]: aprende una frontera que encierra a la mayoría de los datos en el espacio de un núcleo, en la línea de las máquinas de soporte vectorial.
+- **Error de reconstrucción**: con PCA o con un autoencoder (capítulo de t-SNE, UMAP y autoencoders), los casos normales se reconstruyen bien con pocas componentes y los anómalos no.
+- **Modelos de densidad**: una mezcla gaussiana o una estimación de densidad de núcleo; anómalo es lo que tiene baja densidad $\hat{p}(\mathbf{x})$.
+
+### Evaluar con pocas etiquetas
+
+Casi todos los detectores producen una **puntuación**, no una decisión. El umbral se fija con el parámetro de **contaminación** (la proporción esperada de anomalías) o con la capacidad de revisión: si un equipo puede investigar 50 alertas al día, se revisan las 50 de mayor puntuación. Si existen algunas etiquetas, se usan las métricas del capítulo de evaluación de clasificadores, con dos preferencias: la **precisión en los primeros $N$** (de las $N$ alertas más altas, cuántas eran reales) y el **área bajo la curva de precisión-exhaustividad**, mucho más informativa que la ROC cuando las anomalías son el 1 % de los datos.
+
+## Laboratorio: cuatro detectores, cuatro ideas de rareza
+
+Los datos tienen un grupo denso con correlación fuerte, un grupo disperso y seis **anomalías plantadas** (marcadas con un anillo). El fondo muestra la puntuación del detector en cada punto del plano: cuanto más intenso, más anómalo. Los puntos con contorno grueso son las alertas: el porcentaje de casos con mayor puntuación según la contaminación elegida. Arrastra el rombo para medir cualquier posición.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="an-lab">
+  <p class="plab-eyebrow">Laboratorio · Detección de anomalías</p>
+  <h3 class="plab-title">¿Raro respecto a qué?</h3>
+  <p class="plab-sub">Elige el detector y la contaminación. Compara qué anomalías plantadas encuentra cada uno y dónde pone sus falsas alarmas.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Detector
+      <div class="plab-seg" id="an-method">
+        <button data-value="maha" aria-pressed="true">Mahalanobis</button>
+        <button data-value="knn">k-vecinos</button>
+        <button data-value="lof">LOF</button>
+        <button data-value="iforest">Isolation Forest</button>
+      </div>
+    </div>
+    <div class="plab-field" id="an-cov-f">Covarianza
+      <div class="plab-seg" id="an-cov">
+        <button data-value="clasica" aria-pressed="true">Clásica</button>
+        <button data-value="robusta">Robusta (MCD)</button>
+      </div>
+    </div>
+    <label>Vecinos k: <b id="an-k-v"></b><input type="range" id="an-k" min="2" max="30" step="1" value="10"></label>
+    <label>Contaminación: <b id="an-c-v"></b><input type="range" id="an-c" min="1" max="15" step="1" value="5"></label>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Anomalías plantadas detectadas</span><strong id="an-hit"></strong></div>
+    <div class="plab-stat"><span>Precisión de las alertas</span><strong id="an-prec"></strong></div>
+    <div class="plab-stat"><span>Rombo: puntuación</span><strong id="an-q"></strong></div>
+    <div class="plab-stat"><span>Rombo: percentil entre los datos</span><strong id="an-qp"></strong></div>
+  </div>
+  <div class="plab-panel">
+    <h4>Mapa de puntuación y alertas</h4>
+    <svg id="an-svg" class="wide" role="img" aria-label="Mapa de calor de la puntuación de anomalía, datos, anomalías plantadas y alertas"></svg>
+    <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s1)"></i>caso normal</span><span><i class="dot" style="background:transparent;border:2px solid var(--lab-s2)"></i>anomalía plantada</span><span><i class="dot" style="background:var(--lab-s5)"></i>alerta del detector</span><span><i style="background:var(--lab-s5);opacity:.4"></i>puntuación alta</span></div>
+  </div>
+  <p class="plab-note" id="an-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con Mahalanobis clásica y 5 % de contaminación, ¿qué anomalías plantadas se escapan? Cambia a covarianza robusta. <strong>Predice</strong> antes qué pasará con la anomalía que está justo al lado del grupo denso.</li>
+    <li>Con k-vecinos, ¿dónde caen las falsas alarmas? Compara con LOF usando el mismo k.</li>
+    <li>Arrastra el rombo desde el centro del grupo disperso hasta el borde del grupo denso y observa su percentil con k-vecinos y con LOF.</li>
+    <li>Con Isolation Forest, ¿qué forma tienen las curvas de igual puntuación? ¿Por qué parecen rectángulos?</li>
+  </ol>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('an-lab');
+  const $ = s => root.querySelector(s);
+  const g = K.rng(12), N = () => g.normal();
+  const X = [], planted = [];
+  for (let i = 0; i < 90; i++) { const u = N(), v = N(); X.push([-1.6 + 0.62 * u, -0.6 + 0.62 * (0.93 * u + 0.37 * v)]); }
+  for (let i = 0; i < 40; i++) X.push([2.2 + 0.85 * N(), 1.7 + 0.85 * N()]);
+  [[-3.6, 3.0], [3.9, -2.9], [-0.9, -1.75], [-2.55, 0.55], [0.55, -0.35], [4.6, 4.2]].forEach(p => { planted.push(X.length); X.push(p); });
+  const isPl = X.map((_, i) => planted.includes(i));
+  let q = [0.3, 0.6], drag = false;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const method = K.segmented($('#an-method'), () => recompute());
+  const covSeg = K.segmented($('#an-cov'), () => recompute());
+  // Media y covarianza (clásica o con pasos C del MCD, h = 75 %).
+  function meanCov(idx) {
+    const m = [K.mean(idx.map(i => X[i][0])), K.mean(idx.map(i => X[i][1]))];
+    const n = idx.length; let a = 0, b = 0, c = 0;
+    idx.forEach(i => { const u = X[i][0] - m[0], v = X[i][1] - m[1]; a += u * u; b += u * v; c += v * v; });
+    a /= n - 1; b /= n - 1; c /= n - 1; const det = a * c - b * b;
+    return { m, I: [c / det, -b / det, a / det] };
+  }
+  const mahaWith = (M, p) => { const u = p[0] - M.m[0], v = p[1] - M.m[1]; return Math.sqrt(Math.max(0, M.I[0] * u * u + 2 * M.I[1] * u * v + M.I[2] * v * v)); };
+  function fitMaha(robust) {
+    let idx = X.map((_, i) => i), M = meanCov(idx);
+    if (robust) {
+      const h = Math.floor(0.75 * X.length);
+      for (let it = 0; it < 30; it++) {
+        const ord = X.map((p, i) => [mahaWith(M, p), i]).sort((a, b) => a[0] - b[0]).slice(0, h).map(v => v[1]);
+        M = meanCov(ord);
+      }
+    }
+    return p => mahaWith(M, p);
+  }
+  function fitKnn(k) {
+    return (p, self = -1) => X.map((x, j) => j === self ? Infinity : dist(p, x)).sort((a, b) => a - b)[k - 1];
+  }
+  function fitLof(k) {
+    const nn = X.map((p, i) => X.map((x, j) => [j, j === i ? Infinity : dist(p, x)]).sort((a, b) => a[1] - b[1]).slice(0, k));
+    const kd = nn.map(r => r[k - 1][1]);
+    const lrd = nn.map(r => 1 / K.mean(r.map(([o, d]) => Math.max(kd[o], d))));
+    return (p, self = -1) => {
+      const r = X.map((x, j) => [j, j === self ? Infinity : dist(p, x)]).sort((a, b) => a[1] - b[1]).slice(0, k);
+      const l = 1 / Math.max(1e-9, K.mean(r.map(([o, d]) => Math.max(kd[o], d))));
+      return K.mean(r.map(([o]) => lrd[o])) / l;
+    };
+  }
+  function fitIforest() {
+    const r = K.rng(5), psi = 64, T = 100, maxD = Math.ceil(Math.log2(psi));
+    const cN = n => n <= 1 ? 0 : n === 2 ? 1 : 2 * (Math.log(n - 1) + 0.5772156649) - 2 * (n - 1) / n;
+    function build(ids, d) {
+      if (ids.length <= 1 || d >= maxD) return { leaf: true, size: ids.length };
+      const f = r() < 0.5 ? 0 : 1, vals = ids.map(i => X[i][f]), lo = Math.min(...vals), hi = Math.max(...vals);
+      if (hi - lo < 1e-12) return { leaf: true, size: ids.length };
+      const s = lo + (hi - lo) * r();
+      return { f, s, L: build(ids.filter(i => X[i][f] < s), d + 1), R: build(ids.filter(i => X[i][f] >= s), d + 1) };
+    }
+    const trees = [];
+    for (let t = 0; t < T; t++) { const ids = []; while (ids.length < psi) { const i = Math.floor(r() * X.length); if (!ids.includes(i)) ids.push(i); } trees.push(build(ids, 0)); }
+    const path = (node, p, d) => node.leaf ? d + cN(node.size) : path(p[node.f] < node.s ? node.L : node.R, p, d + 1);
+    return p => 2 ** (-K.mean(trees.map(t => path(t, p, 0))) / cN(psi));
+  }
+  let score, train, grid, G = 40;
+  const lim = [-4.6, 5.6, -3.8, 5.0];
+  function recompute() {
+    const m = method.get(), k = +$('#an-k').value;
+    $('#an-cov-f').style.display = m === 'maha' ? '' : 'none';
+    $('#an-k').disabled = !(m === 'knn' || m === 'lof');
+    score = m === 'maha' ? fitMaha(covSeg.get() === 'robusta') : m === 'knn' ? fitKnn(k) : m === 'lof' ? fitLof(k) : fitIforest();
+    train = X.map((p, i) => score(p, i));
+    grid = [];
+    const sx = (lim[1] - lim[0]) / G, sy = (lim[3] - lim[2]) / Math.round(G * (lim[3] - lim[2]) / (lim[1] - lim[0]));
+    for (let a = lim[0]; a < lim[1] - 1e-9; a += sx) for (let b = lim[2]; b < lim[3] - 1e-9; b += sy) grid.push([a, b, sx, sy, score([a + sx / 2, b + sy / 2])]);
+    render();
+  }
+  function render() {
+    const m = method.get(), k = +$('#an-k').value, cont = +$('#an-c').value;
+    $('#an-k-v').textContent = (m === 'knn' || m === 'lof') ? k : '—'; $('#an-c-v').textContent = cont + ' %';
+    const sorted = train.slice().sort((a, b) => a - b), nAlert = Math.max(1, Math.round(cont / 100 * X.length));
+    const thr = sorted[X.length - nAlert];
+    const alert = train.map(s => s >= thr);
+    const lo = K.quantile(sorted, 0.5), hi = sorted[sorted.length - 1];
+    const c = K.chart($('#an-svg'), { width: 620, height: Math.round(576 * (lim[3] - lim[2]) / (lim[1] - lim[0])) + 44, x: [lim[0], lim[1]], y: [lim[2], lim[3]], margin: { left: 34, right: 10, top: 10, bottom: 34 } });
+    grid.forEach(([a, b, sx, sy, s]) => { const t = K.clamp((s - lo) / (hi - lo + 1e-12), 0, 1); if (t > 0.02) { const r = c.rect(a, b, a + sx, b + sy, 's5'); r.style.fillOpacity = 0.55 * t; r.style.stroke = 'none'; } });
+    c.axes({ xTicks: 6, yTicks: 5, grid: false });
+    X.forEach((p, i) => {
+      const d = c.dot(p[0], p[1], isPl[i] ? 5 : 3.6, (alert[i] ? 's5' : 's1') + ' dot');
+      if (alert[i]) { d.style.stroke = 'var(--lab-text)'; d.style.strokeWidth = 1.5; }
+      if (isPl[i]) { const ring = c.dot(p[0], p[1], 9, 's2 line'); ring.style.strokeWidth = 2; }
+    });
+    const s = 9, Xq = c.X(q[0]), Yq = c.Y(q[1]);
+    K.el('path', { d: `M${Xq},${Yq - s}L${Xq + s},${Yq}L${Xq},${Yq + s}L${Xq - s},${Yq}Z`, class: 's4 dot drag' }, c.g).style.strokeWidth = 2;
+    const qs = score(q), pct = 100 * sorted.filter(v => v < qs).length / sorted.length;
+    const hits = planted.filter(i => alert[i]).length, prec = hits / alert.filter(Boolean).length;
+    $('#an-hit').textContent = `${hits} de ${planted.length}`;
+    $('#an-prec').textContent = K.fmt(100 * prec, 0) + ' %';
+    $('#an-q').textContent = K.fmt(qs, m === 'iforest' ? 3 : 2);
+    $('#an-qp').textContent = K.fmt(pct, 0) + (qs >= thr ? ' (alerta)' : '');
+    const name = { maha: 'Mahalanobis', knn: 'k-vecinos', lof: 'LOF', iforest: 'Isolation Forest' }[m];
+    const missed = planted.filter(i => !alert[i]).length;
+    let msg = `${name}: ${nAlert} alertas (${cont} %), ${hits} de las ${planted.length} anomalías plantadas detectadas y ${nAlert - hits} falsas alarmas. `;
+    if (m === 'maha') msg += covSeg.get() === 'clasica' ? 'La elipse se ajusta a todos los datos, incluidos los dos grupos y las anomalías: la covarianza clásica queda inflada y las regiones raras entre grupos pasan desapercibidas.' : 'Con la covarianza robusta, la elipse se ajusta al núcleo más compacto de los datos (el grupo denso): todo lo que se aparte de su correlación destaca, incluido, por cierto, el grupo disperso entero.';
+    else if (m === 'knn') msg += 'La distancia al k-ésimo vecino usa una escala global: la periferia del grupo disperso parece tan rara como los puntos aislados.';
+    else if (m === 'lof') msg += 'LOF compara cada punto con la densidad de sus vecinos: las anomalías pegadas al grupo denso destacan y el grupo disperso se considera normal.';
+    else msg += 'Isolation Forest corta en paralelo a los ejes: lo que se aísla con pocos cortes recibe puntuación alta. Es rápido y global.';
+    const note = $('#an-note'); note.className = 'plab-note ' + (missed === 0 ? 'good' : missed > 2 ? 'warn' : ''); note.textContent = msg;
+  }
+  const svg = $('#an-svg');
+  svg.addEventListener('pointerdown', e => { if (e.target.closest('path.drag')) { drag = true; svg.setPointerCapture(e.pointerId); } });
+  svg.addEventListener('pointermove', e => { if (!drag) return; const [x, y] = svg.__chart.pointer(e); q = [K.clamp(x, lim[0], lim[1]), K.clamp(y, lim[2], lim[3])]; render(); });
+  svg.addEventListener('pointerup', () => { drag = false; });
+  $('#an-k').addEventListener('change', recompute);
+  $('#an-k').addEventListener('input', () => { $('#an-k-v').textContent = $('#an-k').value; });
+  $('#an-c').addEventListener('input', render);
+  recompute();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* El laboratorio compara cuatro detectores sobre un grupo denso correlacionado, un grupo disperso y seis anomalías plantadas. La covarianza clásica de Mahalanobis se infla con todos los datos y deja escapar anomalías entre los grupos; la distancia a los $k$ vecinos marca como sospechosa la periferia del grupo disperso; LOF detecta las anomalías pegadas al grupo denso; Isolation Forest produce contornos rectangulares porque corta en paralelo a los ejes.
+:::
+
+## Implementación en Python
+
+### El sensor: puntuación $z$, Mahalanobis y covarianza robusta
+
+```{python}
+#| label: an-sensor
+import numpy as np
+import pandas as pd
+from scipy.stats import chi2
+from sklearn.covariance import EmpiricalCovariance, MinCovDet
+
+sensor = pd.DataFrame({"temp": [60, 62, 64, 66, 68, 70, 72, 74, 76, 69],
+                       "pres": [120, 125, 127, 133, 135, 141, 143, 149, 151, 126]}, index=range(1, 11))
+z = (sensor - sensor.mean()) / sensor.std()
+print("puntuaciones z de la lectura 10:", z.loc[10].round(2).to_dict())
+
+umbral = np.sqrt(chi2.ppf(0.975, df=2))
+clasica = EmpiricalCovariance().fit(sensor)
+referencia = EmpiricalCovariance().fit(sensor.loc[1:9])
+robusta = MinCovDet(random_state=0).fit(sensor)
+tabla = pd.DataFrame({
+    "clásica (10 lecturas)": np.sqrt(clasica.mahalanobis(sensor)),
+    "solo referencia (9)": np.sqrt(referencia.mahalanobis(sensor)),
+    "robusta (MCD)": np.sqrt(robusta.mahalanobis(sensor)),
+}, index=sensor.index).round(2)
+print(f"\numbral χ² (97.5 %): d_M > {umbral:.2f}")
+print(tabla.T)
+```
+
+`EmpiricalCovariance` usa la covarianza con divisor $n$ y `MinCovDet` aplica además una corrección de consistencia, por lo que sus valores difieren ligeramente de los calculados a mano con divisor $n - 1$; la conclusión es la misma: solo con una referencia limpia o robusta la lectura 10 destaca con claridad.
+
+### LOF y la distancia a los vecinos en el ejemplo de la recta
+
+```{python}
+#| label: an-lof-recta
+from sklearn.neighbors import LocalOutlierFactor, NearestNeighbors
+
+recta = np.array([0, 0.2, 0.4, 1.4, 5, 7, 9]).reshape(-1, 1)
+lof = LocalOutlierFactor(n_neighbors=2).fit(recta)
+dist_k = NearestNeighbors(n_neighbors=3).fit(recta).kneighbors(recta)[0][:, 2]   # 2.º vecino (el 1.º es él mismo)
+print(pd.DataFrame({"x": recta.ravel(), "distancia al 2.º vecino": dist_k,
+                    "LOF": -lof.negative_outlier_factor_}).round(3).T)
+```
+
+`scikit-learn` guarda el LOF con signo negativo (`negative_outlier_factor_`) para que «mayor sea más normal», la convención de todos sus detectores.
+
+### Comparación en datos con anomalías plantadas
+
+```{python}
+#| label: fig-an-comparacion
+#| fig-cap: "Puntuación de cuatro detectores sobre un grupo denso correlacionado, un grupo disperso y 15 anomalías plantadas (anillos naranjas). El color de fondo es la puntuación (más oscuro, más anómalo) y los puntos rojos son las alertas con contaminación del 5 %."
+import matplotlib.pyplot as plt
+from sklearn.ensemble import IsolationForest
+from sklearn.covariance import EllipticEnvelope
+
+rng = np.random.default_rng(3)
+u = rng.normal(size=(300, 2))
+denso = np.c_[-1.6 + 0.62 * u[:, 0], -0.6 + 0.62 * (0.93 * u[:, 0] + 0.37 * u[:, 1])]
+disperso = rng.normal([2.2, 1.7], 0.85, (150, 2))
+anom = np.vstack([rng.uniform([-4.5, -3.5], [5.5, 5], (10, 2)), [[-0.9, -1.75], [-2.55, 0.55], [-0.6, -1.4], [-2.2, 0.3], [0.55, -0.35]]])
+X = np.vstack([denso, disperso, anom])
+y = np.r_[np.zeros(len(denso) + len(disperso)), np.ones(len(anom))]
+
+detectores = {
+    "Mahalanobis robusta": EllipticEnvelope(contamination=0.05, random_state=0),
+    "k-vecinos (k = 10)": None,
+    "LOF (k = 20)": LocalOutlierFactor(n_neighbors=20, contamination=0.05),
+    "Isolation Forest": IsolationForest(contamination=0.05, random_state=0),
+}
+xx, yy = np.meshgrid(np.linspace(-4.6, 5.6, 150), np.linspace(-3.8, 5.0, 130))
+malla = np.c_[xx.ravel(), yy.ravel()]
+puntuaciones = {}
+
+fig, axes = plt.subplots(1, 4, figsize=(15, 3.8))
+for ax, (nombre, modelo) in zip(axes, detectores.items()):
+    if nombre.startswith("k-vecinos"):
+        nn = NearestNeighbors(n_neighbors=11).fit(X)
+        s = nn.kneighbors(X)[0][:, 10]
+        fondo = nn.kneighbors(malla, n_neighbors=10)[0][:, 9]
+    elif nombre.startswith("LOF"):
+        s = -modelo.fit(X).negative_outlier_factor_
+        fondo = -LocalOutlierFactor(n_neighbors=20, novelty=True).fit(X).score_samples(malla)
+    else:
+        s = -modelo.fit(X).score_samples(X)
+        fondo = -modelo.score_samples(malla)
+    puntuaciones[nombre] = s
+    alerta = s >= np.quantile(s, 0.95)
+    ax.contourf(xx, yy, fondo.reshape(xx.shape), levels=np.quantile(fondo, np.linspace(0.5, 1, 9)), cmap="Reds", alpha=0.7)
+    ax.scatter(*X[~alerta].T, s=6, color="#2563eb")
+    ax.scatter(*X[alerta].T, s=14, color="#dc2626")
+    ax.scatter(*anom.T, s=70, facecolors="none", edgecolors="#ea580c", linewidths=1.5)
+    ax.set_title(nombre, fontsize=10); ax.set_xticks([]); ax.set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+### Evaluar con las etiquetas plantadas
+
+```{python}
+#| label: an-evaluacion
+from sklearn.metrics import roc_auc_score, average_precision_score
+
+def precision_en_n(y, s, n):
+    return y[np.argsort(-s)[:n]].mean()
+
+filas = {nombre: {"ROC AUC": roc_auc_score(y, s), "AP (área PR)": average_precision_score(y, s),
+                  "precisión en las 15 primeras": precision_en_n(y, s, 15)} for nombre, s in puntuaciones.items()}
+print(pd.DataFrame(filas).T.round(3))
+print(f"\nproporción de anomalías: {y.mean():.3f} (AP de un detector al azar)")
+```
+
+La referencia de la precisión promedio (AP) es la proporción de anomalías: un detector al azar obtiene ese valor. Una ROC AUC alta puede convivir con una AP modesta cuando las anomalías son escasas, por eso conviene mirar ambas.
+
+### Detección de novedades
+
+Cuando se tiene un conjunto de entrenamiento que se sabe normal, los detectores se ajustan con él y se aplican a datos nuevos. En `LocalOutlierFactor` hay que pedirlo explícitamente con `novelty=True`.
+
+```{python}
+#| label: an-novedad
+normal = np.vstack([denso, disperso])
+nuevos = np.array([[-1.6, -0.6], [2.2, 1.7], [-0.9, -1.75], [4.8, -3.0]])
+modelos = {
+    "LOF (novelty)": LocalOutlierFactor(n_neighbors=20, novelty=True).fit(normal),
+    "Isolation Forest": IsolationForest(random_state=0).fit(normal),
+    "Mahalanobis robusta": EllipticEnvelope(random_state=0).fit(denso),
+}
+print(pd.DataFrame({n: m.predict(nuevos) for n, m in modelos.items()},
+                   index=["centro denso", "centro disperso", "junto al denso", "lejano"]))
+```
+
+`predict` devuelve $1$ para normal y $-1$ para anómalo. La envolvente elíptica, ajustada solo con el grupo denso, considera anómalo todo lo que no se le parezca, incluido el centro del grupo disperso: un modelo de «lo normal» solo sabe de lo que vio.
+
+## Guía de elección
+
+| Situación | Detector sugerido |
+|---|---|
+| Una variable, explicación sencilla | puntuación $z$ robusta, cercas de Tukey |
+| Pocas variables, nube elíptica | Mahalanobis con covarianza robusta (MCD) |
+| Grupos de densidades distintas | LOF, HDBSCAN (GLOSH) |
+| Muchos casos o muchas variables | Isolation Forest |
+| Datos de referencia que se saben normales | detección de novedades (LOF con `novelty=True`, One-Class SVM) |
+| Imágenes, señales, texto | error de reconstrucción de un autoencoder |
+
+: Elección de un detector de anomalías. {#tbl-guia-anomalias}
+
+En la práctica conviene combinar varios detectores y revisar a mano las alertas de mayor puntuación: una anomalía es una **hipótesis** que un experto debe confirmar.
+
+## Resumen
+
+- Una anomalía es un caso que parece generado por otro mecanismo; puede ser puntual, contextual o colectiva, y el problema puede ser supervisado, semisupervisado o no supervisado.
+- Los métodos **univariados** no ven anomalías en la relación entre variables. **Mahalanobis** sí, pero sufre **enmascaramiento**: con todos los datos, la lectura del sensor tenía $d_M = 2.76$; con una referencia limpia, $12.17$. La covarianza **robusta** (MCD) resuelve el problema.
+- La distancia a los $k$ vecinos es global; **LOF** compara la densidad de cada punto con la de sus vecinos y detecta anomalías **locales** ($\text{LOF} = 3.21$ en el ejemplo).
+- **Isolation Forest** mide qué tan fácil es aislar un caso con cortes aleatorios; es rápido, escala bien y es más bien global.
+- Los detectores producen puntuaciones; el umbral sale de la contaminación esperada o de la capacidad de revisión, y con pocas etiquetas se evalúa con precisión en los primeros $N$ y área PR.
+
+Los últimos capítulos de esta parte cambian de tarea: en lugar de agrupar o señalar casos, buscan **representaciones** de pocas dimensiones que conserven la estructura de los datos.
+
+[^chi2]: Si $\mathbf{x}$ sigue una normal multivariada, $\boldsymbol{\Sigma}^{-1/2}(\mathbf{x} - \boldsymbol{\mu})$ tiene $p$ componentes normales estándar independientes, y $d_M^2$ es la suma de sus cuadrados. La suma de los cuadrados de $p$ normales estándar independientes sigue, por definición, una distribución **ji cuadrada** con $p$ grados de libertad. Con parámetros estimados y pocos datos la aproximación es solo eso, una aproximación.
+
+[^mad]: La **desviación absoluta mediana** es $\text{MAD} = \text{mediana}(|x_i - \text{mediana}(x)|)$. El factor $0.6745$ hace que, para datos normales, $z^{*}$ sea comparable con la puntuación $z$ habitual. A diferencia de la media y la desviación estándar, la mediana y la MAD apenas cambian con unos pocos valores extremos.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::
