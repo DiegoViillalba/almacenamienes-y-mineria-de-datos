@@ -1,0 +1,653 @@
+---
+title: "Validación de clustering"
+pagetitle: "Validación de clustering: silueta, índices internos y externos, número de grupos y estabilidad"
+open-graph:
+  description: "Cómo evaluar un agrupamiento sin respuesta correcta: tendencia de agrupamiento (Hopkins), silueta, Davies-Bouldin y Calinski-Harabasz, índices externos (Rand ajustado, información mutua), elección del número de grupos (codo, silueta, estadístico de brecha, BIC) y estabilidad por remuestreo, con cálculos a mano y laboratorio interactivo."
+twitter-card:
+  description: "Cómo evaluar un agrupamiento sin respuesta correcta: tendencia de agrupamiento (Hopkins), silueta, Davies-Bouldin y Calinski-Harabasz, índices externos (Rand ajustado, información mutua), elección del número de grupos (codo, silueta, estadístico de brecha, BIC) y estabilidad por remuestreo, con cálculos a mano y laboratorio interactivo."
+description: "Cómo evaluar un agrupamiento sin respuesta correcta: tendencia de agrupamiento (Hopkins), silueta, Davies-Bouldin y Calinski-Harabasz, índices externos (Rand ajustado, información mutua), elección del número de grupos (codo, silueta, estadístico de brecha, BIC) y estabilidad por remuestreo, con cálculos a mano y laboratorio interactivo."
+author: "Diego Villalba"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    code-fold: true
+    code-tools: true
+    code-summary: "Mostrar código"
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../../references.bib]
+jupyter: python3
+---
+
+{{< include ../preprocesamiento/_labkit.qmd >}}
+
+En clasificación, la pregunta «¿qué tan bueno es el modelo?» tiene una respuesta operativa: el error en datos que el modelo no vio. En clustering no existe ese juez. El capítulo introductorio de esta parte adelantó las cuatro miradas complementarias con que se evalúa un agrupamiento: criterios **internos**, criterios **externos**, **estabilidad** e **interpretación**. Este capítulo desarrolla las tres primeras con cálculos que se pueden hacer a mano, y añade una pregunta que debería hacerse antes que todas: **¿hay grupos en los datos, para empezar?**
+
+Usaremos los seis puntos de entrega del capítulo de $k$-medias, cuyas distancias ya conocemos, y compararemos dos particiones en dos grupos: la que encontró $k$-medias y una deliberadamente mala.
+
+## Intuición: dos maneras de partir seis puntos
+
+| Punto | P1 | P2 | P3 | P4 | P5 | P6 |
+|---|---:|---:|---:|---:|---:|---:|
+| $x$ | 1 | 2 | 1 | 5 | 6 | 4 |
+| $y$ | 1 | 1 | 3 | 4 | 6 | 6 |
+| Partición buena | 1 | 1 | 1 | 2 | 2 | 2 |
+| Partición mala | 1 | 1 | 2 | 2 | 2 | 2 |
+
+: Los seis puntos y dos particiones en dos grupos. {#tbl-val-particiones}
+
+La partición mala es la que $k$-medias tenía después de su primera asignación (con los centros en P1 y P3): manda a P3 con los puntos de arriba a la derecha. A simple vista es peor. El objetivo es construir números que lo digan, **punto por punto y en conjunto**, sin usar ninguna etiqueta externa.
+
+Las distancias euclidianas entre los seis puntos son:
+
+| | P1 | P2 | P3 | P4 | P5 | P6 |
+|---|---:|---:|---:|---:|---:|---:|
+| P1 | 0 | 1.00 | 2.00 | 5.00 | 7.07 | 5.83 |
+| P2 | 1.00 | 0 | 2.24 | 4.24 | 6.40 | 5.39 |
+| P3 | 2.00 | 2.24 | 0 | 4.12 | 5.83 | 4.24 |
+| P4 | 5.00 | 4.24 | 4.12 | 0 | 2.24 | 2.24 |
+| P5 | 7.07 | 6.40 | 5.83 | 2.24 | 0 | 2.00 |
+| P6 | 5.83 | 5.39 | 4.24 | 2.24 | 2.00 | 0 |
+
+: Matriz de distancias euclidianas entre los seis puntos. {#tbl-val-distancias}
+
+## Construcción paso a paso
+
+### Paso 1. La silueta de un punto
+
+@rousseeuw1987 propuso comparar, para cada punto, dos distancias promedio:
+
+- $a(i)$: la distancia promedio de $i$ a los **otros puntos de su grupo** (¿qué tan bien acompañado está?);
+- $b(i)$: la distancia promedio de $i$ a los puntos del **grupo vecino**, el grupo ajeno más cercano en promedio (¿qué tan cerca está la alternativa?).
+
+Para P3 en la partición buena, su grupo es $\{P1, P2, P3\}$ y el único otro grupo es $\{P4, P5, P6\}$:
+
+$$
+a(P3) = \frac{2.00 + 2.24}{2} = 2.12, \qquad b(P3) = \frac{4.12 + 5.83 + 4.24}{3} = 4.73.
+$$
+
+La **silueta** compara ambas en una escala de $-1$ a $1$:
+
+$$
+s(i) = \frac{b(i) - a(i)}{\max\{a(i), b(i)\}}, \qquad s(P3) = \frac{4.73 - 2.12}{4.73} = 0.55.
+$$
+
+Si $s(i)$ es cercano a 1, el punto está mucho más cerca de su grupo que de la alternativa. Cercano a 0, está en la frontera. **Negativo**, está más cerca, en promedio, de otro grupo que del suyo: probablemente está mal asignado. En la partición mala, P3 está con P4, P5 y P6:
+
+$$
+a(P3) = \frac{4.12 + 5.83 + 4.24}{3} = 4.73, \qquad b(P3) = \frac{2.00 + 2.24}{2} = 2.12, \qquad s(P3) = \frac{2.12 - 4.73}{4.73} = -0.55.
+$$
+
+Los papeles de $a$ y $b$ se intercambiaron y la silueta cambió de signo: el índice **señala al punto mal asignado**.
+
+### Paso 2. Siluetas de todos los puntos
+
+| | P1 | P2 | P3 | P4 | P5 | P6 | Promedio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Buena: $a(i)$ | 1.50 | 1.62 | 2.12 | 2.24 | 2.12 | 2.12 | |
+| Buena: $b(i)$ | 5.97 | 5.34 | 4.73 | 4.46 | 6.44 | 5.15 | |
+| Buena: $s(i)$ | 0.75 | 0.70 | 0.55 | 0.50 | 0.67 | 0.59 | **0.63** |
+| Mala: $s(i)$ | 0.80 | 0.78 | **−0.55** | 0.38 | 0.50 | 0.50 | **0.40** |
+
+: Siluetas de cada punto en las dos particiones. {#tbl-val-siluetas}
+
+El promedio de las siluetas, el **coeficiente de silueta**, resume la partición: $0.63$ contra $0.40$. En la partición buena, el punto peor ubicado es P4 ($0.50$), el más cercano al otro grupo. En la mala, P1 y P2 mejoran ligeramente (su grupo es más compacto), pero P3 se hunde y P4, P5 y P6 empeoran porque cargan con un compañero lejano.
+
+### Paso 3. Dos índices basados en centroides
+
+La silueta requiere todas las distancias entre pares, $O(n^2)$. Otros índices solo usan los centroides, lo que los hace baratos con muchos datos.
+
+**Calinski-Harabasz.** Compara la variación entre grupos $B$ y dentro de los grupos $W$ de la descomposición $T = W + B$ del capítulo de $k$-medias, cada una dividida entre sus grados de libertad, como en un análisis de varianza [@calinski1974]:
+
+$$
+\text{CH} = \frac{B / (k - 1)}{W / (n - k)}.
+$$ {#eq-ch}
+
+Para la partición buena, $W = 8.00$ y $B = 48.33 - 8.00 = 40.33$, así que $\text{CH} = \dfrac{40.33/1}{8.00/4} = 20.17$. Para la mala, $W = 21.25$ y $B = 27.08$: $\text{CH} = \dfrac{27.08}{21.25/4} = 5.10$. **Mayor es mejor.**
+
+**Davies-Bouldin.** Para cada grupo $c$ calcula su dispersión $S_c$, la distancia promedio de sus puntos a su centroide, y lo compara con el grupo que más se le parece [@davies1979]:
+
+$$
+\text{DB} = \frac{1}{k} \sum_{c=1}^{k} \max_{c' \ne c} \frac{S_c + S_{c'}}{\lVert \bar{\mathbf{x}}_c - \bar{\mathbf{x}}_{c'} \rVert}.
+$$ {#eq-db}
+
+En la partición buena, los centroides son $(1.33, 1.67)$ y $(5, 5.33)$, a $5.19$ uno del otro, y las dispersiones son $S_1 = (0.75 + 0.94 + 1.37)/3 = 1.02$ y $S_2 = 1.25$. Con dos grupos, ambos términos son iguales: $\text{DB} = (1.02 + 1.25)/5.19 = 0.44$. En la mala, $S_1 = 0.50$, $S_2 = 2.08$ y los centroides están a $4.51$: $\text{DB} = 2.58/4.51 = 0.57$. **Menor es mejor.**
+
+| Partición | Silueta (↑) | Calinski-Harabasz (↑) | Davies-Bouldin (↓) |
+|---|---:|---:|---:|
+| Buena | 0.63 | 20.17 | 0.44 |
+| Mala | 0.40 | 5.10 | 0.57 |
+
+: Índices internos de las dos particiones. {#tbl-val-indices}
+
+Los tres índices coinciden. No siempre ocurre; cada uno mide la cohesión y la separación de manera distinta.
+
+### Paso 4. Si existiera una respuesta de referencia
+
+Supongamos que alguien conoce la **zona** real de cada punto: P1, P2 y P3 están en la zona norte, y P4, P5 y P6 en la sur. Esa es exactamente la partición buena, así que comparemos la **mala** con la referencia. Los índices externos se basan en **pares** de puntos: con seis puntos hay $\binom{6}{2} = 15$ pares, y cada uno cae en una de cuatro casillas.
+
+| | Juntos en la partición | Separados en la partición |
+|---|---:|---:|
+| **Juntos en la referencia** | $a = 4$ | $b = 2$ |
+| **Separados en la referencia** | $c = 3$ | $d = 6$ |
+
+: Clasificación de los 15 pares de puntos según la referencia y la partición mala. {#tbl-val-pares}
+
+Por ejemplo, el par (P1, P2) está junto en ambas ($a$); (P1, P3) está junto en la referencia y separado en la partición ($b$); (P3, P4) está separado en la referencia y junto en la partición ($c$). El **índice de Rand** es la proporción de pares en los que ambas particiones están de acuerdo [@rand1971objective]:
+
+$$
+\text{RI} = \frac{a + d}{a + b + c + d} = \frac{4 + 6}{15} = 0.67.
+$$
+
+Un $0.67$ parece aceptable, pero el índice de Rand de dos particiones **al azar** rara vez es bajo, porque la mayoría de los pares están separados en ambas. El **índice de Rand ajustado** (ARI) resta lo que se esperaría por azar con los mismos tamaños de grupo [@hubert1985]. Se calcula con la tabla de contingencia de ambas particiones:
+
+| | Grupo 1 de la partición | Grupo 2 de la partición | Total |
+|---|---:|---:|---:|
+| Norte | 2 | 1 | 3 |
+| Sur | 0 | 3 | 3 |
+| Total | 2 | 4 | 6 |
+
+: Tabla de contingencia de la referencia contra la partición mala. {#tbl-val-contingencia}
+
+Con $\binom{m}{2}$ el número de pares que se pueden formar con $m$ elementos:
+
+$$
+\begin{aligned}
+\textstyle\sum_{ij} \binom{n_{ij}}{2} &= \tbinom{2}{2} + \tbinom{1}{2} + \tbinom{0}{2} + \tbinom{3}{2} = 1 + 0 + 0 + 3 = 4 \quad (= a),\\
+\textstyle\sum_{i} \binom{n_{i\cdot}}{2} &= 3 + 3 = 6, \qquad \textstyle\sum_{j} \binom{n_{\cdot j}}{2} = 1 + 6 = 7,\\
+\text{esperado} &= \frac{6 \times 7}{15} = 2.8, \qquad \text{máximo} = \frac{6 + 7}{2} = 6.5,\\
+\text{ARI} &= \frac{4 - 2.8}{6.5 - 2.8} = \frac{1.2}{3.7} = 0.32.
+\end{aligned}
+$$
+
+El ARI vale 1 con concordancia perfecta y alrededor de 0 para particiones al azar (puede ser negativo). Aquí, $0.32$: la partición mala recupera la estructura solo parcialmente, algo que el $0.67$ del índice sin ajustar ocultaba.
+
+## Formalización
+
+### ¿Hay estructura? La tendencia de agrupamiento
+
+Todo algoritmo entrega grupos, incluso con datos uniformes. Con 300 puntos uniformes en un cuadrado, $k$-medias con $k = 4$ produce particiones con coeficiente de silueta cercano a $0.40$, el mismo que la partición «mala» de nuestro ejemplo. Antes de agrupar conviene preguntar si los datos son más agrupados que el azar.
+
+El **estadístico de Hopkins** compara dos tipos de distancias al vecino más cercano en los datos:
+
+- $u_1, \ldots, u_m$: desde $m$ puntos generados **uniformemente** en la región que ocupan los datos hasta el dato más cercano;
+- $w_1, \ldots, w_m$: desde $m$ **datos** elegidos al azar hasta su vecino más cercano entre los demás datos.
+
+$$
+H = \frac{\sum_i u_i}{\sum_i u_i + \sum_i w_i}.
+$$ {#eq-hopkins}
+
+Si los datos son uniformes, ambos tipos de distancia se parecen y $H \approx 0.5$. Si están agrupados, los datos tienen vecinos muy cerca ($w$ pequeñas) mientras que los puntos uniformes caen a menudo en zonas vacías ($u$ grandes), y $H$ se acerca a 1. Valores por encima de $0.7$ indican una tendencia clara a formar grupos. Se suele usar $m$ alrededor del 5 al 10 % de $n$.
+
+### Criterios internos
+
+| Índice | Mide | Rango | Mejor | Costo | Sesgo |
+|---|---|---|---|---|---|
+| Silueta | cohesión y separación de cada punto | $[-1, 1]$ | mayor | $O(n^2)$ | grupos convexos |
+| Calinski-Harabasz | varianza entre / varianza dentro | $[0, \infty)$ | mayor | $O(nk)$ | grupos esféricos |
+| Davies-Bouldin | dispersión / distancia entre centroides | $[0, \infty)$ | menor | $O(nk)$ | grupos esféricos |
+
+: Índices internos más usados. {#tbl-val-internos}
+
+La silueta, además de un número global, produce un **diagnóstico por punto** y por grupo: el gráfico de silueta muestra las barras $s(i)$ ordenadas dentro de cada grupo. Grupos con muchas barras negativas, o mucho más delgados que el resto, delatan problemas. Su definición formal, para $|C_{\ell(i)}| > 1$, es
+
+$$
+a(i) = \frac{1}{|C_{\ell(i)}| - 1} \sum_{j \in C_{\ell(i)},\, j \ne i} d(i, j), \qquad
+b(i) = \min_{c \ne \ell(i)} \frac{1}{|C_c|} \sum_{j \in C_c} d(i, j),
+$$ {#eq-silueta}
+
+y $s(i) = 0$ por convención si el grupo de $i$ tiene un solo punto. La silueta acepta cualquier distancia, por ejemplo la de Gower.
+
+**Advertencia.** Los tres índices premian grupos **compactos y convexos**. En dos medias lunas entrelazadas, la partición de $k$-medias (que corta ambas lunas con una recta) tiene silueta $0.49$, y la partición correcta, que encuentra DBSCAN, solo $0.33$. Un índice interno mide qué tan bien se ajusta la partición a **su idea** de grupo, no si la partición es la verdadera. Por eso no deben usarse para comparar algoritmos con supuestos muy distintos.
+
+### Criterios externos
+
+Sean $U$ y $V$ dos particiones de los mismos $n$ casos, $n_{ij}$ el número de casos en el grupo $i$ de $U$ y el $j$ de $V$, y $a_i = \sum_j n_{ij}$, $b_j = \sum_i n_{ij}$. El índice de Rand ajustado es [@hubert1985]
+
+$$
+\text{ARI} = \frac{\sum_{ij} \binom{n_{ij}}{2} - \Big[\sum_i \binom{a_i}{2} \sum_j \binom{b_j}{2}\Big] \big/ \binom{n}{2}}{\frac{1}{2}\Big[\sum_i \binom{a_i}{2} + \sum_j \binom{b_j}{2}\Big] - \Big[\sum_i \binom{a_i}{2} \sum_j \binom{b_j}{2}\Big] \big/ \binom{n}{2}}.
+$$ {#eq-ari}
+
+La **información mutua normalizada** (NMI) mide cuánta información comparten las dos particiones[^informacion]:
+
+$$
+\text{NMI}(U, V) = \frac{I(U; V)}{\tfrac{1}{2}[H(U) + H(V)]}, \qquad
+I(U; V) = \sum_{ij} \frac{n_{ij}}{n} \ln \frac{n\, n_{ij}}{a_i b_j}.
+$$ {#eq-nmi}
+
+En el ejemplo, $I = 0.318$, $H(\text{referencia}) = \ln 2 = 0.693$ y $H(\text{partición}) = 0.637$, de modo que $\text{NMI} = 0.318/0.665 = 0.48$. A diferencia del ARI, la NMI no está corregida por azar; con muchos grupos pequeños tiende a ser optimista, y existe una versión ajustada (AMI) [@vinh2010information].
+
+Tres reglas para usar índices externos:
+
+1. Son **invariantes a los nombres** de los grupos: «grupo 1» y «grupo 2» pueden estar intercambiados.
+2. Sirven para **comparar algoritmos** en datos con una clasificación conocida, o para ver si los grupos descubiertos coinciden con una variable que **no** se usó al agrupar (la especie de un pingüino, la región de un cliente).
+3. La clasificación de referencia **no es la verdad**: los datos pueden tener una estructura distinta, igualmente válida. Si $k$-medias agrupa pingüinos por sexo y no por especie, no está «equivocado».
+
+### ¿Cuántos grupos?
+
+**Método del codo.** Graficar $W(k)$ y buscar el punto donde la curva se aplana. Es simple, pero el codo a menudo es ambiguo.
+
+**Máximo de un índice.** Elegir el $k$ que maximiza la silueta o CH, o minimiza DB. Ninguno está definido para $k = 1$, de modo que no pueden decir «no hay grupos»; para eso sirve el estadístico de Hopkins o el de brecha.
+
+**Estadístico de brecha (*gap*).** @tibshirani2001gap compararon $\log W_k$ con el valor que tendría en datos **sin estructura**, generados uniformemente en la caja que contiene a los datos:
+
+$$
+\text{Gap}(k) = \mathbb{E}^{*}\big[\log W_k^{*}\big] - \log W_k,
+$$ {#eq-gap}
+
+donde la esperanza se estima con $B$ conjuntos de referencia. Si hay $k$ grupos reales, $W_k$ será mucho menor que en datos uniformes y la brecha será grande. La regla elige el menor $k$ tal que $\text{Gap}(k) \ge \text{Gap}(k + 1) - s_{k+1}$, con $s_{k+1}$ el error estándar de la simulación. A diferencia de los índices anteriores, admite $k = 1$.
+
+**Criterios de información.** Si el agrupamiento es un modelo probabilístico, como una mezcla gaussiana, se puede usar el **BIC**, que penaliza la verosimilitud por el número de parámetros (ver el capítulo de mezclas gaussianas).
+
+**Estabilidad.** Si los grupos son reales, deben reaparecer al repetir el análisis con otras muestras. Un procedimiento simple: tomar muchos pares de submuestras (o muestras *bootstrap*), agrupar cada una y medir el ARI entre las dos particiones sobre los casos comunes. Un $k$ con ARI promedio alto y poca variación es estable [@vonluxburg2010clustering]. La estabilidad no garantiza que los grupos sean verdaderos (un algoritmo que siempre parte por la misma recta es muy estable), pero su ausencia es una alerta seria.
+
+Ningún criterio es definitivo. En la práctica se calculan varios, se buscan coincidencias y la decisión final la toman la **interpretabilidad** y el **uso** de los grupos.
+
+## Laboratorio: la silueta punto por punto
+
+Haz clic en cualquier punto para ver sus distancias: líneas continuas hacia su propio grupo, que promedian $a(i)$, y discontinuas hacia el grupo vecino, que promedian $b(i)$. Las barras de la derecha son las siluetas de todos los puntos, ordenadas dentro de cada grupo. El estado inicial reproduce la partición buena y el punto P3.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="sil-lab">
+  <p class="plab-eyebrow">Laboratorio · Validación interna</p>
+  <h3 class="plab-title">¿Cada punto está en el grupo correcto?</h3>
+  <p class="plab-sub">Elige datos y número de grupos (en los conjuntos generados, la partición es la de k-medias). Haz clic en un punto para ver su a(i), b(i) y s(i).</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos y partición
+      <div class="plab-seg" id="sil-data">
+        <button data-value="buena" aria-pressed="true">Seis puntos: buena</button>
+        <button data-value="mala">Seis puntos: mala</button>
+        <button data-value="cuatro">Cuatro grupos</button>
+        <button data-value="ruido">Ruido uniforme</button>
+        <button data-value="lunas">Medias lunas</button>
+      </div>
+    </div>
+    <label>Grupos k: <b id="sil-k-v"></b><input type="range" id="sil-k" min="2" max="6" step="1" value="4"></label>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Punto elegido: a · b · s</span><strong id="sil-pt"></strong></div>
+    <div class="plab-stat"><span>Coeficiente de silueta</span><strong id="sil-mean"></strong></div>
+    <div class="plab-stat"><span>Calinski-Harabasz · Davies-Bouldin</span><strong id="sil-chdb"></strong></div>
+    <div class="plab-stat"><span>Hopkins H</span><strong id="sil-hop"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Partición y distancias del punto elegido</h4>
+      <svg id="sil-svg" role="img" aria-label="Puntos coloreados por grupo; líneas desde el punto elegido a su grupo y al grupo vecino"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-text)"></i>hacia su grupo: a(i)</span><span><i style="background:var(--lab-axis)"></i>hacia el grupo vecino: b(i)</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Gráfico de silueta</h4>
+      <svg id="sil-bars" role="img" aria-label="Barras horizontales con la silueta de cada punto, agrupadas por grupo"></svg>
+    </div>
+  </div>
+  <div class="plab-panel" style="margin-top:1rem">
+    <h4 id="sil-curve-h">Índices según k (k-medias)</h4>
+    <svg id="sil-curve" class="wide" role="img" aria-label="Silueta, Calinski-Harabasz normalizado y Davies-Bouldin según k"></svg>
+    <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>silueta (↑)</span><span><i style="background:var(--lab-s3)"></i>CH / máximo (↑)</span><span><i style="background:var(--lab-s4)"></i>Davies-Bouldin (↓)</span><span><i class="dot" style="background:var(--lab-s2)"></i>k actual</span></div>
+  </div>
+  <p class="plab-note" id="sil-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con «Seis puntos: buena» y P3 elegido, comprueba a = 2.12, b = 4.73 y s = 0.55. Cambia a «mala»: ¿qué le pasa a la silueta de P3 y por qué?</li>
+    <li>En «Cuatro grupos», recorre k de 2 a 6. ¿Coinciden los tres índices en el mejor k? Con k = 5, ¿qué grupo se parte y qué les pasa a las barras de silueta de sus puntos?</li>
+    <li><strong>Predice</strong> el coeficiente de silueta para «Ruido uniforme» con k = 4 antes de elegirlo. ¿Qué dice el estadístico de Hopkins que no dice la silueta?</li>
+    <li>En «Medias lunas» con k = 2, la silueta es alta, pero mira la partición. ¿Qué supone la silueta sobre la forma de los grupos?</li>
+  </ol>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('sil-lab');
+  const $ = s => root.querySelector(s);
+  const CLS = ['s1', 's2', 's3', 's4', 's5', 'muted'];
+  const g = K.rng(21), N = () => g.normal();
+  const cuatro = [], ruido = [], lunas = [];
+  [[-2, -2], [2, -1.8], [-1.6, 2], [2.2, 2.2]].forEach(([a, b]) => { for (let i = 0; i < 30; i++) cuatro.push([a + 0.4 * N(), b + 0.4 * N()]); });
+  for (let i = 0; i < 100; i++) ruido.push([-3 + 6 * g(), -3 + 6 * g()]);
+  for (let i = 0; i < 100; i++) { const t = Math.PI * (i % 50) / 49; lunas.push(i < 50 ? [2 * Math.cos(t) - 1 + 0.15 * N(), 2 * Math.sin(t) - 0.5 + 0.15 * N()] : [2 * (1 - Math.cos(t)) - 1 + 0.15 * N(), 2 * (1 - Math.sin(t)) - 1.5 + 0.15 * N()]); }
+  const seis = [[1, 1], [2, 1], [1, 3], [5, 4], [6, 6], [4, 6]];
+  const SETS = {
+    buena: { X: seis, lab: [0, 0, 0, 1, 1, 1], lim: [0, 7, 0, 7], names: true },
+    mala: { X: seis, lab: [0, 0, 1, 1, 1, 1], lim: [0, 7, 0, 7], names: true },
+    cuatro: { X: cuatro, lim: [-4, 4, -4, 4] }, ruido: { X: ruido, lim: [-3.3, 3.3, -3.3, 3.3] }, lunas: { X: lunas, lim: [-3.4, 3.4, -3, 2.6] }
+  };
+  let sel = 2;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+  function kmeans(X, k) {
+    const r = K.rng(3); let best = null;
+    for (let rep = 0; rep < 10; rep++) {
+      const C = [X[Math.floor(r() * X.length)].slice()];
+      while (C.length < k) { const D = X.map(p => Math.min(...C.map(c => d2(p, c)))), t = K.sum(D); let u = r() * t, i = 0; while (i < X.length - 1 && (u -= D[i]) > 0) i++; C.push(X[i].slice()); }
+      let L = null;
+      for (let s = 0; s < 100; s++) {
+        const nl = X.map(p => { let b = 0; C.forEach((c, j) => { if (d2(p, c) < d2(p, C[b])) b = j; }); return b; });
+        if (L && nl.every((v, i) => v === L[i])) break; L = nl;
+        C.forEach((c, j) => { const m = X.filter((_, i) => L[i] === j); if (m.length) { c[0] = K.mean(m.map(p => p[0])); c[1] = K.mean(m.map(p => p[1])); } });
+      }
+      const W = K.sum(X.map((p, i) => d2(p, C[L[i]])));
+      if (!best || W < best.W) best = { L, W };
+    }
+    // Reetiqueta por x del centroide para colores estables.
+    const k2 = [...new Set(best.L)], cx = k2.map(c => K.mean(X.filter((_, i) => best.L[i] === c).map(p => p[0] + 0.01 * p[1])));
+    const ord = k2.map((c, i) => [c, cx[i]]).sort((a, b) => a[1] - b[1]).map(v => v[0]);
+    return best.L.map(l => ord.indexOf(l));
+  }
+  function indices(X, L) {
+    const ks = [...new Set(L)].sort((a, b) => a - b), n = X.length, k = ks.length;
+    const sil = X.map((p, i) => {
+      const own = X.filter((_, j) => j !== i && L[j] === L[i]);
+      if (!own.length) return { a: 0, b: 0, s: 0, nb: -1 };
+      const a = K.mean(own.map(q => dist(p, q)));
+      let b = Infinity, nb = -1;
+      ks.forEach(c => { if (c === L[i]) return; const m = K.mean(X.filter((_, j) => L[j] === c).map(q => dist(p, q))); if (m < b) { b = m; nb = c; } });
+      return { a, b, s: (b - a) / Math.max(a, b), nb };
+    });
+    const cen = ks.map(c => { const m = X.filter((_, i) => L[i] === c); return [K.mean(m.map(p => p[0])), K.mean(m.map(p => p[1])), m.length]; });
+    const all = [K.mean(X.map(p => p[0])), K.mean(X.map(p => p[1]))];
+    const W = K.sum(X.map((p, i) => d2(p, cen[ks.indexOf(L[i])]))), T = K.sum(X.map(p => d2(p, all))), B = T - W;
+    const S = ks.map((c, ci) => K.mean(X.filter((_, i) => L[i] === c).map(p => dist(p, cen[ci]))));
+    const DB = K.mean(ks.map((_, ci) => Math.max(...ks.map((__, cj) => cj === ci ? -Infinity : (S[ci] + S[cj]) / dist(cen[ci], cen[cj])))));
+    return { sil, mean: K.mean(sil.map(v => v.s)), CH: (B / (k - 1)) / (W / (n - k)), DB };
+  }
+  // Hopkins promediado en 25 repeticiones (m = 10 % de n) sobre la caja que contiene a los datos.
+  function hopkins(X) {
+    const r = K.rng(17), m = Math.max(3, Math.round(0.1 * X.length));
+    const lo = [0, 1].map(j => Math.min(...X.map(p => p[j]))), hi = [0, 1].map(j => Math.max(...X.map(p => p[j])));
+    let tot = 0;
+    for (let rep = 0; rep < 25; rep++) {
+      let U = 0, Wd = 0;
+      for (let t = 0; t < m; t++) {
+        const u = [lo[0] + (hi[0] - lo[0]) * r(), lo[1] + (hi[1] - lo[1]) * r()];
+        U += Math.min(...X.map(p => dist(u, p)));
+        const i = Math.floor(r() * X.length);
+        Wd += Math.min(...X.map((p, j) => j === i ? Infinity : dist(X[i], p)));
+      }
+      tot += U / (U + Wd);
+    }
+    return tot / 25;
+  }
+  const cache = {};
+  const dataSeg = K.segmented($('#sil-data'), v => { sel = v === 'buena' || v === 'mala' ? 2 : 0; render(); });
+  function render() {
+    const key = dataSeg.get(), S = SETS[key], fixed = !!S.lab;
+    const k = fixed ? 2 : +$('#sil-k').value;
+    $('#sil-k').disabled = fixed; $('#sil-k-v').textContent = fixed ? '2 (fija)' : k;
+    const L = fixed ? S.lab : (cache[key + k] = cache[key + k] || kmeans(S.X, k));
+    const I = indices(S.X, L);
+    const c = K.chart($('#sil-svg'), { width: 340, height: 340 * (S.lim[3] - S.lim[2]) / (S.lim[1] - S.lim[0]), x: [S.lim[0], S.lim[1]], y: [S.lim[2], S.lim[3]], margin: { left: 34, right: 10, top: 10, bottom: 32 } });
+    c.axes({ xTicks: 5, yTicks: 5 });
+    const p = S.X[sel], info = I.sil[sel];
+    S.X.forEach((q, j) => {
+      if (j === sel) return;
+      if (L[j] === L[sel]) c.line(p[0], p[1], q[0], q[1], 'muted line thin').style.stroke = 'var(--lab-text)';
+      else if (L[j] === info.nb) c.line(p[0], p[1], q[0], q[1], 'muted line dash thin');
+    });
+    S.X.forEach((q, j) => {
+      const d = c.dot(q[0], q[1], j === sel ? 8 : (S.names ? 6.5 : 4.2), CLS[L[j]] + ' dot'); d.dataset.i = j; d.style.cursor = 'pointer';
+      if (j === sel) { d.style.stroke = 'var(--lab-text)'; d.style.strokeWidth = 2.5; }
+      if (S.names) c.text(q[0], q[1], 'P' + (j + 1), { dx: 9, dy: -8, class: 'strong' });
+      if (!S.names && I.sil[j].s < 0) c.dot(q[0], q[1], 7.5, 's5 line thin');
+    });
+    // Barras de silueta.
+    const order = S.X.map((_, i) => i).sort((a, b) => L[a] - L[b] || I.sil[b].s - I.sil[a].s);
+    const n = S.X.length, gap = 0.6 * ([...new Set(L)].length - 1);
+    const cb = K.chart($('#sil-bars'), { width: 300, height: 340, x: [-0.7, 1], y: [n + gap + 0.5, -0.5], margin: { left: 30, right: 10, top: 10, bottom: 32 } });
+    cb.axes({ xTicks: 4, yTicks: 0, xLabel: 's(i)', xFmt: v => K.fmt(v, 1) });
+    let y = 0, prev = -1;
+    order.forEach(i => {
+      if (prev !== -1 && L[i] !== prev) y += 0.6; prev = L[i];
+      const r = cb.rect(0, y - 0.42, I.sil[i].s, y + 0.42, CLS[L[i]]); r.style.fillOpacity = i === sel ? 1 : 0.65; r.style.stroke = i === sel ? 'var(--lab-text)' : 'none';
+      if (S.names) cb.text(Math.max(0, I.sil[i].s), y, 'P' + (i + 1), { dx: 4, dy: 4 });
+      y += 1;
+    });
+    cb.line(I.mean, -0.5, I.mean, n + gap + 0.5, 's5 line dash thin');
+    cb.line(0, -0.5, 0, n + gap + 0.5, 'muted line thin');
+    $('#sil-pt').textContent = `${K.fmt(info.a, 2)} · ${K.fmt(info.b, 2)} · ${K.fmt(info.s, 2)}`;
+    $('#sil-mean').textContent = K.fmt(I.mean, 3);
+    $('#sil-chdb').textContent = `${K.fmt(I.CH, 1)} · ${K.fmt(I.DB, 2)}`;
+    const H = hopkins(S.X); $('#sil-hop').textContent = K.fmt(H, 2);
+    // Curvas según k.
+    const cc = K.chart($('#sil-curve'), { width: 620, height: 210, x: [1.6, 6.4], y: [0, 1.6], margin: { left: 40, right: 12, top: 12, bottom: 36 } });
+    cc.axes({ xTicks: 5, yTicks: 4, xLabel: 'k', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    $('#sil-curve-h').textContent = fixed ? 'Índices según k (k-medias sobre los seis puntos)' : 'Índices según k (k-medias)';
+    const ks = fixed ? [2, 3, 4, 5] : [2, 3, 4, 5, 6];
+    const R = ks.map(kk => { const LL = (cache[key + 'c' + kk] = cache[key + 'c' + kk] || kmeans(S.X, kk)); return indices(S.X, LL); });
+    const chMax = Math.max(...R.map(r => r.CH));
+    [['mean', 's1', v => v], ['CH', 's3', v => v / chMax], ['DB', 's4', v => v]].forEach(([f, cl, tr]) => {
+      cc.path(ks.map((kk, i) => [kk, tr(R[i][f])]), cl + ' line');
+      ks.forEach((kk, i) => cc.dot(kk, tr(R[i][f]), kk === k ? 5.5 : 3, (kk === k && !fixed ? 's2' : cl) + ' dot'));
+    });
+    const bestS = ks[R.map(r => r.mean).indexOf(Math.max(...R.map(r => r.mean)))], bestCH = ks[R.map(r => r.CH).indexOf(chMax)], bestDB = ks[R.map(r => r.DB).indexOf(Math.min(...R.map(r => r.DB)))];
+    const neg = I.sil.filter(v => v.s < 0).length;
+    let msg = `Punto ${S.names ? 'P' + (sel + 1) : 'elegido'}: a = ${K.fmt(info.a, 2)}, b = ${K.fmt(info.b, 2)}, s = ${K.fmt(info.s, 2)}. `;
+    msg += info.s < 0 ? 'Silueta negativa: en promedio está más cerca del grupo vecino que del suyo. ' : info.s < 0.25 ? 'Está cerca de la frontera entre grupos. ' : 'Está bien dentro de su grupo. ';
+    msg += `${neg} punto(s) con silueta negativa. Mejor k según silueta: ${bestS}; según CH: ${bestCH}; según DB: ${bestDB}.`;
+    let cls = neg ? 'warn' : 'good';
+    if (key === 'ruido') { msg += ` Hopkins H = ${K.fmt(H, 2)}, cerca de 0.5: no hay tendencia a formar grupos, aunque k-medias entregue una silueta de ${K.fmt(I.mean, 2)}.`; cls = 'bad'; }
+    if (key === 'lunas') { msg += ' La silueta favorece cortes rectos y compactos; las dos lunas reales tendrían una silueta menor.'; cls = 'warn'; }
+    const note = $('#sil-note'); note.className = 'plab-note ' + cls; note.textContent = msg;
+  }
+  $('#sil-svg').addEventListener('click', e => { const t = e.target.closest('circle'); if (t && t.dataset.i !== undefined) { sel = +t.dataset.i; render(); } });
+  $('#sil-k').addEventListener('input', render);
+  render();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* Valores de referencia: en la partición buena de los seis puntos, P3 tiene $a = 2.12$, $b = 4.73$ y $s = 0.55$; el coeficiente de silueta es $0.63$, $\text{CH} = 20.17$ y $\text{DB} = 0.44$. En la partición mala, $s(P3) = -0.55$, la silueta media baja a $0.40$, $\text{CH} = 5.10$ y $\text{DB} = 0.57$. Con ruido uniforme, $k$-medias produce siluetas cercanas a $0.4$ y el estadístico de Hopkins queda cerca de $0.5$.
+:::
+
+## Implementación en Python
+
+### Los índices del ejemplo
+
+```{python}
+#| label: val-ejemplo
+import numpy as np
+import pandas as pd
+from sklearn.metrics import (silhouette_samples, silhouette_score, calinski_harabasz_score,
+                             davies_bouldin_score, adjusted_rand_score, rand_score,
+                             normalized_mutual_info_score)
+
+P = np.array([[1, 1], [2, 1], [1, 3], [5, 4], [6, 6], [4, 6]], dtype=float)
+buena = np.array([0, 0, 0, 1, 1, 1])
+mala = np.array([0, 0, 1, 1, 1, 1])
+
+tabla = pd.DataFrame({
+    "s(i) buena": silhouette_samples(P, buena),
+    "s(i) mala": silhouette_samples(P, mala),
+}, index=[f"P{i}" for i in range(1, 7)]).round(3)
+print(tabla)
+for nombre, lab in [("buena", buena), ("mala", mala)]:
+    print(f"{nombre}: silueta = {silhouette_score(P, lab):.3f}, CH = {calinski_harabasz_score(P, lab):.2f}, "
+          f"DB = {davies_bouldin_score(P, lab):.3f}")
+
+zona = buena                                  # la referencia externa del ejemplo
+print(f"\nRand = {rand_score(zona, mala):.3f}, ARI = {adjusted_rand_score(zona, mala):.3f}, "
+      f"NMI = {normalized_mutual_info_score(zona, mala):.3f}")
+print("ARI con los grupos renombrados:", adjusted_rand_score(zona, 1 - mala))
+```
+
+### Tendencia de agrupamiento
+
+```{python}
+#| label: val-hopkins
+from sklearn.neighbors import NearestNeighbors
+from sklearn.datasets import make_blobs
+
+def hopkins(X, fraccion=0.1, semilla=0):
+    rng = np.random.default_rng(semilla)
+    m = max(1, int(fraccion * len(X)))
+    nn = NearestNeighbors(n_neighbors=2).fit(X)
+    uniformes = rng.uniform(X.min(axis=0), X.max(axis=0), size=(m, X.shape[1]))
+    u = nn.kneighbors(uniformes, n_neighbors=1)[0].ravel()
+    muestra = X[rng.choice(len(X), m, replace=False)]
+    w = nn.kneighbors(muestra, n_neighbors=2)[0][:, 1]       # el 1.º vecino es el propio punto
+    return u.sum() / (u.sum() + w.sum())
+
+rng = np.random.default_rng(1)
+X_grupos, y_grupos = make_blobs(n_samples=400, centers=4, cluster_std=0.7, random_state=3)
+X_ruido = rng.uniform(-3, 3, size=(400, 2))
+print(f"Hopkins con cuatro grupos: {hopkins(X_grupos):.2f}")
+print(f"Hopkins con ruido uniforme: {hopkins(X_ruido):.2f}")
+```
+
+### Índices según el número de grupos
+
+```{python}
+#| label: fig-val-indices
+#| fig-cap: "Cuatro criterios para elegir k con k-medias sobre datos con cuatro grupos. El codo de W, el máximo de la silueta y de Calinski-Harabasz y el mínimo de Davies-Bouldin coinciden en k = 4."
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+
+ks = range(2, 10)
+filas = []
+for k in ks:
+    lab = KMeans(n_clusters=k, n_init=10, random_state=0).fit(X_grupos)
+    filas.append({"k": k, "W": lab.inertia_, "silueta": silhouette_score(X_grupos, lab.labels_),
+                  "CH": calinski_harabasz_score(X_grupos, lab.labels_), "DB": davies_bouldin_score(X_grupos, lab.labels_)})
+res = pd.DataFrame(filas).set_index("k")
+
+fig, axes = plt.subplots(1, 4, figsize=(13, 3))
+for ax, col, color in zip(axes, res.columns, ["#59636e", "#2563eb", "#16a34a", "#7c3aed"]):
+    ax.plot(res.index, res[col], "o-", color=color)
+    ax.axvline(4, ls="--", color="#ea580c", lw=1)
+    ax.set_title(col); ax.set_xlabel("k"); ax.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+### El gráfico de silueta
+
+```{python}
+#| label: fig-val-silueta
+#| fig-cap: "Gráficos de silueta para k = 3, 4 y 5. Con k = 4 todos los grupos tienen barras anchas y por encima del promedio (línea roja). Con k = 3 un grupo junta dos grupos reales; con k = 5 un grupo real se parte y aparecen siluetas bajas."
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), sharex=True)
+paleta = ["#2563eb", "#ea580c", "#16a34a", "#7c3aed", "#dc2626"]
+for ax, k in zip(axes, [3, 4, 5]):
+    lab = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(X_grupos)
+    s = silhouette_samples(X_grupos, lab)
+    y = 0
+    for c in range(k):
+        sc = np.sort(s[lab == c])
+        ax.fill_betweenx(np.arange(y, y + len(sc)), 0, sc, color=paleta[c], alpha=0.8)
+        y += len(sc) + 10
+    ax.axvline(s.mean(), color="#dc2626", ls="--")
+    ax.set_title(f"k = {k}, silueta = {s.mean():.2f}"); ax.set_yticks([]); ax.set_xlabel("s(i)")
+plt.tight_layout()
+plt.show()
+```
+
+### El estadístico de brecha
+
+```{python}
+#| label: fig-val-gap
+#| fig-cap: "Estadístico de brecha para los datos con cuatro grupos (izquierda) y para ruido uniforme (derecha), con barras de error estándar. La regla de Tibshirani elige k = 4 en el primer caso y k = 1 en el segundo."
+def gap_statistic(X, ks, B=20, semilla=0):
+    rng = np.random.default_rng(semilla)
+    lo, hi = X.min(axis=0), X.max(axis=0)
+    gaps, errores = [], []
+    for k in ks:
+        logW = np.log(KMeans(n_clusters=k, n_init=5, random_state=0).fit(X).inertia_)
+        ref = [np.log(KMeans(n_clusters=k, n_init=3, random_state=0).fit(rng.uniform(lo, hi, X.shape)).inertia_)
+               for _ in range(B)]
+        gaps.append(np.mean(ref) - logW)
+        errores.append(np.std(ref) * np.sqrt(1 + 1 / B))
+    gaps, errores = np.array(gaps), np.array(errores)
+    elegido = next((k for i, k in enumerate(ks[:-1]) if gaps[i] >= gaps[i + 1] - errores[i + 1]), ks[-1])
+    return gaps, errores, elegido
+
+ks_gap = list(range(1, 9))
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.2))
+for ax, (titulo, X) in zip(axes, [("cuatro grupos", X_grupos), ("ruido uniforme", X_ruido)]):
+    g, e, k_opt = gap_statistic(X, ks_gap)
+    ax.errorbar(ks_gap, g, yerr=e, fmt="o-", color="#2563eb", capsize=3)
+    ax.axvline(k_opt, ls="--", color="#ea580c")
+    ax.set_title(f"{titulo}: k elegido = {k_opt}"); ax.set_xlabel("k"); ax.set_ylabel("Gap(k)"); ax.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+### Estabilidad por remuestreo
+
+Para cada $k$ se toman 30 pares de submuestras del 80 % de los datos, se agrupa cada una con una semilla distinta y se mide el ARI sobre los casos que ambas comparten.
+
+```{python}
+#| label: fig-val-estabilidad
+#| fig-cap: "Estabilidad de k-medias según k: ARI entre agrupamientos de pares de submuestras (80 %). Hasta k = 4 las particiones se reproducen casi siempre (con k = 2 y 3 el algoritmo junta grupos reales, pero siempre de la misma forma: estable no significa correcto); con más grupos, la forma de partir los grupos reales cambia de una submuestra a otra."
+def estabilidad(X, k, repeticiones=30, fraccion=0.8, semilla=0):
+    rng = np.random.default_rng(semilla)
+    n, m = len(X), int(fraccion * len(X))
+    aris = []
+    for r in range(repeticiones):
+        i1, i2 = rng.choice(n, m, replace=False), rng.choice(n, m, replace=False)
+        comunes = np.intersect1d(i1, i2)
+        km1 = KMeans(n_clusters=k, n_init=3, random_state=2 * r).fit(X[i1])
+        km2 = KMeans(n_clusters=k, n_init=3, random_state=2 * r + 1).fit(X[i2])
+        aris.append(adjusted_rand_score(km1.predict(X[comunes]), km2.predict(X[comunes])))
+    return np.array(aris)
+
+ks_est = range(2, 9)
+est = [estabilidad(X_grupos, k) for k in ks_est]
+fig, ax = plt.subplots(figsize=(6.5, 3.2))
+ax.boxplot(est, positions=list(ks_est), widths=0.5)
+ax.set_xlabel("k"); ax.set_ylabel("ARI entre submuestras"); ax.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+### BIC con mezclas gaussianas
+
+```{python}
+#| label: val-bic
+from sklearn.mixture import GaussianMixture
+
+bic = {k: GaussianMixture(n_components=k, random_state=0, n_init=3).fit(X_grupos).bic(X_grupos) for k in range(1, 9)}
+print({k: round(v) for k, v in bic.items()})
+print("k con menor BIC:", min(bic, key=bic.get))
+```
+
+### Cuando los índices internos engañan
+
+```{python}
+#| label: val-lunas
+from sklearn.datasets import make_moons
+from sklearn.cluster import DBSCAN
+
+X_lunas, y_lunas = make_moons(n_samples=300, noise=0.06, random_state=0)
+particiones = {
+    "k-medias (k = 2)": KMeans(n_clusters=2, n_init=10, random_state=0).fit_predict(X_lunas),
+    "DBSCAN": DBSCAN(eps=0.2, min_samples=5).fit_predict(X_lunas),
+}
+print(pd.DataFrame({nombre: {"silueta": silhouette_score(X_lunas, lab), "ARI con las lunas": adjusted_rand_score(y_lunas, lab)}
+                    for nombre, lab in particiones.items()}).T.round(3))
+```
+
+La silueta prefiere la partición de $k$-medias, aunque la de DBSCAN recupera exactamente las dos lunas (ARI = 1).
+
+## Resumen
+
+- Antes de agrupar, el **estadístico de Hopkins** indica si los datos son más agrupados que el azar ($H \approx 0.5$: no; $H$ cercano a 1: sí).
+- La **silueta** $s(i) = (b - a)/\max(a, b)$ evalúa cada punto: negativa señala puntos mal asignados. Su promedio resume la partición.
+- **Calinski-Harabasz** (mayor es mejor) y **Davies-Bouldin** (menor es mejor) solo usan centroides; los tres índices internos favorecen grupos compactos y convexos.
+- Los índices **externos** (ARI, NMI) comparan con una clasificación de referencia; el ARI corrige por azar y por eso es preferible al índice de Rand.
+- Para elegir $k$ se combinan el codo, el máximo de los índices, el **estadístico de brecha** (que admite $k = 1$), el BIC y la **estabilidad** ante remuestreo; la decisión final depende del uso de los grupos.
+
+El siguiente capítulo presenta una familia de algoritmos que no exige fijar $k$ de antemano: el clustering jerárquico.
+
+[^informacion]: La **entropía** $H(U) = -\sum_i \frac{a_i}{n} \ln \frac{a_i}{n}$ mide la incertidumbre sobre el grupo de un caso elegido al azar. La **información mutua** $I(U; V)$ mide cuánto se reduce la incertidumbre sobre su grupo en $U$ al conocer su grupo en $V$: vale 0 si las particiones son independientes y $H(U)$ si $V$ determina $U$ por completo.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

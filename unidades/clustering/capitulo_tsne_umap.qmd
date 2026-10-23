@@ -1,549 +1,545 @@
 ---
-title: "t-SNE, UMAP y reducción de dimensionalidad no lineal"
-description: "Compara PCA con los métodos no lineales t-SNE y UMAP para visualizar datos de alta dimensión, preservando la estructura local de vecindades."
-pagetitle: "t-SNE, UMAP y reducción de dimensionalidad no lineal"
+title: "t-SNE, UMAP y autoencoders"
+pagetitle: "t-SNE, UMAP y autoencoders: visualización de datos de alta dimensión"
 open-graph:
-  description: "Compara PCA con los métodos no lineales t-SNE y UMAP para visualizar datos de alta dimensión, preservando la estructura local de vecindades."
+  description: "Reducción de dimensionalidad que conserva vecindarios: probabilidades de vecindad, perplejidad, distribución t y el problema de aglomeración en t-SNE; grafo difuso, n_neighbors y min_dist en UMAP; autoencoders y error de reconstrucción; cómo leer (y no leer) estas gráficas, con desarrollo manual, t-SNE en el navegador y código en Python."
 twitter-card:
-  description: "Compara PCA con los métodos no lineales t-SNE y UMAP para visualizar datos de alta dimensión, preservando la estructura local de vecindades."
+  description: "Reducción de dimensionalidad que conserva vecindarios: probabilidades de vecindad, perplejidad, distribución t y el problema de aglomeración en t-SNE; grafo difuso, n_neighbors y min_dist en UMAP; autoencoders y error de reconstrucción; cómo leer (y no leer) estas gráficas, con desarrollo manual, t-SNE en el navegador y código en Python."
+description: "Reducción de dimensionalidad que conserva vecindarios: probabilidades de vecindad, perplejidad, distribución t y el problema de aglomeración en t-SNE; grafo difuso, n_neighbors y min_dist en UMAP; autoencoders y error de reconstrucción; cómo leer (y no leer) estas gráficas, con desarrollo manual, t-SNE en el navegador y código en Python."
 author: "Diego Villalba"
-date: today
 lang: es
 format:
   html:
     toc: true
     toc-depth: 3
     toc-title: "Contenido"
-    number-sections: true
     code-fold: true
     code-tools: true
     code-summary: "Mostrar código"
-    fig-align: center
     theme: cosmo
     highlight-style: github
-    smooth-scroll: true
-  pdf:
-    toc: true
-    toc-depth: 3
-    number-sections: true
-    documentclass: scrbook
-    papersize: letter
-    fontsize: 11pt
-    geometry: margin=2.5cm
-    keep-tex: false
 execute:
   echo: true
   warning: false
   message: false
-  cache: false
-bibliography: [referencias_clustering.bib, ../../references.bib]
-crossref:
-  fig-title: "Figura"
-  tbl-title: "Tabla"
-  eq-prefix: "Ec."
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../../references.bib]
 jupyter: python3
 ---
 
-Los datos modernos suelen vivir en espacios de decenas, cientos o miles de dimensiones. Aunque matemáticamente bien definidos, estos espacios son difíciles de visualizar e interpretar. La reducción de dimensionalidad busca representar los datos en un espacio de baja dimensión —típicamente 2D o 3D— preservando la estructura relevante: distancias, vecindades, o topología local.
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-PCA (Análisis de Componentes Principales) es el método lineal clásico: encuentra la proyección ortogonal de menor dimensión que maximiza la varianza conservada [@jolliffe2002]. Sin embargo, PCA asume que la estructura relevante se puede capturar mediante combinaciones lineales de las variables originales. Muchas variedades de datos reales —como manifolds curvos en alta dimensión— requieren métodos no lineales.
+PCA, MDS e Isomap intentan conservar **distancias**: las de todos los pares, incluidos los muy lejanos. En dos dimensiones eso es casi siempre imposible. Si los datos tienen diez grupos en cincuenta dimensiones, no hay forma de dibujarlos en un plano respetando todas sus distancias, y el intento suele producir una mancha en la que los grupos se enciman. Los métodos de este capítulo hacen una renuncia deliberada: **olvidan las distancias grandes y se concentran en conservar quién es vecino de quién**. El resultado son mapas en los que los grupos se ven con una claridad asombrosa. Esa misma claridad es su peligro, porque invita a leer en el mapa cosas que no conserva.
 
-t-SNE y UMAP son los dos métodos no lineales más usados en la práctica para visualización de datos de alta dimensión. Ambos intentan preservar la estructura local de vecindades, pero difieren en sus fundamentos teóricos, velocidad de cómputo y capacidad de preservar estructura global [@maaten2008; @mcinnes2018].
+Estudiaremos t-SNE [@maaten2008], el método que popularizó estas visualizaciones; UMAP [@mcinnes2018], su sucesor más rápido; y los **autoencoders**, redes neuronales que aprenden una representación comprimida y que, a diferencia de los otros dos, pueden reconstruir los datos.
 
-## Limitaciones de PCA para visualización
+## Intuición: ¿quién es vecino de quién?
 
-PCA proyecta los datos sobre los $d$ autovectores de la matriz de covarianza con mayores autovalores. Esta proyección es óptima para preservar la varianza, pero no necesariamente preserva la estructura de grupos o la topología local.
+Cinco puntos en una recta, en las posiciones
 
-```{python}
-import numpy as np
-from sklearn.datasets import make_swiss_roll
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
+| Punto | A | B | C | D | E |
+|---|---:|---:|---:|---:|---:|
+| Posición | 0 | 1 | 3 | 5 | 6 |
 
-X, color = make_swiss_roll(n_samples=1000, noise=0.05, random_state=42)
+: Cinco puntos en una recta. {#tbl-tsne-puntos}
 
-pca = PCA(n_components=2)
-X_pca = pca.fit_transform(X)
+Si le pidiéramos a A que eligiera **un vecino al azar**, favoreciendo a los cercanos, casi siempre elegiría a B, a veces a C y casi nunca a D o E. Esa es la idea de t-SNE: describir los datos con **probabilidades de ser vecinos** y buscar un dibujo en el que esas probabilidades se parezcan.
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-ax1 = fig.add_subplot(121, projection="3d")
-ax1.scatter(X[:, 0], X[:, 1], X[:, 2], c=color, cmap="Spectral", s=5, alpha=0.7)
-ax1.set_title("Swiss Roll (3D original)")
-ax1.set_xlabel("x"); ax1.set_ylabel("y"); ax1.set_zlabel("z")
-ax2 = fig.add_subplot(122)
-ax2.scatter(X_pca[:, 0], X_pca[:, 1], c=color, cmap="Spectral", s=5)
-ax2.set_title("PCA (2D) — estructura doblada colapsada")
-ax2.set_xlabel("PC1"); ax2.set_ylabel("PC2")
-plt.tight_layout()
-plt.show()
-```
+## Construcción paso a paso
 
-## SNE y t-SNE
+### Paso 1. Probabilidades de vecindad
 
-t-SNE fue propuesto por van der Maaten y Hinton en 2008 como mejora de Stochastic Neighbor Embedding (SNE) [@maaten2008]. La idea central es modelar la estructura de vecindades en el espacio original mediante una distribución de probabilidad, construir una distribución análoga en el espacio de baja dimensión, y minimizar la divergencia entre ambas.
+t-SNE convierte las distancias desde cada punto $i$ en probabilidades con una campana gaussiana de ancho $\sigma_i$:
 
-### Probabilidades de similitud en el espacio original
-
-Para cada par de puntos $(i,j)$, se define una probabilidad $p_{j|i}$ que refleja qué tan probable es que el punto $j$ sea vecino del punto $i$ si los vecinos se eligieran proporcionalmente a una distribución gaussiana centrada en $i$.
-
-::: {.callout-note appearance="minimal"}
-Definición. La similitud condicional asimétrica en el espacio original es:
 $$
-p_{j|i} = \frac{\exp\left(-\|\mathbf{x}_i-\mathbf{x}_j\|^2/(2\sigma_i^2)\right)}{\sum_{k\neq i}\exp\left(-\|\mathbf{x}_i-\mathbf{x}_k\|^2/(2\sigma_i^2)\right)},
-$$ {#eq-tsne-pji}
-y la similitud simétrica es $p_{ij} = (p_{j|i}+p_{i|j})/(2n)$.
-:::
-
-El ancho $\sigma_i$ se determina para que la entropía de $p_{\cdot|i}$ sea $\log_2(\text{Perp})$, donde Perp es la **perplejidad**, un hiperparámetro que controla el número efectivo de vecinos considerados.
-
-### Distribución en el espacio de baja dimensión
-
-En el espacio de baja dimensión, t-SNE usa una distribución $t$ de Student con un grado de libertad (distribución de Cauchy) en vez de una gaussiana. Esta elección resuelve el problema del crowding: en el espacio original los puntos moderadamente distantes pueden distribuirse en muchas direcciones, pero en 2D no hay suficiente "espacio" para acomodarlos todos, lo que comprime artificialmente los grupos.
-
-::: {.callout-note appearance="minimal"}
-Definición. La similitud entre los puntos en el espacio de baja dimensión $\mathbf{y}_i, \mathbf{y}_j$ usando la distribución $t$ de Student es:
+p_{j \mid i} = \frac{\exp\!\big(-d_{ij}^2 / 2\sigma_i^2\big)}{\sum_{k \ne i} \exp\!\big(-d_{ik}^2 / 2\sigma_i^2\big)}.
 $$
-q_{ij} = \frac{(1+\|\mathbf{y}_i-\mathbf{y}_j\|^2)^{-1}}{\sum_{k\neq l}(1+\|\mathbf{y}_k-\mathbf{y}_l\|^2)^{-1}}.
-$$ {#eq-tsne-qij}
-:::
 
-### Función objetivo
+Para A con $\sigma = 1$, los pesos $e^{-d^2/2}$ hacia B, C, D y E son $0.6065$, $0.0111$, $3.7 \times 10^{-6}$ y $1.5 \times 10^{-8}$. Normalizando, $p_{B \mid A} = 0.982$ y $p_{C \mid A} = 0.018$: A «ve» prácticamente un solo vecino. Con $\sigma = 2$, los pesos son $0.883$, $0.325$, $0.044$ y $0.011$, y las probabilidades $0.699$, $0.257$, $0.035$ y $0.009$: ahora A reparte su atención entre más puntos.
 
-t-SNE minimiza la divergencia KL entre la distribución en el espacio original y la distribución en el espacio reducido:
+### Paso 2. La perplejidad: cuántos vecinos efectivos
 
-::: {.callout-note appearance="minimal"}
-Definición. El objetivo de t-SNE es:
+¿Qué $\sigma$ usar? Un $\sigma$ fijo no sirve: en una zona densa abarcaría cientos de puntos y en una dispersa ninguno. t-SNE elige un $\sigma_i$ **distinto para cada punto** de modo que todos tengan el mismo **número efectivo de vecinos**, medido con la **perplejidad**[^perplejidad]:
+
 $$
-C = \text{KL}(P\|Q) = \sum_{i\neq j} p_{ij}\log\frac{p_{ij}}{q_{ij}}.
+\text{Perp}(P_i) = 2^{H(P_i)}, \qquad H(P_i) = -\sum_{j} p_{j \mid i} \log_2 p_{j \mid i}.
+$$
+
+Con $\sigma = 1$, la entropía de A es $H = -(0.982 \log_2 0.982 + 0.018 \log_2 0.018) = 0.13$ bits y la perplejidad $2^{0.13} = 1.09$: un vecino efectivo. Con $\sigma = 2$, la perplejidad es $2.13$. El usuario fija la perplejidad (típicamente entre 5 y 50) y t-SNE busca, para cada punto, el $\sigma_i$ que la produce mediante una **búsqueda binaria**: si la perplejidad es muy alta, reduce $\sigma_i$; si es muy baja, lo aumenta. Las probabilidades se simetrizan como $p_{ij} = (p_{j \mid i} + p_{i \mid j}) / 2n$, para que cada par tenga un único peso.
+
+### Paso 3. El dibujo usa colas pesadas
+
+En el dibujo de baja dimensión, con posiciones $\mathbf{y}_i$, t-SNE define probabilidades análogas, pero con una distribución **$t$ de Student** con un grado de libertad en lugar de una gaussiana:
+
+$$
+q_{ij} = \frac{\big(1 + \lVert \mathbf{y}_i - \mathbf{y}_j \rVert^2\big)^{-1}}{\sum_{k \ne l} \big(1 + \lVert \mathbf{y}_k - \mathbf{y}_l \rVert^2\big)^{-1}}.
+$$
+
+¿Por qué? Compara cuánto más «vecino» es un punto a distancia 1 que uno a distancia 5. Con la gaussiana ($\sigma = 1$) el cociente es $e^{-0.5}/e^{-12.5} = e^{12} \approx 162\,755$; con la $t$ es $\tfrac{1/(1+1)}{1/(1+25)} = 13$. La $t$ tiene **colas pesadas**: decae lentamente, de modo que dos puntos moderadamente lejanos en los datos pueden quedar **muy** lejos en el dibujo sin que su $q_{ij}$ cambie mucho. Esto resuelve el **problema de aglomeración** (*crowding*): en diez dimensiones caben muchos puntos a la misma distancia moderada de un centro, pero en un plano no hay sitio para todos. Las colas pesadas permiten empujarlos hacia afuera y dejar espacio entre los grupos.
+
+### Paso 4. Ajustar el dibujo
+
+t-SNE mueve los puntos del dibujo para que las $q_{ij}$ se parezcan a las $p_{ij}$, minimizando la **divergencia de Kullback-Leibler**[^kl]
+
+$$
+C = \text{KL}(P \,\|\, Q) = \sum_{i \ne j} p_{ij} \log \frac{p_{ij}}{q_{ij}},
 $$ {#eq-tsne-kl}
-:::
 
-La minimización se realiza mediante descenso de gradiente estocástico, típicamente con aceleración por momentos y un término de exageración inicial que amplifica los $p_{ij}$ en las primeras iteraciones para facilitar la formación de grupos.
+con descenso de gradiente. El gradiente tiene una interpretación física:
 
-### Interpretación de la perplejidad
+$$
+\frac{\partial C}{\partial \mathbf{y}_i} = 4 \sum_{j} (p_{ij} - q_{ij}) \frac{\mathbf{y}_i - \mathbf{y}_j}{1 + \lVert \mathbf{y}_i - \mathbf{y}_j \rVert^2}.
+$$ {#eq-tsne-grad}
 
-La perplejidad controla cuántos vecinos efectivos se consideran al construir las distribuciones de similitud. Valores bajos (5-10) priorizan la estructura local muy fina; valores altos (30-100) capturan estructura más global. En la práctica se recomienda probar Perp $\in \{5, 10, 30, 50, 100\}$ y comparar visualmente.
+Cada par actúa como un **resorte**: si $p_{ij} > q_{ij}$ (son vecinos en los datos pero están lejos en el dibujo), se **atraen**; si $p_{ij} < q_{ij}$, se **repelen**. La asimetría de la KL es clave: poner lejos a dos vecinos reales ($p$ grande, $q$ pequeño) cuesta mucho; poner cerca a dos puntos lejanos ($p$ pequeño, $q$ grande) cuesta poco. Por eso t-SNE conserva bien los vecindarios y mal las distancias grandes.
 
-```{=html}
-<div id="tsne-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">t-SNE: efecto de la perplejidad y las iteraciones</span><br>
-    <span style="font-size:0.81em;color:#666;">Simula cómo la perplejidad afecta la distribución de similitudes y la separación entre grupos</span>
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-    <div><label style="font-size:0.83em;color:#444;">Perplejidad = <strong id="perp-v">30</strong></label><br>
-      <input id="perp-sl" type="range" min="5" max="100" step="5" value="30" style="width:100%;accent-color:#1a3a5c;"></div>
-    <div><label style="font-size:0.83em;color:#444;">Grupos en datos = <strong id="ng-v">3</strong></label><br>
-      <input id="ng-sl" type="range" min="2" max="6" step="1" value="3" style="width:100%;accent-color:#7c3aed;"></div>
-  </div>
-  <div id="tsne-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
-  <canvas id="tsne-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-</div>
-<script>
-(function(){
-  const cv=document.getElementById('tsne-cv');
-  const W=680,H=320,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
+## Formalización
 
-  function makeGroups(ng,n=60){
-    const pts=[],lbls=[];
-    const centers=Array.from({length:ng},(_,i)=>{const a=i/ng*2*Math.PI;return[3*Math.cos(a),3*Math.sin(a)];});
-    for(let i=0;i<n;i++){const c=centers[i%ng];pts.push([c[0]+(Math.random()-0.5)*0.6,c[1]+(Math.random()-0.5)*0.6]);lbls.push(i%ng);}
-    return{pts,lbls};
-  }
-
-  // Simulate t-SNE effect with perplejidad: low perp = tight groups but noise in global structure
-  // high perp = better global structure but groups may merge
-  function simulate(pts,lbls,ng,perp){
-    const n=pts.length;
-    // Compute pairwise distances
-    const D=pts.map(p=>pts.map(q=>Math.sqrt((p[0]-q[0])**2+(p[1]-q[1])**2)));
-    // Sigma depends on perplexity: approx sigma ~ perp * mean_nn_dist / some_factor
-    const sigma=Math.max(0.3,perp/30*0.8);
-    // t-SNE-like 2D layout simulation: place groups in circle, spread based on perp
-    const spread=1.5+perp/50;
-    const noise=perp<15?0.8:perp>60?0.3:0.5;
-    const centers2d=Array.from({length:ng},(_,i)=>{const a=i/ng*2*Math.PI;return[spread*Math.cos(a),spread*Math.sin(a)];});
-    return pts.map((_,i)=>{
-      const c=centers2d[lbls[i]];
-      return[c[0]+(Math.random()-0.5)*noise,c[1]+(Math.random()-0.5)*noise];
-    });
-  }
-
-  function draw(perp,ng){
-    const{pts,lbls}=makeGroups(ng);
-    const embedded=simulate(pts,lbls,ng,perp);
-    const xVals=embedded.map(p=>p[0]),yVals=embedded.map(p=>p[1]);
-    const xMn=Math.min(...xVals)-0.5,xMx=Math.max(...xVals)+0.5;
-    const yMn=Math.min(...yVals)-0.5,yMx=Math.max(...yVals)+0.5;
-    const PAD={l:30,r:16,t:20,b:24};
-    const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
-    const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
-    const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
-
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(PAD.l,PAD.t,CW,CH);
-
-    embedded.forEach((p,i)=>{
-      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5,0,2*Math.PI);
-      ctx.fillStyle=COLS[lbls[i]]+'cc';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1.2;ctx.stroke();
-    });
-
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText(`Visualización tipo t-SNE (Perp=${perp}, k=${ng} grupos)`,PAD.l+CW/2,PAD.t-5);
-
-    const sep=perp<15?'baja — grupos fragmentados o ruidosos':perp>60?'alta — grupos pueden solaparse':'óptima para este dataset';
-    document.getElementById('tsne-info').innerHTML=
-      `Perplejidad = <strong>${perp}</strong> → separación entre grupos: <em>${sep}</em>`;
-  }
-
-  document.getElementById('perp-sl').addEventListener('input',function(){
-    document.getElementById('perp-v').textContent=this.value;
-    draw(parseInt(this.value),parseInt(document.getElementById('ng-sl').value));
-  });
-  document.getElementById('ng-sl').addEventListener('input',function(){
-    document.getElementById('ng-v').textContent=this.value;
-    draw(parseInt(document.getElementById('perp-sl').value),parseInt(this.value));
-  });
-  draw(30,3);
-})();
-</script>
-```
-
-```{python}
-from sklearn.datasets import load_digits
-from sklearn.manifold import TSNE
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-import numpy as np
-
-digits = load_digits()
-X = StandardScaler().fit_transform(digits.data)
-
-tsne = TSNE(n_components=2, perplexity=30, n_iter=1000, random_state=42, learning_rate="auto", init="pca")
-X_tsne = tsne.fit_transform(X)
-
-plt.figure(figsize=(8, 6))
-scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=digits.target,
-                      cmap="tab10", s=8, alpha=0.8)
-plt.colorbar(scatter, label="Dígito")
-plt.title("t-SNE (perp=30) — dataset de dígitos MNIST")
-plt.xlabel("t-SNE 1"); plt.ylabel("t-SNE 2")
-plt.tight_layout()
-plt.show()
-```
-
-## UMAP
-
-UMAP (Uniform Manifold Approximation and Projection) fue propuesto por McInnes et al. en 2018 [@mcinnes2018] con fundamentos teóricos basados en geometría diferencial y topología algebraica. A diferencia de t-SNE, UMAP tiene una mejor preservación de la estructura global y es significativamente más rápido, lo que lo hace aplicable a conjuntos de datos de millones de puntos.
-
-### Fundamentos teóricos
-
-La base de UMAP es la teoría de conjuntos simpliciales difusos (fuzzy simplicial sets). Los datos se modelan como una variedad de Riemann, se construye una representación topológica local de esa variedad usando grafos ponderados de vecinos más cercanos, y luego se busca una representación de baja dimensión que preserve esa topología.
+### t-SNE completo
 
 ::: {.callout-note appearance="minimal"}
-Definición. UMAP construye un grafo de vecindad ponderado donde la conectividad entre $\mathbf{x}_i$ y $\mathbf{x}_j$ se modela mediante
-$$
-v_{j|i} = \exp\left(-\frac{d(\mathbf{x}_i,\mathbf{x}_j)-\rho_i}{\sigma_i}\right),
-$$ {#eq-umap-vji}
-donde $\rho_i$ es la distancia al vecino más cercano de $\mathbf{x}_i$ y $\sigma_i$ se ajusta para que la suma de conectividades sea $\log_2(k)$ (con $k$ el número de vecinos).
+**t-SNE.** Entrada: datos $\mathbf{x}_1, \ldots, \mathbf{x}_n$, perplejidad, número de iteraciones.
+
+1. Para cada $i$, buscar $\sigma_i$ tal que $\text{Perp}(P_i)$ sea la perplejidad deseada; calcular $p_{j \mid i}$ y simetrizar $p_{ij}$.
+2. Inicializar $\mathbf{y}_i$ (al azar con varianza pequeña o con las dos primeras componentes de PCA).
+3. Durante las primeras iteraciones, multiplicar las $p_{ij}$ por un factor de **exageración temprana** (12 por omisión), que acentúa las atracciones y ayuda a formar los grupos.
+4. Iterar el descenso de gradiente con momento, calculando $q_{ij}$ y el gradiente de la @eq-tsne-grad.
 :::
 
-La simetrización es $v_{ij} = v_{j|i}+v_{i|j}-v_{j|i}\cdot v_{i|j}$.
+**Costo.** La versión exacta calcula todos los pares: $O(n^2)$ por iteración. La aproximación de **Barnes-Hut**, la opción por omisión de `scikit-learn`, agrupa los puntos lejanos con un árbol y reduce el costo a $O(n \log n)$, lo que permite decenas de miles de puntos. Con muchas variables conviene reducir antes a unas 50 con PCA.
 
-En el espacio de baja dimensión, UMAP modela la similitud con una curva de familia parametrizable que se ajusta para aproximar una distribución $t$ de Student. El objetivo es minimizar la divergencia cruzada binaria entre las similitudes en alta y baja dimensión.
+**Hiperparámetros.** La **perplejidad** es el más importante: valores bajos (2–5) muestran estructura muy local y pueden partir los grupos en fragmentos; valores altos (50–100) muestran una estructura más global pero funden grupos pequeños. Debe ser menor que el número de puntos. La tasa de aprendizaje y el número de iteraciones también importan: con pocas iteraciones, el mapa no ha convergido.
 
-### Hiperparámetros principales
+### Cómo leer (y no leer) un mapa de t-SNE
 
-**`n_neighbors`:** número de vecinos en el grafo de alta dimensión. Similar a la perplejidad de t-SNE. Valores pequeños capturan estructura local fina; valores grandes capturan estructura global.
+@wattenberg2016how documentaron con ejemplos las trampas más comunes:
 
-**`min_dist`:** distancia mínima entre puntos en el espacio reducido. Controla qué tan compactos son los grupos en la visualización. Valores pequeños producen grupos apretados; valores grandes los esparcen.
+1. **El tamaño de los grupos no significa nada.** t-SNE adapta $\sigma_i$ a la densidad local: un grupo denso y uno disperso con el mismo número de puntos aparecen del mismo tamaño.
+2. **Las distancias entre grupos pueden no significar nada.** Dos grupos lejanos en el mapa no están necesariamente más separados en los datos que dos grupos cercanos.
+3. **El ruido puede parecer estructura.** Con perplejidad baja, datos uniformes sin grupos producen manchas aparentes.
+4. **Las formas engañan.** Una línea en los datos puede aparecer partida en segmentos o curvada.
+5. **Hay que mirar varias perplejidades y varias semillas.** Un patrón que aparece en una sola configuración no es confiable.
+
+### UMAP
+
+UMAP [@mcinnes2018] comparte la idea de t-SNE, conservar vecindarios, con otra construcción matemática (topología de conjuntos simpliciales difusos) y una implementación mucho más rápida.
+
+**El grafo en alta dimensión.** Para cada punto $i$ se toman sus $k$ vecinos más cercanos (`n_neighbors`), se calcula $\rho_i$, la distancia a su vecino **más cercano**, y se asigna a cada arista un peso
+
+$$
+v_{j \mid i} = \exp\!\left(-\frac{d_{ij} - \rho_i}{\sigma_i}\right),
+$$ {#eq-umap-v}
+
+con $\sigma_i$ elegido para que $\sum_{j} v_{j \mid i} = \log_2 k$. Restar $\rho_i$ garantiza que cada punto esté conectado con peso 1 a su vecino más cercano: nadie queda aislado, lo que hace a UMAP robusto en zonas dispersas. Para A en nuestra recta, con $k = 3$, sus vecinos B, C y D están a 1, 3 y 5, de modo que $\rho_A = 1$ y hay que resolver
+
+$$
+e^{0} + e^{-2/\sigma} + e^{-4/\sigma} = \log_2 3 = 1.585.
+$$
+
+Con $u = e^{-2/\sigma}$, la ecuación es $u + u^2 = 0.585$, de donde $u = 0.414$ y $\sigma_A = -2/\ln 0.414 = 2.27$. Los pesos de A hacia B, C y D son $1$, $0.414$ y $0.171$. Como $v_{j \mid i}$ y $v_{i \mid j}$ pueden diferir, se combinan como una unión difusa, $v_{ij} = v_{j \mid i} + v_{i \mid j} - v_{j \mid i} v_{i \mid j}$.
+
+**El dibujo.** En baja dimensión, la similitud es $w_{ij} = \big(1 + a \lVert \mathbf{y}_i - \mathbf{y}_j \rVert^{2b}\big)^{-1}$, una familia de curvas de cola pesada cuyos parámetros $a$ y $b$ se ajustan a partir de `min_dist`, la distancia mínima a la que se permite que queden los puntos. El objetivo es la **entropía cruzada** entre los pesos de ambos grafos,
+
+$$
+\sum_{i \ne j} \Big[ v_{ij} \log \frac{v_{ij}}{w_{ij}} + (1 - v_{ij}) \log \frac{1 - v_{ij}}{1 - w_{ij}} \Big],
+$$ {#eq-umap-ce}
+
+cuyo primer término atrae a los vecinos y el segundo repele a los no vecinos. Para no calcular todas las repulsiones, UMAP usa **muestreo negativo**: en cada paso repele cada punto de unos cuantos puntos elegidos al azar. Además se inicializa con un embebido espectral (capítulo anterior), lo que mejora la estructura global.
+
+**Hiperparámetros.** `n_neighbors` (5–50) cumple el papel de la perplejidad: pocos vecinos, estructura local; muchos, global. `min_dist` (0–0.99) controla qué tan apretados quedan los grupos en el dibujo, sin cambiar qué es vecino de qué.
+
+### t-SNE y UMAP frente a frente
+
+| | t-SNE | UMAP |
+|---|---|---|
+| Objetivo | KL entre probabilidades de vecindad | entropía cruzada entre grafos difusos |
+| Hiperparámetro principal | perplejidad | `n_neighbors`, `min_dist` |
+| Costo | $O(n \log n)$ (Barnes-Hut) | aproximadamente lineal (vecinos aproximados y muestreo negativo) |
+| Estructura global | débil | algo mejor (inicialización espectral) |
+| Casos nuevos | no (hay que recalcular) | sí, con `transform` |
+| Dimensiones de salida | 2 o 3 en la práctica | cualquiera; útil como paso previo a clustering |
+
+: Comparación de t-SNE y UMAP. {#tbl-tsne-umap}
+
+@kobak2019art mostraron que buena parte de la diferencia en estructura global se debe a la **inicialización**: t-SNE inicializado con PCA conserva la estructura global casi tan bien como UMAP. En ambos casos, las advertencias sobre tamaños y distancias siguen aplicando.
+
+### Autoencoders
+
+Un **autoencoder** [@hinton2006reducing] es una red neuronal entrenada para **copiar su entrada en su salida** a través de un cuello de botella:
+
+$$
+\mathbf{z} = f_{\text{cod}}(\mathbf{x}) \in \mathbb{R}^{q}, \qquad \hat{\mathbf{x}} = f_{\text{dec}}(\mathbf{z}), \qquad \min \sum_i \lVert \mathbf{x}_i - \hat{\mathbf{x}}_i \rVert^2,
+$$ {#eq-autoencoder}
+
+con $q$ mucho menor que $p$. Para reconstruir bien a través de solo $q$ números, el codificador debe aprender una representación compacta de lo esencial. Si el codificador y el decodificador son lineales, el mejor autoencoder abarca el mismo subespacio que las primeras $q$ componentes de PCA; con capas no lineales, puede aprender variedades curvas. A diferencia de t-SNE y UMAP:
+
+- tiene un **decodificador**, que reconstruye datos a partir de la representación;
+- asigna **casos nuevos** con solo pasarlos por el codificador;
+- su **error de reconstrucción** sirve para detectar anomalías: los casos parecidos a los del entrenamiento se reconstruyen bien y los raros, no.
+
+Sus variantes (autoencoders variacionales, de eliminación de ruido) son la base de muchos modelos generativos. El capítulo de PyTorch y JAX muestra cómo entrenar redes de este tipo.
+
+## Laboratorio: t-SNE en el navegador
+
+El laboratorio ejecuta t-SNE exacto sobre 90 puntos de **diez dimensiones**. En «Tres grupos», los grupos A y B están cerca entre sí y C está casi tres veces más lejos; además, C es tres veces más disperso. La tabla compara esas proporciones con las del mapa. Cambia la perplejidad y reinicia para ver cómo cambia el dibujo.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="ts-lab">
+  <p class="plab-eyebrow">Laboratorio · t-SNE</p>
+  <h3 class="plab-title">¿Qué conserva el mapa y qué no?</h3>
+  <p class="plab-sub">El mapa se calcula aquí mismo con descenso de gradiente. «Ejecutar» anima las iteraciones; «Reiniciar» parte de otra posición aleatoria.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos (10 dimensiones)
+      <div class="plab-seg" id="ts-data">
+        <button data-value="grupos" aria-pressed="true">Tres grupos</button>
+        <button data-value="ruido">Ruido uniforme</button>
+        <button data-value="linea">Una curva</button>
+      </div>
+    </div>
+    <label>Perplejidad: <b id="ts-perp-v"></b><input type="range" id="ts-perp" min="2" max="45" step="1" value="20"></label>
+    <div class="plab-field">Exageración temprana
+      <div class="plab-seg" id="ts-ex"><button data-value="si" aria-pressed="true">Sí (×12)</button><button data-value="no">No</button></div>
+    </div>
+  </div>
+  <div class="plab-controls">
+    <div class="plab-field">Optimización
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        <button class="plab-btn primary" id="ts-run">Ejecutar</button>
+        <button class="plab-btn" id="ts-step">+50 iteraciones</button>
+        <button class="plab-btn" id="ts-reset">Reiniciar (otra semilla)</button>
+      </div>
+    </div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Iteración</span><strong id="ts-it"></strong></div>
+    <div class="plab-stat"><span>KL(P‖Q)</span><strong id="ts-kl"></strong></div>
+    <div class="plab-stat"><span>σᵢ mínimo · máximo</span><strong id="ts-sig"></strong></div>
+    <div class="plab-stat"><span>Semilla</span><strong id="ts-seed"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel"><h4>Mapa de t-SNE</h4><svg id="ts-svg" role="img" aria-label="Mapa bidimensional de t-SNE coloreado por grupo real"></svg><div class="plab-legend" id="ts-legend"></div></div>
+    <div class="plab-panel"><h4>Divergencia KL por iteración</h4><svg id="ts-kls" role="img" aria-label="Divergencia de Kullback-Leibler a lo largo de las iteraciones"></svg>
+      <div id="ts-tab" class="plab-scroll" style="margin-top:.5rem"></div></div>
+  </div>
+  <p class="plab-note" id="ts-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con «Tres grupos» y perplejidad 20, compara en la tabla la razón de distancias A–C / A–B y la razón de dispersiones C / A en los datos y en el mapa. ¿Qué conserva t-SNE?</li>
+    <li>Reinicia varias veces: ¿cambia la posición relativa de los grupos? ¿Cambia qué puntos están juntos?</li>
+    <li><strong>Predice</strong> qué verás con «Ruido uniforme» y perplejidad 3. Compruébalo y sube la perplejidad a 40.</li>
+    <li>Con «Una curva», compara perplejidad 3 y 40. ¿En cuál se ve la curva continua?</li>
+    <li>Quita la exageración temprana y reinicia. ¿Converge al mismo tipo de mapa? ¿Cuánto tarda en separar los grupos?</li>
+  </ol>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('ts-lab');
+  const $ = s => root.querySelector(s);
+  const DIM = 10, CLS = ['s1', 's2', 's3'];
+  function makeSets() {
+    const g = K.rng(2024), N = () => g.normal();
+    const grupos = [], gl = [];
+    const cA = Array(DIM).fill(0), cB = Array(DIM).fill(0), cC = Array(DIM).fill(0);
+    cB[0] = 6; cC[1] = 18;  cC[0] = 3;   // |A-B| = 6, |A-C| ≈ 18.2, |B-C| ≈ 18.2
+    [[cA, 1], [cB, 1], [cC, 3]].forEach(([c, s], k) => { for (let i = 0; i < 30; i++) { grupos.push(c.map(v => v + s * N())); gl.push(k); } });
+    const ruido = [], rl = [];
+    for (let i = 0; i < 90; i++) { ruido.push(Array.from({ length: DIM }, () => g())); rl.push(0); }
+    const linea = [], ll = [];
+    for (let i = 0; i < 90; i++) { const t = 4 * Math.PI * i / 89; const v = Array(DIM).fill(0); v[0] = 3 * Math.cos(t); v[1] = 3 * Math.sin(t); v[2] = 1.2 * t; for (let d = 3; d < DIM; d++) v[d] = 0.05 * N(); linea.push(v); ll.push(i < 30 ? 0 : i < 60 ? 1 : 2); }
+    return { grupos: { X: grupos, lab: gl, names: ['A', 'B', 'C'] }, ruido: { X: ruido, lab: rl, names: ['puntos'] }, linea: { X: linea, lab: ll, names: ['inicio', 'medio', 'final'] } };
+  }
+  const SETS = makeSets();
+  let S, P, Y, U, G, it, seed = 1, timer = null, hist = [], sig = [0, 0];
+  const exSeg = K.segmented($('#ts-ex'), () => reset());
+  const dataSeg = K.segmented($('#ts-data'), () => { stop(); setup(); });
+  function computeP(X, perp) {
+    const n = X.length, D = X.map(a => X.map(b => K.sum(a.map((v, k) => (v - b[k]) ** 2))));
+    const Pc = X.map(() => Array(n).fill(0)), target = Math.log(perp), sigmas = [];
+    for (let i = 0; i < n; i++) {
+      let beta = 1, lo = -Infinity, hi = Infinity;
+      for (let t = 0; t < 60; t++) {
+        let sum = 0; const row = D[i].map((d, j) => j === i ? 0 : Math.exp(-d * beta)); sum = K.sum(row) || 1e-300;
+        let H = 0; row.forEach((w, j) => { if (j !== i && w > 0) { const p = w / sum; H -= p * Math.log(p); } });
+        row.forEach((w, j) => Pc[i][j] = w / sum);
+        if (Math.abs(H - target) < 1e-5) break;
+        if (H > target) { lo = beta; beta = hi === Infinity ? beta * 2 : (beta + hi) / 2; } else { hi = beta; beta = lo === -Infinity ? beta / 2 : (beta + lo) / 2; }
+      }
+      sigmas.push(Math.sqrt(1 / (2 * beta)));
+    }
+    const Pm = X.map(() => Array(n).fill(0));
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) Pm[i][j] = Math.max((Pc[i][j] + Pc[j][i]) / (2 * n), 1e-12);
+    return { P: Pm, sig: [Math.min(...sigmas), Math.max(...sigmas)] };
+  }
+  function setup() { S = SETS[dataSeg.get()]; const r = computeP(S.X, +$('#ts-perp').value); P = r.P; sig = r.sig; reset(true); }
+  function reset(first) {
+    stop(); if (!first) seed++;
+    const r = K.rng(seed * 101), n = S.X.length;
+    Y = S.X.map(() => [1e-2 * r.normal(), 1e-2 * r.normal()]); U = Y.map(() => [0, 0]); G = Y.map(() => [1, 1]); it = 0; hist = [];
+    iterate(300); render();
+  }
+  function iterate(m) {
+    const n = Y.length, exag = exSeg.get() === 'si';
+    for (let s = 0; s < m; s++, it++) {
+      const ex = exag && it < 100 ? 12 : 1, mom = it < 120 ? 0.5 : 0.8, lr = 60;
+      const num = Y.map(() => Array(n).fill(0)); let Z = 0;
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { const d = 1 / (1 + (Y[i][0] - Y[j][0]) ** 2 + (Y[i][1] - Y[j][1]) ** 2); num[i][j] = num[j][i] = d; Z += 2 * d; }
+      let kl = 0;
+      for (let i = 0; i < n; i++) {
+        let gx = 0, gy = 0;
+        for (let j = 0; j < n; j++) { if (i === j) continue; const q = Math.max(num[i][j] / Z, 1e-12), f = 4 * (ex * P[i][j] - q) * num[i][j]; gx += f * (Y[i][0] - Y[j][0]); gy += f * (Y[i][1] - Y[j][1]); if (j > i) kl += 2 * P[i][j] * Math.log(P[i][j] / q); }
+        [gx, gy].forEach((gd, d) => { G[i][d] = Math.sign(gd) !== Math.sign(U[i][d]) ? G[i][d] + 0.2 : Math.max(0.01, G[i][d] * 0.8); U[i][d] = mom * U[i][d] - lr * G[i][d] * gd; });
+      }
+      Y.forEach((y, i) => { y[0] += U[i][0]; y[1] += U[i][1]; });
+      const mx = K.mean(Y.map(y => y[0])), my = K.mean(Y.map(y => y[1])); Y.forEach(y => { y[0] -= mx; y[1] -= my; });
+      if (it % 5 === 0) hist.push([it, kl]);
+    }
+  }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } $('#ts-run').textContent = 'Ejecutar'; }
+  $('#ts-run').addEventListener('click', () => { if (timer) return stop(); $('#ts-run').textContent = 'Pausar'; timer = setInterval(() => { iterate(5); render(); if (it >= 1500) stop(); }, 30); });
+  $('#ts-step').addEventListener('click', () => { iterate(50); render(); });
+  $('#ts-reset').addEventListener('click', () => reset());
+  $('#ts-perp').addEventListener('input', () => { $('#ts-perp-v').textContent = $('#ts-perp').value; });
+  $('#ts-perp').addEventListener('change', () => setup());
+  const centroid = (A, idx) => [0, 1].map(d => K.mean(idx.map(i => A[i][d])));
+  const spread = (A, idx, c) => K.mean(idx.map(i => Math.sqrt(K.sum(A[i].map((v, d) => (v - c[d]) ** 2)))));
+  const centroidN = (A, idx) => A[0].map((_, d) => K.mean(idx.map(i => A[i][d])));
+  function render() {
+    $('#ts-perp-v').textContent = $('#ts-perp').value;
+    const lim = 1.1 * Math.max(...Y.map(y => Math.max(Math.abs(y[0]), Math.abs(y[1])))) || 1;
+    const c = K.chart($('#ts-svg'), { width: 340, height: 340, x: [-lim, lim], y: [-lim, lim], margin: { left: 30, right: 10, top: 10, bottom: 30 } });
+    c.axes({ xTicks: 4, yTicks: 4, xFmt: v => K.fmt(v, 0) });
+    Y.forEach((y, i) => c.dot(y[0], y[1], 3.8, CLS[S.lab[i]] + ' dot'));
+    $('#ts-legend').innerHTML = S.names.map((nm, k) => `<span><i class="dot" style="background:var(--lab-${CLS[k]})"></i>${nm}</span>`).join('');
+    const kmax = Math.max(...hist.map(h => h[1]).filter(Number.isFinite), 0.1);
+    const ck = K.chart($('#ts-kls'), { width: 340, height: 180, x: [0, Math.max(300, it)], y: [0, kmax * 1.05], margin: { left: 40, right: 10, top: 10, bottom: 34 } });
+    ck.axes({ xTicks: 4, yTicks: 4, xLabel: 'iteración', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, 1) });
+    if (hist.length) ck.path(hist, 's4 line');
+    if (exSeg.get() === 'si') ck.line(100, 0, 100, kmax * 1.05, 'muted line dash thin');
+    const kl = hist.length ? hist[hist.length - 1][1] : NaN;
+    $('#ts-it').textContent = it; $('#ts-kl').textContent = K.fmt(kl, 3); $('#ts-sig').textContent = `${K.fmt(sig[0], 2)} · ${K.fmt(sig[1], 2)}`; $('#ts-seed').textContent = seed;
+    let msg = '';
+    if (dataSeg.get() === 'grupos') {
+      const idx = [0, 1, 2].map(k => S.lab.map((l, i) => l === k ? i : -1).filter(i => i >= 0));
+      const cx = idx.map(ix => centroidN(S.X, ix)), cy = idx.map(ix => centroid(Y, ix));
+      const dX = (a, b) => Math.sqrt(K.sum(cx[a].map((v, d) => (v - cx[b][d]) ** 2))), dY = (a, b) => Math.hypot(cy[a][0] - cy[b][0], cy[a][1] - cy[b][1]);
+      const sX = idx.map((ix, k) => spread(S.X, ix, cx[k])), sY = idx.map((ix, k) => spread(Y, ix, cy[k]));
+      const rX = dX(0, 2) / dX(0, 1), rY = dY(0, 2) / dY(0, 1), qX = sX[2] / sX[0], qY = sY[2] / sY[0];
+      $('#ts-tab').innerHTML = `<table class="plab-table"><thead><tr><th>Proporción</th><th>Datos (10D)</th><th>Mapa</th></tr></thead><tbody><tr><td>distancia A–C / A–B</td><td>${K.fmt(rX, 2)}</td><td>${K.fmt(rY, 2)}</td></tr><tr><td>dispersión C / A</td><td>${K.fmt(qX, 2)}</td><td>${K.fmt(qY, 2)}</td></tr></tbody></table>`;
+      msg = `En los datos, C está ${K.fmt(rX, 1)} veces más lejos de A que B y es ${K.fmt(qX, 1)} veces más disperso; en el mapa esas proporciones son ${K.fmt(rY, 1)} y ${K.fmt(qY, 1)}. t-SNE conserva qué puntos son vecinos (los tres grupos quedan separados), no los tamaños ni las distancias entre grupos.`;
+    } else {
+      $('#ts-tab').innerHTML = '';
+      msg = dataSeg.get() === 'ruido'
+        ? `Ruido uniforme en 10 dimensiones, sin grupos. Con perplejidad ${$('#ts-perp').value}, ${+$('#ts-perp').value < 8 ? 'el mapa puede mostrar manchas que parecen grupos: son artefactos de una vecindad demasiado pequeña.' : 'el mapa se ve como una nube homogénea, que es la respuesta correcta.'}`
+        : `Una hélice (curva de dimensión 1) en 10 dimensiones, coloreada por tramos. ${+$('#ts-perp').value < 8 ? 'Con perplejidad baja, t-SNE puede partir la curva en segmentos desconectados o desordenados.' : 'Con perplejidad alta, la continuidad de la curva se conserva mejor.'}`;
+    }
+    if (it < 250) msg += ' (Aún en las primeras iteraciones: deja que la optimización avance.)';
+    $('#ts-note').textContent = msg;
+  }
+  setup();
+})();
+</script>
+```
+:::
+
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* El laboratorio ejecuta t-SNE exacto sobre 90 puntos en diez dimensiones. Con tres grupos en los que C está 2.9 veces más lejos de A que B y es 3 veces más disperso, el mapa separa los tres grupos, pero la razón de dispersiones queda cerca de 1 y la de distancias se comprime a alrededor de 2: t-SNE conserva los vecindarios, no los tamaños ni las distancias entre grupos. Con ruido uniforme y perplejidad baja aparecen manchas que no son grupos.
+:::
+
+## Implementación en Python
+
+### Perplejidad y $\sigma_i$ a mano
 
 ```{python}
-try:
-    import umap
-    from sklearn.datasets import load_digits
-    from sklearn.preprocessing import StandardScaler
-    import matplotlib.pyplot as plt
+#| label: tsne-perplejidad
+import numpy as np
+import pandas as pd
 
-    digits = load_digits()
-    X = StandardScaler().fit_transform(digits.data)
+x = np.array([0, 1, 3, 5, 6], dtype=float)
 
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
-    X_umap = reducer.fit_transform(X)
+def fila_p(i, sigma):
+    w = np.exp(-(x - x[i]) ** 2 / (2 * sigma ** 2)); w[i] = 0
+    p = w / w.sum()
+    H = -(p[p > 0] * np.log2(p[p > 0])).sum()
+    return p, 2 ** H
 
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(X_umap[:, 0], X_umap[:, 1], c=digits.target,
-                          cmap="tab10", s=8, alpha=0.8)
-    plt.colorbar(scatter, label="Dígito")
-    plt.title("UMAP (n_neighbors=15, min_dist=0.1) — dataset de dígitos")
-    plt.xlabel("UMAP 1"); plt.ylabel("UMAP 2")
-    plt.tight_layout()
-    plt.show()
+for sigma in [1, 2]:
+    p, perp = fila_p(0, sigma)
+    print(f"σ = {sigma}: p(·|A) = {p.round(3)}, perplejidad = {perp:.2f}")
 
-except ImportError:
-    print("Instalar umap-learn: pip install umap-learn")
+def sigma_para(i, objetivo, lo=1e-3, hi=100):
+    for _ in range(100):                       # búsqueda binaria
+        medio = (lo + hi) / 2
+        _, perp = fila_p(i, medio)
+        lo, hi = (lo, medio) if perp > objetivo else (medio, hi)
+    return medio
+
+print("σ_A para perplejidad 2:", round(sigma_para(0, 2), 3))
 ```
 
-## Comparación t-SNE vs UMAP
+### t-SNE en los dígitos escritos a mano
 
-| Característica | t-SNE | UMAP |
-|---|---|---|
-| Fundamento | Divergencia KL, distribución $t$ | Topología difusa, manifold learning |
-| Velocidad | $O(n^2)$ ingenuo, $O(n\log n)$ con BH | $O(n^{1.14})$ aproximado |
-| Preservación global | Limitada | Mejor que t-SNE |
-| Reproducibilidad | Estocástico, varía entre corridas | Más estable con `random_state` |
-| Hiperparámetros | Perplejidad, tasa aprendizaje | `n_neighbors`, `min_dist` |
-| Escalabilidad | Hasta ~100k puntos | Hasta millones de puntos |
-| Uso en clustering | Solo visualización | Sí, como preprocessing |
+El conjunto `digits` de `scikit-learn` tiene 1 797 imágenes de $8 \times 8$ píxeles: 64 variables. Ningún método usa las etiquetas; el color solo sirve para juzgar el resultado.
 
 ```{python}
-from sklearn.datasets import make_blobs
-from sklearn.manifold import TSNE
-from sklearn.preprocessing import StandardScaler
+#| label: fig-tsne-digitos
+#| fig-cap: "Los dígitos escritos a mano (64 dimensiones) proyectados con PCA, t-SNE (perplejidad 30) y UMAP (15 vecinos). PCA conserva la varianza global pero encima los dígitos; t-SNE y UMAP separan casi todos los dígitos sin haber visto las etiquetas."
 import matplotlib.pyplot as plt
-import numpy as np
+from sklearn.datasets import load_digits
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE, trustworthiness
+import umap
 
-X_high, y = make_blobs(n_samples=500, n_features=20, centers=5,
-                       cluster_std=2.0, random_state=42)
-X_std = StandardScaler().fit_transform(X_high)
+digitos = load_digits()
+Xd, yd = digitos.data, digitos.target
+mapas = {
+    "PCA": PCA(n_components=2).fit_transform(Xd),
+    "t-SNE (perplejidad 30)": TSNE(n_components=2, perplexity=30, init="pca", random_state=0).fit_transform(Xd),
+    "UMAP (15 vecinos)": umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=0).fit_transform(Xd),
+}
+fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
+for ax, (nombre, Y2) in zip(axes, mapas.items()):
+    sc = ax.scatter(*Y2.T, c=yd, cmap="tab10", s=5)
+    ax.set_title(f"{nombre}\nconfiabilidad = {trustworthiness(Xd, Y2, n_neighbors=10):.3f}", fontsize=10)
+    ax.set_xticks([]); ax.set_yticks([])
+fig.colorbar(sc, ax=axes, ticks=range(10), label="dígito", fraction=0.02)
+plt.show()
+```
 
-tsne = TSNE(n_components=2, perplexity=30, random_state=42,
-            learning_rate="auto", init="pca")
-X_tsne = tsne.fit_transform(X_std)
+### El efecto de la perplejidad y de `n_neighbors`
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-axes[0].scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap="tab10", s=10, alpha=0.8)
-axes[0].set_title("t-SNE — datos en 20D")
-
-try:
-    import umap
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
-    X_umap = reducer.fit_transform(X_std)
-    axes[1].scatter(X_umap[:, 0], X_umap[:, 1], c=y, cmap="tab10", s=10, alpha=0.8)
-    axes[1].set_title("UMAP — datos en 20D")
-except ImportError:
-    axes[1].text(0.5, 0.5, "Instalar umap-learn", ha="center", va="center")
-    axes[1].set_title("UMAP (no instalado)")
-
+```{python}
+#| label: fig-tsne-perplejidad
+#| fig-cap: "t-SNE de los dígitos con perplejidad 3, 30 y 150 (arriba) y UMAP con 3, 15 y 150 vecinos (abajo). Valores pequeños fragmentan los grupos; valores grandes conservan más estructura global y funden los detalles."
+fig, axes = plt.subplots(2, 3, figsize=(13, 8))
+for ax, perp in zip(axes[0], [3, 30, 150]):
+    Y2 = TSNE(perplexity=perp, init="pca", random_state=0).fit_transform(Xd)
+    ax.scatter(*Y2.T, c=yd, cmap="tab10", s=3); ax.set_title(f"t-SNE, perplejidad {perp}")
+for ax, k in zip(axes[1], [3, 15, 150]):
+    Y2 = umap.UMAP(n_neighbors=k, min_dist=0.1, random_state=0).fit_transform(Xd)
+    ax.scatter(*Y2.T, c=yd, cmap="tab10", s=3); ax.set_title(f"UMAP, n_neighbors = {k}")
+for ax in axes.ravel():
+    ax.set_xticks([]); ax.set_yticks([])
 plt.tight_layout()
 plt.show()
 ```
 
-## Autoencoder básico para reducción de dimensionalidad
-
-Un autoencoder es una red neuronal que aprende una representación comprimida de los datos. Consiste en un codificador que mapea la entrada a un espacio latente de dimensión reducida, y un decodificador que reconstruye la entrada desde ese espacio latente. El entrenamiento minimiza el error de reconstrucción.
-
-```{=html}
-<div id="ae-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Autoencoder — compresión y reconstrucción</span><br>
-    <span style="font-size:0.81em;color:#666;">Ajusta la dimensión del espacio latente y observa cómo cambia el error de reconstrucción</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">Dim. latente = <strong id="ae-dv">2</strong></label>
-    <input id="ae-dsl" type="range" min="1" max="8" step="1" value="2" style="flex:1;min-width:150px;accent-color:#1a3a5c;">
-  </div>
-  <canvas id="ae-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-  <div id="ae-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:8px;min-height:22px;"></div>
-</div>
-<script>
-(function(){
-  const cv=document.getElementById('ae-cv');
-  const W=680,H=300,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const IN_DIM=16; // simulate 16D input
-
-  // Approximate reconstruction error curve (monotone decreasing with latent dim)
-  function reconErr(d){
-    // sigmoidal decay: high error at d=1, near 0 at d=8
-    return 1.0*Math.exp(-0.55*(d-1));
-  }
-  // Information preserved
-  function infoPreserved(d){return 1-reconErr(d);}
-
-  function drawArch(latDim){
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(0,0,W,H);
-    const layers=[IN_DIM,8,latDim,8,IN_DIM];
-    const names=['Entrada\n('+IN_DIM+'D)','Enc 1\n(8)','Latente\n('+latDim+'D)','Dec 1\n(8)','Salida\n('+IN_DIM+'D)'];
-    const nL=layers.length;
-    const lx=Array.from({length:nL},(_,i)=>W*0.08+i*W*0.21);
-    const maxN=IN_DIM;
-    const maxH=H*0.7;
-    const CY=H*0.42;
-    const rNode=5;
-
-    // Draw connections
-    for(let l=0;l<nL-1;l++){
-      const n1=Math.min(layers[l],10),n2=Math.min(layers[l+1],10);
-      for(let i=0;i<n1;i++)for(let j=0;j<n2;j++){
-        const y1=CY-(n1-1)*9+(i*2)*(n1>1?9/(n1-1)*9:0)/9-n1*4.5+i*9;
-        const y2=CY-n2*4.5+j*9;
-        ctx.strokeStyle='rgba(100,120,180,0.08)';ctx.lineWidth=0.8;
-        ctx.beginPath();ctx.moveTo(lx[l],y1);ctx.lineTo(lx[l+1],y2);ctx.stroke();
-      }
-    }
-
-    // Draw nodes
-    layers.forEach((n,li)=>{
-      const show=Math.min(n,10);
-      const more=n>10;
-      const isLatent=li===2;
-      const col=isLatent?'#f59e0b':li<2?'#2563eb':'#dc2626';
-      for(let i=0;i<show;i++){
-        const ny=CY-show*4.5+i*9;
-        ctx.beginPath();ctx.arc(lx[li],ny,rNode,0,2*Math.PI);
-        ctx.fillStyle=col+'cc';ctx.fill();
-        ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
-      }
-      if(more){ctx.fillStyle=col;ctx.font='10px Georgia,serif';ctx.textAlign='center';ctx.fillText('⋮',lx[li],CY+show*4.5+12);}
-      const lbl=names[li];
-      ctx.fillStyle=isLatent?'#92400e':col;ctx.font=(isLatent?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
-      lbl.split('\n').forEach((s,si)=>ctx.fillText(s,lx[li],CY+show*4.5+26+si*12));
-    });
-
-    // Bottleneck brace
-    ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(lx[2]-18,H*0.12);ctx.lineTo(lx[2]-18,H*0.75);
-    ctx.moveTo(lx[2]+18,H*0.12);ctx.lineTo(lx[2]+18,H*0.75);ctx.stroke();
-    ctx.fillStyle='#92400e';ctx.font='bold 9px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('cuello',lx[2],H*0.09);
-
-    // Error bar chart (right panel)
-    const bx=W*0.88,by=H*0.15,bh=H*0.7,bw=W*0.06;
-    const err=reconErr(latDim);
-    const info=infoPreserved(latDim);
-    ctx.fillStyle='#dc2626cc';ctx.fillRect(bx-bw,by+bh*(1-err),bw,bh*err);
-    ctx.fillStyle='#16a34acc';ctx.fillRect(bx,by+bh*(1-info),bw,bh*info);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;
-    ctx.strokeRect(bx-bw,by,bw,bh);ctx.strokeRect(bx,by,bw,bh);
-    ctx.fillStyle='#dc2626';ctx.font='9px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Error',bx-bw/2,by+bh+12);ctx.fillText((err*100).toFixed(0)+'%',bx-bw/2,by+bh*(1-err)-4);
-    ctx.fillStyle='#16a34a';ctx.fillText('Info',bx+bw/2,by+bh+12);ctx.fillText((info*100).toFixed(0)+'%',bx+bw/2,by+bh*(1-info)-4);
-
-    // Labels
-    ctx.fillStyle='#2563eb';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Codificador',lx[1],H*0.06);
-    ctx.fillStyle='#dc2626';ctx.fillText('Decodificador',lx[3],H*0.06);
-
-    document.getElementById('ae-info').innerHTML=
-      `Dimensión latente = <strong>${latDim}</strong> / ${IN_DIM}&ensp;·&ensp;`+
-      `Error de reconstrucción ≈ <strong style="color:#dc2626">${(err*100).toFixed(0)}%</strong>&ensp;·&ensp;`+
-      `Información preservada ≈ <strong style="color:#16a34a">${(info*100).toFixed(0)}%</strong>`;
-  }
-
-  document.getElementById('ae-dsl').addEventListener('input',function(){
-    const d=parseInt(this.value);
-    document.getElementById('ae-dv').textContent=d;
-    drawArch(d);
-  });
-  drawArch(2);
-})();
-</script>
-```
+### Tamaños y distancias que no significan nada
 
 ```{python}
-import numpy as np
-from sklearn.datasets import load_digits
+#| label: fig-tsne-trampas
+#| fig-cap: "Izquierda: tres grupos en 10 dimensiones; C está tres veces más lejos de A que B y es tres veces más disperso (proyección PCA). Centro: t-SNE iguala tamaños y distancias. Derecha: ruido uniforme en 10 dimensiones con perplejidad 5, en el que t-SNE dibuja manchas que no son grupos."
+rng = np.random.default_rng(0)
+centros = np.zeros((3, 10)); centros[1, 0] = 6; centros[2, :2] = [3, 18]
+X3 = np.vstack([c + s * rng.normal(size=(100, 10)) for c, s in zip(centros, [1, 1, 3])])
+y3 = np.repeat([0, 1, 2], 100)
+ruido = rng.uniform(size=(300, 10))
+
+fig, axes = plt.subplots(1, 3, figsize=(13, 3.8))
+paleta = np.array(["#2563eb", "#ea580c", "#16a34a"])
+axes[0].scatter(*PCA(2).fit_transform(X3).T, c=paleta[y3], s=6); axes[0].set_title("PCA de los tres grupos")
+axes[1].scatter(*TSNE(perplexity=30, random_state=0).fit_transform(X3).T, c=paleta[y3], s=6); axes[1].set_title("t-SNE de los tres grupos")
+axes[2].scatter(*TSNE(perplexity=5, random_state=0).fit_transform(ruido).T, s=6, color="#59636e"); axes[2].set_title("t-SNE de ruido (perplejidad 5)")
+for ax in axes:
+    ax.set_xticks([]); ax.set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+### UMAP para casos nuevos y como paso previo al clustering
+
+UMAP aprende una transformación que se puede aplicar a datos nuevos, y con más de dos dimensiones de salida es un buen preprocesamiento para algoritmos basados en densidad como HDBSCAN.
+
+```{python}
+#| label: tsne-umap-clustering
+from sklearn.model_selection import train_test_split
+from sklearn.cluster import HDBSCAN, KMeans
+from sklearn.metrics import adjusted_rand_score
+
+X_tr, X_te, y_tr, y_te = train_test_split(Xd, yd, test_size=0.3, random_state=0, stratify=yd)
+reductor = umap.UMAP(n_neighbors=15, min_dist=0.0, n_components=5, random_state=0).fit(X_tr)
+Z_tr, Z_te = reductor.transform(X_tr), reductor.transform(X_te)
+
+hd = HDBSCAN(min_cluster_size=30).fit(Z_tr)
+km_crudo = KMeans(n_clusters=10, n_init=10, random_state=0).fit(X_tr)
+print(f"HDBSCAN sobre UMAP (5D): {hd.labels_.max() + 1} grupos, {np.mean(hd.labels_ < 0):.1%} ruido, "
+      f"ARI con los dígitos = {adjusted_rand_score(y_tr, hd.labels_):.3f}")
+print(f"k-medias sobre los 64 píxeles: ARI = {adjusted_rand_score(y_tr, km_crudo.labels_):.3f}")
+print("forma de los casos nuevos transformados:", Z_te.shape)
+```
+
+Agrupar sobre una representación de UMAP puede funcionar muy bien, pero hereda sus distorsiones: los tamaños y las densidades del espacio reducido no son los originales. Conviene validar los grupos en el espacio original.
+
+### Un autoencoder con `scikit-learn`
+
+Un perceptrón multicapa entrenado para predecir su propia entrada es un autoencoder. Con la arquitectura $64 \to 256 \to 64 \to q \to 64 \to 256 \to 64$, la capa central es la representación de $q$ dimensiones; la extraemos aplicando a mano las tres primeras capas.
+
+```{python}
+#| label: fig-tsne-autoencoder
+#| fig-cap: "Representación de dos dimensiones de los dígitos aprendida por un autoencoder (izquierda) y error de reconstrucción según el número de dimensiones del cuello de botella, comparado con PCA (derecha). Con un cuello de botella estrecho, el autoencoder profundo reconstruye mejor que PCA porque puede seguir la curvatura de los datos."
+from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
 
-# Autoencoder con PyTorch (si disponible) o simulado con sklearn
-try:
-    import torch
-    import torch.nn as nn
+Xs = MinMaxScaler().fit_transform(Xd)
 
-    digits = load_digits()
-    X = MinMaxScaler().fit_transform(digits.data).astype(np.float32)
-    X_tensor = torch.tensor(X)
+def autoencoder(q, semilla=0):
+    return MLPRegressor(hidden_layer_sizes=(256, 64, q, 64, 256), activation="relu", solver="adam",
+                        learning_rate_init=1e-3, max_iter=1500, random_state=semilla).fit(Xs, Xs)
 
-    class Autoencoder(nn.Module):
-        def __init__(self, latent_dim):
-            super().__init__()
-            self.encoder = nn.Sequential(
-                nn.Linear(64, 32), nn.ReLU(),
-                nn.Linear(32, latent_dim)
-            )
-            self.decoder = nn.Sequential(
-                nn.Linear(latent_dim, 32), nn.ReLU(),
-                nn.Linear(32, 64), nn.Sigmoid()
-            )
-        def forward(self, x):
-            return self.decoder(self.encoder(x))
+def codificar(ae, X):
+    h = X
+    for W, b in zip(ae.coefs_[:3], ae.intercepts_[:3]):     # 64 → 256 → 64 → q
+        h = np.maximum(h @ W + b, 0)
+    return h
 
-    ae = Autoencoder(latent_dim=2)
-    optimizer = torch.optim.Adam(ae.parameters(), lr=1e-3)
-    criterion = nn.MSELoss()
+ae2 = autoencoder(2)
+Z = codificar(ae2, Xs)
+errores = {"autoencoder": [], "PCA": []}
+dims = [2, 4, 8, 16]
+for q in dims:
+    errores["autoencoder"].append(np.mean((autoencoder(q).predict(Xs) - Xs) ** 2))
+    pca = PCA(n_components=q).fit(Xs)
+    errores["PCA"].append(np.mean((pca.inverse_transform(pca.transform(Xs)) - Xs) ** 2))
 
-    for epoch in range(200):
-        out = ae(X_tensor)
-        loss = criterion(out, X_tensor)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-    with torch.no_grad():
-        Z = ae.encoder(X_tensor).numpy()
-
-    print(f"Error de reconstrucción final (MSE): {loss.item():.6f}")
-    print(f"Espacio latente: {Z.shape}")
-
-except ImportError:
-    print("PyTorch no disponible. Usando PCA como aproximación.")
-    from sklearn.decomposition import PCA
-    digits = load_digits()
-    X = MinMaxScaler().fit_transform(digits.data)
-    pca = PCA(n_components=2)
-    Z = pca.fit_transform(X)
-    rec = pca.inverse_transform(Z)
-    mse = ((X - rec)**2).mean()
-    print(f"PCA 2 componentes — MSE de reconstrucción: {mse:.6f}")
-    print(f"Varianza explicada: {pca.explained_variance_ratio_.sum():.4f}")
-```
-
-## Precauciones y buenas prácticas
-
-Las técnicas de reducción no lineal son herramientas de visualización, no de inferencia estadística. Varias advertencias son importantes:
-
-**No interpretar distancias como absolutas.** Las distancias en el espacio 2D de t-SNE o UMAP no son proporcionales a las distancias originales. Dos puntos cercanos en la visualización no necesariamente son similares en el espacio original.
-
-**Resultados estocásticos.** t-SNE produce resultados distintos en cada corrida salvo que se fije la semilla aleatoria. UMAP es más estable pero sigue siendo estocástico.
-
-**La estructura global no se preserva en t-SNE.** Los grupos lejanos en la visualización de t-SNE no necesariamente están más separados en el espacio original. UMAP preserva mejor la estructura global.
-
-**No usar como único criterio para clustering.** Una apariencia de grupos en 2D no implica que existan grupos reales en el espacio original. Confirmar con métricas internas o externas.
-
-```{python}
-from sklearn.manifold import TSNE
-from sklearn.datasets import make_blobs
-from sklearn.preprocessing import StandardScaler
-import numpy as np
-
-# Demostración: correr t-SNE múltiples veces con distintas semillas
-X, y = make_blobs(n_samples=200, centers=3, cluster_std=0.8, random_state=0)
-X_std = StandardScaler().fit_transform(X)
-
-for seed in [0, 42, 123]:
-    tsne = TSNE(n_components=2, perplexity=30, random_state=seed,
-                learning_rate="auto", init="pca", n_iter=500)
-    Z = tsne.fit_transform(X_std)
-    spread = Z.std(axis=0).mean()
-    print(f"Semilla {seed:3d} — dispersión media en 2D: {spread:.3f}")
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+ax1.scatter(*Z.T, c=yd, cmap="tab10", s=5); ax1.set_title("espacio latente del autoencoder (q = 2)"); ax1.set_xticks([]); ax1.set_yticks([])
+for nombre, color in [("autoencoder", "#2563eb"), ("PCA", "#ea580c")]:
+    ax2.plot(dims, errores[nombre], "o-", color=color, label=nombre)
+ax2.set_xlabel("dimensiones del cuello de botella"); ax2.set_ylabel("error cuadrático medio"); ax2.legend(); ax2.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+print(pd.DataFrame(errores, index=dims).round(4))
 ```
 
 ## Cuándo usar cada método
 
-| Escenario | Recomendación |
+| Objetivo | Recomendación |
 |---|---|
-| Visualización rápida, <50k puntos | t-SNE con perplejidad 30 |
-| Visualización de millones de puntos | UMAP |
-| Se necesita reproducibilidad | UMAP con `random_state` |
-| Reducción para clustering posterior | UMAP (preserva mejor estructura global) |
-| Reconstrucción aproximada | Autoencoder |
-| Interpretabilidad de los ejes | PCA |
-| Alta dimensión con manifold no lineal | UMAP o t-SNE después de PCA inicial |
+| Ejes interpretables, reducción reversible antes de un modelo | PCA |
+| Dibujar una tabla de distancias o disimilitudes | MDS |
+| Desenrollar una variedad suave y con poco ruido | Isomap |
+| Visualizar grupos en datos de alta dimensión | t-SNE (perplejidad 30, inicialización PCA) o UMAP |
+| Muchos casos, o transformar casos nuevos | UMAP |
+| Reducción previa a clustering por densidad | UMAP con 5–10 dimensiones y `min_dist = 0` |
+| Reconstruir datos, detectar anomalías por reconstrucción | autoencoder |
+
+: Elección de un método de reducción de dimensionalidad. {#tbl-elegir-reduccion}
+
+Y tres reglas para cualquier mapa de t-SNE o UMAP: probar **varias** perplejidades o números de vecinos, probar **varias semillas**, y **confirmar** en los datos originales cualquier patrón que se quiera reportar.
+
+## Resumen
+
+- t-SNE convierte distancias en **probabilidades de vecindad** con un ancho $\sigma_i$ por punto, elegido para que todos tengan la misma **perplejidad** (número efectivo de vecinos).
+- En el dibujo usa una distribución **$t$ de Student**, de colas pesadas, que resuelve el problema de aglomeración; minimiza la divergencia KL, que castiga separar vecinos y tolera acercar puntos lejanos.
+- Por eso t-SNE conserva vecindarios, pero **no** tamaños de grupo ni distancias entre grupos, y con perplejidad baja puede inventar grupos en el ruido.
+- **UMAP** construye un grafo difuso de $k$ vecinos (con $\rho_i$ y $\sigma_i$ por punto) y optimiza una entropía cruzada con muestreo negativo; es más rápido, transforma casos nuevos y sirve como paso previo al clustering.
+- Los **autoencoders** aprenden una representación comprimida con una red neuronal; tienen decodificador, asignan casos nuevos y su error de reconstrucción detecta anomalías.
+
+El último capítulo de esta parte reúne todas las herramientas en un caso completo: descubrir grupos en los pingüinos del archipiélago Palmer sin mirar su especie.
+
+[^perplejidad]: La **perplejidad** de una distribución es $2^{H}$, con $H$ su entropía en bits. Una distribución uniforme sobre $m$ resultados tiene entropía $\log_2 m$ y perplejidad exactamente $m$. Por eso se interpreta como un número efectivo de opciones: una perplejidad de 30 equivale a repartir la probabilidad por igual entre unos 30 vecinos.
+
+[^kl]: La **divergencia de Kullback-Leibler** $\text{KL}(P \| Q) = \sum p \log(p/q)$ mide cuánta información se pierde al aproximar la distribución $P$ con $Q$. Vale 0 si son iguales y es siempre positiva en otro caso. No es simétrica: $\text{KL}(P \| Q) \ne \text{KL}(Q \| P)$, y esa asimetría es la que hace a t-SNE priorizar los vecindarios.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

@@ -1,538 +1,554 @@
 ---
-title: "Introducción al clustering y métricas de evaluación"
-description: "Introduce el clustering no supervisado: medidas de distancia y similitud, propiedades formales y métricas para evaluar particiones sin etiquetas verdaderas."
-pagetitle: "Introducción al clustering y métricas de evaluación"
+title: "Similitud y distancias"
+pagetitle: "Similitud y distancias para clustering: numéricas, categóricas y mixtas"
 open-graph:
-  description: "Introduce el clustering no supervisado: medidas de distancia y similitud, propiedades formales y métricas para evaluar particiones sin etiquetas verdaderas."
+  description: "Cómo medir el parecido entre casos para el aprendizaje no supervisado: distancias de Minkowski, Mahalanobis, coseno, Jaccard, coincidencia simple, Gower para datos mixtos y edición para cadenas; escala, ponderación y concentración de distancias en alta dimensión, con desarrollo manual y laboratorio interactivo."
 twitter-card:
-  description: "Introduce el clustering no supervisado: medidas de distancia y similitud, propiedades formales y métricas para evaluar particiones sin etiquetas verdaderas."
+  description: "Cómo medir el parecido entre casos para el aprendizaje no supervisado: distancias de Minkowski, Mahalanobis, coseno, Jaccard, coincidencia simple, Gower para datos mixtos y edición para cadenas; escala, ponderación y concentración de distancias en alta dimensión, con desarrollo manual y laboratorio interactivo."
+description: "Cómo medir el parecido entre casos para el aprendizaje no supervisado: distancias de Minkowski, Mahalanobis, coseno, Jaccard, coincidencia simple, Gower para datos mixtos y edición para cadenas; escala, ponderación y concentración de distancias en alta dimensión, con desarrollo manual y laboratorio interactivo."
 author: "Diego Villalba"
-date: today
 lang: es
 format:
   html:
     toc: true
     toc-depth: 3
     toc-title: "Contenido"
-    number-sections: true
     code-fold: true
     code-tools: true
     code-summary: "Mostrar código"
-    fig-align: center
     theme: cosmo
     highlight-style: github
-    smooth-scroll: true
-  pdf:
-    toc: true
-    toc-depth: 3
-    number-sections: true
-    documentclass: scrbook
-    papersize: letter
-    fontsize: 11pt
-    geometry: margin=2.5cm
-    keep-tex: false
 execute:
   echo: true
   warning: false
   message: false
-  cache: false
-bibliography: [referencias_clustering.bib, ../../references.bib]
-crossref:
-  fig-title: "Figura"
-  tbl-title: "Tabla"
-  eq-prefix: "Ec."
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../clasificadores/referencias_fundamentos_clasificacion.bib, ../intro_mineria/referencias_eda.bib, ../../references.bib]
 jupyter: python3
 ---
 
-El aprendizaje supervisado parte de un conjunto de observaciones etiquetadas para aprender una función que generalice a datos nuevos. El aprendizaje no supervisado, en cambio, trabaja sin etiquetas: el objetivo es descubrir estructura interna en los datos, ya sea agrupando observaciones similares, identificando componentes latentes o reduciendo la dimensión de representación [@hastie2009; @bishop2006].
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-El clustering —o agrupamiento— es la tarea no supervisada más estudiada. Dado un conjunto de observaciones $\mathbf{x}_1,\dots,\mathbf{x}_n\in\mathbb{R}^p$, el objetivo es particionarlas en grupos $C_1,\dots,C_k$ de modo que las observaciones dentro de cada grupo sean más similares entre sí que con las de otros grupos. Esta noción de similitud no está predefinida: el analista debe elegir una medida de distancia y un criterio de agrupamiento adecuados al problema [@aggarwal2013].
+Todo método de agrupamiento responde, explícita o implícitamente, a una pregunta previa: **¿qué tan parecidos son dos casos?** $k$-medias mide el parecido con la distancia euclidiana; el clustering jerárquico y DBSCAN aceptan cualquier matriz de distancias; t-SNE convierte distancias en probabilidades de ser vecinos. El capítulo anterior mostró que, con las mismas ocho filas, cambiar la escala de una variable transforma por completo los grupos. Este capítulo estudia la otra mitad del problema: **cómo** medir la distancia según el tipo de dato, que en la práctica rara vez es una tabla de números con unidades comparables [@aggarwal2013; @han2011].
 
-Este capítulo desarrolla los fundamentos del clustering: medidas de distancia y similitud, propiedades formales que deben cumplir, y métricas de evaluación que permiten comparar particiones cuando no se dispone de etiquetas verdaderas. Los capítulos siguientes desarrollan los algoritmos más importantes: K-Means, clustering jerárquico, DBSCAN y reducción de dimensionalidad no lineal.
+## Intuición: ¿quién se parece más a Ana?
 
-## El problema de clustering
+Una tienda quiere ofrecer a Ana los productos que compran los clientes más parecidos a ella. Tiene cinco registros con variables de tipos distintos: dos **numéricas**, una **categórica** y una **binaria**.
 
-Sea $\mathcal{D}=\{\mathbf{x}_1,\dots,\mathbf{x}_n\}$ un conjunto de $n$ observaciones en $\mathbb{R}^p$. Un clustering de $\mathcal{D}$ en $k$ grupos es una función de asignación
+| Cliente | Edad | Ingreso (miles de pesos) | Canal de compra | Tarjeta de la tienda |
+|---|---:|---:|---|---|
+| Ana | 34 | 28 | app | sí |
+| Beto | 36 | 75 | app | no |
+| Carla | 58 | 30 | tienda | sí |
+| Daniel | 31 | 26 | web | no |
+| Elena | 55 | 70 | tienda | no |
+
+: Cinco clientes con variables mixtas. {#tbl-mixtos}
+
+A simple vista, Daniel tiene casi la misma edad y el mismo ingreso que Ana, pero compra por otro canal y no tiene tarjeta. Beto comparte el canal pero gana casi el triple. Carla comparte la tarjeta pero le lleva 24 años. ¿Quién es el más parecido? La respuesta depende de qué variables se usen y de cuánto pese cada una, y en este capítulo la construiremos paso a paso.
+
+## Construcción paso a paso
+
+### Paso 1. Solo las variables numéricas
+
+La distancia euclidiana con las unidades originales da, desde Ana, $3.61$ a Daniel, $24.1$ a Carla, $47.0$ a Beto y $47.0$ a Elena. Como en el capítulo anterior, las unidades importan: el ingreso varía en un rango de 49 mil pesos y la edad en uno de 27 años. Una alternativa a la estandarización es la normalización por **rango** (min-max), que lleva cada variable a $[0, 1]$:
 
 $$
-\ell:\{1,\dots,n\}\to\{1,\dots,k\},
+\tilde{x} = \frac{x - \min}{\max - \min}, \qquad
+\tilde{x}_{\text{edad}} = \frac{\text{edad} - 31}{27}, \qquad
+\tilde{x}_{\text{ingreso}} = \frac{\text{ingreso} - 26}{49}.
 $$
 
-donde $\ell(i)$ indica el grupo al que pertenece la observación $\mathbf{x}_i$. El grupo $C_j$ es el subconjunto de observaciones asignadas a la etiqueta $j$:
+Entre Ana y Daniel las diferencias normalizadas son $3/27 = 0.111$ en edad y $2/49 = 0.041$ en ingreso. Tres formas de combinarlas:
 
 $$
-C_j=\{\mathbf{x}_i\mid \ell(i)=j\}.
+\begin{aligned}
+d_1 &= 0.111 + 0.041 = 0.152 && \text{(Manhattan: suma de diferencias)},\\
+d_2 &= \sqrt{0.111^2 + 0.041^2} = 0.118 && \text{(euclidiana)},\\
+d_\infty &= \max(0.111,\, 0.041) = 0.111 && \text{(Chebyshev: la mayor diferencia)}.
+\end{aligned}
 $$
 
-La función de asignación óptima depende del criterio elegido. Distintos algoritmos minimizan distintos objetivos, y no existe un único criterio universal. El número de particiones posibles en $k$ grupos de $n$ objetos crece exponencialmente con $n$, por lo que los algoritmos eficientes explotan heurísticas o restricciones geométricas.
+Con cualquiera de las tres, **Daniel** es el más cercano a Ana; Carla queda a $d_2 = 0.89$, Beto a $0.96$ y Elena a $1.16$. Pero estas distancias ignoran el canal y la tarjeta.
 
-## Medidas de distancia y similitud
+### Paso 2. Las variables categóricas: coincidencia simple
 
-La noción de similitud entre observaciones se formaliza mediante funciones de distancia. Una función $d:\mathbb{R}^p\times\mathbb{R}^p\to\mathbb{R}_{\geq 0}$ es una distancia si satisface cuatro propiedades.
+Para una variable **nominal** como el canal no tiene sentido restar: «app menos tienda» no es un número. Lo natural es preguntar si los valores **coinciden**:
 
-::: {.callout-note appearance="minimal"}
-Definición. Una función $d$ es una métrica si para todo $\mathbf{x},\mathbf{y},\mathbf{z}\in\mathbb{R}^p$:
-
-1. $d(\mathbf{x},\mathbf{y})\geq 0$ y $d(\mathbf{x},\mathbf{y})=0\Leftrightarrow\mathbf{x}=\mathbf{y}$ (positividad definida),
-2. $d(\mathbf{x},\mathbf{y})=d(\mathbf{y},\mathbf{x})$ (simetría),
-3. $d(\mathbf{x},\mathbf{z})\leq d(\mathbf{x},\mathbf{y})+d(\mathbf{y},\mathbf{z})$ (desigualdad triangular).
-:::
-
-### Distancias de Minkowski
-
-La familia de distancias de Minkowski unifica varias métricas clásicas mediante un parámetro $p\geq 1$.
-
-::: {.callout-note appearance="minimal"}
-Definición. La distancia de Minkowski de orden $p$ entre $\mathbf{x}=(x_1,\dots,x_d)$ y $\mathbf{y}=(y_1,\dots,y_d)$ es
 $$
-d_p(\mathbf{x},\mathbf{y}) = \left(\sum_{j=1}^{d}|x_j-y_j|^p\right)^{1/p}.
+\delta(a, b) = \begin{cases} 0 & \text{si } a = b,\\ 1 & \text{si } a \ne b. \end{cases}
+$$
+
+Con dos variables categóricas (canal y tarjeta), la **distancia de coincidencia simple** es la proporción de variables en las que difieren dos casos[^hamming]. Ana y Beto difieren en la tarjeta: $1/2$. Ana y Carla difieren en el canal: $1/2$. Ana y Daniel difieren en ambas: $2/2 = 1$. Si solo miráramos estas variables, Daniel sería el **menos** parecido.
+
+### Paso 3. Combinar: la distancia de Gower
+
+@gower1971general propuso promediar contribuciones de cada variable, todas en la escala $[0, 1]$: para las numéricas, la diferencia absoluta dividida entre el rango; para las categóricas, la coincidencia $\delta$. Para Ana y Daniel:
+
+$$
+d_G(\text{Ana}, \text{Daniel}) = \frac{1}{4}\Big(\underbrace{\tfrac{3}{27}}_{\text{edad}} + \underbrace{\tfrac{2}{49}}_{\text{ingreso}} + \underbrace{1}_{\text{canal}} + \underbrace{1}_{\text{tarjeta}}\Big)
+= \frac{0.111 + 0.041 + 1 + 1}{4} = 0.538.
+$$
+
+| Desde Ana | Edad | Ingreso | Canal | Tarjeta | $d_G$ | Orden |
+|---|---:|---:|---:|---:|---:|---:|
+| Beto | 0.074 | 0.959 | 0 | 1 | 0.508 | 2 |
+| Carla | 0.889 | 0.041 | 1 | 0 | **0.482** | 1 |
+| Daniel | 0.111 | 0.041 | 1 | 1 | 0.538 | 3 |
+| Elena | 0.778 | 0.857 | 1 | 1 | 0.909 | 4 |
+
+: Contribuciones de cada variable a la distancia de Gower desde Ana. {#tbl-gower-ana}
+
+Con Gower, la más parecida a Ana es **Carla** y Daniel cae al tercer lugar. ¿Tiene sentido? Cada desacuerdo categórico aporta 1, lo mismo que la máxima diferencia posible de edad (27 años). Que Daniel compre por web y no tenga tarjeta pesa tanto como si tuviera 27 años más **y** 49 mil pesos más de ingreso. Es una decisión implícita del método.
+
+### Paso 4. Ponderar de forma deliberada
+
+Gower admite pesos $w_j$ por variable. Si el negocio considera que canal y tarjeta deben pesar la mitad que las variables demográficas, con $w = (1, 1, 0.5, 0.5)$:
+
+$$
+d_G^w(\text{Ana}, \text{Daniel}) = \frac{0.111 + 0.041 + 0.5(1) + 0.5(1)}{1 + 1 + 0.5 + 0.5} = \frac{1.152}{3} = 0.384,
+$$
+
+y ahora el orden es Daniel ($0.384$), Carla ($0.477$), Beto ($0.511$) y Elena ($0.878$). Ninguna de las dos respuestas es la correcta en abstracto; cada una refleja una idea distinta de «parecido». Lo importante es que la decisión sea **explícita**.
+
+### Paso 5. La matriz de distancias
+
+Los algoritmos de clustering jerárquico, $k$-medoides y DBSCAN no necesitan las variables originales: les basta la **matriz de distancias** $\mathbf{D}$, con $D_{ij} = d(\mathbf{x}_i, \mathbf{x}_j)$. Con Gower de pesos iguales:
+
+| | Ana | Beto | Carla | Daniel | Elena |
+|---|---:|---:|---:|---:|---:|
+| Ana | 0 | 0.508 | 0.482 | 0.538 | 0.909 |
+| Beto | 0.508 | 0 | 0.933 | 0.546 | 0.451 |
+| Carla | 0.482 | 0.933 | 0 | 0.770 | 0.482 |
+| Daniel | 0.538 | 0.546 | 0.770 | 0 | 0.697 |
+| Elena | 0.909 | 0.451 | 0.482 | 0.697 | 0 |
+
+: Matriz de distancias de Gower entre los cinco clientes. {#tbl-gower-matriz}
+
+La matriz es **simétrica** y tiene ceros en la diagonal. Para $n$ casos tiene $n(n-1)/2$ valores distintos: 10 aquí, casi 50 millones con $n = 10\,000$. Esa es la razón por la que los métodos que la necesitan completa tienen problemas de memoria con muchos datos.
+
+## Formalización
+
+### ¿Qué es una distancia?
+
+Una función $d$ que asigna un número a cada par de casos es una **métrica** si, para todos $\mathbf{x}, \mathbf{y}, \mathbf{z}$:
+
+1. $d(\mathbf{x}, \mathbf{y}) \ge 0$, con igualdad si y solo si $\mathbf{x} = \mathbf{y}$ (positividad);
+2. $d(\mathbf{x}, \mathbf{y}) = d(\mathbf{y}, \mathbf{x})$ (simetría);
+3. $d(\mathbf{x}, \mathbf{z}) \le d(\mathbf{x}, \mathbf{y}) + d(\mathbf{y}, \mathbf{z})$ (desigualdad triangular).
+
+La desigualdad triangular dice que ir directamente nunca es más largo que dar un rodeo. No es un capricho matemático: los índices espaciales que aceleran la búsqueda de vecinos (árboles KD, árboles de bolas) la usan para descartar regiones enteras sin calcular distancias. Algunas medidas útiles **no** son métricas: la distancia euclidiana **al cuadrado** (que usa $k$-medias) viola la desigualdad triangular, y la distancia coseno también. Se les llama **disimilitudes**. Muchas veces se trabaja con una **similitud** $s$ en lugar de una distancia; las conversiones más comunes son $d = 1 - s$ cuando $s \in [0, 1]$, y en sentido inverso el **núcleo gaussiano**
+
+$$
+s(\mathbf{x}, \mathbf{y}) = \exp\!\left(-\frac{d(\mathbf{x}, \mathbf{y})^2}{2\sigma^2}\right),
+$$ {#eq-nucleo-gaussiano}
+
+que vale 1 cuando los casos coinciden y decae a 0 cuando se alejan, a un ritmo controlado por $\sigma$. Lo usarán el clustering espectral y t-SNE.
+
+### Distancias para datos numéricos
+
+**Minkowski.** Para vectores con $p$ variables, la distancia de orden $s \ge 1$ es
+
+$$
+d_s(\mathbf{x}, \mathbf{y}) = \Big(\sum_{j=1}^{p} |x_j - y_j|^s\Big)^{1/s}.
 $$ {#eq-minkowski}
+
+Con $s = 1$ es la distancia **Manhattan** (la que recorre un taxi en una ciudad cuadriculada), con $s = 2$ la **euclidiana** y con $s \to \infty$ la de **Chebyshev**, $\max_j |x_j - y_j|$. Al crecer $s$, la distancia se concentra en la variable con mayor diferencia: Manhattan es la más tolerante con una diferencia grande en una sola variable y Chebyshev la menos. El conjunto de puntos a distancia menor que $r$ de un centro, la **bola**, es un rombo para Manhattan, un círculo para la euclidiana y un cuadrado para Chebyshev; el laboratorio de este capítulo las dibuja.
+
+**Mahalanobis.** Cuando las variables están **correlacionadas**, la euclidiana cuenta dos veces la información compartida. La distancia de @mahalanobis1936 corrige escala y correlación a la vez:
+
+$$
+d_M(\mathbf{x}, \mathbf{y}) = \sqrt{(\mathbf{x} - \mathbf{y})^\top \boldsymbol{\Sigma}^{-1} (\mathbf{x} - \mathbf{y})},
+$$ {#eq-mahalanobis}
+
+donde $\boldsymbol{\Sigma}$ es la matriz de covarianza[^covarianza] de los datos. Un ejemplo con dos variables estandarizadas y correlación $0.8$:
+
+$$
+\boldsymbol{\Sigma} = \begin{pmatrix} 1 & 0.8 \\ 0.8 & 1 \end{pmatrix}, \qquad
+\boldsymbol{\Sigma}^{-1} = \frac{1}{1 - 0.64}\begin{pmatrix} 1 & -0.8 \\ -0.8 & 1 \end{pmatrix}
+= \frac{1}{0.36}\begin{pmatrix} 1 & -0.8 \\ -0.8 & 1 \end{pmatrix}.
+$$
+
+Los puntos $\mathbf{a} = (1, 1)$ y $\mathbf{b} = (1, -1)$ están a la misma distancia euclidiana del origen, $\sqrt{2} = 1.414$. Pero
+
+$$
+d_M(\mathbf{a}, \mathbf{0})^2 = \frac{1 - 1.6 + 1}{0.36} = \frac{0.4}{0.36} = 1.11, \qquad
+d_M(\mathbf{b}, \mathbf{0})^2 = \frac{1 + 1.6 + 1}{0.36} = \frac{3.6}{0.36} = 10,
+$$
+
+es decir, $d_M(\mathbf{a}, \mathbf{0}) = 1.05$ y $d_M(\mathbf{b}, \mathbf{0}) = 3.16$. El punto $\mathbf{a}$ sigue la tendencia de los datos (ambas variables altas a la vez, como es habitual con correlación positiva) y $\mathbf{b}$ la contradice. Mahalanobis lo reconoce: su bola es una **elipse** alineada con la nube de datos. Esta idea será central en la detección de anomalías.
+
+**Coseno.** Cuando importa la **dirección** del vector y no su longitud, como en textos representados por conteos de palabras, se usa
+
+$$
+d_{\cos}(\mathbf{x}, \mathbf{y}) = 1 - \frac{\mathbf{x}^\top \mathbf{y}}{\lVert \mathbf{x} \rVert \, \lVert \mathbf{y} \rVert}.
+$$ {#eq-coseno}
+
+Tres documentos con conteos de las palabras (*datos*, *minería*, *fútbol*): $\mathbf{d}_1 = (3, 2, 0)$, $\mathbf{d}_2 = (6, 4, 0)$, que es el mismo texto escrito dos veces, y $\mathbf{d}_3 = (0, 1, 3)$. La euclidiana separa a $\mathbf{d}_1$ de su propia copia por $3.61$, casi tanto como de un texto sobre otro tema ($\mathbf{d}_3$, a $4.36$), y la copia larga queda a $7.35$ de $\mathbf{d}_3$: la **longitud** del texto domina la distancia. El coseno pone a $\mathbf{d}_1$ y $\mathbf{d}_2$ a distancia **cero**, y a $\mathbf{d}_1$ y $\mathbf{d}_3$ a $1 - 2/(\sqrt{13}\sqrt{10}) = 0.825$.
+
+**Correlación.** Para comparar la **forma** de dos series (ventas semanales de dos tiendas de tamaño distinto), $d = 1 - r(\mathbf{x}, \mathbf{y})$, donde $r$ es el coeficiente de correlación de Pearson entre los valores de ambas series. Es el coseno aplicado a las series centradas.
+
+### Escala y pesos
+
+Como vimos en el capítulo anterior, **la escala es un peso implícito**. Las tres opciones habituales son:
+
+| Transformación | Fórmula | Rango resultante | Sensibilidad a atípicos |
+|---|---|---|---|
+| Estandarización | $(x - \bar{x})/s$ | sin límites, media 0 y desviación 1 | alta (la media y $s$ se mueven) |
+| Min-max | $(x - \min)/(\max - \min)$ | $[0, 1]$ | muy alta (un atípico fija el rango) |
+| Robusta | $(x - \text{mediana})/\text{RIC}$ | sin límites | baja |
+
+: Transformaciones de escala antes de medir distancias. {#tbl-escalas}
+
+Con un atípico, min-max comprime a todos los demás casos en una franja estrecha y la variable deja de contar. Después de escalar, cualquier peso adicional $w_j$ se aplica multiplicando la variable por $\sqrt{w_j}$ antes de la euclidiana, o directamente en la fórmula de Gower.
+
+### Distancias para datos categóricos y binarios
+
+**Nominales.** La coincidencia simple cuenta desacuerdos. Si se codifican con *one-hot*, la euclidiana al cuadrado entre dos casos es exactamente **el doble** del número de desacuerdos, porque cada desacuerdo cambia dos columnas indicadoras. Con muchas categorías, la coincidencia simple es más directa y no infla la dimensión.
+
+**Ordinales.** Si las categorías tienen orden (básico < plus < premium), se reemplazan por sus rangos $1, \ldots, M$ y se tratan como numéricas divididas entre $M - 1$.
+
+**Binarias.** Para dos casos descritos por $m$ atributos binarios se cuenta la tabla
+
+| | $y_j = 1$ | $y_j = 0$ |
+|---|---:|---:|
+| $x_j = 1$ | $a$ | $b$ |
+| $x_j = 0$ | $c$ | $d$ |
+
+: Coincidencias entre dos vectores binarios. {#tbl-binarias}
+
+La similitud de coincidencia simple es $(a + d)/m$ y la de **Jaccard** es $a/(a + b + c)$, que ignora las coausencias $d$. Supón un catálogo de 10 productos. Ana compró pan y leche; Beto, vino y queso. No comparten nada, y sin embargo coinciden en **no** haber comprado los otros seis productos: la coincidencia simple da $6/10 = 0.6$ de similitud. Jaccard da $0/4 = 0$. Cuando la presencia es lo informativo y la ausencia es lo normal (canastas, síntomas, palabras), los atributos son **asimétricos** y conviene Jaccard; es la misma medida que aparece en la extracción de patrones.
+
+### Datos mixtos: Gower
+
+La distancia de @gower1971general para $p$ variables de cualquier tipo es
+
+$$
+d_G(\mathbf{x}, \mathbf{y}) = \frac{\sum_{j=1}^{p} w_j\, \delta_j(\mathbf{x}, \mathbf{y})\, d_j(x_j, y_j)}{\sum_{j=1}^{p} w_j\, \delta_j(\mathbf{x}, \mathbf{y})},
+\qquad
+d_j = \begin{cases}
+|x_j - y_j| / R_j & \text{numérica, con rango } R_j,\\
+\mathbb{1}[x_j \ne y_j] & \text{categórica},
+\end{cases}
+$$ {#eq-gower}
+
+donde $\delta_j = 0$ si el valor falta en alguno de los dos casos (o si ambos son 0 en un atributo binario asimétrico) y $\delta_j = 1$ en otro caso. Así, Gower **maneja faltantes** de forma natural: promedia solo las variables disponibles. Su punto débil es el que vimos con Ana: un desacuerdo categórico vale tanto como la diferencia numérica máxima, y el rango $R_j$ depende de los extremos.
+
+### Cadenas y secuencias
+
+La **distancia de edición** (de Levenshtein) entre dos cadenas es el mínimo número de inserciones, eliminaciones y sustituciones de un carácter que transforman una en la otra. Se calcula con programación dinámica: $D_{i,j}$ es la distancia entre los primeros $i$ caracteres de una cadena y los primeros $j$ de la otra, y
+
+$$
+D_{i,j} = \min\big(D_{i-1,j} + 1,\; D_{i,j-1} + 1,\; D_{i-1,j-1} + \mathbb{1}[s_i \ne t_j]\big).
+$$ {#eq-levenshtein}
+
+Para «casa» y «cosas» la tabla termina en $D_{4,5} = 2$: sustituir la *a* por *o* e insertar una *s* al final. Se usa para limpiar nombres capturados a mano, comparar secuencias de ADN y agrupar rutas de navegación. Para series de tiempo desfasadas existe una idea análoga, el alineamiento temporal dinámico (DTW).
+
+### Distancias en alta dimensión
+
+En el capítulo de vecinos cercanos vimos que, con muchas variables, **todas las distancias se parecen**. Con 500 puntos uniformes en el hipercubo, el cociente entre la diferencia del vecino más lejano y el más cercano y la distancia al más cercano, $(d_{\max} - d_{\min})/d_{\min}$, vale 82 en dos dimensiones, 1.7 en diez, 0.51 en cien y 0.11 en mil [@beyer1999nearest]. Cuando el más lejano está apenas un 11 % más lejos que el más cercano, la idea de «grupo de casos cercanos» pierde sentido. Por eso, antes de agrupar datos con muchas variables, conviene seleccionar variables o reducir la dimensión.
+
+## Laboratorio: la forma de la distancia
+
+Siete puntos en el plano (con la misma escala en ambos ejes). Elige un punto de referencia haciendo clic sobre él, cambia la métrica y arrastra los puntos. El contorno es la **bola** de la métrica que pasa por el vecino más cercano: todo lo que queda dentro está más cerca que ese vecino. La matriz de la derecha muestra todas las distancias, sombreadas de menor (oscuro) a mayor.
+
+::: {.content-visible when-format="html"}
+```{=html}
+<div class="plab" id="dist-lab">
+  <p class="plab-eyebrow">Laboratorio · Métricas de distancia</p>
+  <h3 class="plab-title">¿Quién es el vecino más cercano según cada métrica?</h3>
+  <p class="plab-sub">Haz clic en un punto para elegirlo como referencia; arrástralo para moverlo. Mahalanobis usa la covarianza de los siete puntos; coseno mide ángulos desde el origen.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Métrica
+      <div class="plab-seg" id="dist-metric">
+        <button data-value="l2" aria-pressed="true">Euclidiana</button>
+        <button data-value="l1">Manhattan</button>
+        <button data-value="linf">Chebyshev</button>
+        <button data-value="maha">Mahalanobis</button>
+        <button data-value="cos">Coseno</button>
+      </div>
+    </div>
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="dist-data">
+        <button data-value="corr" aria-pressed="true">Nube correlacionada</button>
+        <button data-value="rayos">Direcciones</button>
+      </div>
+    </div>
+  </div>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Referencia</span><strong id="dist-ref"></strong></div>
+    <div class="plab-stat"><span>Vecino más cercano</span><strong id="dist-nn"></strong></div>
+    <div class="plab-stat"><span>Vecino según la euclidiana</span><strong id="dist-nn2"></strong></div>
+    <div class="plab-stat"><span>Más lejano</span><strong id="dist-far"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Puntos y bola de la métrica</h4>
+      <svg id="dist-svg" role="img" aria-label="Siete puntos arrastrables, punto de referencia y contorno de la bola de la métrica"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-s2)"></i>referencia</span><span><i class="dot" style="background:var(--lab-s3)"></i>vecino más cercano</span><span><i style="background:var(--lab-axis)"></i>bola por el vecino</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>Matriz de distancias</h4>
+      <div id="dist-mat" class="plab-scroll"></div>
+      <div class="plab-math" id="dist-math"></div>
+    </div>
+  </div>
+  <p class="plab-note" id="dist-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con la nube correlacionada y el punto A como referencia, compara el vecino más cercano con la euclidiana y con Mahalanobis. <strong>Predice</strong> antes de cambiar: ¿cuál de los puntos sigue la tendencia de la nube?</li>
+    <li>Cambia a Manhattan y Chebyshev. ¿Cambia el orden de algún par en la matriz? Busca una posición de un punto en la que la euclidiana y Chebyshev elijan vecinos distintos.</li>
+    <li>Con «Direcciones» y la métrica coseno, arrastra un punto a lo largo de su rayo, alejándolo del origen. ¿Qué pasa con su distancia coseno? ¿Y con la euclidiana?</li>
+  </ol>
+</div>
+<script>
+(() => {
+  const K = window.LabKit, root = document.getElementById('dist-lab');
+  const $ = s => root.querySelector(s);
+  const NAMES = 'ABCDEFG'.split('');
+  const SETS = {
+    corr: [[0.4, 0.3], [1.3, 1.2], [1.0, -0.4], [-0.9, -1.0], [-1.6, -1.5], [2.0, 1.9], [-0.3, 0.6]],
+    rayos: [[1, 0.5], [2.4, 1.2], [0.4, 1.6], [-1.2, 1.4], [-2.2, -0.6], [1.8, -1.6], [0.6, 2.4]]
+  };
+  let P = SETS.corr.map(p => p.slice()), ref = 0, drag = -1, moved = false;
+  const metric = K.segmented($('#dist-metric'), render);
+  const data = K.segmented($('#dist-data'), v => { P = SETS[v].map(p => p.slice()); ref = 0; if (v === 'rayos') metric.set('cos'); else render(); });
+
+  function covInv() {
+    const mx = K.mean(P.map(p => p[0])), my = K.mean(P.map(p => p[1])), n = P.length;
+    const sxx = K.sum(P.map(p => (p[0] - mx) ** 2)) / (n - 1), syy = K.sum(P.map(p => (p[1] - my) ** 2)) / (n - 1), sxy = K.sum(P.map(p => (p[0] - mx) * (p[1] - my))) / (n - 1);
+    const det = sxx * syy - sxy * sxy;
+    return { S: [sxx, sxy, syy], I: det > 1e-9 ? [syy / det, -sxy / det, sxx / det] : null };
+  }
+  function dist(a, b, m, CI) {
+    const u = a[0] - b[0], v = a[1] - b[1];
+    if (m === 'l1') return Math.abs(u) + Math.abs(v);
+    if (m === 'linf') return Math.max(Math.abs(u), Math.abs(v));
+    if (m === 'maha') return CI.I ? Math.sqrt(Math.max(0, CI.I[0] * u * u + 2 * CI.I[1] * u * v + CI.I[2] * v * v)) : NaN;
+    if (m === 'cos') { const na = Math.hypot(a[0], a[1]), nb = Math.hypot(b[0], b[1]); return na < 1e-9 || nb < 1e-9 ? NaN : 1 - (a[0] * b[0] + a[1] * b[1]) / (na * nb); }
+    return Math.hypot(u, v);
+  }
+  // Contorno {x : d(x, c) = r} para cada métrica.
+  function ball(c, ctr, r, m, CI) {
+    const pts = [];
+    if (m === 'cos') {
+      const ang = Math.acos(K.clamp(1 - r, -1, 1)), base = Math.atan2(ctr[1], ctr[0]);
+      [-ang, ang].forEach(a => c.line(0, 0, 3.4 * Math.cos(base + a), 3.4 * Math.sin(base + a), 'muted line dash thin'));
+      c.line(0, 0, 3.4 * Math.cos(base), 3.4 * Math.sin(base), 's2 line thin').style.opacity = 0.5;
+      return;
+    }
+    for (let t = 0; t <= 120; t++) {
+      const th = t / 120 * 2 * Math.PI, dx = Math.cos(th), dy = Math.sin(th);
+      const unit = dist([dx, dy], [0, 0], m, CI);
+      pts.push([ctr[0] + r * dx / unit, ctr[1] + r * dy / unit]);
+    }
+    c.path(pts, 'muted line dash thin');
+  }
+  function render() {
+    const m = metric.get(), CI = covInv();
+    const D = P.map(a => P.map(b => dist(a, b, m, CI)));
+    const order = P.map((_, j) => j).filter(j => j !== ref).sort((x, y) => D[ref][x] - D[ref][y] || x - y);
+    const nn = order[0], far = order[order.length - 1];
+    const De = P.map((_, j) => j).filter(j => j !== ref).sort((x, y) => dist(P[ref], P[x], 'l2') - dist(P[ref], P[y], 'l2') || x - y)[0];
+    const c = K.chart($('#dist-svg'), { width: 360, height: 360, x: [-3, 3], y: [-3, 3], margin: { left: 36, right: 10, top: 10, bottom: 34 } });
+    c.axes({ xTicks: 6, yTicks: 6, xLabel: 'x₁', yLabel: 'x₂' }); c.zeroLines();
+    if (Number.isFinite(D[ref][nn])) ball(c, P[ref], D[ref][nn], m, CI);
+    c.line(P[ref][0], P[ref][1], P[nn][0], P[nn][1], 's3 line thin');
+    P.forEach((p, i) => {
+      const cls = i === ref ? 's2' : i === nn ? 's3' : 's1';
+      const d = c.dot(p[0], p[1], i === ref ? 8 : 6.5, cls + ' dot drag'); d.dataset.i = i;
+      c.text(p[0], p[1], NAMES[i], { dx: 9, dy: -8, class: 'strong' });
+    });
+    $('#dist-ref').textContent = NAMES[ref];
+    $('#dist-nn').textContent = `${NAMES[nn]} (${K.fmt(D[ref][nn], 3)})`;
+    $('#dist-nn2').textContent = NAMES[De];
+    $('#dist-far').textContent = `${NAMES[far]} (${K.fmt(D[ref][far], 3)})`;
+    const vals = D.flat().filter((v, k) => Math.floor(k / P.length) !== k % P.length && Number.isFinite(v));
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    $('#dist-mat').innerHTML = '<table class="plab-table"><thead><tr><th></th>' + NAMES.map(n => `<th>${n}</th>`).join('') + '</tr></thead><tbody>' +
+      D.map((row, i) => `<tr><th>${NAMES[i]}</th>` + row.map((v, j) => {
+        const t = i === j || !Number.isFinite(v) ? 0 : 1 - (v - lo) / (hi - lo + 1e-12);
+        const st = i === j ? '' : `background:color-mix(in srgb, var(--lab-s1) ${Math.round(8 + 55 * t)}%, transparent)`;
+        return `<td style="${st}"${(i === ref && j === nn) || (j === ref && i === nn) ? ' class="hl"' : ''}>${i === j ? '0' : K.fmt(v, 2)}</td>`;
+      }).join('') + '</tr>').join('') + '</tbody></table>';
+    const S = CI.S;
+    $('#dist-math').textContent = m === 'maha'
+      ? `Σ (muestral) = [${K.fmt(S[0], 2)}  ${K.fmt(S[1], 2)}; ${K.fmt(S[1], 2)}  ${K.fmt(S[2], 2)}]\ncorrelación r = ${K.fmt(S[1] / Math.sqrt(S[0] * S[2]), 2)}`
+      : m === 'cos' ? `d = 1 − cos θ, con θ el ángulo entre los vectores desde el origen\nθ(${NAMES[ref]}, ${NAMES[nn]}) = ${K.fmt(Math.acos(K.clamp(1 - D[ref][nn], -1, 1)) * 180 / Math.PI, 1)}°`
+      : m === 'l1' ? `d = |Δx₁| + |Δx₂|` : m === 'linf' ? `d = max(|Δx₁|, |Δx₂|)` : `d = √(Δx₁² + Δx₂²)`;
+    const note = $('#dist-note');
+    if (m === 'maha' && !CI.I) { note.className = 'plab-note bad'; note.textContent = 'La covarianza es singular (los puntos están alineados): Mahalanobis no está definida.'; return; }
+    let msg = `Con la métrica elegida, el vecino más cercano de ${NAMES[ref]} es ${NAMES[nn]}. `;
+    if (nn !== De) msg += `La euclidiana elegiría a ${NAMES[De]}: la métrica cambia quiénes son los vecinos, y con ello los grupos que se formen.`;
+    else msg += 'Coincide con la euclidiana.';
+    if (m === 'maha') msg += ' La bola es una elipse alineada con la nube: alejarse siguiendo la correlación «cuesta» poco; alejarse en contra, mucho.';
+    if (m === 'cos') msg += ' Para el coseno solo importa el ángulo: todo el sector entre los rayos discontinuos está más cerca que el vecino, sin importar la longitud.';
+    note.className = 'plab-note' + (nn !== De ? ' warn' : ''); note.textContent = msg;
+  }
+  const svg = $('#dist-svg');
+  svg.addEventListener('pointerdown', e => { const t = e.target.closest('circle'); if (t && t.dataset.i !== undefined) { drag = +t.dataset.i; moved = false; svg.setPointerCapture(e.pointerId); } });
+  svg.addEventListener('pointermove', e => { if (drag < 0) return; const [x, y] = svg.__chart.pointer(e); P[drag] = [K.clamp(x, -2.9, 2.9), K.clamp(y, -2.9, 2.9)]; moved = true; render(); });
+  svg.addEventListener('pointerup', () => { if (drag >= 0 && !moved) ref = drag; drag = -1; render(); });
+  render();
+})();
+</script>
+```
 :::
 
-Los casos más comunes son:
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* En la configuración inicial (nube correlacionada, referencia A), el vecino más cercano de A con la euclidiana es G, mientras que con Mahalanobis es B, que sigue la dirección de la correlación. Con el coseno, la distancia solo depende del ángulo de cada punto respecto al origen.
+:::
 
-- $p=1$: distancia Manhattan o $L^1$, $d_1(\mathbf{x},\mathbf{y})=\sum_j|x_j-y_j|$.
-- $p=2$: distancia Euclídea o $L^2$, $d_2(\mathbf{x},\mathbf{y})=\sqrt{\sum_j(x_j-y_j)^2}$.
-- $p\to\infty$: distancia de Chebyshev, $d_\infty(\mathbf{x},\mathbf{y})=\max_j|x_j-y_j|$.
+## Implementación en Python
 
-La elección de $p$ determina qué tipo de diferencias entre coordenadas se penalizan más. La distancia Manhattan es menos sensible a diferencias grandes en una sola coordenada; la Euclídea las amplifica mediante el cuadrado; la de Chebyshev las ignora excepto en la coordenada de mayor diferencia.
+### Matrices de distancias con `scipy`
 
-### Distancias para datos no vectoriales
-
-Cuando los datos no son vectores en $\mathbb{R}^p$, se usan distancias específicas al tipo de dato.
-
-**Distancia del coseno.** Para vectores $\mathbf{x},\mathbf{y}\neq\mathbf{0}$, mide el ángulo entre ellos y es frecuente en texto:
-$$
-d_{\cos}(\mathbf{x},\mathbf{y}) = 1 - \frac{\mathbf{x}^T\mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|}.
-$$
-
-**Distancia de Jaccard.** Para conjuntos $A$ y $B$, mide la proporción de elementos que no comparten:
-$$
-d_J(A,B) = 1 - \frac{|A\cap B|}{|A\cup B|}.
-$$
-
-**Distancia de edición (Levenshtein).** Para cadenas de texto o secuencias, cuenta el número mínimo de operaciones de inserción, eliminación y sustitución para transformar una cadena en la otra.
-
-### Importancia de la escala
-
-Las distancias basadas en normas son sensibles a la escala de las variables. Si una variable mide gramos y otra mide kilómetros, la segunda dominará la distancia Euclídea. Por ello, antes de aplicar algoritmos de clustering es habitual estandarizar los datos dividiendo cada variable por su desviación estándar, o aplicar otra normalización adecuada al dominio.
+`scipy.spatial.distance.pdist` calcula las $n(n-1)/2$ distancias de una matriz de datos y `squareform` las acomoda en la matriz cuadrada. Acepta, entre otras, `"euclidean"`, `"cityblock"` (Manhattan), `"chebyshev"`, `"mahalanobis"`, `"cosine"`, `"jaccard"` y `"hamming"`.
 
 ```{python}
+#| label: dist-numericas
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics.pairwise import euclidean_distances, manhattan_distances, cosine_distances
-
-rng = np.random.default_rng(42)
-X = rng.normal(loc=[0, 0], scale=[1, 100], size=(50, 2))  # escala muy distinta
-
-X_std = StandardScaler().fit_transform(X)
-
-print("Sin escalar — distancia media:", euclidean_distances(X).mean().round(2))
-print("Escalado    — distancia media:", euclidean_distances(X_std).mean().round(2))
-```
-
-```{=html}
-<div id="dist-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Explorador de métricas de distancia</span><br>
-    <span style="font-size:0.81em;color:#666;">Mueve los puntos A y B con los sliders; ajusta p para comparar distancias de Minkowski</span>
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
-    <div><label style="font-size:0.79em;color:#2563eb;">A = (<strong id="dax-v">1</strong>, <strong id="day-v">1</strong>)</label><br>
-      <input id="dax" type="range" min="-4" max="4" step="0.25" value="1" style="width:100%;accent-color:#2563eb;">
-      <input id="day" type="range" min="-4" max="4" step="0.25" value="1" style="width:100%;accent-color:#2563eb;margin-top:4px;"></div>
-    <div><label style="font-size:0.79em;color:#dc2626;">B = (<strong id="dbx-v">3</strong>, <strong id="dby-v">-1</strong>)</label><br>
-      <input id="dbx" type="range" min="-4" max="4" step="0.25" value="3" style="width:100%;accent-color:#dc2626;">
-      <input id="dby" type="range" min="-4" max="4" step="0.25" value="-1" style="width:100%;accent-color:#dc2626;margin-top:4px;"></div>
-    <div><label style="font-size:0.79em;color:#444;">p = <strong id="dp-v">2</strong> <span id="dp-name" style="font-style:italic;"></span></label><br>
-      <input id="dp" type="range" min="1" max="20" step="1" value="2" style="width:100%;accent-color:#1a3a5c;margin-top:18px;"></div>
-  </div>
-  <canvas id="dist-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-  <div id="dist-info" style="text-align:center;font-size:0.82em;padding:6px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:8px;"></div>
-</div>
-<script>
-(function(){
-  const cv=document.getElementById('dist-cv');
-  const W=680,H=320,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const PAD={l:50,r:20,t:20,b:36};
-  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
-  const xMn=-5,xMx=5,yMn=-5,yMx=5;
-  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
-  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
-
-  function mink(a,b,p){
-    const ac=Math.abs(a[0]-b[0]),bc=Math.abs(a[1]-b[1]);
-    if(p>=18)return Math.max(ac,bc);
-    return Math.pow(Math.pow(ac,p)+Math.pow(bc,p),1/p);
-  }
-
-  function draw(){
-    const ax=parseFloat(document.getElementById('dax').value);
-    const ay=parseFloat(document.getElementById('day').value);
-    const bx=parseFloat(document.getElementById('dbx').value);
-    const by=parseFloat(document.getElementById('dby').value);
-    const p=parseInt(document.getElementById('dp').value);
-    const A=[ax,ay],B=[bx,by];
-
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
-    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
-    [-4,-2,0,2,4].forEach(v=>{
-      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();
-    });
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.moveTo(sx(0),PAD.t);ctx.lineTo(sx(0),PAD.t+CH);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(PAD.l,sy(0));ctx.lineTo(PAD.l+CW,sy(0));ctx.stroke();
-    ctx.fillStyle='#999';ctx.font='10px Georgia,serif';ctx.textAlign='center';
-    [-4,-2,0,2,4].forEach(v=>{
-      ctx.fillText(v,sx(v),PAD.t+CH+14);
-      ctx.textAlign='right';ctx.fillText(v,PAD.l-5,sy(v)+3);ctx.textAlign='center';
-    });
-
-    // Manhattan path
-    ctx.strokeStyle='rgba(245,158,11,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,3]);
-    ctx.beginPath();ctx.moveTo(sx(ax),sy(ay));ctx.lineTo(sx(bx),sy(ay));ctx.lineTo(sx(bx),sy(by));ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Chebyshev square
-    const ch=Math.max(Math.abs(bx-ax),Math.abs(by-ay));
-    const cx2=(ax+bx)/2,cy2=(ay+by)/2;
-    ctx.strokeStyle='rgba(124,58,237,0.4)';ctx.lineWidth=1.5;
-    ctx.strokeRect(sx(cx2-ch),sy(cy2+ch),sx(cx2+ch)-sx(cx2-ch),sy(cy2-ch)-sy(cy2+ch));
-
-    // Euclidean line
-    ctx.strokeStyle='rgba(22,163,74,0.7)';ctx.lineWidth=2;ctx.setLineDash([]);
-    ctx.beginPath();ctx.moveTo(sx(ax),sy(ay));ctx.lineTo(sx(bx),sy(by));ctx.stroke();
-
-    // Minkowski ball at A with radius = d(A,B)
-    const r=mink(A,B,p);
-    const SCALE=CW/(xMx-xMn);
-    ctx.strokeStyle='#1a3a5c';ctx.lineWidth=2;ctx.globalAlpha=0.5;
-    ctx.beginPath();
-    const N=360;
-    for(let i=0;i<=N;i++){
-      const th=i/N*2*Math.PI;
-      const ac=Math.abs(Math.cos(th)),as=Math.abs(Math.sin(th));
-      const rr=p>=18?r/Math.max(ac,as):r/Math.pow(Math.pow(ac,p)+Math.pow(as,p),1/p);
-      const px2=ax+rr*Math.cos(th),py2=ay+rr*Math.sin(th);
-      i===0?ctx.moveTo(sx(px2),sy(py2)):ctx.lineTo(sx(px2),sy(py2));
-    }
-    ctx.closePath();ctx.stroke();ctx.globalAlpha=1;
-
-    // Points
-    [[ax,ay,'#2563eb','A'],[bx,by,'#dc2626','B']].forEach(([x,y,col,lbl])=>{
-      ctx.beginPath();ctx.arc(sx(x),sy(y),7,0,2*Math.PI);
-      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
-      ctx.fillStyle=col;ctx.font='bold 12px Georgia,serif';ctx.textAlign='center';
-      ctx.fillText(lbl,sx(x),sy(y)-12);
-    });
-
-    const dE=mink(A,B,2),dM=mink(A,B,1),dC=mink(A,B,Infinity),dP=mink(A,B,p);
-    const pname=p>=18?'∞ (Chebyshev)':p===1?'1 (Manhattan)':p===2?'2 (Euclídea)':p;
-    document.getElementById('dp-name').textContent='';
-    document.getElementById('dist-info').innerHTML=
-      `<span style="color:#16a34a">Euclídea (p=2)</span>: <strong>${dE.toFixed(3)}</strong>&ensp;·&ensp;`+
-      `<span style="color:#f59e0b">Manhattan (p=1)</span>: <strong>${dM.toFixed(3)}</strong>&ensp;·&ensp;`+
-      `<span style="color:#7c3aed">Chebyshev (p→∞)</span>: <strong>${dC.toFixed(3)}</strong>&ensp;·&ensp;`+
-      `<span style="color:#1a3a5c">Minkowski (p=${pname})</span>: <strong>${dP.toFixed(3)}</strong>`;
-  }
-
-  ['dax','day','dbx','dby','dp'].forEach(id=>{
-    document.getElementById(id).addEventListener('input',function(){
-      const v=parseFloat(this.value);
-      const vid={dax:'dax-v',day:'day-v',dbx:'dbx-v',dby:'dby-v'}[id];
-      if(vid)document.getElementById(vid).textContent=v.toFixed(2);
-      if(id==='dp'){
-        const pv=parseInt(this.value);
-        document.getElementById('dp-v').textContent=pv>=18?'∞':pv;
-      }
-      draw();
-    });
-  });
-  draw();
-})();
-</script>
-```
-
-## Evaluación de clustering sin etiquetas verdaderas
-
-En la mayoría de las aplicaciones de clustering no se dispone de una partición verdadera contra la que comparar. Las métricas internas evalúan la calidad de la partición usando únicamente las distancias entre los puntos.
-
-### Índice de silueta
-
-El índice de silueta mide, para cada observación, qué tan bien encaja en su propio grupo comparado con el grupo más cercano [@rousseeuw1987].
-
-::: {.callout-note appearance="minimal"}
-Definición. Para la observación $\mathbf{x}_i$ asignada al grupo $C_{\ell(i)}$, se definen:
-- $a(i)$: distancia media a todos los demás puntos del mismo grupo,
-- $b(i)$: distancia media al grupo más cercano distinto del propio.
-
-La silueta de $i$ es:
-$$
-s(i) = \frac{b(i)-a(i)}{\max\{a(i),b(i)\}}.
-$$ {#eq-silhouette}
-:::
-
-El valor de $s(i)$ está en $[-1,1]$. Un valor cercano a 1 indica que $\mathbf{x}_i$ está bien asignada: está lejos de los demás grupos. Un valor cercano a 0 indica que está en la frontera. Un valor negativo indica que $\mathbf{x}_i$ probablemente está mal asignada.
-
-El índice de silueta global es el promedio de $s(i)$ sobre todas las observaciones:
-$$
-S = \frac{1}{n}\sum_{i=1}^n s(i).
-$$
-
-### Índice Davies-Bouldin
-
-El índice Davies-Bouldin mide la compacidad de cada grupo relativa a la separación entre grupos [@davies1979].
-
-::: {.callout-note appearance="minimal"}
-Definición. Sea $\bar{d}_k$ el diámetro promedio del grupo $k$ (distancia media de sus puntos al centroide) y $d(k,l)$ la distancia entre los centroides de los grupos $k$ y $l$. El índice Davies-Bouldin es:
-$$
-\text{DB} = \frac{1}{K}\sum_{k=1}^{K}\max_{l\neq k}\frac{\bar{d}_k+\bar{d}_l}{d(k,l)}.
-$$ {#eq-davies-bouldin}
-:::
-
-Un valor menor de DB indica mejor clustering: grupos compactos y bien separados. El índice penaliza tanto la dispersión interna como la falta de separación entre grupos.
-
-### Índice Calinski-Harabasz
-
-El índice Calinski-Harabasz, también llamado criterio de varianza entre/intra grupos, compara la dispersión entre grupos con la dispersión dentro de los grupos [@calinski1974].
-
-::: {.callout-note appearance="minimal"}
-Definición. Sea $\text{SS}_B$ la suma de cuadrados entre grupos y $\text{SS}_W$ la suma de cuadrados dentro de grupos. El índice Calinski-Harabasz es:
-$$
-\text{CH} = \frac{\text{SS}_B/(K-1)}{\text{SS}_W/(n-K)}.
-$$ {#eq-calinski-harabasz}
-:::
-
-Un valor mayor de CH indica mejor clustering. Esta métrica favorece grupos compactos y bien separados, similar a Davies-Bouldin pero en sentido opuesto.
-
-```{python}
-from sklearn.datasets import make_blobs
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
-
-X, y_true = make_blobs(n_samples=300, centers=4, cluster_std=0.8, random_state=42)
-
-results = []
-for k in range(2, 8):
-    km = KMeans(n_clusters=k, random_state=42, n_init=10)
-    labels = km.fit_predict(X)
-    results.append({
-        "k": k,
-        "silhouette": silhouette_score(X, labels).round(4),
-        "davies_bouldin": davies_bouldin_score(X, labels).round(4),
-        "calinski_harabasz": calinski_harabasz_score(X, labels).round(2),
-    })
-
-for r in results:
-    print(r)
-```
-
-```{=html}
-<div id="sil-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Índice de silueta — visualizador</span><br>
-    <span style="font-size:0.81em;color:#666;">Ajusta el número de grupos k y observa cómo cambia la silueta de cada punto</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">k = <strong id="sk-v">3</strong></label>
-    <input id="sk-sl" type="range" min="2" max="7" step="1" value="3" style="flex:1;min-width:150px;accent-color:#1a3a5c;">
-  </div>
-  <div id="sil-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
-  <canvas id="sil-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
-</div>
-<script>
-(function(){
-  // Pre-generated 60-point blob dataset (3 natural clusters)
-  const PTS=[
-    [0.8,1.2],[1.2,0.9],[0.5,1.5],[1.0,0.7],[1.4,1.3],[0.7,0.8],[1.1,1.6],[0.9,1.0],[1.3,0.6],[0.6,1.1],
-    [1.5,1.8],[0.4,1.3],[1.0,1.4],[1.2,1.1],[0.8,0.6],[1.6,1.0],[0.5,0.9],[1.3,1.5],[0.7,1.3],[1.1,0.8],
-    [4.2,4.5],[4.8,4.1],[3.9,4.7],[4.5,4.3],[5.0,4.6],[4.1,3.9],[4.7,4.8],[4.3,4.2],[4.6,3.8],[4.0,4.4],
-    [5.1,4.7],[3.8,4.0],[4.4,4.9],[4.9,4.5],[4.2,3.7],[4.6,4.1],[3.9,4.6],[4.8,4.3],[4.1,4.8],[4.5,4.0],
-    [7.5,1.5],[7.0,2.0],[7.8,1.2],[7.3,1.8],[6.8,1.6],[7.6,2.2],[7.1,1.0],[7.4,1.9],[7.7,1.4],[6.9,2.1],
-    [8.0,1.7],[7.2,1.3],[7.5,2.3],[7.0,1.1],[7.8,1.8],[7.3,2.0],[6.8,1.4],[7.6,1.6],[7.1,2.2],[7.4,1.2]
-  ];
-  const N=PTS.length;
-  const cv=document.getElementById('sil-cv');
-  const W=680,H=300,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2','#be185d'];
-
-  function dist2(a,b){return Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2);}
-
-  function kmeans(k,iters=40){
-    let cents=PTS.slice(0,k).map(p=>[...p]);
-    let labels=new Array(N).fill(0);
-    for(let it=0;it<iters;it++){
-      labels=PTS.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
-      cents=Array.from({length:k},(_,ci)=>{
-        const cl=PTS.filter((_,i)=>labels[i]===ci);
-        if(!cl.length)return cents[ci];
-        return[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length];
-      });
-    }
-    return{labels,cents};
-  }
-
-  function silhouette(labels,k){
-    return PTS.map((p,i)=>{
-      const same=PTS.filter((_,j)=>j!==i&&labels[j]===labels[i]);
-      const a=same.length?same.reduce((s,q)=>s+dist2(p,q),0)/same.length:0;
-      let b=Infinity;
-      for(let c=0;c<k;c++){
-        if(c===labels[i])continue;
-        const cl=PTS.filter((_,j)=>labels[j]===c);
-        if(!cl.length)continue;
-        const mb=cl.reduce((s,q)=>s+dist2(p,q),0)/cl.length;
-        if(mb<b)b=mb;
-      }
-      return(b-a)/Math.max(a,b);
-    });
-  }
-
-  function draw(k){
-    const{labels,cents}=kmeans(k);
-    const sils=silhouette(labels,k);
-    const avgSil=sils.reduce((s,v)=>s+v,0)/N;
-    ctx.clearRect(0,0,W,H);
-
-    // Left: scatter
-    const LP={l:44,r:W/2-8,t:20,b:H-30};
-    const LW=LP.r-LP.l,LH=LP.b-LP.t;
-    const xMn=0,xMx=9,yMn=0,yMx=6;
-    const sx=x=>LP.l+(x-xMn)/xMx*LW,sy=y=>LP.t+LH-(y-yMn)/yMx*LH;
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW,LH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;
-    ctx.strokeRect(LP.l,LP.t,LW,LH);
-    PTS.forEach((p,i)=>{
-      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5,0,2*Math.PI);
-      ctx.fillStyle=COLS[labels[i]]+'cc';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();
-    });
-    cents.forEach((c,i)=>{
-      ctx.beginPath();ctx.arc(sx(c[0]),sy(c[1]),9,0,2*Math.PI);
-      ctx.fillStyle=COLS[i];ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
-      ctx.fillStyle='#fff';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
-      ctx.fillText(i+1,sx(c[0]),sy(c[1])+3);
-    });
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Scatter (k='+k+')',LP.l+LW/2,LP.t-6);
-
-    // Right: silhouette bars
-    const RP={l:W/2+8,r:W-10,t:20,b:H-30};
-    const RW=RP.r-RP.l,RH=RP.b-RP.t;
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
-
-    // Sort by cluster then by silhouette
-    const sorted=sils.map((s,i)=>({s,c:labels[i]})).sort((a,b)=>a.c-b.c||b.s-a.s);
-    const bh=RH/N;
-    const midX=RP.l+RW/2;
-    sorted.forEach((d,i)=>{
-      const bw=Math.abs(d.s)*RW*0.45;
-      const by=RP.t+i*bh;
-      ctx.fillStyle=COLS[d.c]+(d.s<0?'88':'cc');
-      if(d.s>=0)ctx.fillRect(midX,by,bw,bh-0.5);
-      else ctx.fillRect(midX-bw,by,bw,bh-0.5);
-    });
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(midX,RP.t);ctx.lineTo(midX,RP.b);ctx.stroke();
-    ctx.fillStyle='#888';ctx.font='9px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('-1',RP.l+4,RP.b+12);ctx.fillText('0',midX,RP.b+12);ctx.fillText('1',RP.r-4,RP.b+12);
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('Siluetas por punto',RP.l+RW/2,RP.t-6);
-
-    document.getElementById('sil-info').innerHTML=
-      `k = <strong>${k}</strong>&ensp;·&ensp;`+
-      `Silueta media = <strong style="color:${avgSil>0.5?'#16a34a':avgSil>0.25?'#ca8a04':'#dc2626'}">${avgSil.toFixed(3)}</strong>&ensp;·&ensp;`+
-      `Puntos negativos = <strong>${sils.filter(s=>s<0).length}</strong>`;
-  }
-
-  document.getElementById('sk-sl').addEventListener('input',function(){
-    const k=parseInt(this.value);
-    document.getElementById('sk-v').textContent=k;
-    draw(k);
-  });
-  draw(3);
-})();
-</script>
-```
-
-## Evaluación con etiquetas verdaderas
-
-Cuando se dispone de etiquetas externas —por ejemplo en un experimento controlado— es posible medir cuánto se parece la partición encontrada a la partición de referencia. Estas métricas son externas.
-
-### Índice de Rand ajustado
-
-El índice de Rand considera todos los pares de observaciones y cuenta cuántos pares están en el mismo grupo en ambas particiones, o en grupos distintos en ambas [@hubert1985].
-
-::: {.callout-note appearance="minimal"}
-Definición. El índice de Rand ajustado (ARI) corrige el índice de Rand por la coincidencia esperada bajo asignación aleatoria:
-$$
-\text{ARI} = \frac{\text{RI} - \mathbb{E}[\text{RI}]}{\max(\text{RI}) - \mathbb{E}[\text{RI}]}.
-$$ {#eq-ari}
-:::
-
-El ARI está en $[-1,1]$. Un valor de 1 indica concordancia perfecta; un valor de 0 indica lo esperado por azar. Se prefiere sobre el índice de Rand sin ajustar porque no crece artificialmente con $n$ o $k$.
-
-```{python}
-from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
-
-X, y_true = make_blobs(n_samples=200, centers=3, cluster_std=1.0, random_state=0)
-
-for k in [2, 3, 4]:
-    km = KMeans(n_clusters=k, random_state=0, n_init=10)
-    pred = km.fit_predict(X)
-    ari = adjusted_rand_score(y_true, pred)
-    nmi = normalized_mutual_info_score(y_true, pred)
-    print(f"k={k}  ARI={ari:.4f}  NMI={nmi:.4f}")
-```
-
-## Preprocesamiento antes de clustering
-
-Antes de aplicar cualquier algoritmo de clustering conviene realizar algunas verificaciones y transformaciones.
-
-**Estandarización.** Variables con rangos muy distintos dominarán la distancia. Usar `StandardScaler` o `RobustScaler` antes de aplicar algoritmos basados en distancias euclídeas.
-
-**Reducción de dimensión.** En espacios de alta dimensión, todas las distancias tienden a igualarse (maldición de la dimensionalidad). Aplicar PCA u otras técnicas antes de clustering puede mejorar los resultados.
-
-**Detección de valores atípicos.** Los algoritmos como K-Means son sensibles a outliers porque los centroides son promedios. Conviene identificarlos y decidir si excluirlos o usar algoritmos más robustos.
-
-**Codificación de variables categóricas.** Las distancias estándar no aplican directamente a variables nominales. Se pueden usar codificación one-hot con distancia euclídea, o la distancia de Gower que maneja mezclas de tipos.
-
-```{python}
 import pandas as pd
-from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import pdist, squareform
+
+clientes = pd.DataFrame({
+    "edad": [34, 36, 58, 31, 55],
+    "ingreso": [28, 75, 30, 26, 70],
+    "canal": ["app", "app", "tienda", "web", "tienda"],
+    "tarjeta": ["sí", "no", "sí", "no", "no"],
+}, index=["Ana", "Beto", "Carla", "Daniel", "Elena"])
+
+num = clientes[["edad", "ingreso"]].to_numpy(float)
+rango = (num - num.min(axis=0)) / (num.max(axis=0) - num.min(axis=0))
+
+for metrica in ["cityblock", "euclidean", "chebyshev"]:
+    D = squareform(pdist(rango, metric=metrica))
+    print(f"{metrica:>10}: desde Ana", np.round(D[0], 3))
+```
+
+### Distancia de Gower desde cero
+
+`scikit-learn` no trae Gower, pero se programa en pocas líneas siguiendo la @eq-gower. Los pesos permiten reproducir los dos órdenes del ejemplo manual.
+
+```{python}
+#| label: dist-gower
+def gower(df, numericas, categoricas, pesos=None):
+    """Matriz de distancias de Gower (sin faltantes) para un DataFrame mixto."""
+    cols = numericas + categoricas
+    w = np.ones(len(cols)) if pesos is None else np.asarray(pesos, float)
+    n = len(df)
+    total = np.zeros((n, n))
+    for j, col in enumerate(cols):
+        x = df[col].to_numpy()
+        if col in numericas:
+            rango = x.max() - x.min()
+            dj = np.abs(x[:, None] - x[None, :]) / rango
+        else:
+            dj = (x[:, None] != x[None, :]).astype(float)
+        total += w[j] * dj
+    return total / w.sum()
+
+G = gower(clientes, ["edad", "ingreso"], ["canal", "tarjeta"])
+print(pd.DataFrame(G, index=clientes.index, columns=clientes.index).round(3))
+
+Gw = gower(clientes, ["edad", "ingreso"], ["canal", "tarjeta"], pesos=[1, 1, 0.5, 0.5])
+print("\nGower ponderado desde Ana:", pd.Series(Gw[0], index=clientes.index).round(3).to_dict())
+```
+
+La matriz de Gower se puede pasar directamente a los algoritmos que aceptan distancias precalculadas, como `AgglomerativeClustering(metric="precomputed")` o `DBSCAN(metric="precomputed")`.
+
+### Mahalanobis, coseno y Jaccard
+
+```{python}
+#| label: dist-otras
+from scipy.spatial.distance import mahalanobis, cosine, jaccard
+
+Sigma = np.array([[1, 0.8], [0.8, 1]])
+VI = np.linalg.inv(Sigma)
+print("Mahalanobis (1, 1):", round(mahalanobis([1, 1], [0, 0], VI), 3),
+      " (1, -1):", round(mahalanobis([1, -1], [0, 0], VI), 3))
+
+d1, d2, d3 = np.array([3, 2, 0]), np.array([6, 4, 0]), np.array([0, 1, 3])
+print("coseno d1-d2:", round(cosine(d1, d2), 3), " d1-d3:", round(cosine(d1, d3), 3))
+
+catalogo = 10
+ana = np.zeros(catalogo, bool); ana[[0, 1]] = True    # pan, leche
+beto = np.zeros(catalogo, bool); beto[[2, 3]] = True  # vino, queso
+coincidencia = (ana == beto).mean()
+print("similitud de coincidencia simple:", coincidencia, " similitud de Jaccard:", 1 - jaccard(ana, beto))
+```
+
+### Distancia de edición
+
+```{python}
+#| label: dist-levenshtein
+def levenshtein(s, t):
+    D = np.zeros((len(s) + 1, len(t) + 1), dtype=int)
+    D[:, 0] = range(len(s) + 1)
+    D[0, :] = range(len(t) + 1)
+    for i in range(1, len(s) + 1):
+        for j in range(1, len(t) + 1):
+            D[i, j] = min(D[i - 1, j] + 1, D[i, j - 1] + 1, D[i - 1, j - 1] + (s[i - 1] != t[j - 1]))
+    return D
+
+D = levenshtein("casa", "cosas")
+print(pd.DataFrame(D, index=["∅", *"casa"], columns=["∅", *"cosas"]))
+print("distancia:", D[-1, -1])
+```
+
+### Concentración de distancias
+
+```{python}
+#| label: fig-dist-concentracion
+#| fig-cap: "Contraste relativo (d_max − d_min)/d_min entre un punto de consulta y 500 puntos uniformes, según la dimensión. Con muchas variables, el vecino más lejano está casi tan cerca como el más cercano."
+import matplotlib.pyplot as plt
 
 rng = np.random.default_rng(0)
-X_raw = rng.normal(loc=[0, 0, 100, 100], scale=[1, 1, 50, 50], size=(300, 4))
+dims = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+contraste = []
+for p in dims:
+    X = rng.random((500, p)); q = rng.random(p)
+    d = np.linalg.norm(X - q, axis=1)
+    contraste.append((d.max() - d.min()) / d.min())
 
-pipeline = Pipeline([
-    ("scaler", StandardScaler()),
-    ("pca", PCA(n_components=2)),
-    ("km", KMeans(n_clusters=3, random_state=0, n_init=10)),
-])
-
-labels = pipeline.fit_predict(X_raw)
-print("Distribución de grupos:", np.bincount(labels))
+fig, ax = plt.subplots(figsize=(6, 3.4))
+ax.loglog(dims, contraste, "o-", color="#2563eb")
+ax.set_xlabel("número de variables p")
+ax.set_ylabel("(d_max − d_min) / d_min")
+ax.grid(alpha=0.3, which="both")
+plt.tight_layout()
+plt.show()
 ```
 
-## Selección del número de grupos
+## Guía para elegir una distancia
 
-Una de las decisiones más difíciles en clustering es el número de grupos $k$. No existe una respuesta única, pero varias heurísticas son útiles:
+| Tipo de datos | Distancia recomendada | Antes de calcular |
+|---|---|---|
+| Numéricos, unidades comparables | Euclidiana o Manhattan | revisar atípicos |
+| Numéricos, unidades distintas | Euclidiana sobre datos escalados | estandarizar o escalado robusto |
+| Numéricos correlacionados | Mahalanobis, o euclidiana tras PCA | estimar la covarianza con suficientes datos |
+| Conteos, textos | Coseno | normalizar por longitud (TF-IDF) |
+| Formas de series | $1 - r$ (correlación), DTW | alinear frecuencias |
+| Binarios asimétricos (canastas) | Jaccard | — |
+| Categóricos | Coincidencia simple | agrupar categorías raras |
+| Mixtos | Gower | decidir pesos de forma explícita |
+| Cadenas | Edición (Levenshtein) | normalizar mayúsculas y acentos |
 
-- **Método del codo**: graficar el WCSS o el índice de silueta en función de $k$ y buscar un punto de inflexión.
-- **Índice de silueta**: maximizar $S(k)$ sobre valores candidatos de $k$.
-- **Davies-Bouldin**: minimizar DB$(k)$.
-- **Calinski-Harabasz**: maximizar CH$(k)$.
-- **Conocimiento del dominio**: en muchos problemas, el número razonable de grupos se puede restringir con información previa.
+: Elección de la distancia según el tipo de datos. {#tbl-guia-distancias}
 
-Ninguna métrica interna puede reemplazar la interpretación del analista. El mejor $k$ estadístico puede no ser el más útil para el objetivo de negocio.
+## Resumen
+
+- Una **métrica** cumple positividad, simetría y desigualdad triangular; algunas medidas útiles (euclidiana al cuadrado, coseno) no la cumplen y se llaman disimilitudes.
+- Minkowski reúne Manhattan, euclidiana y Chebyshev; Mahalanobis corrige escala y correlación; coseno compara direcciones.
+- Para categóricas se cuenta coincidencia; para binarias asimétricas, Jaccard ignora las coausencias.
+- **Gower** combina variables mixtas y maneja faltantes, pero cada desacuerdo categórico pesa tanto como la diferencia numérica máxima. Con Ana, cambiar los pesos cambió al cliente más parecido de Carla a Daniel.
+- La escala y los pesos son decisiones explícitas; en alta dimensión las distancias se concentran y conviene reducir la dimensión antes de agrupar.
+
+Con una forma de medir el parecido, el siguiente capítulo presenta el algoritmo de agrupamiento más usado: $k$-medias.
+
+[^hamming]: Para vectores de la misma longitud, el número de posiciones en que difieren es la **distancia de Hamming**; la coincidencia simple es la distancia de Hamming dividida entre el número de variables.
+
+[^covarianza]: La **matriz de covarianza** $\boldsymbol{\Sigma}$ tiene en la diagonal las varianzas de cada variable y fuera de ella las covarianzas entre pares. Su inversa $\boldsymbol{\Sigma}^{-1}$ «deshace» la escala y la correlación: si los datos tienen covarianza $\boldsymbol{\Sigma}$, la transformación $\boldsymbol{\Sigma}^{-1/2}\mathbf{x}$ produce variables sin correlación y con varianza 1, y la distancia de Mahalanobis es la euclidiana en ese espacio transformado.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::

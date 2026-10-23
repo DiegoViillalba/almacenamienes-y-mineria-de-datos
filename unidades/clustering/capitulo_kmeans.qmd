@@ -1,494 +1,644 @@
 ---
-title: "K-Means y K-Medoids"
-description: "Explica el algoritmo K-Means y el método de Lloyd, la inicialización K-Means++, el método del codo para elegir k y la alternativa robusta K-Medoids."
-pagetitle: "K-Means y K-Medoids"
+title: "K-medias y K-medoides"
+pagetitle: "K-medias (K-Means) y K-medoides: algoritmo de Lloyd, K-Means++ y robustez"
 open-graph:
-  description: "Explica el algoritmo K-Means y el método de Lloyd, la inicialización K-Means++, el método del codo para elegir k y la alternativa robusta K-Medoids."
+  description: "El algoritmo de k-medias paso a paso: suma de cuadrados dentro de los grupos, algoritmo de Lloyd, regiones de Voronoi, convergencia a óptimos locales, inicialización K-Means++, limitaciones, k-medoides (PAM) frente a atípicos y variantes a escala, con desarrollo manual, laboratorio interactivo y código en Python."
 twitter-card:
-  description: "Explica el algoritmo K-Means y el método de Lloyd, la inicialización K-Means++, el método del codo para elegir k y la alternativa robusta K-Medoids."
+  description: "El algoritmo de k-medias paso a paso: suma de cuadrados dentro de los grupos, algoritmo de Lloyd, regiones de Voronoi, convergencia a óptimos locales, inicialización K-Means++, limitaciones, k-medoides (PAM) frente a atípicos y variantes a escala, con desarrollo manual, laboratorio interactivo y código en Python."
+description: "El algoritmo de k-medias paso a paso: suma de cuadrados dentro de los grupos, algoritmo de Lloyd, regiones de Voronoi, convergencia a óptimos locales, inicialización K-Means++, limitaciones, k-medoides (PAM) frente a atípicos y variantes a escala, con desarrollo manual, laboratorio interactivo y código en Python."
 author: "Diego Villalba"
-date: today
 lang: es
 format:
   html:
     toc: true
     toc-depth: 3
     toc-title: "Contenido"
-    number-sections: true
     code-fold: true
     code-tools: true
     code-summary: "Mostrar código"
-    fig-align: center
     theme: cosmo
     highlight-style: github
-    smooth-scroll: true
-  pdf:
-    toc: true
-    toc-depth: 3
-    number-sections: true
-    documentclass: scrbook
-    papersize: letter
-    fontsize: 11pt
-    geometry: margin=2.5cm
-    keep-tex: false
 execute:
   echo: true
   warning: false
   message: false
-  cache: false
-bibliography: [referencias_clustering.bib, ../../references.bib]
-crossref:
-  fig-title: "Figura"
-  tbl-title: "Tabla"
-  eq-prefix: "Ec."
+bibliography: [referencias_no_supervisado.bib, referencias_clustering.bib, ../../references.bib]
 jupyter: python3
 ---
 
-K-Means es el algoritmo de clustering más ampliamente usado en la práctica. Su popularidad se debe a su simplicidad conceptual, su eficiencia computacional y la facilidad de interpretar sus resultados: cada grupo queda representado por un centroide, que es el punto promedio de las observaciones asignadas [@macqueen1967; @lloyd1982].
+{{< include ../preprocesamiento/_labkit.qmd >}}
 
-El algoritmo alterna entre dos pasos: asignar cada punto al centroide más cercano, y actualizar los centroides como el promedio de los puntos asignados. Estos dos pasos se repiten hasta que las asignaciones no cambian. A pesar de su elegancia, K-Means tiene limitaciones importantes: converge a óptimos locales, asume que los grupos son convexos y similares en tamaño, y es sensible a valores atípicos y a la escala de las variables.
+$k$-medias (*k-means*) es el algoritmo de agrupamiento más usado. La idea apareció de forma independiente varias veces: Stuart Lloyd la describió en 1957 para cuantizar señales en los laboratorios Bell, aunque su trabajo se publicó hasta 1982 [@lloyd1982], y @macqueen1967 le dio el nombre con el que se conoce. Su atractivo es una combinación difícil de superar: se entiende en una frase, se programa en diez líneas y escala a millones de casos.
 
-Este capítulo desarrolla el algoritmo K-Means, su análisis teórico, la inicialización inteligente K-Means++, el método del codo para elegir $k$, y el algoritmo K-Medoids, que es más robusto a outliers.
+La frase es: **cada grupo se representa por su promedio, y cada caso pertenece al grupo cuyo promedio tiene más cerca.** El algoritmo alterna esas dos afirmaciones hasta que dejan de cambiar. En este capítulo lo ejecutaremos a mano sobre seis puntos, veremos por qué siempre termina pero no siempre en la mejor solución, cómo elegir buenos puntos de partida y qué ocurre cuando los datos no tienen la forma que el algoritmo supone.
 
-## El objetivo de K-Means
+## Intuición: ubicar dos almacenes
 
-K-Means busca una partición de $n$ observaciones en $k$ grupos $C_1,\dots,C_k$ que minimice la suma de cuadrados intra-grupo, también llamada WCSS (within-cluster sum of squares).
+Una empresa de reparto tiene seis puntos de entrega en una ciudad, con coordenadas en kilómetros, y quiere abrir **dos** almacenes. Cada punto se abastecerá desde el almacén más cercano, y el costo de transporte crece con el cuadrado de la distancia (por tiempo, combustible y desgaste).
 
-::: {.callout-note appearance="minimal"}
-Definición. El objetivo de K-Means es minimizar
+| Punto | P1 | P2 | P3 | P4 | P5 | P6 |
+|---|---:|---:|---:|---:|---:|---:|
+| $x$ (km) | 1 | 2 | 1 | 5 | 6 | 4 |
+| $y$ (km) | 1 | 1 | 3 | 4 | 6 | 6 |
+
+: Seis puntos de entrega. {#tbl-puntos}
+
+Dos problemas están entrelazados. Si supiéramos **qué puntos atiende cada almacén**, pondríamos cada almacén en el promedio de sus puntos, porque el promedio es el lugar que minimiza la suma de distancias al cuadrado. Y si supiéramos **dónde están los almacenes**, cada punto elegiría el más cercano. No sabemos ninguna de las dos cosas, así que empezamos con una suposición y alternamos.
+
+## Construcción paso a paso
+
+### Paso 0. Un punto de partida
+
+Colocamos los almacenes provisionalmente sobre dos puntos de entrega, $\boldsymbol{\mu}_1 = P1 = (1, 1)$ y $\boldsymbol{\mu}_2 = P3 = (1, 3)$. La elección es mala a propósito: ambos almacenes quedan en la esquina inferior izquierda.
+
+### Paso 1. Asignar cada punto al almacén más cercano
+
+Calculamos las distancias de cada punto a los dos almacenes. Para P4 = (5, 4):
+
 $$
-J(C_1,\dots,C_k) = \sum_{j=1}^{k}\sum_{\mathbf{x}\in C_j}\|\mathbf{x}-\boldsymbol{\mu}_j\|^2,
-$$ {#eq-kmeans-obj}
-donde $\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\mathbf{x}\in C_j}\mathbf{x}$ es el centroide del grupo $j$.
-:::
+d(P4, \boldsymbol{\mu}_1) = \sqrt{(5-1)^2 + (4-1)^2} = 5, \qquad d(P4, \boldsymbol{\mu}_2) = \sqrt{(5-1)^2 + (4-3)^2} = \sqrt{17} \approx 4.12,
+$$
 
-Minimizar $J$ sobre todas las particiones posibles es un problema NP-complejo cuando $k$ y $p$ son arbitrarios. El algoritmo de Lloyd encuentra un mínimo local mediante dos pasos de coordinación alternada.
+así que P4 va al almacén 2. Repitiendo para todos, el almacén 1 atiende a P1 y P2, y el almacén 2 a P3, P4, P5 y P6. La **suma de cuadrados dentro de los grupos**, que es el costo total, vale
 
-## Algoritmo de Lloyd
+$$
+W = \underbrace{0 + 1}_{\text{almacén 1}} + \underbrace{0 + 17 + 34 + 18}_{\text{almacén 2}} = 70.
+$$
+
+### Paso 2. Mover cada almacén al promedio de sus puntos
+
+$$
+\boldsymbol{\mu}_1 = \tfrac{1}{2}\big[(1,1) + (2,1)\big] = (1.5,\, 1), \qquad
+\boldsymbol{\mu}_2 = \tfrac{1}{4}\big[(1,3) + (5,4) + (6,6) + (4,6)\big] = (4,\, 4.75).
+$$
+
+Con los mismos grupos y los almacenes en su nuevo lugar, el costo baja de 70 a $W = 21.25$. El almacén 2 se desplazó mucho hacia arriba y a la derecha, arrastrado por P4, P5 y P6.
+
+### Paso 3. Reasignar
+
+Con los almacenes nuevos, algunas asignaciones cambian:
+
+| Punto | P1 | P2 | P3 | P4 | P5 | P6 |
+|---|---:|---:|---:|---:|---:|---:|
+| $d(\cdot, \boldsymbol{\mu}_1)$, con $\boldsymbol{\mu}_1 = (1.5, 1)$ | **0.50** | **0.50** | **2.06** | 4.61 | 6.73 | 5.59 |
+| $d(\cdot, \boldsymbol{\mu}_2)$, con $\boldsymbol{\mu}_2 = (4, 4.75)$ | 4.80 | 4.25 | 3.47 | **1.25** | **2.36** | **1.25** |
+
+: Distancias a los almacenes después del primer movimiento. {#tbl-km-iter2}
+
+P3 ahora está más cerca del almacén 1 ($2.06 < 3.47$) y cambia de grupo. Los grupos quedan $\{P1, P2, P3\}$ y $\{P4, P5, P6\}$, y con los almacenes todavía en $(1.5, 1)$ y $(4, 4.75)$ el costo baja a $W = 13.44$.
+
+### Paso 4. Mover otra vez y comprobar la convergencia
+
+$$
+\boldsymbol{\mu}_1 = \tfrac{1}{3}\big[(1,1) + (2,1) + (1,3)\big] = (1.33,\, 1.67), \qquad
+\boldsymbol{\mu}_2 = \tfrac{1}{3}\big[(5,4) + (6,6) + (4,6)\big] = (5,\, 5.33),
+$$
+
+y $W = 8.00$. Al reasignar, ningún punto cambia de grupo; los promedios, por lo tanto, tampoco cambian. El algoritmo **convergió** en dos iteraciones completas. La secuencia de costos fue
+
+$$
+70 \;\xrightarrow{\text{mover}}\; 21.25 \;\xrightarrow{\text{asignar}}\; 13.44 \;\xrightarrow{\text{mover}}\; 8.00 \;\xrightarrow{\text{asignar}}\; 8.00.
+$$
+
+Nunca subió. No es casualidad, como veremos en la formalización.
+
+### Paso 5. ¿Es la mejor solución?
+
+La variación total de los seis puntos alrededor de su promedio general $(3.17, 3.5)$ es $T = 48.33$. Con dos almacenes quedan $W = 8.00$ dentro de los grupos; los otros $B = 40.33$ son la variación **entre** los grupos. Con seis puntos podemos revisar las $S(6, 2) = 31$ particiones posibles: ninguna tiene un $W$ menor que 8. Además, si se repite el algoritmo empezando en cualquiera de los 15 pares de puntos posibles, siempre termina en la misma solución. En datos tan bien separados, el punto de partida no importa. No siempre será así.
+
+### Paso 6. Cuando el punto de partida sí importa
+
+Seis clientes en una recta, en las posiciones $0, 2, 10, 12, 20, 22$, y $k = 3$. La solución evidente es $\{0, 2\}$, $\{10, 12\}$, $\{20, 22\}$, con centros $1, 11, 21$ y $W = 6$. Si empezamos con centros en $0$, $2$ y $16$:
+
+- asignar: $0 \to 0$, $2 \to 2$ y los otros cuatro a $16$ (el 10 está a 8 del centro 2 y a 6 del 16);
+- mover: los centros quedan en $0$, $2$ y $(10 + 12 + 20 + 22)/4 = 16$, exactamente donde estaban.
+
+El algoritmo se detiene de inmediato con $W = 0 + 0 + (36 + 16 + 16 + 36) = 104$, diecisiete veces peor que la solución evidente. Es un **óptimo local**: ningún paso del algoritmo puede mejorarlo, aunque exista una solución mucho mejor. La defensa es doble: empezar en puntos bien repartidos y repetir el algoritmo desde varios puntos de partida, quedándose con el menor $W$.
+
+## Formalización
+
+### El objetivo
+
+Dados $n$ casos $\mathbf{x}_1, \ldots, \mathbf{x}_n \in \mathbb{R}^p$ y un número de grupos $k$, $k$-medias busca una partición $C_1, \ldots, C_k$ y centros $\boldsymbol{\mu}_1, \ldots, \boldsymbol{\mu}_k$ que minimicen la **suma de cuadrados dentro de los grupos**, también llamada **inercia**:
+
+$$
+W(C, \boldsymbol{\mu}) = \sum_{c=1}^{k} \sum_{i \in C_c} \lVert \mathbf{x}_i - \boldsymbol{\mu}_c \rVert^2.
+$$ {#eq-wcss}
+
+**El promedio es el mejor centro.** Para un grupo fijo $C$, la función $f(\boldsymbol{\mu}) = \sum_{i \in C} \lVert \mathbf{x}_i - \boldsymbol{\mu} \rVert^2$ es una parábola en cada coordenada. Su gradiente es $\nabla f = -2 \sum_{i \in C} (\mathbf{x}_i - \boldsymbol{\mu})$, que se anula en
+
+$$
+\boldsymbol{\mu} = \frac{1}{|C|} \sum_{i \in C} \mathbf{x}_i = \bar{\mathbf{x}}_C.
+$$ {#eq-centroide}
+
+Por eso el método se llama $k$-**medias**: con distancia euclidiana al cuadrado, el mejor representante de un grupo es su media, o **centroide**.
+
+**Descomposición de la variación.** La variación total no depende de la partición y se reparte en una parte dentro de los grupos y otra entre ellos[^huygens]:
+
+$$
+\underbrace{\sum_{i=1}^{n} \lVert \mathbf{x}_i - \bar{\mathbf{x}} \rVert^2}_{T} = \underbrace{\sum_{c=1}^{k} \sum_{i \in C_c} \lVert \mathbf{x}_i - \bar{\mathbf{x}}_c \rVert^2}_{W} + \underbrace{\sum_{c=1}^{k} |C_c|\, \lVert \bar{\mathbf{x}}_c - \bar{\mathbf{x}} \rVert^2}_{B}.
+$$ {#eq-descomposicion}
+
+En el ejemplo, $48.33 = 8.00 + 40.33$. Como $T$ es fijo, **minimizar la cohesión $W$ equivale a maximizar la separación $B$**. La razón $B/T = 0.83$ dice que dos grupos explican el 83 % de la variación de los puntos, un análogo del $R^2$ de la regresión.
+
+### El algoritmo de Lloyd
 
 ::: {.callout-note appearance="minimal"}
-**Algoritmo K-Means (Lloyd).**
+**Algoritmo de Lloyd.** Entrada: datos $\mathbf{x}_1, \ldots, \mathbf{x}_n$, número de grupos $k$, centros iniciales $\boldsymbol{\mu}_1, \ldots, \boldsymbol{\mu}_k$.
 
-**Entrada:** observaciones $\mathbf{x}_1,\dots,\mathbf{x}_n$, número de grupos $k$.
-
-1. Inicializar $k$ centroides $\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k$ (por ejemplo, eligiendo $k$ observaciones al azar).
-2. **Asignación.** Para cada $i$, asignar $\ell(i) = \arg\min_j \|\mathbf{x}_i-\boldsymbol{\mu}_j\|^2$.
-3. **Actualización.** Para cada $j$, actualizar $\boldsymbol{\mu}_j = \frac{1}{|C_j|}\sum_{\ell(i)=j}\mathbf{x}_i$.
-4. Repetir los pasos 2 y 3 hasta que las asignaciones no cambien.
-
-**Salida:** asignación $\ell$ y centroides finales $\boldsymbol{\mu}_1,\dots,\boldsymbol{\mu}_k$.
+1. **Asignación.** Para cada $i$: $\ell(i) \leftarrow \arg\min_{c} \lVert \mathbf{x}_i - \boldsymbol{\mu}_c \rVert^2$.
+2. **Actualización.** Para cada $c$: $\boldsymbol{\mu}_c \leftarrow$ promedio de los $\mathbf{x}_i$ con $\ell(i) = c$.
+3. Si ninguna asignación cambió, terminar; si no, volver al paso 1.
 :::
 
-Cada iteración del algoritmo reduce o mantiene $J$, y como el número de particiones posibles es finito, el algoritmo converge en un número finito de iteraciones. Sin embargo, no se garantiza convergencia al mínimo global.
+**Convergencia.** Cada paso minimiza $W$ respecto a una parte de las incógnitas con la otra fija: la asignación elige, para centros fijos, el mejor grupo de cada punto; la actualización elige, para grupos fijos, el mejor centro de cada grupo (@eq-centroide). Ninguno de los dos puede aumentar $W$. Como hay un número finito de particiones y $W$ nunca sube, el algoritmo no puede visitar dos veces la misma partición con un $W$ distinto, y **termina en un número finito de pasos**. Lo que no garantiza es llegar al mínimo global: termina en un punto donde ningún cambio individual mejora, como en el Paso 6. Encontrar el mínimo global es NP-difícil incluso con $k = 2$ [@aloise2009np].
 
-### Complejidad computacional
+**Costo.** Cada iteración calcula $n \times k$ distancias en $p$ dimensiones: $O(nkp)$. En la práctica bastan pocas decenas de iteraciones, por lo que el algoritmo es lineal en el número de casos.
 
-El paso de asignación requiere $O(nk)$ cálculos de distancia por iteración. El paso de actualización requiere $O(n)$. En la práctica, K-Means converge en pocas iteraciones relativas a $n$. Para datos en alta dimensión o $k$ grande, existen variantes más eficientes basadas en estructuras de árbol o aproximaciones.
+**Empates y grupos vacíos.** Si un punto está a la misma distancia de dos centros, se asigna al de menor índice. Si un grupo se queda sin puntos, su centro no tiene promedio; las implementaciones lo reubican, por ejemplo en el punto más alejado de su centro.
 
-## Inicialización K-Means++
+### La geometría: regiones de Voronoi
 
-La solución encontrada por K-Means depende fuertemente de la inicialización. Una inicialización aleatoria puede dar lugar a centroides iniciales mal distribuidos, lo que lleva a soluciones de baja calidad. K-Means++ [@arthur2007] proporciona una inicialización probabilística que garantiza una solución esperada dentro de un factor logarítmico del óptimo global.
+Para centros fijos, el conjunto de puntos del plano que quedarían asignados al centro $c$ es su **región de Voronoi**,
 
-::: {.callout-note appearance="minimal"}
-**Algoritmo K-Means++.**
+$$
+V_c = \{\mathbf{x} : \lVert \mathbf{x} - \boldsymbol{\mu}_c \rVert \le \lVert \mathbf{x} - \boldsymbol{\mu}_{c'} \rVert \ \text{para todo } c'\}.
+$$
 
-1. Elegir el primer centroide $\boldsymbol{\mu}_1$ uniformemente al azar entre $\mathbf{x}_1,\dots,\mathbf{x}_n$.
-2. Para $j=2,\dots,k$:
-   - Para cada punto $\mathbf{x}_i$, calcular $D(\mathbf{x}_i)=\min_{l<j}\|\mathbf{x}_i-\boldsymbol{\mu}_l\|^2$.
-   - Elegir $\boldsymbol{\mu}_j=\mathbf{x}_i$ con probabilidad proporcional a $D(\mathbf{x}_i)$.
-3. Continuar con el algoritmo de Lloyd estándar.
-:::
+La frontera entre dos centros es la **mediatriz** del segmento que los une: una recta en dos dimensiones, un hiperplano en general. Por lo tanto, **las regiones de $k$-medias son polígonos convexos**. De ahí sale su principal limitación: no puede producir grupos con forma de media luna, de anillo o de serpiente. Una vez ajustado, $k$-medias sirve también para asignar casos nuevos: cada uno va a la región de Voronoi donde cae. En procesamiento de señales esto se llama **cuantización vectorial**: cada caso se resume con el índice de su centro.
 
-La idea es que los centroides iniciales estén bien distribuidos: cada centroide nuevo se elige con mayor probabilidad en zonas alejadas de los centroides ya elegidos. `scikit-learn` usa K-Means++ por defecto.
+### K-Means++: empezar bien
 
+La inicialización aleatoria, eligiendo $k$ casos al azar como centros, a menudo pone dos centros en el mismo grupo natural y deja otro grupo sin centro, como en el Paso 6. @arthur2007 propusieron elegir los centros uno por uno, favoreciendo los puntos lejanos a los ya elegidos:
+
+1. El primer centro es un caso elegido al azar con probabilidad uniforme.
+2. Para cada caso, sea $D(\mathbf{x}_i)^2$ su distancia al cuadrado al centro **más cercano** ya elegido.
+3. El siguiente centro es el caso $i$ con probabilidad $D(\mathbf{x}_i)^2 / \sum_j D(\mathbf{x}_j)^2$.
+4. Repetir 2 y 3 hasta tener $k$ centros; luego ejecutar Lloyd.
+
+En el ejemplo de los almacenes, si el primer centro es P1, las distancias al cuadrado son
+
+| Punto | P1 | P2 | P3 | P4 | P5 | P6 | Suma |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| $D^2$ | 0 | 1 | 4 | 25 | 50 | 34 | 114 |
+| Probabilidad | 0 | 0.009 | 0.035 | 0.219 | 0.439 | 0.298 | 1 |
+
+: Probabilidades de K-Means++ para el segundo centro, con P1 como primero. {#tbl-kmpp}
+
+Con probabilidad $0.219 + 0.439 + 0.298 = 0.956$ el segundo centro cae en el grupo de arriba. Los autores demostraron que, en promedio, $W$ con esta inicialización (aun **antes** de Lloyd) es a lo más $8(\ln k + 2)$ veces el óptimo; en la práctica, la diferencia es mucho menor. Es la inicialización por omisión de `scikit-learn`, que además repite el algoritmo `n_init` veces y se queda con el menor $W$.
+
+### El número de grupos
+
+$W$ siempre baja al aumentar $k$, así que no sirve para elegir $k$ por sí solo. El **método del codo** busca el $k$ a partir del cual las reducciones de $W$ se vuelven pequeñas; el siguiente capítulo desarrolla criterios más finos (silueta, estadístico de brecha, estabilidad).
+
+### Qué supone $k$-medias
+
+Minimizar $W$ con distancia euclidiana equivale a suponer que los grupos son nubes **esféricas**, de **tamaño parecido** y con la **misma dispersión**. Formalmente, es el caso límite de una mezcla gaussiana con covarianzas $\sigma^2 \mathbf{I}$ iguales cuando $\sigma \to 0$, como se mostró en el capítulo de mezclas gaussianas. De ahí sus fallas típicas:
+
+- **Formas no convexas** (medias lunas, anillos): las fronteras rectas las cortan.
+- **Grupos alargados** o con variables correlacionadas: la distancia euclidiana no los respeta; conviene estandarizar, usar PCA o una mezcla gaussiana con covarianza completa.
+- **Tamaños o densidades muy distintos**: para reducir $W$ conviene partir el grupo grande y difuso en lugar de respetar los pequeños.
+- **Escala**: las variables con mayor varianza dominan, como vimos en el capítulo introductorio.
+- **Atípicos**: el cuadrado amplifica las distancias grandes; un solo punto lejano puede capturar un centro completo.
+- **Variables categóricas**: el promedio no está definido. Las variantes $k$-modas y $k$-prototipos [@huang1998extensions] usan la moda y la coincidencia simple.
+
+## Laboratorio: el algoritmo de Lloyd
+
+Ejecuta $k$-medias paso a paso. El fondo muestra las regiones de Voronoi de los centros actuales; las líneas discontinuas, el camino que han recorrido. Con «K-Means++», el tamaño de cada punto es proporcional a su probabilidad de ser elegido como siguiente centro. El estado inicial reproduce el ejemplo de los almacenes.
+
+::: {.content-visible when-format="html"}
 ```{=html}
-<div id="km-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">K-Means — animación paso a paso</span><br>
-    <span style="font-size:0.81em;color:#666;">Observa cómo los centroides se mueven y los grupos cambian en cada iteración</span>
+<div class="plab" id="km-lab">
+  <p class="plab-eyebrow">Laboratorio · K-medias</p>
+  <h3 class="plab-title">Asignar, mover, repetir</h3>
+  <p class="plab-sub">Avanza un paso a la vez y observa cómo baja W. Cambia los datos para ver dónde funciona k-medias y dónde no. Puedes arrastrar los centros antes o durante las iteraciones.</p>
+  <div class="plab-controls">
+    <div class="plab-field">Datos
+      <div class="plab-seg" id="km-data">
+        <button data-value="seis" aria-pressed="true">Seis puntos</button>
+        <button data-value="tres">Tres grupos</button>
+        <button data-value="tamanos">Tamaños distintos</button>
+        <button data-value="lunas">Medias lunas</button>
+        <button data-value="atipico">Con atípico</button>
+        <button data-value="recta">Recta (óptimo local)</button>
+      </div>
+    </div>
+    <div class="plab-field">Inicio
+      <div class="plab-seg" id="km-init">
+        <button data-value="fijo" aria-pressed="true">Fijo</button>
+        <button data-value="azar">Al azar</button>
+        <button data-value="pp">K-Means++</button>
+      </div>
+    </div>
+    <label>Grupos k: <b id="km-k-v"></b><input type="range" id="km-k" min="2" max="6" step="1" value="2"></label>
   </div>
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
-    <label style="font-size:0.83em;color:#444;">k = <strong id="km-kv">3</strong></label>
-    <input id="km-ksl" type="range" min="2" max="6" step="1" value="3" style="flex:1;min-width:120px;accent-color:#1a3a5c;">
-    <button onclick="window.kmReset()" style="font-size:0.8em;padding:4px 12px;border:1px solid #d0d7e3;border-radius:5px;background:#fff;cursor:pointer;">Reiniciar</button>
-    <button onclick="window.kmStep()" style="font-size:0.8em;padding:4px 14px;border:1px solid #1a3a5c;border-radius:5px;background:#1a3a5c;color:#fff;cursor:pointer;">Paso ▶</button>
-    <button onclick="window.kmRun()" style="font-size:0.8em;padding:4px 14px;border:1px solid #16a34a;border-radius:5px;background:#16a34a;color:#fff;cursor:pointer;">Ejecutar ⟳</button>
+  <div class="plab-controls">
+    <div class="plab-field">Avanzar
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        <button class="plab-btn primary" id="km-step">Siguiente paso</button>
+        <button class="plab-btn" id="km-iter">Iteración completa</button>
+        <button class="plab-btn" id="km-run">Hasta converger</button>
+        <button class="plab-btn" id="km-reset">Reiniciar</button>
+        <button class="plab-btn" id="km-seed">Otra semilla</button>
+      </div>
+    </div>
   </div>
-  <div id="km-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-bottom:10px;min-height:22px;"></div>
-  <canvas id="km-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;"></canvas>
+  <div class="plab-stats">
+    <div class="plab-stat"><span>Próximo paso</span><strong id="km-next"></strong></div>
+    <div class="plab-stat"><span>Iteración</span><strong id="km-it"></strong></div>
+    <div class="plab-stat"><span>W actual</span><strong id="km-W"></strong></div>
+    <div class="plab-stat"><span>Mejor W en 30 reinicios</span><strong id="km-best"></strong></div>
+  </div>
+  <div class="plab-grid">
+    <div class="plab-panel">
+      <h4>Datos, centros y regiones de Voronoi</h4>
+      <svg id="km-svg" role="img" aria-label="Puntos coloreados por grupo, centros arrastrables y regiones de Voronoi"></svg>
+      <div class="plab-legend"><span><i class="dot" style="background:var(--lab-text)"></i>centro (rombo)</span><span><i style="background:var(--lab-axis)"></i>trayectoria del centro</span></div>
+    </div>
+    <div class="plab-panel">
+      <h4>W después de cada paso</h4>
+      <svg id="km-wsvg" role="img" aria-label="Suma de cuadrados dentro de los grupos después de cada paso"></svg>
+      <div class="plab-legend"><span><i style="background:var(--lab-s1)"></i>W</span><span><i style="background:var(--lab-s3)"></i>mejor W conocido</span></div>
+      <div id="km-tab" class="plab-scroll" style="margin-top:.5rem"></div>
+    </div>
+  </div>
+  <p class="plab-note" id="km-note" aria-live="polite"></p>
+  <ol class="plab-task">
+    <li>Con «Seis puntos» e inicio fijo, avanza paso por paso. Comprueba que W recorre 70 → 21.25 → 13.44 → 8.00 y que P3 cambia de grupo en la segunda asignación.</li>
+    <li>Elige «Recta (óptimo local)» con inicio fijo y k = 3. <strong>Predice</strong> qué hará el algoritmo y compruébalo. Luego cambia a K-Means++ y pulsa «Otra semilla» varias veces: ¿con qué frecuencia llega a W = 6?</li>
+    <li>En «Tamaños distintos» con k = 3, ¿qué grupo parte el algoritmo? Compara W de esa solución con el W de la partición que tú harías a ojo (arrastra los centros a los tres grupos y avanza).</li>
+    <li>En «Medias lunas» con k = 2, ¿alguna inicialización separa las dos lunas? ¿Por qué no puede hacerlo?</li>
+    <li>En «Con atípico» y k = 2, ¿qué grupo forma el punto P7? Explica por qué el cuadrado de la distancia lo favorece.</li>
+  </ol>
 </div>
 <script>
-(function(){
-  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
-  // 40 points in 3 natural clusters
-  const SEED=[
-    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],
-    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],
-    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],
-    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],
-    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1]
-  ];
-  const cv=document.getElementById('km-cv');
-  const W=680,H=380,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-  const PAD={l:44,r:16,t:20,b:30};
-  const CW=W-PAD.l-PAD.r,CH=H-PAD.t-PAD.b;
-  const xMn=0,xMx=9,yMn=0,yMx=7;
-  const sx=x=>PAD.l+(x-xMn)/(xMx-xMn)*CW;
-  const sy=y=>PAD.t+CH-(y-yMn)/(yMx-yMn)*CH;
-
-  let k=3,cents=[],labels=[],phase='init',iter=0,converged=false;
-
-  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}
-
-  function initCents(k){
-    const idx=[];
-    while(idx.length<k){const r=Math.floor(Math.random()*SEED.length);if(!idx.includes(r))idx.push(r);}
-    return idx.map(i=>[...SEED[i]]);
+(() => {
+  const K = window.LabKit, root = document.getElementById('km-lab');
+  const $ = s => root.querySelector(s);
+  const CLS = ['s1', 's2', 's3', 's4', 's5', 'muted'];
+  const gen = K.rng(5), N = () => gen.normal();
+  const tres = [], tam = [], lunas = [];
+  [[-2, -1.5], [2, -1], [0, 2]].forEach(([a, b]) => { for (let i = 0; i < 30; i++) tres.push([a + 0.55 * N(), b + 0.55 * N()]); });
+  for (let i = 0; i < 70; i++) tam.push([-1.2 + 1.05 * N(), 1.05 * N()]);
+  [[2.6, 1.8], [2.6, -1.8]].forEach(([a, b]) => { for (let i = 0; i < 15; i++) tam.push([a + 0.28 * N(), b + 0.28 * N()]); });
+  for (let i = 0; i < 100; i++) { const t = Math.PI * (i % 50) / 49; lunas.push(i < 50 ? [2 * Math.cos(t) - 1 + 0.15 * N(), 2 * Math.sin(t) - 0.5 + 0.15 * N()] : [2 * (1 - Math.cos(t)) - 1 + 0.15 * N(), 2 * (1 - Math.sin(t)) - 1.5 + 0.15 * N()]); }
+  const seis = [[1, 1], [2, 1], [1, 3], [5, 4], [6, 6], [4, 6]];
+  const SETS = {
+    seis: { X: seis, x: [0, 7], y: [0, 7], fijo: [0, 2, 3, 4, 5, 1], labels: true, k: 2 },
+    tres: { X: tres, x: [-4, 4], y: [-3.5, 4], fijo: [0, 1, 2, 3, 4, 5], k: 3 },
+    tamanos: { X: tam, x: [-4.5, 4], y: [-3.6, 3.6], fijo: [70, 85, 0, 1, 2, 3], k: 3 },
+    lunas: { X: lunas, x: [-3.4, 3.4], y: [-2.8, 2.4], fijo: [10, 60, 30, 80, 0, 50], k: 2 },
+    atipico: { X: seis.concat([[14, 5]]), x: [0, 15], y: [0, 8.5], fijo: [0, 3, 6, 1, 2, 4], labels: true, k: 2 },
+    recta: { X: [[0, 0], [2, 0], [10, 0], [12, 0], [20, 0], [22, 0]], x: [-2, 24], y: [-3, 3], fijo: [0, 1, 4, 2, 3, 5], init3: [[0, 0], [2, 0], [16, 0]], labels: true, k: 3 }
+  };
+  let S, C, lab, phase, it, hist, trail, seed = 1, rng, drag = -1;
+  const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+  const nearest = (p, Cs) => { let b = 0; Cs.forEach((c, j) => { if (d2(p, c) < d2(p, Cs[b]) - 1e-12) b = j; }); return b; };
+  const Wof = (L, Cs) => K.sum(S.X.map((p, i) => d2(p, Cs[L[i]])));
+  const bestCache = {};
+  function bestW(key, k) {
+    if (bestCache[key + k] !== undefined) return bestCache[key + k];
+    const r = K.rng(99); let best = Infinity;
+    for (let rep = 0; rep < 30; rep++) {
+      const Cs = [S.X[Math.floor(r() * S.X.length)].slice()];
+      while (Cs.length < k) { const D = S.X.map(p => Math.min(...Cs.map(c => d2(p, c)))), t = K.sum(D); let u = r() * t, i = 0; while (i < S.X.length - 1 && (u -= D[i]) > 0) i++; Cs.push(S.X[i].slice()); }
+      let L = null;
+      for (let s = 0; s < 200; s++) { const nl = S.X.map(p => nearest(p, Cs)); if (L && nl.every((v, i) => v === L[i])) break; L = nl; Cs.forEach((c, j) => { const m = S.X.filter((_, i) => L[i] === j); if (m.length) { c[0] = K.mean(m.map(p => p[0])); c[1] = K.mean(m.map(p => p[1])); } }); }
+      best = Math.min(best, Wof(L, Cs));
+    }
+    return (bestCache[key + k] = best);
   }
-
-  function assign(){
-    return SEED.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
+  const dataSeg = K.segmented($('#km-data'), v => { $('#km-k').value = SETS[v].k; reset(); });
+  const initSeg = K.segmented($('#km-init'), () => reset());
+  function reset() {
+    S = SETS[dataSeg.get()]; const k = +$('#km-k').value; rng = K.rng(seed * 7919 + 13);
+    lab = null; it = 0; hist = []; trail = [];
+    const mode = initSeg.get();
+    if (mode === 'fijo') C = S.init3 && k === 3 ? S.init3.map(c => c.slice()) : S.fijo.slice(0, k).map(i => S.X[i].slice());
+    else if (mode === 'azar') { const idx = []; while (idx.length < k) { const i = Math.floor(rng() * S.X.length); if (!idx.includes(i)) idx.push(i); } C = idx.map(i => S.X[i].slice()); }
+    else C = [S.X[Math.floor(rng() * S.X.length)].slice()];
+    phase = C.length < k ? 'init' : 'assign';
+    trail = C.map(c => [c.slice()]);
+    render();
   }
-
-  function update(labels){
-    return Array.from({length:k},(_,ci)=>{
-      const cl=SEED.filter((_,i)=>labels[i]===ci);
-      if(!cl.length)return cents[ci];
-      return[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length];
-    });
+  function step() {
+    const k = +$('#km-k').value;
+    if (phase === 'done') return;
+    if (phase === 'init') {
+      const D = S.X.map(p => Math.min(...C.map(c => d2(p, c)))), t = K.sum(D);
+      let u = rng() * t, i = 0; while (i < S.X.length - 1 && (u -= D[i]) > 0) i++;
+      C.push(S.X[i].slice()); trail.push([S.X[i].slice()]);
+      if (C.length >= k) phase = 'assign';
+      return;
+    }
+    if (phase === 'assign') {
+      const nl = S.X.map(p => nearest(p, C));
+      const same = lab && nl.every((v, i) => v === lab[i]);
+      lab = nl; hist.push(Wof(lab, C));
+      phase = same ? 'done' : 'update';
+      return;
+    }
+    C.forEach((c, j) => { const m = S.X.filter((_, i) => lab[i] === j); if (m.length) { c[0] = K.mean(m.map(p => p[0])); c[1] = K.mean(m.map(p => p[1])); } trail[j].push(c.slice()); });
+    hist.push(Wof(lab, C)); it++; phase = 'assign';
   }
+  $('#km-step').addEventListener('click', () => { step(); render(); });
+  $('#km-iter').addEventListener('click', () => { if (phase === 'init') { while (phase === 'init') step(); } else { const p0 = phase; step(); if (p0 === 'assign' && phase === 'update') step(); else if (p0 === 'update') step(); } render(); });
+  $('#km-run').addEventListener('click', () => { for (let s = 0; s < 400 && phase !== 'done'; s++) step(); render(); });
+  $('#km-reset').addEventListener('click', reset);
+  $('#km-seed').addEventListener('click', () => { seed++; reset(); });
+  $('#km-k').addEventListener('input', reset);
 
-  function wcss(labels){
-    return SEED.reduce((s,p,i)=>s+dist2(p,cents[labels[i]]),0);
-  }
-
-  function draw(){
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(PAD.l,PAD.t,CW,CH);
-    ctx.strokeStyle='#e8ecf3';ctx.lineWidth=0.8;
-    [1,2,3,4,5,6,7,8].forEach(v=>{
-      ctx.beginPath();ctx.moveTo(sx(v),PAD.t);ctx.lineTo(sx(v),PAD.t+CH);ctx.stroke();
-    });
-    [1,2,3,4,5,6].forEach(v=>{
-      ctx.beginPath();ctx.moveTo(PAD.l,sy(v));ctx.lineTo(PAD.l+CW,sy(v));ctx.stroke();
-    });
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+CH);ctx.lineTo(PAD.l+CW,PAD.t+CH);ctx.stroke();
-
-    // Voronoi regions (background color strips)
-    const step=6;
-    for(let px=PAD.l;px<PAD.l+CW;px+=step){
-      for(let py=PAD.t;py<PAD.t+CH;py+=step){
-        const gx=xMn+(px-PAD.l)/CW*(xMx-xMn),gy=yMn+(1-(py-PAD.t)/CH)*(yMx-yMn);
-        let bi=0,bd=Infinity;
-        cents.forEach((c,i)=>{const d=dist2([gx,gy],c);if(d<bd){bd=d;bi=i;}});
-        ctx.fillStyle=COLS[bi]+'18';ctx.fillRect(px,py,step,step);
+  function dims() { const iw = 350, xr = S.x[1] - S.x[0], yr = S.y[1] - S.y[0]; return { width: iw + 46, height: Math.round(iw * yr / xr) + 44 }; }
+  function render() {
+    const k = +$('#km-k').value; $('#km-k-v').textContent = k;
+    const { width, height } = dims();
+    const c = K.chart($('#km-svg'), { width, height, x: S.x, y: S.y, margin: { left: 36, right: 10, top: 10, bottom: 34 } });
+    if (C.length && phase !== 'init') {
+      const G = 46, sx = (S.x[1] - S.x[0]) / G, sy = (S.y[1] - S.y[0]) / Math.round(G * (S.y[1] - S.y[0]) / (S.x[1] - S.x[0]));
+      for (let a = S.x[0]; a < S.x[1] - 1e-9; a += sx) for (let b = S.y[0]; b < S.y[1] - 1e-9; b += sy) {
+        const r = c.rect(a, b, a + sx, b + sy, CLS[nearest([a + sx / 2, b + sy / 2], C) % 6]); r.style.fillOpacity = 0.1; r.style.stroke = 'none';
       }
     }
-
-    // Points
-    SEED.forEach((p,i)=>{
-      ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),5.5,0,2*Math.PI);
-      ctx.fillStyle=labels.length?COLS[labels[i]]+'cc':'#94a3b8cc';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    c.axes({ xTicks: 6, yTicks: 5, xLabel: 'x', yLabel: 'y' });
+    let Dsq = null;
+    if (phase === 'init') { Dsq = S.X.map(p => Math.min(...C.map(cc => d2(p, cc)))); }
+    const tot = Dsq ? K.sum(Dsq) : 0, mx = Dsq ? Math.max(...Dsq) : 0;
+    S.X.forEach((p, i) => {
+      const r = Dsq ? 2.5 + 9 * Math.sqrt(Dsq[i] / (mx || 1)) : (S.labels ? 6.5 : 4);
+      c.dot(p[0], p[1], r, (lab ? CLS[lab[i] % 6] : 'muted') + ' dot');
+      if (S.labels) c.text(p[0], p[1], Dsq ? `P${i + 1} (${K.fmt(Dsq[i] / tot, 3)})` : `P${i + 1}`, { dx: 8, dy: -8, class: 'strong' });
     });
-
-    // Centroids
-    cents.forEach((c,i)=>{
-      ctx.beginPath();ctx.arc(sx(c[0]),sy(c[1]),10,0,2*Math.PI);
-      ctx.fillStyle=COLS[i];ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
-      ctx.fillStyle='#fff';ctx.font='bold 10px Georgia,serif';ctx.textAlign='center';
-      ctx.fillText(i+1,sx(c[0]),sy(c[1])+3);
+    trail.forEach((t, j) => { if (t.length > 1) c.path(t, 'muted line dash thin'); });
+    C.forEach((m, j) => {
+      const X = c.X(m[0]), Y = c.Y(m[1]), s = 10;
+      const d = K.el('path', { d: `M${X},${Y - s}L${X + s},${Y}L${X},${Y + s}L${X - s},${Y}Z`, class: CLS[j % 6] + ' dot drag' }, c.g);
+      d.style.strokeWidth = 2.5; d.style.stroke = 'var(--lab-text)'; d.dataset.c = j;
     });
-
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='center';
-    ctx.fillText('K-Means — iteración '+iter,PAD.l+CW/2,PAD.t-6);
-  }
-
-  window.kmReset=function(){
-    k=parseInt(document.getElementById('km-ksl').value);
-    cents=initCents(k);labels=[];iter=0;converged=false;phase='init';
-    draw();
-    document.getElementById('km-info').innerHTML='Centroides inicializados aleatoriamente. Presiona <strong>Paso</strong> para asignar.';
-  };
-
-  window.kmStep=function(){
-    if(converged){document.getElementById('km-info').innerHTML='<strong style="color:#16a34a">Convergido.</strong> K-Means terminó.';return;}
-    if(phase==='init'||phase==='update'){
-      const newL=assign();
-      const same=labels.length&&newL.every((l,i)=>l===labels[i]);
-      labels=newL;phase='assign';iter++;
-      draw();
-      const w=wcss(labels);
-      if(same){converged=true;document.getElementById('km-info').innerHTML=`Iteración ${iter} — <strong style="color:#16a34a">Convergido</strong>. WCSS = ${w.toFixed(2)}`;}
-      else document.getElementById('km-info').innerHTML=`Iteración ${iter}: asignación actualizada. WCSS = <strong>${w.toFixed(2)}</strong>`;
-    } else {
-      const prev=cents.map(c=>[...c]);cents=update(labels);phase='update';
-      draw();
-      const moved=cents.reduce((s,c,i)=>s+Math.sqrt(dist2(c,prev[i])),0);
-      document.getElementById('km-info').innerHTML=`Iteración ${iter}: centroides actualizados. Desplazamiento total = <strong>${moved.toFixed(4)}</strong>`;
+    const best = bestW(dataSeg.get(), k);
+    const cur = lab ? Wof(lab, C) : (phase === 'init' ? NaN : Wof(S.X.map(p => nearest(p, C)), C));
+    $('#km-next').textContent = { init: 'elegir centro (D²)', assign: 'asignar', update: 'mover centros', done: 'convergió' }[phase];
+    $('#km-it').textContent = it;
+    $('#km-W').textContent = K.fmt(cur, 2);
+    $('#km-best').textContent = K.fmt(best, 2);
+    const hv = hist.length ? hist : [NaN];
+    const ymax = Math.max(best * 1.1, ...hist.filter(Number.isFinite)) * 1.05;
+    const cw = K.chart($('#km-wsvg'), { width: 380, height: 220, x: [0, Math.max(4, hist.length + 1)], y: [0, ymax || 1], margin: { left: 50, right: 12, top: 12, bottom: 36 } });
+    cw.axes({ xTicks: 5, yTicks: 4, xLabel: 'paso (asignar / mover)', yLabel: 'W', xFmt: v => K.fmt(v, 0), yFmt: v => K.fmt(v, ymax < 10 ? 1 : 0) });
+    cw.line(0, best, Math.max(4, hist.length + 1), best, 's3 line dash thin');
+    if (hist.length) { cw.path(hist.map((w, i) => [i + 1, w]), 's1 line'); hist.forEach((w, i) => cw.dot(i + 1, w, 3.5, 's1 dot')); }
+    const sizes = C.map((_, j) => lab ? lab.filter(l => l === j).length : 0);
+    $('#km-tab').innerHTML = '<table class="plab-table"><thead><tr><th>Centro</th><th>x</th><th>y</th><th>Casos</th></tr></thead><tbody>' +
+      C.map((m, j) => `<tr><td><span style="color:var(--lab-${CLS[j % 6] === 'muted' ? 'axis' : CLS[j % 6]})">◆</span> μ${j + 1}</td><td>${K.fmt(m[0], 2)}</td><td>${K.fmt(m[1], 2)}</td><td>${lab ? sizes[j] : '—'}</td></tr>`).join('') + '</tbody></table>';
+    const note = $('#km-note'); let msg, cls = '';
+    if (phase === 'init') msg = `K-Means++: ${C.length} de ${k} centros elegidos. Cada punto se elegirá como siguiente centro con probabilidad proporcional a D², su distancia al cuadrado al centro más cercano; por eso los puntos lejanos se ven más grandes.`;
+    else if (!lab) msg = `Centros iniciales colocados. Si se asignara ahora cada punto a su centro más cercano, W valdría ${K.fmt(cur, 2)}.`;
+    else if (phase === 'update') msg = `Asignación hecha: W = ${K.fmt(hist[hist.length - 1], 2)}. Ahora cada centro se moverá al promedio de sus puntos.`;
+    else if (phase === 'assign') msg = `Centros movidos al promedio de sus grupos: W = ${K.fmt(hist[hist.length - 1], 2)}${hist.length > 1 ? ` (antes ${K.fmt(hist[hist.length - 2], 2)})` : ''}. W nunca sube.`;
+    else {
+      const gap = cur / best - 1;
+      if (gap > 0.02) { msg = `Convergió en ${it} ${it === 1 ? 'iteración' : 'iteraciones'} con W = ${K.fmt(cur, 2)}, pero existe una solución con W = ${K.fmt(best, 2)}: es un óptimo local (${K.fmt(100 * gap, 0)} % peor). Prueba K-Means++ u otra semilla.`; cls = 'warn'; }
+      else { msg = `Convergió en ${it} ${it === 1 ? 'iteración' : 'iteraciones'} con W = ${K.fmt(cur, 2)}, igual al mejor W conocido.`; cls = 'good'; }
+      const ds = dataSeg.get();
+      if (ds === 'lunas') { msg += ' Aun así, las fronteras rectas de Voronoi cortan cada luna: el mejor W no es la partición que buscamos.'; cls = 'warn'; }
+      if (ds === 'tamanos' && k === 3) msg += ' Observa si el grupo grande y difuso quedó partido: reducir W lo favorece aunque los grupos pequeños sean más evidentes.';
+      if (ds === 'atipico' && k === 2) msg += lab[6] !== lab[0] && lab.slice(0, 6).every(l => l === lab[0]) ? ' El atípico P7 se quedó con un centro para él solo y los dos grupos reales se fusionaron: esa es la solución de mínimo W.' : ' Paradoja: esta partición natural es solo un óptimo local; la de menor W le dedica un centro completo al atípico P7.';
     }
-  };
-
-  window.kmRun=function(){
-    const run=()=>{if(!converged){window.kmStep();setTimeout(run,400);}};
-    run();
-  };
-
-  document.getElementById('km-ksl').addEventListener('input',function(){
-    document.getElementById('km-kv').textContent=this.value;
-    window.kmReset();
-  });
-
-  window.kmReset();
+    note.className = 'plab-note ' + cls; note.textContent = msg;
+  }
+  const svg = $('#km-svg');
+  svg.addEventListener('pointerdown', e => { const t = e.target.closest('path[data-c]'); if (t) { drag = +t.dataset.c; svg.setPointerCapture(e.pointerId); } });
+  svg.addEventListener('pointermove', e => { if (drag < 0) return; const [x, y] = svg.__chart.pointer(e); C[drag] = [K.clamp(x, S.x[0], S.x[1]), K.clamp(y, S.y[0], S.y[1])]; trail[drag] = [C[drag].slice()]; if (phase === 'done') phase = 'assign'; render(); });
+  svg.addEventListener('pointerup', () => { drag = -1; });
+  $('#km-k').value = 2; reset();
 })();
 </script>
 ```
-
-## Limitaciones de K-Means
-
-K-Means tiene varios supuestos implícitos que, cuando no se cumplen, producen clustering de baja calidad:
-
-**Grupos convexos y esféricos.** K-Means minimiza distancias Euclídeas, lo que favorece grupos circulares en 2D o elipsoidales alineados con los ejes en alta dimensión. Grupos con formas no convexas —anillos, medias lunas, espirales— no pueden segmentarse correctamente.
-
-**Grupos de tamaño similar.** El centroide de un grupo pequeño puede ser "absorbido" por un grupo grande. Esto puede mitigarse con K-Medoids o con restricciones de tamaño.
-
-**Sensibilidad a outliers.** El centroide es la media, que puede desplazarse considerablemente ante un solo punto extremo. K-Medoids es más robusto porque usa medianas en vez de medias.
-
-**Número de grupos fijo.** K-Means requiere especificar $k$ de antemano. La elección adecuada de $k$ es un problema abierto que se aborda con heurísticas como el método del codo.
-
-## Método del codo
-
-Una heurística clásica para elegir $k$ es graficar el WCSS en función de $k$ y buscar un codo: el punto donde la reducción marginal de WCSS disminuye al agregar otro grupo.
-
-```{python}
-from sklearn.datasets import make_blobs
-from sklearn.cluster import KMeans
-import numpy as np
-
-X, _ = make_blobs(n_samples=300, centers=4, cluster_std=0.7, random_state=7)
-
-wcss = []
-for k in range(1, 11):
-    km = KMeans(n_clusters=k, random_state=0, n_init=10)
-    km.fit(X)
-    wcss.append(km.inertia_)
-
-for k, w in enumerate(wcss, 1):
-    print(f"k={k:2d}  WCSS={w:10.2f}")
-```
-
-```{=html}
-<div id="elbow-wrap" style="font-family:Georgia,serif;max-width:700px;margin:2em auto;background:#f9fafc;border:1px solid #d0d7e3;border-radius:10px;padding:20px 24px;box-shadow:0 2px 12px rgba(30,60,120,.07);">
-  <div style="text-align:center;margin-bottom:12px;">
-    <span style="font-size:1.05em;font-weight:bold;color:#1a2e45;">Método del codo y silueta — selección de k</span><br>
-    <span style="font-size:0.81em;color:#666;">Haz clic en un k para ver el clustering y sus métricas</span>
-  </div>
-  <canvas id="elbow-cv" style="display:block;width:100%;border-radius:6px;border:1px solid #e0e5ed;background:#fff;cursor:pointer;"></canvas>
-  <div id="elbow-info" style="text-align:center;font-size:0.82em;padding:5px 10px;background:#fff;border:1px solid #e0e5ed;border-radius:5px;margin-top:10px;min-height:22px;"></div>
-</div>
-<script>
-(function(){
-  const PTS=[
-    [1.0,1.2],[1.4,0.8],[0.8,1.5],[1.2,0.7],[1.6,1.4],[0.9,0.9],[1.3,1.7],[1.1,1.0],[1.5,0.6],[0.7,1.3],
-    [1.8,1.9],[0.5,1.1],[1.0,1.5],[1.3,1.2],[0.8,0.5],[1.7,1.1],[0.6,0.8],[1.4,1.6],[1.9,1.3],[0.4,1.4],
-    [4.5,4.8],[4.9,4.2],[4.2,5.0],[4.7,4.4],[5.2,4.7],[4.3,4.0],[4.8,5.1],[4.4,4.3],[5.0,4.1],[4.1,4.5],
-    [5.3,4.9],[4.0,4.1],[4.6,5.2],[5.1,4.6],[4.3,3.9],[4.7,4.2],[5.4,4.8],[3.9,4.3],[4.5,5.0],[5.0,4.5],
-    [7.8,1.8],[7.2,2.2],[8.1,1.3],[7.5,2.0],[7.0,1.7],[7.9,2.4],[7.3,1.1],[7.6,2.1],[8.2,2.0],[7.1,1.5],
-    [7.4,2.5],[7.7,1.3],[8.0,1.9],[7.2,2.3],[7.5,1.6],[7.8,2.2],[7.0,1.2],[7.6,1.8],[8.1,2.3],[7.3,1.9]
-  ];
-  const N=PTS.length;
-  const COLS=['#2563eb','#dc2626','#16a34a','#f59e0b','#7c3aed','#0891b2'];
-  const cv=document.getElementById('elbow-cv');
-  const W=680,H=400,DPR=window.devicePixelRatio||1;
-  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';
-  const ctx=cv.getContext('2d');ctx.scale(DPR,DPR);
-
-  function dist2(a,b){return(a[0]-b[0])**2+(a[1]-b[1])**2;}
-  function kmeans(k){
-    let cents=[];
-    const taken=new Set();
-    while(cents.length<k){const r=Math.floor(Math.random()*N);if(!taken.has(r)){taken.add(r);cents.push([...PTS[r]]);}}
-    let labels=new Array(N).fill(0);
-    for(let it=0;it<50;it++){
-      const nl=PTS.map(p=>{let bi=0,bd=Infinity;cents.forEach((c,i)=>{const d=dist2(p,c);if(d<bd){bd=d;bi=i;}});return bi;});
-      cents=Array.from({length:k},(_,ci)=>{const cl=PTS.filter((_,i)=>nl[i]===ci);return cl.length?[cl.reduce((s,p)=>s+p[0],0)/cl.length,cl.reduce((s,p)=>s+p[1],0)/cl.length]:cents[ci];});
-      labels=nl;
-    }
-    const wcss=PTS.reduce((s,p,i)=>s+dist2(p,cents[labels[i]]),0);
-    return{labels,cents,wcss};
-  }
-
-  function silScore(labels,k){
-    const sils=PTS.map((p,i)=>{
-      const same=PTS.filter((_,j)=>j!==i&&labels[j]===labels[i]);
-      const a=same.length?same.reduce((s,q)=>s+Math.sqrt(dist2(p,q)),0)/same.length:0;
-      let b=Infinity;
-      for(let c=0;c<k;c++){if(c===labels[i])continue;const cl=PTS.filter((_,j)=>labels[j]===c);if(!cl.length)continue;const mb=cl.reduce((s,q)=>s+Math.sqrt(dist2(p,q)),0)/cl.length;if(mb<b)b=mb;}
-      return(b-a)/Math.max(a,b);
-    });
-    return sils.reduce((s,v)=>s+v,0)/N;
-  }
-
-  const KS=[2,3,4,5,6,7];
-  const cache=KS.map(k=>{let best=null;for(let t=0;t<5;t++){const r=kmeans(k);if(!best||r.wcss<best.wcss)best=r;}return{...best,k,sil:k>1?silScore(best.labels,k):0};});
-  const maxW=cache[0].wcss*1.05;
-  let sel=1;// index into cache
-
-  function drawChart(selIdx){
-    ctx.clearRect(0,0,W,H);
-    const CH2=H/2-10;
-    // Top: WCSS chart
-    const LP={l:52,r:W-16,t:12,b:CH2};
-    const LW2=LP.r-LP.l,LH=LP.b-LP.t;
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(LP.l,LP.t,LW2,LH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(LP.l,LP.t,LW2,LH);
-    const xStep=LW2/(KS.length+1);
-    cache.forEach((d,i)=>{
-      const bx=LP.l+xStep*(i+0.5),bh=d.wcss/maxW*LH*0.85;
-      const isS=i===selIdx;
-      ctx.fillStyle=isS?'#1a3a5c':'#94a3b8';ctx.fillRect(bx-xStep*0.28,LP.b-bh,xStep*0.56,bh);
-      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
-      ctx.fillText('k='+d.k,bx,LP.b+13);
-      ctx.fillStyle=isS?'#1a3a5c':'#6b7280';
-      ctx.fillText((d.wcss/1000).toFixed(0)+'k',bx,LP.b-bh-5);
-    });
-    // WCSS line
-    ctx.beginPath();ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;
-    cache.forEach((d,i)=>{const bx=LP.l+xStep*(i+0.5),by=LP.b-d.wcss/maxW*LH*0.85;i===0?ctx.moveTo(bx,by):ctx.lineTo(bx,by);});
-    ctx.stroke();
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('WCSS por k (método del codo)',LP.l+4,LP.t+12);
-
-    // Bottom: Silhouette chart
-    const RP={l:52,r:W-16,t:H/2+8,b:H-20};
-    const RW=RP.r-RP.l,RH=RP.b-RP.t;
-    ctx.fillStyle='#f8f9fb';ctx.fillRect(RP.l,RP.t,RW,RH);
-    ctx.strokeStyle='#9aa3b5';ctx.lineWidth=1;ctx.strokeRect(RP.l,RP.t,RW,RH);
-    const maxS=0.8;
-    cache.forEach((d,i)=>{
-      const bx=RP.l+xStep*(i+0.5),bh=d.sil/maxS*RH*0.85;
-      const isS=i===selIdx;
-      const col=d.sil>0.5?'#16a34a':d.sil>0.25?'#f59e0b':'#dc2626';
-      ctx.fillStyle=(isS?col:'#94a3b8');ctx.fillRect(bx-xStep*0.28,RP.b-bh,xStep*0.56,bh);
-      ctx.fillStyle='#1a2e45';ctx.font=(isS?'bold ':'')+`10px Georgia,serif`;ctx.textAlign='center';
-      ctx.fillText('k='+d.k,bx,RP.b+13);
-      ctx.fillStyle=(isS?col:'#6b7280');
-      ctx.fillText(d.sil.toFixed(3),bx,RP.b-bh-5);
-    });
-    ctx.fillStyle='#1a2e45';ctx.font='bold 11px Georgia,serif';ctx.textAlign='left';ctx.fillText('Silueta por k',RP.l+4,RP.t+12);
-
-    const d=cache[selIdx];
-    document.getElementById('elbow-info').innerHTML=
-      `k = <strong>${d.k}</strong>&ensp;·&ensp;WCSS = <strong>${d.wcss.toFixed(1)}</strong>&ensp;·&ensp;`+
-      `Silueta = <strong style="color:${d.sil>0.5?'#16a34a':d.sil>0.25?'#ca8a04':'#dc2626'}">${d.sil.toFixed(3)}</strong>&ensp;·&ensp;`+
-      `Haz clic en las barras para seleccionar k`;
-  }
-
-  cv.addEventListener('click',function(e){
-    const rect=cv.getBoundingClientRect();
-    const px=e.clientX-rect.left;
-    const xStep=(W-68)/(KS.length+1);
-    const i=Math.round((px-52)/xStep)-1;
-    if(i>=0&&i<KS.length){sel=i;drawChart(sel);}
-  });
-
-  drawChart(sel);
-})();
-</script>
-```
-
-## K-Medoids (PAM)
-
-K-Medoids es una variante de K-Means que, en vez de representar cada grupo por su media, lo representa por una observación real llamada medoide [@kaufman1990]. Esto lo hace más robusto a outliers, porque los medoides son puntos del conjunto de datos y no pueden ser arrastrados por valores extremos.
-
-::: {.callout-note appearance="minimal"}
-Definición. Un medoide del grupo $C_j$ es la observación $\mathbf{m}_j\in C_j$ que minimiza la suma de distancias a los demás puntos del grupo:
-$$
-\mathbf{m}_j = \arg\min_{\mathbf{x}\in C_j}\sum_{\mathbf{x}'\in C_j}d(\mathbf{x},\mathbf{x}').
-$$ {#eq-medoid}
 :::
 
-El algoritmo PAM (Partitioning Around Medoids) itera intercambiando medoides con no-medoides y aceptando los cambios que reducen el costo total. PAM es más costoso que K-Means ($O(k(n-k)^2)$ por iteración), pero produce resultados más robustos ante outliers.
+::: {.content-visible when-format="pdf"}
+*Laboratorio interactivo disponible en la versión HTML.* Con los seis puntos y los centros iniciales en P1 y P3, la secuencia de $W$ es $70 \to 21.25 \to 13.44 \to 8.00 \to 8.00$ y el algoritmo converge en dos iteraciones a los grupos $\{P1, P2, P3\}$ y $\{P4, P5, P6\}$. En la recta con centros iniciales en 0, 2 y 16, el algoritmo se detiene de inmediato en $W = 104$, mientras que el óptimo es $W = 6$.
+:::
+
+## K-medoides: un representante real y robusto
+
+### El problema del atípico
+
+Agreguemos al ejemplo de los almacenes un séptimo punto de entrega muy alejado, P7 = (14, 5). La partición «natural» en dos grupos sigue siendo $\{P1, P2, P3\}$ y $\{P4, P5, P6, P7\}$, pero su $W$ es $3.33 + 65.5 = 68.83$: P7 arrastra el centro del segundo grupo hasta $(7.25, 5.25)$ y aporta él solo casi todo el costo. En cambio, la partición que **aísla** a P7, $\{P1, \ldots, P6\}$ contra $\{P7\}$, tiene $W = 48.33 + 0 = 48.33$. La solución óptima de $k$-medias es dedicarle un almacén completo al punto atípico y juntar los dos grupos reales. El responsable es el **cuadrado**: P7 está a unas 7 unidades del centro natural, y su contribución de $\approx 49$ pesa más que la de todos los demás puntos juntos.
+
+### Medoides
+
+$k$-**medoides** [@kaufman1990] hace dos cambios. El representante de cada grupo debe ser **uno de los casos** (el *medoide*) y el costo usa distancias **sin elevar al cuadrado**, o cualquier otra disimilitud:
+
+$$
+\text{costo} = \sum_{c=1}^{k} \sum_{i \in C_c} d(\mathbf{x}_i, \mathbf{m}_c), \qquad \mathbf{m}_c \in \{\mathbf{x}_1, \ldots, \mathbf{x}_n\}.
+$$ {#eq-kmedoides}
+
+El medoide de un grupo es el caso con la menor suma de distancias a los demás. En el grupo $\{P4, P5, P6, P7\}$, las sumas de distancias euclidianas desde cada candidato son $13.53$, $12.30$, $14.29$ y $27.17$: el medoide es P5 = (6, 6). A diferencia del promedio, que P7 desplazó más de dos unidades, el medoide **no puede ser arrastrado** a una zona vacía. Con distancias sin cuadrado, la partición natural (medoides P1 y P5) cuesta $15.30$ y la que aísla a P7 cuesta $17.84$: $k$-medoides prefiere la partición natural.
+
+### El algoritmo PAM
+
+El algoritmo clásico, PAM (*Partitioning Around Medoids*), tiene dos fases:
+
+1. **Construcción.** Elegir el primer medoide como el caso con menor suma de distancias a todos; luego, agregar uno a uno el caso que más reduzca el costo.
+2. **Intercambio.** Para cada par (medoide $\mathbf{m}$, no medoide $\mathbf{o}$), calcular cuánto cambia el costo si $\mathbf{o}$ reemplaza a $\mathbf{m}$. Aplicar el mejor intercambio si reduce el costo y repetir hasta que ninguno lo reduzca.
+
+Cada fase de intercambio evalúa $k(n - k)$ pares, cada uno con costo $O(n)$: $O(k(n - k)^2)$ por iteración, mucho más que $k$-medias. A cambio, $k$-medoides:
+
+- funciona con **cualquier matriz de distancias** (Gower, Jaccard, edición), sin necesidad de promedios;
+- es más **robusto** a atípicos;
+- produce representantes **interpretables**: un cliente real, no un cliente promedio que no existe.
+
+Para datos grandes existen aproximaciones como CLARA, que aplica PAM a submuestras, y FastPAM.
+
+## Variantes a escala
+
+- **Mini-batch $k$-medias** [@sculley2010web]: en cada paso usa una muestra pequeña de casos para mover los centros con un promedio móvil. Es mucho más rápido con millones de casos, a cambio de un $W$ ligeramente mayor.
+- **$k$-medias bisectante**: empieza con un grupo y parte repetidamente el de mayor $W$ en dos con $k$-medias de dos grupos. Produce una jerarquía y suele dar grupos de tamaño más parejo.
+- **Algoritmo de Elkan**: usa la desigualdad triangular para evitar calcular distancias que no pueden cambiar la asignación; da el mismo resultado que Lloyd, más rápido con pocos grupos.
+
+## Implementación en Python
+
+### El ejemplo de los almacenes
+
+`KMeans` acepta los centros iniciales como un arreglo, lo que permite reproducir el cálculo manual. Con `max_iter=1` se detiene después de una asignación y una actualización.
 
 ```{python}
-from sklearn.datasets import make_blobs
+#| label: km-almacenes
 import numpy as np
-
-rng = np.random.default_rng(42)
-X, _ = make_blobs(n_samples=200, centers=3, cluster_std=0.8, random_state=42)
-
-# Agregar outliers
-X = np.vstack([X, [[10, 10], [10, -10], [-10, 10]]])
-
+import pandas as pd
 from sklearn.cluster import KMeans
 
-km = KMeans(n_clusters=3, random_state=0, n_init=10)
-labels_km = km.fit_predict(X)
-print("K-Means centroides:\n", km.cluster_centers_.round(3))
+P = np.array([[1, 1], [2, 1], [1, 3], [5, 4], [6, 6], [4, 6]], dtype=float)
+inicio = P[[0, 2]]                         # P1 y P3
 
-# Implementación simple de K-Medoids
-def kmedoids_simple(X, k, seed=0):
-    rng = np.random.default_rng(seed)
-    idx = rng.choice(len(X), k, replace=False)
-    medoids = list(idx)
+for iteraciones in [1, 2, 3]:
+    km = KMeans(n_clusters=2, init=inicio, n_init=1, max_iter=iteraciones, tol=0).fit(P)
+    print(f"max_iter={iteraciones}: grupos {km.labels_ + 1}, centros {km.cluster_centers_.round(2).tolist()}, W = {km.inertia_:.2f}")
 
-    for _ in range(100):
-        D = np.array([[np.linalg.norm(X[i] - X[m]) for m in medoids] for i in range(len(X))])
-        labels = D.argmin(axis=1)
-        new_medoids = []
-        for j in range(k):
-            cluster = np.where(labels == j)[0]
-            if len(cluster) == 0:
-                new_medoids.append(medoids[j])
-                continue
-            sub_D = np.array([[np.linalg.norm(X[a] - X[b]) for b in cluster] for a in cluster])
-            new_medoids.append(int(cluster[sub_D.sum(axis=1).argmin()]))
-        if new_medoids == medoids:
-            break
-        medoids = new_medoids
-    return np.array(medoids), labels
-
-medoids_idx, labels_kmed = kmedoids_simple(X, 3)
-print("\nK-Medoids medoides (índices):", medoids_idx)
-print("K-Medoids medoides (valores):\n", X[medoids_idx].round(3))
+T = ((P - P.mean(axis=0)) ** 2).sum()
+print(f"\nT = {T:.2f}, W = {km.inertia_:.2f}, B = {T - km.inertia_:.2f}, B/T = {(T - km.inertia_) / T:.2f}")
 ```
 
-## Implementación con scikit-learn
+`inertia_` se calcula con las asignaciones finales a los centros finales; por eso, con `max_iter=1`, `scikit-learn` informa el $W$ de los nuevos grupos con los centros ya movidos.
+
+### Lloyd desde cero
 
 ```{python}
-from sklearn.datasets import make_blobs
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import silhouette_score
+#| label: km-lloyd
+def lloyd(X, centros, max_iter=100):
+    """Algoritmo de Lloyd; devuelve etiquetas, centros e historia de W."""
+    centros = np.array(centros, dtype=float)
+    etiquetas, historia = None, []
+    for _ in range(max_iter):
+        d2 = ((X[:, None, :] - centros[None, :, :]) ** 2).sum(axis=2)
+        nuevas = d2.argmin(axis=1)                              # asignación
+        historia.append(d2[np.arange(len(X)), nuevas].sum())
+        if etiquetas is not None and np.array_equal(nuevas, etiquetas):
+            break
+        etiquetas = nuevas
+        for c in range(len(centros)):                           # actualización
+            if np.any(etiquetas == c):
+                centros[c] = X[etiquetas == c].mean(axis=0)
+        historia.append(((X - centros[etiquetas]) ** 2).sum())
+    return etiquetas, centros, historia
 
-X, y_true = make_blobs(
-    n_samples=400, centers=[[-3, -3], [0, 0], [3, 3], [0, 5]],
-    cluster_std=[0.8, 1.0, 0.7, 0.9], random_state=42
-)
+_, _, h = lloyd(P, P[[0, 2]])
+print("W tras cada paso:", np.round(h, 2))
 
-X_std = StandardScaler().fit_transform(X)
-
-km = KMeans(
-    n_clusters=4,
-    init="k-means++",
-    n_init=20,
-    max_iter=300,
-    random_state=42
-)
-labels = km.fit_predict(X_std)
-
-print("Inercia (WCSS):", round(km.inertia_, 4))
-print("Iteraciones hasta convergencia:", km.n_iter_)
-print("Silueta:", round(silhouette_score(X_std, labels), 4))
-print("Distribución:", np.bincount(labels))
+recta = np.array([[0], [2], [10], [12], [20], [22]], dtype=float)
+for nombre, ini in [("malo  (0, 2, 16)", [[0], [2], [16]]), ("bueno (0, 10, 20)", [[0], [10], [20]])]:
+    lab, cen, h = lloyd(recta, ini)
+    print(f"inicio {nombre}: centros {cen.ravel()}, W final = {h[-1]:.0f}")
 ```
 
-## Consideraciones prácticas
+### Cuándo funciona y cuándo no
 
-- Ejecutar K-Means múltiples veces (`n_init`) y quedarse con la solución de menor WCSS reduce el riesgo de caer en mínimos locales pobres.
-- Estandarizar siempre los datos antes de aplicar K-Means, a menos que las distintas escalas tengan significado conceptual.
-- En espacios de muy alta dimensión, considerar primero reducción de dimensión (PCA, UMAP) antes de aplicar K-Means.
-- K-Means no es adecuado para datos con clusters de forma irregular; en ese caso preferir DBSCAN o clustering espectral.
+```{python}
+#| label: fig-km-fallas
+#| fig-cap: "k-medias con k-means++ y 10 reinicios en cuatro situaciones. Funciona con grupos esféricos y de tamaño parecido; falla con grupos alargados, con tamaños muy distintos (parte el grupo grande) y con formas no convexas."
+import matplotlib.pyplot as plt
+from sklearn.datasets import make_blobs, make_moons
+
+rng = np.random.default_rng(0)
+X1, _ = make_blobs(n_samples=300, centers=3, cluster_std=0.6, random_state=1)
+X2 = make_blobs(n_samples=300, centers=3, random_state=170)[0] @ np.array([[0.6, -0.6], [-0.4, 0.8]])
+X3 = np.vstack([rng.normal([-1.2, 0], 1.05, (220, 2)),
+                rng.normal([2.6, 1.8], 0.28, (40, 2)), rng.normal([2.6, -1.8], 0.28, (40, 2))])
+X4, _ = make_moons(n_samples=300, noise=0.06, random_state=0)
+casos = [("esféricos", X1, 3), ("alargados", X2, 3), ("tamaños distintos", X3, 3), ("medias lunas", X4, 2)]
+
+fig, axes = plt.subplots(1, 4, figsize=(13, 3.3))
+colores = np.array(["#2563eb", "#ea580c", "#16a34a"])
+for ax, (titulo, X, k) in zip(axes, casos):
+    km = KMeans(n_clusters=k, n_init=10, random_state=0).fit(X)
+    ax.scatter(X[:, 0], X[:, 1], s=8, c=colores[km.labels_])
+    ax.scatter(*km.cluster_centers_.T, marker="D", s=70, c="black")
+    ax.set_title(titulo); ax.set_xticks([]); ax.set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+### K-medoides con PAM
+
+`scikit-learn` no incluye $k$-medoides (está en el paquete externo `scikit-learn-extra`). Una versión compacta de PAM sobre una matriz de distancias, aplicada al ejemplo con el atípico:
+
+```{python}
+#| label: km-pam
+from scipy.spatial.distance import cdist
+
+def pam(D, k):
+    """PAM sobre una matriz de distancias D (n x n): construcción + intercambio."""
+    n = len(D)
+    medoides = [int(D.sum(axis=1).argmin())]
+    while len(medoides) < k:                                   # construcción
+        costo = [D[:, medoides + [o]].min(axis=1).sum() if o not in medoides else np.inf for o in range(n)]
+        medoides.append(int(np.argmin(costo)))
+    actual = D[:, medoides].min(axis=1).sum()
+    while True:                                                # intercambio
+        mejor = (actual, None, None)
+        for a, m in enumerate(medoides):
+            for o in set(range(n)) - set(medoides):
+                prueba = medoides.copy(); prueba[a] = o
+                c = D[:, prueba].min(axis=1).sum()
+                if c < mejor[0] - 1e-12:
+                    mejor = (c, a, o)
+        if mejor[1] is None:
+            return medoides, D[:, medoides].argmin(axis=1), actual
+        medoides[mejor[1]] = mejor[2]
+        actual = mejor[0]
+
+P7 = np.vstack([P, [14, 5]])
+km = KMeans(n_clusters=2, n_init=20, random_state=0).fit(P7)
+med, lab_med, costo = pam(cdist(P7, P7), k=2)
+print("k-medias   :", km.labels_ + 1, " centros", km.cluster_centers_.round(2).tolist())
+print("k-medoides :", lab_med + 1, " medoides", [f"P{m + 1}" for m in med], f" costo = {costo:.2f}")
+```
+
+### Una aplicación: cuantización de color
+
+Cada píxel de una imagen es un punto en el espacio de color $(R, G, B)$. Agrupar los píxeles con $k$-medias y reemplazar cada uno por su centro reduce la imagen a $k$ colores: es la cuantización vectorial en acción.
+
+```{python}
+#| label: fig-km-color
+#| fig-cap: "Cuantización de color con k-medias: la imagen original (miles de colores) y sus versiones con 4, 8 y 16 colores, que son los centros de los grupos de píxeles. Se ajusta con una muestra de 5 000 píxeles y se asigna el resto con predict."
+from sklearn.datasets import load_sample_image
+
+img = load_sample_image("flower.jpg") / 255.0
+pix = img.reshape(-1, 3)
+muestra = pix[np.random.default_rng(0).choice(len(pix), 5000, replace=False)]
+
+fig, axes = plt.subplots(1, 4, figsize=(13, 2.8))
+axes[0].imshow(img); axes[0].set_title("original")
+for ax, k in zip(axes[1:], [4, 8, 16]):
+    km = KMeans(n_clusters=k, n_init=4, random_state=0).fit(muestra)
+    ax.imshow(km.cluster_centers_[km.predict(pix)].reshape(img.shape))
+    ax.set_title(f"k = {k} colores")
+for ax in axes:
+    ax.axis("off")
+plt.tight_layout()
+plt.show()
+```
+
+### Mini-batch para datos grandes
+
+```{python}
+#| label: km-minibatch
+import time
+from sklearn.cluster import MiniBatchKMeans
+
+Xg, _ = make_blobs(n_samples=200_000, centers=8, n_features=10, random_state=0)
+for modelo in [KMeans(n_clusters=8, n_init=3, random_state=0),
+               MiniBatchKMeans(n_clusters=8, n_init=3, batch_size=2048, random_state=0)]:
+    t0 = time.perf_counter(); modelo.fit(Xg); t = time.perf_counter() - t0
+    print(f"{type(modelo).__name__:>16}: {t:5.2f} s, W = {modelo.inertia_:,.0f}")
+```
+
+## Ventajas y limitaciones
+
+| Ventajas | Limitaciones |
+|---|---|
+| Simple, rápido y escalable: $O(nkp)$ por iteración | Requiere fijar $k$ de antemano |
+| Converge siempre en pocos pasos | Solo garantiza un óptimo local; depende del inicio |
+| Asigna casos nuevos (cuantización vectorial) | Supone grupos esféricos, de tamaño y dispersión parecidos |
+| Centros interpretables como «caso típico» | Sensible a la escala y a los atípicos |
+| Base de muchas variantes (mini-batch, bisectante, $k$-medoides) | Solo datos numéricos con distancia euclidiana |
+
+: Ventajas y limitaciones de k-medias. {#tbl-km-pros}
+
+## Resumen
+
+- $k$-medias minimiza la suma de cuadrados dentro de los grupos $W$; para grupos fijos, el mejor centro es el **promedio**.
+- La variación total se descompone en $T = W + B$: minimizar la cohesión equivale a maximizar la separación.
+- El algoritmo de Lloyd alterna **asignar** y **mover**; $W$ nunca sube y el algoritmo termina, pero solo en un **óptimo local**.
+- K-Means++ elige centros iniciales con probabilidad proporcional a $D^2$ y, junto con varios reinicios, evita casi siempre los malos óptimos.
+- Las regiones son de Voronoi (convexas); $k$-medias falla con formas no convexas, tamaños distintos y atípicos.
+- $k$-medoides usa casos reales como representantes y distancias sin cuadrado; es más robusto y acepta cualquier disimilitud, a un costo computacional mayor.
+
+El siguiente capítulo responde a las dos preguntas que $k$-medias deja abiertas: **¿son buenos estos grupos?** y **¿cuántos grupos hay?**
+
+[^huygens]: La descomposición es el **teorema de Huygens** (o de König-Huygens) y es la misma que se usa en el análisis de varianza (ANOVA): la suma de cuadrados total se divide en una parte «dentro» y otra «entre». Se demuestra sumando y restando $\bar{\mathbf{x}}_c$ dentro de $\lVert \mathbf{x}_i - \bar{\mathbf{x}} \rVert^2$ y observando que los productos cruzados suman cero porque $\sum_{i \in C_c} (\mathbf{x}_i - \bar{\mathbf{x}}_c) = \mathbf{0}$.
+
+## Referencias {.unnumbered}
+
+::: {#refs}
+:::
