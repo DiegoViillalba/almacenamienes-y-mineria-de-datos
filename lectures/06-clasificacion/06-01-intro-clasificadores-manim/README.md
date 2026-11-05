@@ -67,8 +67,8 @@ Ejecutar desde esta carpeta:
 # Sólo algunos actos (1–5), útil al editar
 CLS_PARTS=3,4 ../../../.venv-manim/bin/manim-slides render -ql presentacion.py IntroClasificadores
 
-# Entrega 1920 × 1080 a 30 fps
-../../../.venv-manim/bin/manim-slides render --resolution 1920,1080 --fps 30 --max-inflight-encoders 4 presentacion.py IntroClasificadores
+# Entrega 4K (3840 × 2160) a 30 fps: nitidez en proyector y pantallas Retina
+../../../.venv-manim/bin/manim-slides render --resolution 3840,2160 --fps 30 --max-inflight-encoders 4 presentacion.py IntroClasificadores
 
 # HTML autónomo para la galería
 ../../../.venv-manim/bin/manim-slides convert --folder slides --offline --one-file -ccontrols=true -cprogress=true -cslide_number=true -chash=true IntroClasificadores ../../../docs/lectures/_output/06-clasificacion/06-01-intro-clasificadores-manim/index.html
