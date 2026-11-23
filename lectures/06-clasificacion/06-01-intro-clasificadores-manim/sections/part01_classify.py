@@ -26,7 +26,36 @@ def client_table(size: float = 22) -> VGroup:
 
 
 class ClassifySection:
+    def video_hook(self) -> None:
+        self.beat("Un modelo acierta el 97 %: ¿le confiarías tu dinero? "
+                  "Mostrar primero la exactitud. Esperar dos segundos antes de revelar "
+                  "que dice «paga» para todos.")
+        self.start("Antes de empezar", "97 % de aciertos… ¿es suficiente?", YELLOW)
+        dots = VGroup(*[marker(1 if i in (17, 54, 86) else 0, r=0.12)
+                        for i in range(100)])
+        dots.arrange_in_grid(rows=10, cols=10, buff=0.16).move_to([-3.3, -0.3, 0])
+        value = safe_text("97 %", size=88, weight=BOLD, color=GREEN)
+        caption = safe_text("de exactitud", size=30)
+        question = safe_text("¿Qué pasa con los que no pagan?", size=26,
+                             color=YELLOW, max_width=6.2)
+        right = VGroup(value, caption, question).arrange(DOWN, buff=0.3)
+        right.move_to([3.25, 0.2, 0])
+        self.play(LaggedStart(*[FadeIn(d) for d in dots], lag_ratio=0.006),
+                  FadeIn(right), run_time=1.3)
+        self.wait(1.5)
+        self.beat("El modelo dice «paga» para todos. No detecta ninguno de los tres impagos. "
+                  "Una cifra de aciertos no describe cómo se equivoca. Ese es el hilo del video.")
+        reveal = VGroup(
+            safe_text("Predicción: «todos pagan»", size=28, color=BLUE),
+            safe_text("Impagos detectados: 0 de 3", size=30, color=RED, weight=BOLD),
+        ).arrange(DOWN, buff=0.25).move_to([3.25, -0.3, 0])
+        rings = VGroup(*[Circle(radius=0.21, color=RED, stroke_width=4).move_to(dots[i])
+                         for i in (17, 54, 86)])
+        self.play(FadeOut(right), FadeIn(reveal), Create(rings), run_time=0.7)
+
     def opening(self) -> None:
+        if self.video_mode:
+            self.video_hook()
         self.beat("0–1 min. Portada. Pregunte: ¿cuántas decisiones de «sí o no» toma hoy un "
                   "banco, un hospital o su correo sin que una persona las revise? Deje que den "
                   "dos o tres ejemplos.")
@@ -39,7 +68,14 @@ class ClassifySection:
         author = safe_text("Diego Villalba · Facultad de Ciencias · UNAM", size=20, color=MUTED)
         logo = self.logo_lockup(width=3.65, height=1.0)
         cover = Group(eyebrow, title, subtitle, course, author, logo).arrange(DOWN, buff=0.26)
+        self.clear()
         self.play(FadeIn(cover, shift=UP * 0.16), run_time=0.8)
+
+        if self.video_mode:
+            self.add_branding()
+            self.table_to_plane()
+            self.first_rule()
+            return
 
         self.beat("1–2 min. Ruta. Anuncie el hilo: un solo ejemplo (diez clientes de una "
                   "financiera) recorre toda la clase. Habrá dos «tu turno» y un ejercicio final.")
@@ -169,8 +205,8 @@ class ClassifySection:
     def first_rule(self) -> None:
         plane, pts = self.plane, self.pts
         self.beat("6–7 min. El modelo más tonto posible: ignorar x y decir siempre «paga» "
-                  "(la clase más frecuente). Acierta 6 de 10. Es la REFERENCIA: cualquier "
-                  "modelo que no la supere no aprendió nada de los atributos.")
+                  "(la clase más frecuente). Acierta 6 de 10. Es la REFERENCIA. La "
+                  "comparación debe considerar también qué errores nos importan.")
         self.play(FadeOut(self.newc), run_time=0.4)
         head = self.swap_heading(self.table_head, "¿Qué es clasificar?",
                                  "Primera regla: no mirar nada", BLUE)

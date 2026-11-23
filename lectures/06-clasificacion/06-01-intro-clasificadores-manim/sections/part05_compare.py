@@ -78,7 +78,9 @@ class CompareSection:
         self.beat("55–56 min. Conecte con el acto 2: la logística da probabilidades, así que "
                   "podemos MOVER EL UMBRAL. Si el banco teme más al impago, baja el umbral a "
                   "0.2: C (p = 0.27) se detecta, pero E (p = 0.25) se vuelve falsa alarma. "
-                  "Sensibilidad 1, precisión 0.67. Otra vez: nada es gratis.")
+                  "Sensibilidad 1, precisión 0.67. Es una demostración del efecto, "
+                  "no un umbral óptimo elegido sobre prueba. En la práctica se fija "
+                  "con validación antes de evaluar en prueba.")
         lr2 = (p >= 0.2).astype(int)
         cm_l2 = confusion(YTE, lr2)
         m2 = metrics(cm_l2)
@@ -89,8 +91,12 @@ class CompareSection:
                      safe_text("detecta a C… y acusa a E", size=20, color=MUTED)
                      ).arrange(DOWN, buff=0.12).move_to([0.5, -1.55, 0])
         self.play(FadeIn(mid))
-        warn = pill("Con 5 clientes, un solo caso mueve la exactitud 0.20", RED, size=20)
-        warn.move_to([0, -2.85, 0])
+        warn = VGroup(
+            safe_text("Demostración del umbral; se elige con validación", size=25,
+                      color=YELLOW, max_width=12),
+            safe_text("5 casos: un cliente cambia la exactitud en 20 puntos porcentuales",
+                      size=22, color=MUTED, max_width=12),
+        ).arrange(DOWN, buff=0.18).move_to([0, -2.7, 0])
         self.play(FadeIn(warn))
         self.exercise()
 
@@ -99,7 +105,7 @@ class CompareSection:
         pz = 1 / (1 + exp(-z))
         order, dist = knn_order(EX_CLIENT)
         self.beat("56–58 min. Ejercicio en parejas (3 min). Cliente nuevo: ingreso 20, deuda "
-                  "50. (a) 3-NN con las distancias dadas. (b) Logística con pesos redondeados: "
+                  "50. (a) 3-NN con las distancias dadas. (b) Otro modelo, simplificado: "
                   "calcular z y leer p con la tabla de σ. (c) Si resulta que SÍ pagó, ¿en qué "
                   "celda de la matriz cae cada modelo? No revele.")
         self.start("Tu turno", "Clasifica a mano", YELLOW)
@@ -116,7 +122,7 @@ class CompareSection:
                          ["σ(z)", "0.12", "0.27", "0.50", "0.73", "0.88", "0.92", "0.95"]],
                         col_widths=[0.9] + [0.78] * 7, size=19, row_h=0.42)
         right = VGroup(
-            safe_text("(b) pesos redondeados:", size=22, color=MUTED),
+            safe_text("(b) otro modelo, para practicar:", size=24, color=MUTED),
             tex(rf"z = {EX_B:g} {EX_W1:+.2f}\,\text{{ingreso}} {EX_W2:+.2f}\,\text{{deuda}}",
                 size=30, color=PURPLE, max_width=6.2),
             sig_tbl,
@@ -124,8 +130,11 @@ class CompareSection:
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.28).move_to([3.3, 0.35, 0])
         self.play(FadeIn(left))
         self.play(FadeIn(right))
-        timer = pill("3 min · en parejas", YELLOW, size=22).move_to([0, -2.75, 0])
+        timer = pill("Pausa el video y resuelve" if self.video_mode else "3 min · en parejas",
+                     YELLOW, size=24).move_to([0, -2.75, 0])
         self.play(FadeIn(timer))
+        if self.video_mode:
+            self.wait(4)
 
         self.beat("58 min. Solución. (a) 10, 7 y 8: tres «no paga» → no paga. (b) z = −8 − 2 + "
                   "12.5 = 2.5 → p ≈ 0.92 → no paga. (c) Si pagó, ambos cometen un FALSO "
@@ -158,7 +167,8 @@ class CompareSection:
                          ]]).arrange(DOWN, aligned_edge=LEFT, buff=0.34).move_to([0, 0.55, 0])
         self.play(LaggedStart(*[FadeIn(i, shift=RIGHT * 0.1) for i in ideas], lag_ratio=0.25))
         ticket = VGroup(
-            safe_text("Ticket de salida", size=24, color=YELLOW, weight=BOLD),
+            safe_text("Para pensar y comentar" if self.video_mode else "Ticket de salida",
+                      size=24, color=YELLOW, weight=BOLD),
             safe_text("Da un ejemplo donde un falso negativo cueste más que un falso positivo.",
                       size=21, max_width=11),
             safe_text("¿Qué métrica vigilarías y hacia dónde moverías el umbral?", size=21,

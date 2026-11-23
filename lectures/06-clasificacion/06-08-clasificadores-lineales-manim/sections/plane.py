@@ -90,7 +90,7 @@ class Plane(VGroup):
             return VectorizedPoint(self.p(*self.xr[:1], self.yr[0]))
         cls = DashedLine if dashed else Line
         kw = {"dash_length": 0.12} if dashed else {}
-        return cls(self.p(*ends[0]), self.p(*ends[1]), color=color, stroke_width=width, **kw)
+        return cls(self.p(*ends[0]), self.p(*ends[1]), color=color, stroke_width=width, **kw).set_z_index(5)
 
     def half_planes(self, b, w1, w2, opacity: float = 0.14, colors=(ORANGE, BLUE)) -> VGroup:
         """Dos polígonos: región g > 0 (naranja, +1) y g < 0 (azul, −1)."""
@@ -110,7 +110,7 @@ class Plane(VGroup):
                     poly.append((ax + t * (bx - ax), ay + t * (by - ay)))
             if len(poly) >= 3:
                 out.add(Polygon(*[self.p(*q) for q in poly], stroke_width=0,
-                                fill_color=col, fill_opacity=opacity))
+                                fill_color=col, fill_opacity=opacity).set_z_index(-5))
         return out
 
     def foot(self, b, w1, w2, x, y):

@@ -80,7 +80,7 @@ class ConfusionSection:
                   "positivo).")
         self.play(FadeOut(VGroup(ways, q, pos)))
         cm = ConfMatrix(center=(3.6, 0.0, 0), cw=1.85, ch=1.3)
-        self.play(FadeIn(cm.frame()))
+        self.play(FadeIn(cm))
         tokens, anims, used = self._fly(cm, pts, STUMP_T)
         self.play(LaggedStart(*anims, lag_ratio=0.18), run_time=3.2)
         counts = VGroup(*[cm.count_mob(k, used[k]) for k in ("TP", "FN", "FP", "TN")])
@@ -109,57 +109,56 @@ class ConfusionSection:
                   FadeIn(cm.headers[1]))
         self.play(FadeOut(names[2:]), run_time=0.3)
 
-        self.beat("14–16 min. Ahora sin plano. PRECISIÓN se lee en la COLUMNA de la alarma: "
-                  "de las veces que dijimos «no paga», ¿cuántas eran ciertas? 4 de 5. "
-                  "SENSIBILIDAD (recall) se lee en la FILA de los morosos: de los que de "
-                  "verdad no pagaron, ¿a cuántos atrapamos? 4 de 4. Señale con la mano "
-                  "columna y fila antes de la fórmula.")
-        matrix = VGroup(cm, tokens, counts, diag)
-        self.play(FadeOut(VGroup(plane, pts, regions, line, legend, acc_t)),
-                  matrix.animate.move_to([-4.15, 0.3, 0]))
-        head = self.swap_heading(head, "¿Cómo medimos errores?", "Columna, fila, diagonal", RED)
-        col = cm.highlight(["TP", "FP"], PURPLE, buff=0.08)
-        row = cm.highlight(["TP", "FN"], YELLOW, buff=0.14)
-        prec = VGroup(
-            safe_text("Precisión: cuando suena la alarma, ¿acierta?", size=22, max_width=7.4, color=PURPLE,
-                      weight=BOLD),
-            tex(r"\frac{TP}{TP + FP} = \frac{4}{4 + 1} = 0.80", size=36, color=PURPLE),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.18)
-        rec = VGroup(
-            safe_text("Sensibilidad: de los morosos, ¿cuántos detecta?", size=22, max_width=7.4, color=YELLOW,
-                      weight=BOLD),
-            tex(r"\frac{TP}{TP + FN} = \frac{4}{4 + 0} = 1.00", size=36, color=YELLOW),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.18)
-        acc = VGroup(
-            safe_text("Exactitud: aciertos sobre el total (diagonal)", size=22, max_width=7.4, color=GREEN,
-                      weight=BOLD),
-            tex(r"\frac{TP + TN}{n} = \frac{9}{10} = 0.90", size=36, color=GREEN),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.18)
-        stack = VGroup(acc, prec, rec).arrange(DOWN, aligned_edge=LEFT, buff=0.4)
-        stack.move_to([0, -0.3, 0]).align_to([-0.9, 0, 0], LEFT)
-        self.play(FadeIn(acc))
-        self.play(FadeOut(diag), Create(col))
-        self.play(FadeIn(prec, shift=LEFT * 0.1))
-        self.play(Create(row))
-        self.play(FadeIn(rec, shift=LEFT * 0.1))
-
-        self.beat("16–17 min. Un número que resume ambas: F1 es la media armónica; castiga "
-                  "que una de las dos sea baja. No se detenga: lo importante es que cada "
-                  "métrica responde una PREGUNTA distinta del negocio.")
-        f1 = VGroup(
-            safe_text("F1: equilibrio entre ambas", size=24, color=INK, weight=BOLD),
-            tex(r"F_1 = \frac{2\,P\,R}{P + R} = \frac{2(0.80)(1.00)}{1.80} \approx 0.89",
-                size=32, max_width=6.4),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.18)
-        f1.move_to([-4.1, -2.5, 0])
-        self.play(FadeIn(f1, shift=UP * 0.1))
+        matrix = VGroup(cm, tokens, counts)
+        self.remove(cm, cm.boxes, cm.headers, cm.code_labels, tokens, counts)
+        self.add(matrix)
+        self.play(FadeOut(VGroup(plane, pts, regions, line, legend, acc_t, diag)),
+                  matrix.animate.move_to([-3.65, 0.2, 0]))
+        head = self.swap_heading(head, "¿Cómo medimos errores?", "Una pregunta por métrica", RED)
+        views = [
+            ("Exactitud", "¿Cuántos aciertos hubo en total?", ["TP", "TN"], GREEN,
+             r"\frac{TP + TN}{n} = \frac{9}{10} = 0.90",
+             "9 aciertos entre 10 clientes",
+             "La exactitud cuenta los aciertos sobre todos los clientes. Resaltar sólo la diagonal."),
+            ("Precisión", "Cuando suena la alarma, ¿acierta?", ["TP", "FP"], PURPLE,
+             r"\frac{TP}{TP + FP} = \frac{4}{5} = 0.80",
+             "4 alarmas correctas de 5",
+             "La precisión mira la columna de las alarmas: cuatro correctas entre cinco."),
+            ("Sensibilidad", "De los impagos, ¿cuántos detecta?", ["TP", "FN"], YELLOW,
+             r"\frac{TP}{TP + FN} = \frac{4}{4} = 1.00",
+             "Detectamos los 4 impagos",
+             "La sensibilidad mira la fila de los impagos: detectamos cuatro de cuatro. "
+             "Conectar con la alarma del inicio, que no detectaba ninguno."),
+        ]
+        current = highlight = None
+        for name, question, codes, color, formula, meaning, notes in views:
+            self.beat(notes)
+            new = VGroup(
+                safe_text(name, size=38, color=color, weight=BOLD),
+                safe_text(question, size=25, max_width=6.3),
+                tex(formula, size=44, max_width=6.2),
+                safe_text(meaning, size=27, color=color, max_width=6.2),
+            ).arrange(DOWN, aligned_edge=LEFT, buff=0.38).move_to([3.2, 0.15, 0])
+            hi = VGroup(*[cm.highlight([code], color) for code in codes])
+            if current is not None:
+                self.play(FadeOut(current), FadeOut(highlight), run_time=0.3)
+            self.play(FadeIn(new), Create(hi), run_time=0.7)
+            current, highlight = new, hi
+        if not self.video_mode:
+            self.beat("F1 resume precisión y sensibilidad con la media armónica. "
+                      "No incluye verdaderos negativos ni sustituye el costo de los errores.")
+            f1 = VGroup(safe_text("F1: media armónica de P y R", size=28),
+                        tex(r"F_1 = \frac{2PR}{P+R} \approx 0.89", size=44))
+            f1.arrange(DOWN, buff=0.4).move_to(current)
+            self.play(FadeOut(current), FadeOut(highlight), FadeIn(f1))
         self.threshold_tradeoff(head)
 
     # ------------------------------------------------------------------
     def threshold_tradeoff(self, head) -> None:
         self.beat("17–19 min. Si movemos el corte, los clientes cambian de celda. Prediga "
                   "con la clase: si EXIGIMOS más deuda para encender la alarma (subir el "
-                  "corte), ¿qué pasa con la precisión y con la sensibilidad? Avance corte por "
+                  "corte), sonarán menos alarmas. La sensibilidad no aumenta; la precisión "
+                  "depende de cuáles se retiren y no tiene por qué ser monótona. Avance corte por "
                   "corte y deje que lean las barras.")
         self.clear()
         head = self.heading("¿Cómo medimos errores?", "Mover el corte: nada es gratis", RED)
@@ -169,7 +168,7 @@ class ConfusionSection:
         plane, pts, regions, line, legend = self._plane_with_rule(t0)
         cm = ConfMatrix(center=(3.7, 1.05, 0), cw=1.75, ch=0.95, header_size=17, codes=False)
         self.play(FadeIn(plane), FadeIn(regions), FadeIn(line), FadeIn(legend), FadeIn(pts),
-                  FadeIn(cm.frame()))
+                  FadeIn(cm))
         tokens, anims, used = self._fly(cm, pts, t0)
         self.play(LaggedStart(*anims, lag_ratio=0.05), run_time=1.2)
         counts = VGroup(*[cm.count_mob(k, used[k], size=28) for k in ("TP", "FN", "FP", "TN")])
@@ -204,10 +203,11 @@ class ConfusionSection:
                       tr["exactitud"].animate.set_value(m["acc"]),
                       tr["precisión"].animate.set_value(m["prec"]),
                       tr["sensibilidad"].animate.set_value(m["rec"]), run_time=1.2)
-        trade = pill("más exigente: menos falsas alarmas, más morosos escapan", YELLOW,
+        trade = pill("subir el corte: menos alarmas; pueden escapar impagos", YELLOW,
                      size=18, width=6.4).move_to([3.4, -0.5, 0])
         self.play(FadeIn(trade))
-        self.accuracy_paradox()
+        if not self.video_mode:
+            self.accuracy_paradox()
 
     def _targets(self, cm: ConfMatrix, t: float):
         pred = stump_predict(XTR[:, 1], t)

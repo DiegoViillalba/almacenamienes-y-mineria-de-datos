@@ -12,18 +12,18 @@ from pathlib import Path
 
 from manim import *
 
-BG = "#07111F"
-PANEL = "#0D1E34"
-INK = "#F7F7F2"
-MUTED = "#9FB3C8"
-GRID = "#27435D"
-BLUE = "#58C4DD"     # paga
-ORANGE = "#FFB86B"   # no paga (positivo)
-PURPLE = "#B28DFF"   # modelo lineal / puntaje
+BG = "#111827"
+PANEL = "#1B2638"
+INK = "#F3F4F6"
+MUTED = "#B8C4D6"
+GRID = "#64748B"
+BLUE = "#67C7EB"     # paga
+ORANGE = "#F2B56B"   # no paga (positivo)
+PURPLE = "#B8A4E3"   # modelo lineal / puntaje
 PINK = "#F78FB3"
-GREEN = "#6FCF97"    # acierto
-YELLOW = "#F7C948"   # foco, cliente nuevo, pregunta
-RED = "#FF6B6B"      # error
+GREEN = "#85C6A2"    # acierto
+YELLOW = "#E5C76B"   # foco, cliente nuevo, pregunta
+RED = "#ED8A8A"      # error
 
 CLASS_COLOR = {0: BLUE, 1: ORANGE}
 CELL_COLOR = {"TP": GREEN, "TN": GREEN, "FP": RED, "FN": RED}
