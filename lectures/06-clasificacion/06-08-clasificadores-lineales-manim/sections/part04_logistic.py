@@ -222,8 +222,8 @@ class LogisticSection:
         landR = Landscape3D(log_loss_h, LOG_BETA, LOG_LEVELS, GREEN, origin=(cxR, 0.2, 0),
                             scale=0.82, zh=1.7)
         az, lift = ValueTracker(-0.15), ValueTracker(0.0)
-        scL = always_redraw(lambda: landL.draw(az.get_value(), EL, lift.get_value()))
-        scR = always_redraw(lambda: landR.draw(az.get_value(), EL, lift.get_value()))
+        scL = always_redraw(lambda: landL.draw(az.get_value(), EL, lift.get_value(), fine=False))
+        scR = always_redraw(lambda: landR.draw(az.get_value(), EL, lift.get_value(), fine=False))
         self.play(FadeIn(decoL), FadeIn(decoR), Create(axL), Create(axR), FadeIn(tL), FadeIn(tR))
         self.play(LaggedStart(*[Create(e) for e in ellL], lag_ratio=0.1),
                   LaggedStart(*[Create(e) for e in ellR], lag_ratio=0.1), run_time=1.8)
@@ -233,6 +233,8 @@ class LogisticSection:
                   rate_func=smooth)
         scL.clear_updaters()
         scR.clear_updaters()
+        self.remove(scL, scR)
+        self.add(landL.draw(AZ, EL, 1.0), landR.draw(AZ, EL, 1.0))   # malla fina
         self.play(GrowFromCenter(landL.star(AZ, EL)), GrowFromCenter(landR.star(AZ, EL)))
         start = (0.0, 0.0)
         jump = CurvedArrow(axL.c2p(*start), axL.c2p(*OLS_MIN), color=YELLOW, stroke_width=3,
