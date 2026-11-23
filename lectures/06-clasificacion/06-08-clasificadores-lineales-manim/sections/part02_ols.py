@@ -14,6 +14,7 @@ from manim import *
 from sections.data import (HOURS, HX, HYPM, LOSS_B0, LOSS_B1, MASK_ALL, MASK_BASE, MASK_BOX,
                            MASK_FAR, MASK_OLS, MASK_OLS_FAR, OLS0, OLS1, OLS_CUT, OLS_LEVELS,
                            OLS_MIN, OLS_SXX, OLS_SXY, level_curve, n_errors, ols_loss, ols_sse)
+from sections.landscape import AZ, EL, Landscape3D
 from sections.plane import Plane, legend
 from sections.theme import (BLUE, GREEN, GRID, INK, MUTED, ORANGE, PURPLE, RED, YELLOW, card,
                             marker, safe_text, table, tex)
@@ -174,13 +175,23 @@ class OLSSection:
     def bowl(self) -> None:
         self.beat("19")
         head = self.start("¿Por qué hay fórmula?", "La pérdida es un tazón cuadrático", BLUE)
-        ax, deco = param_axes()
+        ax, deco = param_axes(center=(3.5, -2.0, 0), width=5.4, height=1.6)
         ells = contours(ax, ols_loss, OLS_MIN, OLS_LEVELS, BLUE)
-        star = Star(n=5, outer_radius=0.14, color=YELLOW, fill_opacity=1).move_to(
+        star = Star(n=5, outer_radius=0.11, color=YELLOW, fill_opacity=1).move_to(
             ax.c2p(*OLS_MIN))
+        land = Landscape3D(ols_loss, OLS_MIN, OLS_LEVELS, BLUE, origin=(3.5, 0.4, 0),
+                           scale=0.9, zh=1.7)
+        az, lift = ValueTracker(-0.15), ValueTracker(0.0)
+        sc = always_redraw(lambda: land.draw(az.get_value(), EL, lift.get_value()))
         self.play(FadeIn(deco), Create(ax))
         self.play(LaggedStart(*[Create(e) for e in ells], lag_ratio=0.12), run_time=1.6)
         self.play(GrowFromCenter(star))
+        # El mismo mapa, visto como paisaje: las curvas suben a su altura.
+        self.play(FadeIn(sc), run_time=0.8)
+        self.play(lift.animate.set_value(1.0), az.animate.set_value(AZ), run_time=2.6,
+                  rate_func=smooth)
+        sc.clear_updaters()
+        self.play(GrowFromCenter(land.star(AZ, EL)))
         steps = VGroup(
             tex(r"\text{SSE}(\boldsymbol\beta) = \lVert \mathbf{y} - X\boldsymbol\beta\rVert^2",
                 size=32),

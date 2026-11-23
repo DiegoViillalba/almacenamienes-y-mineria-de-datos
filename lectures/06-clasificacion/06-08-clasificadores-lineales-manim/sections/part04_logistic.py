@@ -20,6 +20,7 @@ from sections.data import (GRAD0, HOURS, HX, HY01, LOG0, LOG1, LOG_BETA, LOG_CUT
                            MASK_FAR, MASK_LOG, MASK_LOG_FAR, MASK_OLS_FAR, OLS0, OLS1,
                            OLS_LEVELS, OLS_MIN, SEP_LOSSES, SEP_SLOPES, SEP_Y01, log_loss_h,
                            n_errors, ols_loss)
+from sections.landscape import AZ, EL, Landscape3D
 from sections.part02_ols import contours, param_axes
 from sections.plane import Plane, legend
 from sections.theme import (BLUE, GREEN, GRID, INK, MUTED, ORANGE, PURPLE, RED, YELLOW, card,
@@ -207,23 +208,40 @@ class LogisticSection:
     def landscape(self) -> None:
         self.beat("36")
         self.start("Buscar el fondo del valle", "Un salto contra muchos pasos", GREEN)
-        axL, decoL = param_axes(center=(-3.4, -0.55, 0), width=5.4, height=3.6)
-        axR, decoR = param_axes(center=(3.4, -0.55, 0), width=5.4, height=3.6)
-        tL = safe_text("MCO: tazón cuadrático", size=24, color=BLUE, weight=BOLD).next_to(
-            axL, UP, buff=0.5)
+        cxL, cxR = -3.45, 3.45
+        axL, decoL = param_axes(center=(cxL, -1.75, 0), width=5.4, height=1.5)
+        axR, decoR = param_axes(center=(cxR, -1.75, 0), width=5.4, height=1.5)
+        tL = safe_text("MCO: tazón cuadrático", size=24, color=BLUE, weight=BOLD).move_to(
+            [cxL, 2.0, 0])
         tR = safe_text("Logística: convexa, no cuadrática", size=24, color=GREEN,
-                       weight=BOLD).next_to(axR, UP, buff=0.5)
+                       weight=BOLD).move_to([cxR, 2.0, 0])
         ellL = contours(axL, ols_loss, OLS_MIN, OLS_LEVELS, BLUE)
         ellR = contours(axR, log_loss_h, LOG_BETA, LOG_LEVELS, GREEN)
+        landL = Landscape3D(ols_loss, OLS_MIN, OLS_LEVELS, BLUE, origin=(cxL, 0.2, 0),
+                            scale=0.82, zh=1.7)
+        landR = Landscape3D(log_loss_h, LOG_BETA, LOG_LEVELS, GREEN, origin=(cxR, 0.2, 0),
+                            scale=0.82, zh=1.7)
+        az, lift = ValueTracker(-0.15), ValueTracker(0.0)
+        scL = always_redraw(lambda: landL.draw(az.get_value(), EL, lift.get_value()))
+        scR = always_redraw(lambda: landR.draw(az.get_value(), EL, lift.get_value()))
         self.play(FadeIn(decoL), FadeIn(decoR), Create(axL), Create(axR), FadeIn(tL), FadeIn(tR))
         self.play(LaggedStart(*[Create(e) for e in ellL], lag_ratio=0.1),
                   LaggedStart(*[Create(e) for e in ellR], lag_ratio=0.1), run_time=1.8)
+        # Mismo mapa, visto como paisaje 3D: las curvas de nivel suben a su altura.
+        self.play(FadeIn(scL), FadeIn(scR), run_time=0.8)
+        self.play(lift.animate.set_value(1.0), az.animate.set_value(AZ), run_time=2.6,
+                  rate_func=smooth)
+        scL.clear_updaters()
+        scR.clear_updaters()
+        self.play(GrowFromCenter(landL.star(AZ, EL)), GrowFromCenter(landR.star(AZ, EL)))
         start = (0.0, 0.0)
         jump = CurvedArrow(axL.c2p(*start), axL.c2p(*OLS_MIN), color=YELLOW, stroke_width=3,
-                           angle=0.6, tip_length=0.15)
-        self.play(FadeIn(Dot(axL.c2p(*start), radius=0.07, color=INK)), Create(jump))
+                           angle=0.6, tip_length=0.12)
+        jump3d = landL.path([start, OLS_MIN], AZ, EL, color=YELLOW, width=3.5)
+        self.play(FadeIn(Dot(axL.c2p(*start), radius=0.06, color=INK)), Create(jump),
+                  Create(jump3d))
         sL = safe_text("1 paso (fórmula)", size=22, color=YELLOW, weight=BOLD).next_to(
-            axL, DOWN, buff=0.4)
+            axL, DOWN, buff=0.42)
         self.play(FadeIn(sL))
 
         self.beat("37")
@@ -231,24 +249,28 @@ class LogisticSection:
         sub = gd[np.unique(np.r_[np.arange(0, 60), np.geomspace(60, len(gd) - 1, 80).astype(int)])]
         gd_path = VMobject(stroke_color=MUTED, stroke_width=2.5).set_points_as_corners(
             [axR.c2p(*b) for b in sub])
-        self.play(Create(gd_path), run_time=2.6)
+        gd_path3d = landR.path(sub, AZ, EL, color=MUTED, width=2.5)
+        self.play(Create(gd_path), Create(gd_path3d), run_time=2.6)
         sR1 = safe_text("gradiente: ~3000 pasos", size=20, color=MUTED).next_to(
-            axR, DOWN, buff=0.4).align_to(axR, LEFT)
+            axR, DOWN, buff=0.42).align_to(axR, LEFT)
         self.play(FadeIn(sR1))
         nw = VGroup()
         for a, b in zip(LOG_NEWTON[:4], LOG_NEWTON[1:5]):
             nw.add(Arrow(axR.c2p(*a), axR.c2p(*b), buff=0.02, color=YELLOW, stroke_width=4,
                          max_tip_length_to_length_ratio=0.15))
-        dots = VGroup(*[Dot(axR.c2p(*b), radius=0.06, color=YELLOW) for b in LOG_NEWTON[:5]])
+        dots = VGroup(*[Dot(axR.c2p(*b), radius=0.05, color=YELLOW) for b in LOG_NEWTON[:5]])
+        newton3d = landR.path(LOG_NEWTON[:5], AZ, EL, color=YELLOW, width=3.5)
         self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(d)) for a, d in
                                 zip(nw, dots[1:])], lag_ratio=0.6), FadeIn(dots[0]),
-                  run_time=2.4)
+                  Create(newton3d), run_time=2.4)
         sR2 = safe_text("Newton: 4–5 pasos", size=20, color=YELLOW, weight=BOLD).next_to(
             sR1, RIGHT, buff=0.4)
         self.play(FadeIn(sR2))
         self.beat("38")
-        caveat = safe_text("Aquí: rango completo y sin separación → mínimo único", size=20,
-                           color=MUTED, max_width=12).move_to([0,-3.35,0])
+        caveat = VGroup(
+            safe_text("Aquí: rango completo y sin separación", size=19, color=MUTED),
+            safe_text("→ mínimo único", size=19, color=YELLOW, weight=BOLD),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.08).move_to([4.7, 2.78, 0])
         self.play(FadeIn(caveat))
 
     # ------------------------------------------------------------------
