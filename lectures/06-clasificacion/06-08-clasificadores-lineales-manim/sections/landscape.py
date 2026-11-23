@@ -20,7 +20,10 @@ from sections.plane import View3D
 from sections.theme import GRID, INK, MUTED, PANEL, YELLOW, safe_text, tex
 
 DEEP = "#162022"          # tono del fondo del cuenco
-N_ANG, N_RAD = 80, 10
+LIGHT = np.array([-0.35, -0.55, 0.76])
+LIGHT = LIGHT / np.linalg.norm(LIGHT)   # luz desde arriba y de frente
+N_ANG, N_RAD = 240, 36   # malla fina (cuadro final); la animación usa 1/3 de ella
+STRIDE = 3
 AZ, EL = 0.55, 0.70      # vista final: el valle largo se ve de lado
 
 
@@ -64,8 +67,10 @@ class Landscape3D:
 
     # --- dibujo --------------------------------------------------------
     def draw(self, az: float, el: float, lift: float = 1.0, opacity: float = 1.0,
-             labels: bool = True) -> VGroup:
+             labels: bool = True, fine: bool = True) -> VGroup:
+        """``fine=False`` usa 1/3 de la malla: para animar la cámara con fluidez."""
         v, wx, wy, zh = self.view, self.wx, self.wy, self.zh
+        st = 1 if fine else STRIDE
         g = VGroup()
         corners = [(-wx / 2, -wy / 2), (wx / 2, -wy / 2), (wx / 2, wy / 2), (-wx / 2, wy / 2)]
         g.add(Polygon(*[v(x, y, 0, az, el) for x, y in corners], stroke_color=GRID,
@@ -73,36 +78,42 @@ class Landscape3D:
         items = []
         key = {}
         dark, light = ManimColor(DEEP), ManimColor(self.color)
-        edge = interpolate_color(light, ManimColor(INK), 0.25)
-        for k in range(N_ANG):
-            for j in range(N_RAD):
-                idx = [(k, j), (k + 1, j), (k + 1, j + 1), (k, j + 1)]
-                world, zs, depth = [], [], 0.0
+        for k in range(0, N_ANG, st):
+            for j in range(0, N_RAD, st):
+                idx = [(k, j), (k + st, j), (k + st, j + st), (k, j + st)]
+                world, zs, depth, w3 = [], [], 0.0, []
                 for a, b in idx:
                     x, y = self.wxy(*self.grid[a, b])
                     z = zh * self.zfrac(self.gval[a, b])
                     world.append(v(x, y, z, az, el))
+                    w3.append((x, y, z))
                     zs.append(z / zh)
                     depth += v.depth(x, y, z, az) / 4
+                # Sombreado por orientación: la luz resalta la curvatura del cuenco.
+                n = np.cross(np.subtract(w3[1], w3[0]), np.subtract(w3[3], w3[0])) + \
+                    np.cross(np.subtract(w3[2], w3[1]), np.subtract(w3[2], w3[3]))
+                norm = np.linalg.norm(n)
+                shade = 0.5 if norm < 1e-9 else float(np.clip(abs(n @ LIGHT) / norm, 0, 1))
                 frac = float(np.mean(zs))
-                col = interpolate_color(dark, light, 0.10 + 0.80 * min(frac, 1.0) ** 0.8)
-                items.append((depth, 0, Polygon(*world, stroke_color=edge, stroke_width=0.6,
-                                                stroke_opacity=0.28 * opacity, fill_color=col,
-                                                fill_opacity=0.97 * opacity)))
+                t = (0.10 + 0.78 * min(frac, 1.0) ** 0.8) * (0.55 + 0.75 * shade)
+                col = interpolate_color(dark, light, float(np.clip(t, 0.0, 1.0)))
+                items.append((depth, 0, Polygon(*world, stroke_color=col, stroke_width=0.6,
+                                                stroke_opacity=opacity, fill_color=col,
+                                                fill_opacity=opacity)))
                 key[(k, j)] = depth
         # Curvas de nivel: el tramo k–k+1 del anillo i cae en la celda (k, j)
         radial = [np.linalg.norm(self.rim[k] - self.center) for k in range(N_ANG)]
         light_line = interpolate_color(light, ManimColor(INK), 0.7)
         for lv, ring in zip(self.levels, self.rings):
             zl = lift * zh * self.zfrac(lv)
-            for k in range(N_ANG):
-                p, q = ring[k], ring[(k + 1) % N_ANG]
+            for k in range(0, N_ANG, st):
+                p, q = ring[k], ring[(k + st) % N_ANG]
                 s = np.linalg.norm(p - self.center) / radial[k]
-                j = min(int(s * N_RAD), N_RAD - 1)
+                j = (min(int(s * N_RAD), N_RAD - 1) // st) * st
                 seg = Line(v(*self.wxy(*p), zl, az, el), v(*self.wxy(*q), zl, az, el),
                            stroke_color=light_line, stroke_width=2.6,
-                           stroke_opacity=0.95 * opacity)
-                items.append((key[(k, j)] + 1e-6, 1, seg))
+                           stroke_opacity=opacity)
+                items.append((key[(k, j)] + 0.06, 1, seg))
         for _, _, m in sorted(items, key=lambda t: (t[0], t[1])):
             g.add(m)
         if labels:
@@ -137,6 +148,13 @@ class Landscape3D:
         return Star(n=5, outer_radius=0.13, color=YELLOW, fill_opacity=1).move_to(
             self.point(*self.center, az, el)).set_z_index(30)
 
-    def path(self, pts, az: float, el: float, color=YELLOW, width=3.0) -> VMobject:
-        return VMobject(stroke_color=color, stroke_width=width).set_points_as_corners(
-            [self.point(a, b, az, el) for a, b in pts]).set_z_index(30)
+    def path(self, pts, az: float, el: float, color=YELLOW, width=3.0, dense: int = 24) -> VMobject:
+        """Trayectoria sobre la superficie; cada tramo se densifica para seguir la curvatura."""
+        pts = [np.asarray(p, float) for p in pts]
+        dense_pts = []
+        for p, q in zip(pts[:-1], pts[1:]):
+            for t in np.linspace(0, 1, dense, endpoint=False):
+                dense_pts.append(p + t * (q - p))
+        dense_pts.append(pts[-1])
+        return VMobject(stroke_color=color, stroke_width=width).set_points_smoothly(
+            [self.point(a, b, az, el) for a, b in dense_pts]).set_z_index(30)

@@ -57,7 +57,7 @@ def contours(ax: Axes, f, center, levels, color) -> VGroup:
     b0lo, b0hi = LOSS_B0
     b1lo, b1hi = LOSS_B1
     for k, lv in enumerate(levels):
-        pts = level_curve(f, center, lv)
+        pts = level_curve(f, center, lv, n=480)   # muestreo fino: curvas suaves
         segments = []
         current = []
         for a, b in np.vstack([pts, pts[:1]]):
@@ -182,7 +182,7 @@ class OLSSection:
         land = Landscape3D(ols_loss, OLS_MIN, OLS_LEVELS, BLUE, origin=(3.5, 0.4, 0),
                            scale=0.9, zh=1.7)
         az, lift = ValueTracker(-0.15), ValueTracker(0.0)
-        sc = always_redraw(lambda: land.draw(az.get_value(), EL, lift.get_value()))
+        sc = always_redraw(lambda: land.draw(az.get_value(), EL, lift.get_value(), fine=False))
         self.play(FadeIn(deco), Create(ax))
         self.play(LaggedStart(*[Create(e) for e in ells], lag_ratio=0.12), run_time=1.6)
         self.play(GrowFromCenter(star))
@@ -191,6 +191,8 @@ class OLSSection:
         self.play(lift.animate.set_value(1.0), az.animate.set_value(AZ), run_time=2.6,
                   rate_func=smooth)
         sc.clear_updaters()
+        self.remove(sc)
+        self.add(land.draw(AZ, EL, 1.0))        # malla fina: curvatura suave
         self.play(GrowFromCenter(land.star(AZ, EL)))
         steps = VGroup(
             tex(r"\text{SSE}(\boldsymbol\beta) = \lVert \mathbf{y} - X\boldsymbol\beta\rVert^2",
