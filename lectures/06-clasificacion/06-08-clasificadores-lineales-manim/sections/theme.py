@@ -10,6 +10,7 @@ La forma (círculo/cuadrado) acompaña siempre al color.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from manim import *
@@ -40,14 +41,112 @@ LOGO_PATH = Path(__file__).resolve().parents[3] / "assets" / "Logo_FC_Blanco.png
 # pegadas y otras separadas. Se compone a SUPERSAMPLE veces el tamaño y se
 # reduce, para que el espaciado salga de los métricos reales de la fuente.
 SUPERSAMPLE = 4
+_MATH_K: list = []  # factor para igualar la altura de los dígitos CM con los de DejaVu
+
+_NUM = re.compile(r"(?<![\w²³.])([-−+±]?\d+(?:\.\d+)?)(?![\w²³])")
+_GLYPHS: dict = {}
+_METRICS: dict = {}
+
+
+def _text(content: str, size: float, color: str, weight: str, font: str) -> Text:
+    mob = Text(content, font=font, font_size=size * SUPERSAMPLE, color=color,
+               weight=weight, disable_ligatures=True)
+    return mob.scale(1 / SUPERSAMPLE)
+
+
+def _math_scale() -> float:
+    if not _MATH_K:
+        dj = _text("0", 24, INK, NORMAL, FONT).height
+        cm = MathTex("0", font_size=24).height
+        _MATH_K.append(dj / cm * 1.02)
+    return _MATH_K[0]
+
+
+def _glyph(ch: str, size: float, bold: bool) -> MathTex:
+    """Glifo LaTeX de un dígito o signo; se compila una vez y se copia."""
+    key = (ch, round(size, 2), bold)
+    if key not in _GLYPHS:
+        src = {"−": "-", "±": r"\pm"}.get(ch, ch)
+        if bold and ch.isdigit():
+            src = r"\mathbf{" + src + "}"
+        _GLYPHS[key] = MathTex(src, font_size=size * _math_scale())
+    return _GLYPHS[key].copy()
+
+
+def numeral(content: str, *, size: float = 24, color: str = INK, bold: bool = False) -> VGroup:
+    """Número en LaTeX (dígitos de Computer Modern) armado con glifos cacheados.
+
+    Sirve igual para números fijos y para valores que cambian cada cuadro
+    (``always_redraw``), porque no compila LaTeX nuevo en cada llamada. La
+    línea base queda en y = 0 antes de reubicar el grupo.
+    """
+    h0 = _glyph("0", size, bold).height
+    out = VGroup()
+    x = 0.0
+    for ch in content:
+        g = _glyph(ch, size, bold).set_color(color)
+        sign = ch in "-−+±"
+        cy = 0.40 * h0 if sign else g.height / 2
+        g.move_to([x + g.width / 2, cy, 0])
+        x += g.width + (0.16 if sign else 0.09) * h0
+        out.add(g)
+    return out
+
+
+def _space(size: float, weight: str, font: str) -> float:
+    """Ancho de un espacio a este tamaño."""
+    key = (round(size, 2), weight, font)
+    if key not in _METRICS:
+        _METRICS[key] = (_text("a a", size, INK, weight, font).width
+                         - _text("aa", size, INK, weight, font).width)
+    return _METRICS[key]
 
 
 def safe_text(content: str, *, size: float = 32, color: str = INK,
               weight: str = NORMAL, max_width: float | None = None,
-              font: str = FONT) -> Text:
-    mob = Text(content, font=font, font_size=size * SUPERSAMPLE, color=color,
-               weight=weight, disable_ligatures=True)
-    mob.scale(1 / SUPERSAMPLE)
+              font: str = FONT) -> VMobject:
+    """Texto DejaVu; los números (``3.5``, ``−0.41``, ``1.04``…) se componen en LaTeX."""
+    if _NUM.search(content) is None:
+        mob = _text(content, size, color, weight, font)
+    else:
+        space = _space(size, weight, font)
+        pad = 0.0016 * size   # aire entre un número LaTeX y el texto pegado a él
+        bold = weight == BOLD
+        x = 0.0
+        row = VGroup()
+        prev = None            # tipo de la pieza anterior ("txt" / "num")
+        gap = True             # ¿hubo espacio entre la pieza anterior y la siguiente?
+        for k, part in enumerate(_NUM.split(content)):
+            if k % 2 == 1:
+                kind = "num"
+                mob = numeral(part, size=size, color=color, bold=bold)
+                base = mob.get_bottom()[1]
+                trail = 0
+            else:
+                if not part:
+                    continue
+                lead = len(part) - len(part.lstrip(" "))
+                trail = len(part) - len(part.rstrip(" "))
+                chunk = part.strip(" ")
+                if not chunk:
+                    x += lead * space
+                    gap = True
+                    continue
+                x += lead * space
+                gap = gap or lead > 0
+                kind = "txt"
+                # «x» de referencia: su base es la línea base del texto
+                ref = _text("x" + chunk, size, color, weight, font)
+                base = ref.submobjects[0].get_bottom()[1]
+                mob = VGroup(*ref.submobjects[1:])
+            if prev is not None and prev != kind and not gap:
+                x += pad
+            mob.shift(RIGHT * (x - mob.get_left()[0]) + UP * (0.0 - base))
+            x += mob.width + trail * space
+            gap = trail > 0
+            prev = kind
+            row.add(mob)
+        mob = row.move_to(ORIGIN)
     if max_width is not None and mob.width > max_width:
         mob.scale_to_fit_width(max_width)
     return mob
