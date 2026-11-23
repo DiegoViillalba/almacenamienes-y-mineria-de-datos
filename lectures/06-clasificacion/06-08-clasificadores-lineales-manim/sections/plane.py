@@ -15,8 +15,8 @@ from sections.theme import BLUE, GRID, INK, MUTED, ORANGE, PURPLE, YELLOW, marke
 
 class Plane(VGroup):
     def __init__(self, x_range=(0.0, 10.0), y_range=(0.0, 8.0), *, height: float = 4.8,
-                 center=(-3.0, -0.45, 0), xlabel: str | None = "x₁",
-                 ylabel: str | None = "x₂", tick_step: float | None = 2.0,
+                 center=(-3.0, -0.45, 0), xlabel: str | None = r"$x_1$",
+                 ylabel: str | None = r"$x_2$", tick_step: float | None = 2.0,
                  axis_color: str = GRID):
         super().__init__()
         self.xr, self.yr = tuple(x_range), tuple(y_range)

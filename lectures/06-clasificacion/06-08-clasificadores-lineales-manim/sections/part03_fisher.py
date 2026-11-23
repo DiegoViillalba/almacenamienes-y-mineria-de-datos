@@ -60,7 +60,7 @@ class FisherSection:
         # recta numérica de sombras
         nl = NumberLine(x_range=[-4, 4, 1], length=5.6, color=GRID, include_ticks=False,
                         stroke_width=2).move_to([3.6, 1.35, 0])
-        nl_t = safe_text("sombras  z = uᵀ(x − centro)", size=20, color=TEAL).next_to(nl, UP, buff=0.2)
+        nl_t = safe_text(r"sombras  $z = \mathbf{u}^\top(\mathbf{x} - \text{centro})$", size=20, color=TEAL).next_to(nl, UP, buff=0.2)
 
         def shadow_line():
             d = u()
@@ -81,15 +81,15 @@ class FisherSection:
                    ).move_to([3.6, -1.75, 0])
         jcurve = VMobject(color=PURPLE, stroke_width=3).set_points_smoothly(
             [jax.c2p(a, j) for a, j in zip(ANGLES[::4], J_CURVE[::4])])
-        jlabs = VGroup(safe_text("ángulo θ de la dirección", size=16, color=MUTED).next_to(
+        jlabs = VGroup(safe_text(r"ángulo $\theta$ de la dirección", size=16, color=MUTED).next_to(
             jax, DOWN, buff=0.32),
             tex("J(\\theta)", size=26, color=PURPLE).next_to(jax.y_axis, UP, buff=0.05))
         for a in (0, 90, 180):
-            jlabs.add(safe_text(f"{a}°", size=13, color=MUTED).next_to(jax.c2p(a, 0), DOWN,
+            jlabs.add(safe_text(f"${a}^\\circ$", size=13, color=MUTED).next_to(jax.c2p(a, 0), DOWN,
                                                                       buff=0.05))
         jdot = always_redraw(lambda: Dot(jax.c2p(th.get_value() % 180, fisher_J(u())),
                                          radius=0.08, color=YELLOW))
-        jval = always_redraw(lambda: safe_text(f"J = {fisher_J(u()):.2f}", size=26, color=YELLOW,
+        jval = always_redraw(lambda: safe_text(f"$J =$ {fisher_J(u()):.2f}", size=26, color=YELLOW,
                                                weight=BOLD).move_to([5.6, 0.1, 0]))
         pl = always_redraw(proj_line)
         sh = always_redraw(shadows)

@@ -31,7 +31,7 @@ class KernelSection:
         xl = VGroup(*[safe_text(f"{v}", size=15, color=MUTED).next_to(ax.c2p(v, 0), DOWN,
                                                                      buff=0.1)
                       for v in (-3, -2, -1, 0, 1, 2, 3)],
-                    safe_text("x", size=20, color=MUTED).next_to(ax.c2p(3.5, 0), RIGHT, buff=0.1))
+                    safe_text("$x$", size=20, color=MUTED).next_to(ax.c2p(3.5, 0), RIGHT, buff=0.1))
         pts = VGroup()
         for x, c in LINE1D:
             m = marker(c, r=0.13).move_to(ax.c2p(x, 0))
@@ -62,7 +62,7 @@ class KernelSection:
         self.beat("49")
         self.play(FadeOut(thr), FadeOut(cnt), FadeOut(best))
         self.play(Create(ax.y_axis))
-        yl = safe_text("x²", size=20, color=PINK).next_to(ax.c2p(-3.5, 10), UP, buff=0.08)
+        yl = safe_text("$x^2$", size=20, color=PINK).next_to(ax.c2p(-3.5, 10), UP, buff=0.08)
         par = ax.plot(lambda x: x * x, x_range=[-3.16, 3.16], color=PINK, stroke_width=2,
                       stroke_opacity=0.5)
         self.play(FadeIn(yl), Create(par))
@@ -79,7 +79,7 @@ class KernelSection:
             tex(r"\varphi(x) = (x,\ x^2)", size=36, color=PINK),
             tex(r"f(x) = w_1 x + w_2 x^2 + b", size=36, color=PURPLE),
             tex(r"\mathbf{w} = (0,\ -1),\ b = 2", size=30, color=MUTED),
-            safe_text("una recta en el espacio (x, x²)", size=22, color=YELLOW, weight=BOLD),
+            safe_text(r"una recta en el espacio $(x,\ x^2)$", size=22, color=YELLOW, weight=BOLD),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.28).move_to([3.6, 0.8, 0])
         self.play(LaggedStart(*[Write(e) for e in eq], lag_ratio=0.35), run_time=2.4)
 
@@ -97,7 +97,7 @@ class KernelSection:
         self.add(band)
         self.bring_to_front(pts)
         self.play(FadeIn(band), FadeIn(roots))
-        rem = safe_text("curva en x, recta en φ(x)", size=24, color=PINK,
+        rem = safe_text(r"curva en $x$, recta en $\varphi(x)$", size=24, color=PINK,
                         weight=BOLD).next_to(eq, DOWN, buff=0.45).align_to(eq, LEFT)
         self.play(FadeIn(rem))
         self.ring()
@@ -160,7 +160,7 @@ class KernelSection:
         self.play(cut_on.animate.set_value(1.0), run_time=1.0)
         self.play(az.animate.set_value(0.6), run_time=2.6)
         lin = VGroup(tex(r"x_3 = 1.8", size=32, color=YELLOW),
-                     safe_text("un plano en el espacio φ", size=22, color=YELLOW, weight=BOLD)
+                     safe_text(r"un plano en el espacio $\varphi$", size=22, color=YELLOW, weight=BOLD)
                      ).arrange(DOWN, aligned_edge=LEFT, buff=0.15).next_to(txt, DOWN, buff=0.45)
         lin.align_to(txt, LEFT)
         self.play(FadeIn(lin))
@@ -202,9 +202,9 @@ class KernelSection:
                 size=34, color=PINK),
             tex(r"f(\mathbf{x}) = \sum_{i=1}^{n} \alpha_i\, K(\mathbf{x}_i, \mathbf{x}) + b",
                 size=34, color=PURPLE),
-            safe_text("las αᵢ entran linealmente", size=24, color=YELLOW, weight=BOLD),
-            safe_text("K(xᵢ, x): «parecido» con el punto i", size=22, color=MUTED),
-            safe_text("RBF: φ con infinitas coordenadas", size=20, color=MUTED, max_width=5.4),
+            safe_text(r"las $\alpha_i$ entran linealmente", size=24, color=YELLOW, weight=BOLD),
+            safe_text(r"$K(x_i, x)$: «parecido» con el punto $i$", size=22, color=MUTED),
+            safe_text(r"RBF: $\varphi$ con infinitas coordenadas", size=20, color=MUTED, max_width=5.4),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to([3.5, -0.3, 0])
         frame = card(6.4, 4.4, PINK).move_to(right)
         self.beat("56")
@@ -242,7 +242,7 @@ class KernelSection:
         bm.clear_updaters()
         al = tex(r"\boldsymbol\alpha = (K + \lambda I)^{-1}\mathbf{y}", size=32,
                  color=YELLOW).next_to(k_eq, DOWN, buff=0.35)
-        al2 = safe_text("kernel ridge · λ = 0.3 · sin intercepto", size=20, color=MUTED).next_to(
+        al2 = safe_text(r"kernel ridge · $\lambda = 0.3$ · sin intercepto", size=20, color=MUTED).next_to(
             al, DOWN, buff=0.15)
         self.play(Write(al), FadeIn(al2))
         self.beat("58")
@@ -275,7 +275,7 @@ class KernelSection:
         sum_eq = VGroup(
             tex(r"f(x) = \sum_i \alpha_i K(x_i, x)", size=32, color=PURPLE),
             tex(r"\hat y = \operatorname{signo} f(x)", size=32, color=YELLOW),
-            safe_text("lineal en α · hiperplano en φ", size=22, color=PINK, weight=BOLD,
+            safe_text(r"lineal en $\alpha$ · hiperplano en $\varphi$", size=22, color=PINK, weight=BOLD,
                       max_width=4.8),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.22).next_to(al2, DOWN, buff=0.4)
         sum_eq.align_to(al, LEFT)

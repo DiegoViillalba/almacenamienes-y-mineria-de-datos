@@ -100,7 +100,7 @@ class LogisticSection:
         self.play(Write(form[0]), Write(form[1]))
         self.beat("31")
         self.play(Write(form[2]), Write(form[3]))
-        lin = safe_text("dentro de σ: lo mismo de siempre", size=22, color=PURPLE,
+        lin = safe_text(r"dentro de $\sigma$: lo mismo de siempre", size=22, color=PURPLE,
                         weight=BOLD).next_to(form, DOWN, buff=0.35).align_to(form, LEFT)
         self.play(FadeIn(lin))
         self.log_ax, self.log_marks, self.log_curve = ax, marks, line
@@ -131,7 +131,7 @@ class LogisticSection:
         bx = Axes(x_range=[0, 7, 1], y_range=[0, 3.2, 1], x_length=5.0, y_length=3.0, tips=False,
                   axis_config={"color": GRID, "stroke_width": 2, "include_ticks": False}
                   ).move_to([3.9, -0.6, 0])
-        bx_t = safe_text("multa de cada estudiante: −log p(lo observado)", size=18,
+        bx_t = safe_text(r"multa de cada estudiante: $-\log p(\text{lo observado})$", size=18,
                          color=MUTED).next_to(bx, UP, buff=0.15)
 
         def losses():
@@ -159,7 +159,7 @@ class LogisticSection:
             f"pérdida promedio = {np.mean(losses()):.3f}", size=26, color=RED,
             weight=BOLD).next_to(bx, DOWN, buff=0.45))
         beta_t = always_redraw(lambda: safe_text(
-            f"β = ({b0.get_value():.2f}, {b1.get_value():.2f})", size=28, color=PURPLE,
+            f"$\\beta =$ ({b0.get_value():.2f}, {b1.get_value():.2f})", size=28, color=PURPLE,
             weight=BOLD).move_to([3.9, 2.0, 0]))
         self.play(Create(bx), FadeIn(bx_t), FadeIn(hl), FadeIn(br), FadeIn(tot), FadeIn(beta_t))
         self.beat("33")
@@ -181,7 +181,7 @@ class LogisticSection:
             tex(r"X^\top\big(X\boldsymbol\beta - \mathbf{y}\big) = \mathbf{0}", size=38),
             tex(r"\Downarrow", size=36, color=MUTED),
             tex(r"\boldsymbol\beta = (X^\top X)^{-1}X^\top\mathbf{y}", size=36, color=BLUE),
-            safe_text("lineal en β: se despeja", size=24, color=GREEN, weight=BOLD),
+            safe_text(r"lineal en $\beta$: se despeja", size=24, color=GREEN, weight=BOLD),
         ).arrange(DOWN, buff=0.32)
         right = VGroup(
             safe_text("Regresión logística", size=28, color=GREEN, weight=BOLD),
@@ -189,7 +189,7 @@ class LogisticSection:
             tex(r"\Downarrow", size=36, color=MUTED),
             tex(r"\sum_i \Big(\frac{1}{1+e^{-\boldsymbol\beta^\top\mathbf{x}_i}} - y_i\Big)"
                 r"\mathbf{x}_i = \mathbf{0}", size=32),
-            safe_text("no lineal en β: sin fórmula cerrada general", size=24, color=RED, weight=BOLD, max_width=5.5),
+            safe_text(r"no lineal en $\beta$: sin fórmula cerrada general", size=24, color=RED, weight=BOLD, max_width=5.5),
         ).arrange(DOWN, buff=0.32)
         cards = VGroup(card(6.2, 4.6, BLUE), card(6.2, 4.6, GREEN)).arrange(RIGHT, buff=0.4)
         cards.move_to([0, -0.55, 0])
@@ -296,7 +296,7 @@ class LogisticSection:
             return float(-np.mean(SEP_Y01 * np.log(p) + (1 - SEP_Y01) * np.log(1 - p)))
 
         read = always_redraw(lambda: VGroup(
-            safe_text(f"β₁ = {s.get_value():.1f}", size=30, color=PURPLE, weight=BOLD),
+            safe_text(f"$\\beta_1 =$ {s.get_value():.1f}", size=30, color=PURPLE, weight=BOLD),
             safe_text(f"pérdida = {loss_now():.3f}", size=30, color=RED, weight=BOLD),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.2).move_to([2.2, 1.2, 0], aligned_edge=LEFT))
         self.play(Create(curve), FadeIn(read))
@@ -305,7 +305,7 @@ class LogisticSection:
         for m in (curve, read):
             m.clear_updaters()
         fix = VGroup(
-            safe_text("‖β‖ → ∞,  pérdida → 0: sin mínimo finito", size=24, color=RED, weight=BOLD),
+            safe_text(r"$\lVert\boldsymbol\beta\rVert \to \infty$,  pérdida $\to 0$: sin mínimo finito", size=24, color=RED, weight=BOLD),
             tex(r"\mathcal{L}(\boldsymbol\beta) + \frac{\lambda}{2}\lVert\mathbf{w}\rVert^2", size=34,
                 color=GREEN),
             safe_text("la penalización detiene el crecimiento", size=22, color=MUTED),
@@ -349,7 +349,7 @@ class LogisticSection:
         self.play(LaggedStart(*[FadeIn(i) for i in info], lag_ratio=0.3))
         self.beat("41")
         caveat = VGroup(
-            safe_text("Ambos ajustes: L2, λ = 0.01",size=23,color=MUTED),
+            safe_text(r"Ambos ajustes: $L_2$, $\lambda = 0.01$",size=23,color=MUTED),
             safe_text("No es robustez general ante atípicos",size=20,color=MUTED,max_width=4.7),
         ).arrange(DOWN,aligned_edge=LEFT,buff=0.16).next_to(info,DOWN,buff=0.3).align_to(info,LEFT)
         self.play(FadeIn(caveat))

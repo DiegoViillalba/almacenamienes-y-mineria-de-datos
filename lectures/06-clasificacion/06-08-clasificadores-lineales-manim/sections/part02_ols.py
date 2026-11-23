@@ -122,7 +122,7 @@ class OLSSection:
         line = always_redraw(fitted)
         sqs = always_redraw(squares)
         sse = always_redraw(lambda: safe_text(
-            f"SSE = {ols_sse(b0.get_value(), b1.get_value()):.2f}", size=30, color=RED,
+            f"$\\mathrm{{SSE}} =$ {ols_sse(b0.get_value(), b1.get_value()):.2f}", size=30, color=RED,
             weight=BOLD).move_to([3.9, 1.5, 0]))
         self.add(sqs, line)
         self.bring_to_front(marks)
@@ -147,10 +147,10 @@ class OLSSection:
         self.beat("16")
         self.play(FadeOut(eq), FadeOut(rule), FadeOut(sse))
         dx = HX - HX.mean()
-        rows = [["x", *[f"{h:g}" for h in HX]],
-                ["x − x̄", *[f"{v:+.1f}" for v in dx]],
-                ["y", *[f"{v:+.0f}" for v in HYPM]],
-                ["(x − x̄)·y", *[f"{v:+.1f}" for v in dx * HYPM]]]
+        rows = [["$x$", *[f"{h:g}" for h in HX]],
+                [r"$x - \bar{x}$", *[f"{v:+.1f}" for v in dx]],
+                ["$y$", *[f"{v:+.0f}" for v in HYPM]],
+                [r"$(x - \bar{x})\,y$", *[f"{v:+.1f}" for v in dx * HYPM]]]
         tbl = table(rows, col_widths=[1.5] + [0.68] * 6, size=18, row_h=0.42)
         tbl.move_to([3.6, 1.3, 0])
         calc = VGroup(
@@ -204,7 +204,7 @@ class OLSSection:
             tex(r"\hat{\boldsymbol\beta} = (X^\top X)^{-1}X^\top\mathbf{y} = (-1.4,\ 0.4)",
                 size=30, color=PURPLE, max_width=6.0),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to([-3.4, -0.4, 0])
-        lin = safe_text("lineal en β", size=20, color=YELLOW, weight=BOLD).move_to([-3.4, 1.7, 0])
+        lin = safe_text(r"lineal en $\beta$", size=20, color=YELLOW, weight=BOLD).move_to([-3.4, 1.7, 0])
         self.play(Write(steps[0]))
         self.play(Write(steps[1]), FadeIn(lin))
         self.play(Write(steps[2]))
@@ -212,7 +212,7 @@ class OLSSection:
         self.play(FadeOut(steps[:2]), FadeOut(lin))
         self.play(Write(steps[3]))
         self.play(Write(steps[4]))
-        rank = safe_text("Inversa: sólo si X tiene rango completo", size=21, color=MUTED,
+        rank = safe_text("Inversa: sólo si $X$ tiene rango completo", size=21, color=MUTED,
                          max_width=6.0).next_to(steps[4], DOWN, buff=0.25)
         self.play(FadeIn(rank))
 

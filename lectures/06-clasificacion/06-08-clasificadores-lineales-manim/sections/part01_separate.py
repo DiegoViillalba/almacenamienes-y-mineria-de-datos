@@ -162,9 +162,9 @@ class SeparateSection:
         eq = tex(r"g(\mathbf{x}) = \mathbf{w}^\top\mathbf{x} + b", size=44).move_to(
             [RIGHT_X, 1.7, 0])
         facts = VGroup(
-            safe_text("w ⟂ frontera, apunta a +1", size=24, color=PURPLE),
-            safe_text("con w fijo, b desplaza", size=24, color=YELLOW),
-            safe_text("frontera:  g(x) = 0", size=24, color=YELLOW),
+            safe_text(r"$\mathbf{w}\perp$ frontera, apunta a +1", size=24, color=PURPLE),
+            safe_text(r"con $\mathbf{w}$ fijo, $b$ desplaza", size=24, color=YELLOW),
+            safe_text(r"frontera:  $g(\mathbf{x}) = 0$", size=24, color=YELLOW),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.22).next_to(eq, DOWN, buff=0.45)
         self.play(Write(eq), FadeIn(facts[0]))
         self.play(ang.animate.set_value(15), run_time=1.3)
@@ -205,19 +205,19 @@ class SeparateSection:
         hyp = tex(r"\{\mathbf{x}\in\mathbb{R}^d : \mathbf{w}^\top\mathbf{x} + b = 0\}", size=34,
                   color=YELLOW).next_to(rule, DOWN, buff=0.35)
         dims = VGroup()
-        for d, txt in [(1, "d = 1: un punto"), (2, "d = 2: una recta"), (3, "d = 3: un plano")]:
+        for d, txt in [(1, "$d = 1$: un punto"), (2, "$d = 2$: una recta"), (3, "$d = 3$: un plano")]:
             ic = self._dim_icon(d)
             lab = safe_text(txt, size=22, color=MUTED)
             dims.add(VGroup(ic, lab).arrange(RIGHT, buff=0.3))
         dims.arrange(DOWN, aligned_edge=LEFT, buff=0.26).next_to(hyp, DOWN, buff=0.4)
-        gen = safe_text("d variables: hiperplano de dimensión d − 1", size=22, color=YELLOW,
+        gen = safe_text("$d$ variables: hiperplano de dimensión $d - 1$", size=22, color=YELLOW,
                         weight=BOLD, max_width=5.6).next_to(dims, DOWN, buff=0.3).align_to(dims, LEFT)
         self.play(Write(rule))
         self.beat("09")
         self.play(Write(hyp))
         self.play(LaggedStart(*[FadeIn(r) for r in dims], lag_ratio=0.2))
         self.play(FadeIn(gen))
-        assumption = safe_text("w ≠ 0 · en g = 0, fijar el desempate", size=20, color=MUTED,
+        assumption = safe_text(r"$\mathbf{w}\neq\mathbf{0}$ · en $g = 0$, fijar el desempate", size=20, color=MUTED,
                                max_width=5.8).next_to(gen, DOWN, buff=0.22)
         self.play(FadeIn(assumption))
         # Keep the right column inside the safe frame without scaling the graph.
@@ -250,11 +250,11 @@ class SeparateSection:
                                  "Cada error empuja la recta", ORANGE)
         self.play(FadeOut(self.geo_objs), FadeOut(self.geo_text))
         rule = VGroup(
-            safe_text("Si y·g(x) ≤ 0: corregir", size=24, color=MUTED),
+            safe_text(r"Si $y\,g(\mathbf{x}) \le 0$: corregir", size=24, color=MUTED),
             tex(r"\mathbf{w} \leftarrow \mathbf{w} + \eta\, y\, \mathbf{x}", size=38,
                 color=PURPLE),
             tex(r"b \leftarrow b + \eta\, y", size=38, color=YELLOW),
-            safe_text(f"η = {PERC_ETA}", size=22, color=MUTED),
+            safe_text(f"$\\eta = {PERC_ETA}$", size=22, color=MUTED),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.2).move_to([RIGHT_X, 1.2, 0])
         _, w, b = PERC[0]
         bt, wt1, wt2 = ValueTracker(b), ValueTracker(w[0]), ValueTracker(w[1])

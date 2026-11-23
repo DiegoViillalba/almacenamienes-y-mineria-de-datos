@@ -83,7 +83,7 @@ class MultiSection:
         eqs = VGroup(
             tex(r"\sigma(\mathbf{w}^\top\mathbf{x} + b) = p", size=36, color=GREEN),
             tex(r"\iff \mathbf{w}^\top\mathbf{x} + b = \log\frac{p}{1-p}", size=36, color=PURPLE),
-            safe_text("mismo w, distinta constante → paralelas", size=22, color=YELLOW,
+            safe_text(r"mismo $\mathbf{w}$, distinta constante $\to$ paralelas", size=22, color=YELLOW,
                       weight=BOLD),
             tex(rf"\hat b = {b:.2f},\ \ \hat{{\mathbf{{w}}}} = ({w1:.2f},\ {w2:.2f})", size=28,
                 color=MUTED),
@@ -122,7 +122,7 @@ class MultiSection:
                                             "include_ticks": False}).move_to([3.7, -0.4, 0])
         zl = VGroup(tex(r"z = \mathbf{w}^\top\mathbf{x} + b", size=26, color=PURPLE).next_to(
             zax, DOWN, buff=0.15),
-            safe_text("p", size=20, color=MUTED).next_to(zax.c2p(-7, 1), LEFT, buff=0.1),
+            safe_text("$p$", size=20, color=MUTED).next_to(zax.c2p(-7, 1), LEFT, buff=0.1),
 )
         guides = VGroup(*[DashedLine(zax.c2p(-7, v), zax.c2p(7, v), color=GRID, stroke_width=1.5,
                                      dash_length=0.08) for v in (0, 1)])
@@ -140,7 +140,7 @@ class MultiSection:
         zero = DashedLine(zax.c2p(0, -0.15), zax.c2p(0, 1.15), color=YELLOW, stroke_width=3,
                           dash_length=0.08)
         self.play(Create(sg), Create(zero))
-        msg = safe_text("2 variables → 1 número z → σ(z)", size=24, color=YELLOW,
+        msg = safe_text(r"2 variables $\to$ 1 número $z \to \sigma(z)$", size=24, color=YELLOW,
                         weight=BOLD).next_to(zax, UP, buff=0.25)
         self.play(FadeIn(msg))
         self.bring_to_front(copies)
@@ -163,7 +163,7 @@ class MultiSection:
             pts = sorted(CUBE_PTS, key=lambda q: view.depth(q[0], q[1], q[2], az=a))
             for x, y, z, c in pts:
                 g.add(marker(c, r=0.085).move_to(view(x, y, z, az=a)))
-            for lab, p in [("x₁", (4.6, 0, 0)), ("x₂", (0, 4.7, 0)), ("x₃", (0, 0, 4.6))]:
+            for lab, p in [("$x_1$", (4.6, 0, 0)), ("$x_2$", (0, 4.7, 0)), ("$x_3$", (0, 0, 4.6))]:
                 g.add(safe_text(lab, size=18, color=MUTED).move_to(view(*p, az=a)))
             return g
 
@@ -175,10 +175,10 @@ class MultiSection:
         rows = VGroup(
             tex(r"p = \sigma(w_1x_1 + w_2x_2 + w_3x_3 + b)", size=32, color=GREEN),
             tex(r"\text{frontera: } \mathbf{w}^\top\mathbf{x} + b = 0", size=32, color=YELLOW),
-            safe_text("2 variables → recta", size=22, color=MUTED),
-            safe_text("3 variables → plano", size=22, color=MUTED),
-            safe_text("d variables → hiperplano (d − 1)", size=22, color=YELLOW, weight=BOLD),
-            safe_text("Sin importar d, la cuenta es la misma:", size=22, color=MUTED),
+            safe_text(r"2 variables $\to$ recta", size=22, color=MUTED),
+            safe_text(r"3 variables $\to$ plano", size=22, color=MUTED),
+            safe_text(r"$d$ variables $\to$ hiperplano $(d - 1)$", size=22, color=YELLOW, weight=BOLD),
+            safe_text("Sin importar $d$, la cuenta es la misma:", size=22, color=MUTED),
             safe_text("un producto punto y una sigmoide.", size=22, color=MUTED),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.22).move_to([3.5, -0.3, 0])
         self.play(LaggedStart(*[FadeIn(r) for r in rows], lag_ratio=0.2), run_time=2.2)

@@ -102,43 +102,62 @@ def _space(size: float, weight: str, font: str) -> float:
     return _METRICS[key]
 
 
+def _math_piece(src: str, size: float, color: str):
+    """Fragmento LaTeX con su línea base: «x» de referencia + el fragmento."""
+    mob = MathTex("x", src, font_size=size * _math_scale() * 0.92, color=color)
+    return VGroup(*mob.submobjects[1:]), mob.submobjects[0].get_bottom()[1]
+
+
 def safe_text(content: str, *, size: float = 32, color: str = INK,
               weight: str = NORMAL, max_width: float | None = None,
               font: str = FONT) -> VMobject:
-    """Texto DejaVu; los números (``3.5``, ``−0.41``, ``1.04``…) se componen en LaTeX."""
-    if _NUM.search(content) is None:
+    """Texto DejaVu con matemáticas en LaTeX.
+
+    - Lo que va entre ``$…$`` es LaTeX (variables, ejes, expresiones).
+    - Los números sueltos (``3.5``, ``−0.41``, ``1.04``…) también se componen
+      en LaTeX con glifos cacheados, de modo que valen para valores que cambian
+      cada cuadro. Los títulos y conceptos quedan en la fuente normal.
+    """
+    if "$" not in content and _NUM.search(content) is None:
         mob = _text(content, size, color, weight, font)
     else:
+        tokens = []
+        for k, seg in enumerate(content.split("$")):
+            if k % 2 == 1:
+                if seg.strip():
+                    tokens.append(("math", seg))
+            else:
+                for j, part in enumerate(_NUM.split(seg)):
+                    if j % 2 == 1:
+                        tokens.append(("num", part))
+                    elif part:
+                        tokens.append(("txt", part))
         space = _space(size, weight, font)
-        pad = 0.0016 * size   # aire entre un número LaTeX y el texto pegado a él
+        pad = 0.0016 * size    # aire entre fragmentos de distinto tipo pegados
         bold = weight == BOLD
         x = 0.0
         row = VGroup()
-        prev = None            # tipo de la pieza anterior ("txt" / "num")
-        gap = True             # ¿hubo espacio entre la pieza anterior y la siguiente?
-        for k, part in enumerate(_NUM.split(content)):
-            if k % 2 == 1:
-                kind = "num"
-                mob = numeral(part, size=size, color=color, bold=bold)
-                base = mob.get_bottom()[1]
-                trail = 0
-            else:
-                if not part:
-                    continue
-                lead = len(part) - len(part.lstrip(" "))
-                trail = len(part) - len(part.rstrip(" "))
-                chunk = part.strip(" ")
-                if not chunk:
-                    x += lead * space
-                    gap = True
-                    continue
+        prev = None
+        gap = True
+        for kind, val in tokens:
+            trail = 0
+            if kind == "txt":
+                lead = len(val) - len(val.lstrip(" "))
+                trail = len(val) - len(val.rstrip(" "))
+                chunk = val.strip(" ")
                 x += lead * space
                 gap = gap or lead > 0
-                kind = "txt"
-                # «x» de referencia: su base es la línea base del texto
+                if not chunk:
+                    gap = True
+                    continue
                 ref = _text("x" + chunk, size, color, weight, font)
                 base = ref.submobjects[0].get_bottom()[1]
                 mob = VGroup(*ref.submobjects[1:])
+            elif kind == "num":
+                mob = numeral(val, size=size, color=color, bold=bold)
+                base = mob.get_bottom()[1]
+            else:
+                mob, base = _math_piece(val, size, color)
             if prev is not None and prev != kind and not gap:
                 x += pad
             mob.shift(RIGHT * (x - mob.get_left()[0]) + UP * (0.0 - base))
