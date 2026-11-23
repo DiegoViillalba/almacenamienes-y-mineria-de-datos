@@ -2,7 +2,7 @@
 
 La recta de MCO con y ∈ {0, 1} se sale de [0, 1]; se dobla en una sigmoide.
 La frontera p = ½ es z = 0: sigue siendo lineal. La pérdida −log p se ve como
-barras que se encogen mientras β recorre los pasos de Newton. Comparación de
+barras cuyo promedio baja mientras β recorre los pasos de Newton. Comparación de
 gradientes: en MCO β aparece lineal; en la logística, dentro de σ → no se
 puede despejar. Curvas de nivel: elipses contra curvas deformadas, un salto
 contra pasos. Separabilidad perfecta y, al final, los puntos lejanos ya no
@@ -20,6 +20,7 @@ from sections.data import (GRAD0, HOURS, HX, HY01, LOG0, LOG1, LOG_BETA, LOG_CUT
                            MASK_FAR, MASK_LOG, MASK_LOG_FAR, MASK_OLS_FAR, OLS0, OLS1,
                            OLS_LEVELS, OLS_MIN, SEP_LOSSES, SEP_SLOPES, SEP_Y01, log_loss_h,
                            n_errors, ols_loss)
+from sections.landscape import AZ, EL, Landscape3D
 from sections.part02_ols import contours, param_axes
 from sections.plane import Plane, legend
 from sections.theme import (BLUE, GREEN, GRID, INK, MUTED, ORANGE, PURPLE, RED, YELLOW, card,
@@ -56,10 +57,7 @@ class LogisticSection:
         return out
 
     def logistic(self) -> None:
-        self.beat("25–26 min. Volvemos a los seis estudiantes, ahora con y ∈ {0, 1} para leer "
-                  "probabilidades. La recta de MCO da −0.2 y 1.2 en los extremos: no son "
-                  "probabilidades. Pregunte: ¿cómo deformarían la recta para que nunca salga "
-                  "de [0, 1] y conserve el orden?")
+        self.beat("29")
         head = self.start("Regresión logística", "Doblar la recta para leer probabilidades",
                           GREEN)
         ax, labs, guides = prob_axes()
@@ -82,10 +80,7 @@ class LogisticSection:
                    ).arrange(DOWN, aligned_edge=LEFT, buff=0.14).move_to([3.7, 1.2, 0])
         self.play(FadeIn(q))
 
-        self.beat("26–28 min. La recta se dobla en una sigmoide: p = σ(β₀ + β₁x). Lo que entra "
-                  "a σ, z = β₀ + β₁x, ¡es la misma expresión lineal de antes! σ sólo aplasta el "
-                  "puntaje. La frontera p = 0.5 ocurre en z = 0, es decir en x = 3.5 h: un "
-                  "punto, el hiperplano de dimensión 0. La logística es un clasificador lineal.")
+        self.beat("30")
         curve = ax.plot(lambda x: sig(LOG0 + LOG1 * x), x_range=[0, 7], color=GREEN,
                         stroke_width=5)
         self.play(FadeOut(outs), FadeOut(q), Transform(line, curve), run_time=1.8)
@@ -102,7 +97,9 @@ class LogisticSection:
             tex(r"p = \tfrac12 \iff z = 0", size=34, color=YELLOW),
             tex(rf"\hat\beta = ({LOG0:.2f},\ {LOG1:.2f})", size=30),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to([1.6, 0.6, 0], aligned_edge=LEFT)
-        self.play(LaggedStart(*[Write(f) for f in form], lag_ratio=0.35), run_time=2.4)
+        self.play(Write(form[0]), Write(form[1]))
+        self.beat("31")
+        self.play(Write(form[2]), Write(form[3]))
         lin = safe_text("dentro de σ: lo mismo de siempre", size=22, color=PURPLE,
                         weight=BOLD).next_to(form, DOWN, buff=0.35).align_to(form, LEFT)
         self.play(FadeIn(lin))
@@ -119,10 +116,7 @@ class LogisticSection:
     # ------------------------------------------------------------------
     def loss_bars(self) -> None:
         ax, marks = self.log_ax, self.log_marks
-        self.beat("28–30 min. ¿Cómo se eligen β₀ y β₁? Cada estudiante paga una multa −log p de "
-                  "lo que realmente pasó: si aprobó, −log p; si no, −log(1 − p). Con β = 0 todos "
-                  "reciben p = 0.5 y pagan 0.693. Ahora β avanza por los pasos de Newton: la "
-                  "curva se ajusta y las barras rojas se encogen hasta 0.413 de promedio.")
+        self.beat("32")
         head = self.swap_heading(self.log_head, "Máxima verosimilitud",
                                  "Cada punto paga −log de su probabilidad", GREEN)
         self.log_head = head
@@ -168,6 +162,7 @@ class LogisticSection:
             f"β = ({b0.get_value():.2f}, {b1.get_value():.2f})", size=28, color=PURPLE,
             weight=BOLD).move_to([3.9, 2.0, 0]))
         self.play(Create(bx), FadeIn(bx_t), FadeIn(hl), FadeIn(br), FadeIn(tot), FadeIn(beta_t))
+        self.beat("33")
         for beta in LOG_NEWTON[1:5]:
             self.play(b0.animate.set_value(float(beta[0])), b1.animate.set_value(float(beta[1])),
                       run_time=1.3)
@@ -179,11 +174,7 @@ class LogisticSection:
 
     # ------------------------------------------------------------------
     def no_formula(self) -> None:
-        self.beat("30–32 min. Momento clave. Ponga lado a lado las dos condiciones de óptimo. "
-                  "En MCO, β aparece multiplicando: es un sistema lineal y se despeja. En la "
-                  "logística, β está DENTRO de σ, sumado en seis exponenciales distintas: no hay "
-                  "álgebra que lo despeje. Pregunte: ¿cómo resolverían x + eˣ = 3? (Probando: "
-                  "iterar.)")
+        self.beat("34")
         self.start("¿Por qué no hay fórmula?", "β queda atrapado dentro de σ", GREEN)
         left = VGroup(
             safe_text("Mínimos cuadrados", size=28, color=BLUE, weight=BOLD),
@@ -198,7 +189,7 @@ class LogisticSection:
             tex(r"\Downarrow", size=36, color=MUTED),
             tex(r"\sum_i \Big(\frac{1}{1+e^{-\boldsymbol\beta^\top\mathbf{x}_i}} - y_i\Big)"
                 r"\mathbf{x}_i = \mathbf{0}", size=32),
-            safe_text("no lineal en β: no se despeja", size=24, color=RED, weight=BOLD),
+            safe_text("no lineal en β: sin fórmula cerrada general", size=24, color=RED, weight=BOLD, max_width=5.5),
         ).arrange(DOWN, buff=0.32)
         cards = VGroup(card(6.2, 4.6, BLUE), card(6.2, 4.6, GREEN)).arrange(RIGHT, buff=0.4)
         cards.move_to([0, -0.55, 0])
@@ -209,65 +200,84 @@ class LogisticSection:
         box = SurroundingRectangle(right[1][0][3:8], color=RED, buff=0.06)
         self.play(Create(box))
         self.play(FadeIn(left[2]), Write(left[3]), FadeIn(left[4]))
+        self.beat("35")
+        self.play(FadeOut(box), FadeOut(left[1]), FadeOut(right[1]))
         self.play(FadeIn(right[2]), Write(right[3]), FadeIn(right[4]))
 
     # ------------------------------------------------------------------
     def landscape(self) -> None:
-        self.beat("32–34 min. Las dos pérdidas en el plano de parámetros. Izquierda, MCO: "
-                  "elipses perfectas, un salto. Derecha, logística: curvas de nivel deformadas, "
-                  "pero un solo valle (la pérdida es CONVEXA): hay un único mínimo y cualquier "
-                  "método razonable llega. Newton llega en 4–5 pasos; el descenso de gradiente "
-                  "con η = 0.5 necesita miles.")
+        self.beat("36")
         self.start("Buscar el fondo del valle", "Un salto contra muchos pasos", GREEN)
-        axL, decoL = param_axes(center=(-3.4, -0.55, 0), width=5.4, height=3.6)
-        axR, decoR = param_axes(center=(3.4, -0.55, 0), width=5.4, height=3.6)
-        tL = safe_text("MCO: tazón cuadrático", size=24, color=BLUE, weight=BOLD).next_to(
-            axL, UP, buff=0.5)
+        cxL, cxR = -3.45, 3.45
+        axL, decoL = param_axes(center=(cxL, -1.75, 0), width=5.4, height=1.5)
+        axR, decoR = param_axes(center=(cxR, -1.75, 0), width=5.4, height=1.5)
+        tL = safe_text("MCO: tazón cuadrático", size=24, color=BLUE, weight=BOLD).move_to(
+            [cxL, 2.0, 0])
         tR = safe_text("Logística: convexa, no cuadrática", size=24, color=GREEN,
-                       weight=BOLD).next_to(axR, UP, buff=0.5)
+                       weight=BOLD).move_to([cxR, 2.0, 0])
         ellL = contours(axL, ols_loss, OLS_MIN, OLS_LEVELS, BLUE)
         ellR = contours(axR, log_loss_h, LOG_BETA, LOG_LEVELS, GREEN)
+        landL = Landscape3D(ols_loss, OLS_MIN, OLS_LEVELS, BLUE, origin=(cxL, 0.2, 0),
+                            scale=0.82, zh=1.7)
+        landR = Landscape3D(log_loss_h, LOG_BETA, LOG_LEVELS, GREEN, origin=(cxR, 0.2, 0),
+                            scale=0.82, zh=1.7)
+        az, lift = ValueTracker(-0.15), ValueTracker(0.0)
+        scL = always_redraw(lambda: landL.draw(az.get_value(), EL, lift.get_value(), fine=False))
+        scR = always_redraw(lambda: landR.draw(az.get_value(), EL, lift.get_value(), fine=False))
         self.play(FadeIn(decoL), FadeIn(decoR), Create(axL), Create(axR), FadeIn(tL), FadeIn(tR))
         self.play(LaggedStart(*[Create(e) for e in ellL], lag_ratio=0.1),
                   LaggedStart(*[Create(e) for e in ellR], lag_ratio=0.1), run_time=1.8)
+        # Mismo mapa, visto como paisaje 3D: las curvas de nivel suben a su altura.
+        self.play(FadeIn(scL), FadeIn(scR), run_time=0.8)
+        self.play(lift.animate.set_value(1.0), az.animate.set_value(AZ), run_time=2.6,
+                  rate_func=smooth)
+        scL.clear_updaters()
+        scR.clear_updaters()
+        self.remove(scL, scR)
+        self.add(landL.draw(AZ, EL, 1.0), landR.draw(AZ, EL, 1.0))   # malla fina
+        self.play(GrowFromCenter(landL.star(AZ, EL)), GrowFromCenter(landR.star(AZ, EL)))
         start = (0.0, 0.0)
         jump = CurvedArrow(axL.c2p(*start), axL.c2p(*OLS_MIN), color=YELLOW, stroke_width=3,
-                           angle=0.6, tip_length=0.15)
-        self.play(FadeIn(Dot(axL.c2p(*start), radius=0.07, color=INK)), Create(jump))
+                           angle=0.6, tip_length=0.12)
+        jump3d = landL.path([start, OLS_MIN], AZ, EL, color=YELLOW, width=3.5)
+        self.play(FadeIn(Dot(axL.c2p(*start), radius=0.06, color=INK)), Create(jump),
+                  Create(jump3d))
         sL = safe_text("1 paso (fórmula)", size=22, color=YELLOW, weight=BOLD).next_to(
-            axL, DOWN, buff=0.4)
+            axL, DOWN, buff=0.42)
         self.play(FadeIn(sL))
 
-        self.beat("34–35 min. A la derecha, primero el descenso de gradiente: pasos pequeños "
-                  "que zigzaguean por el valle angosto (la traza gris resume 3000 pasos). "
-                  "Después Newton, que usa también la curvatura: cuatro saltos amarillos y "
-                  "llega. Las dos rutas terminan en el mismo punto porque el valle es único.")
+        self.beat("37")
         gd = np.array(LOG_GD)
         sub = gd[np.unique(np.r_[np.arange(0, 60), np.geomspace(60, len(gd) - 1, 80).astype(int)])]
         gd_path = VMobject(stroke_color=MUTED, stroke_width=2.5).set_points_as_corners(
             [axR.c2p(*b) for b in sub])
-        self.play(Create(gd_path), run_time=2.6)
+        gd_path3d = landR.path(sub, AZ, EL, color=MUTED, width=2.5)
+        self.play(Create(gd_path), Create(gd_path3d), run_time=2.6)
         sR1 = safe_text("gradiente: ~3000 pasos", size=20, color=MUTED).next_to(
-            axR, DOWN, buff=0.4).align_to(axR, LEFT)
+            axR, DOWN, buff=0.42).align_to(axR, LEFT)
         self.play(FadeIn(sR1))
         nw = VGroup()
         for a, b in zip(LOG_NEWTON[:4], LOG_NEWTON[1:5]):
             nw.add(Arrow(axR.c2p(*a), axR.c2p(*b), buff=0.02, color=YELLOW, stroke_width=4,
                          max_tip_length_to_length_ratio=0.15))
-        dots = VGroup(*[Dot(axR.c2p(*b), radius=0.06, color=YELLOW) for b in LOG_NEWTON[:5]])
+        dots = VGroup(*[Dot(axR.c2p(*b), radius=0.05, color=YELLOW) for b in LOG_NEWTON[:5]])
+        newton3d = landR.path(LOG_NEWTON[:5], AZ, EL, color=YELLOW, width=3.5)
         self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(d)) for a, d in
                                 zip(nw, dots[1:])], lag_ratio=0.6), FadeIn(dots[0]),
-                  run_time=2.4)
+                  Create(newton3d), run_time=2.4)
         sR2 = safe_text("Newton: 4–5 pasos", size=20, color=YELLOW, weight=BOLD).next_to(
             sR1, RIGHT, buff=0.4)
         self.play(FadeIn(sR2))
+        self.beat("38")
+        caveat = VGroup(
+            safe_text("Aquí: rango completo y sin separación", size=19, color=MUTED),
+            safe_text("→ mínimo único", size=19, color=YELLOW, weight=BOLD),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.08).move_to([4.7, 2.78, 0])
+        self.play(FadeIn(caveat))
 
     # ------------------------------------------------------------------
     def separable(self) -> None:
-        self.beat("35–37 min. Una trampa. Si los datos son PERFECTAMENTE separables (aquí el "
-                  "de 3 h reprobó y el de 4 h aprobó), la pérdida siempre puede bajar más "
-                  "haciendo la sigmoide más empinada: β crece sin fin y el mínimo no existe. "
-                  "Pregunte qué harían. La solución práctica: penalizar λ‖w‖² (regularización).")
+        self.beat("39")
         self.start("Una trampa: separabilidad perfecta", "La sigmoide se vuelve un escalón", RED)
         ax, labs, guides = prob_axes()
         marks = VGroup(*[marker(1 if y else -1, r=0.13).move_to(ax.c2p(h, y))
@@ -295,8 +305,8 @@ class LogisticSection:
         for m in (curve, read):
             m.clear_updaters()
         fix = VGroup(
-            safe_text("β → ∞,  𝓛 → 0: no hay mínimo", size=24, color=RED, weight=BOLD),
-            tex(r"\mathcal{L}(\boldsymbol\beta) + \lambda\lVert\mathbf{w}\rVert^2", size=34,
+            safe_text("‖β‖ → ∞,  pérdida → 0: sin mínimo finito", size=24, color=RED, weight=BOLD),
+            tex(r"\mathcal{L}(\boldsymbol\beta) + \frac{\lambda}{2}\lVert\mathbf{w}\rVert^2", size=34,
                 color=GREEN),
             safe_text("la penalización detiene el crecimiento", size=22, color=MUTED),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.22).move_to([3.6, -1.0, 0])
@@ -304,24 +314,25 @@ class LogisticSection:
 
     # ------------------------------------------------------------------
     def mask_logistic(self) -> None:
-        self.beat("37–39 min. Regresamos al defecto de MCO. Con la logística, los cinco "
-                  "lejanos ya tienen p ≈ 1: su multa −log p es casi cero y su gradiente "
-                  "(p − y)x también. La frontera casi no se mueve y no comete errores. Compare "
-                  "con la recta gris punteada: la de MCO con los lejanos.")
-        self.start("La logística no se deja arrastrar", "Lo que está bien lejos ya no pesa",
+        self.beat("40")
+        self.start("Volver al ejemplo de los puntos lejanos", "Correctos y confiados: poca pérdida",
                    GREEN)
         plane = Plane(*MASK_BOX, height=4.6, center=(-2.6, -0.55, 0))
         base = plane.dots(MASK_BASE)
         far = plane.dots([(x, y, 1) for x, y in MASK_FAR])
         leg = legend().next_to(plane.axes, UP, buff=0.1).align_to(plane.axes, RIGHT)
         b, w1, w2 = MASK_LOG
-        line = plane.boundary(b, w1, w2, color=GREEN)
-        regions = plane.half_planes(b, w1, w2)
+        bt,t1,t2 = ValueTracker(b),ValueTracker(w1),ValueTracker(w2)
+        def current():
+            return bt.get_value(),t1.get_value(),t2.get_value()
+        line = always_redraw(lambda: plane.boundary(*current(), color=GREEN))
+        regions = always_redraw(lambda: plane.half_planes(*current()))
         self.play(FadeIn(plane), FadeIn(leg), FadeIn(regions), FadeIn(base), Create(line))
         self.play(LaggedStart(*[FadeIn(d, shift=LEFT * 0.5) for d in far], lag_ratio=0.12))
         b2, v1, v2 = MASK_LOG_FAR
-        self.play(Transform(line, plane.boundary(b2, v1, v2, color=GREEN)),
-                  Transform(regions, plane.half_planes(b2, v1, v2)), run_time=1.5)
+        self.play(bt.animate.set_value(b2),t1.animate.set_value(v1),t2.animate.set_value(v2),run_time=1.5)
+        line.clear_updaters()
+        regions.clear_updaters()
         self.bring_to_front(base, far)
         ob, o1, o2 = MASK_OLS_FAR
         ols_line = plane.boundary(ob, o1, o2, color=MUTED, width=3, dashed=True)
@@ -336,3 +347,9 @@ class LogisticSection:
                 color=GREEN),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.22).move_to([1.9, 0.9, 0], aligned_edge=LEFT)
         self.play(LaggedStart(*[FadeIn(i) for i in info], lag_ratio=0.3))
+        self.beat("41")
+        caveat = VGroup(
+            safe_text("Ambos ajustes: L2, λ = 0.01",size=23,color=MUTED),
+            safe_text("No es robustez general ante atípicos",size=20,color=MUTED,max_width=4.7),
+        ).arrange(DOWN,aligned_edge=LEFT,buff=0.16).next_to(info,DOWN,buff=0.3).align_to(info,LEFT)
+        self.play(FadeIn(caveat))

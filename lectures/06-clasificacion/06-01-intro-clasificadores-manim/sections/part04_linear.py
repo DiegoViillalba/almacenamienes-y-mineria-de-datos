@@ -79,10 +79,11 @@ class LinearSection:
 
         self.beat("39–41 min. Idea clave: no todos los clientes del mismo lado están igual de "
                   "seguros. Trace la distancia de cada cliente a la recta: lado naranja = z "
-                  "positivo, lado azul = z negativo. Ese número con signo es el PUNTAJE z. "
+                  "positivo, lado azul = z negativo. El puntaje es proporcional a esa "
+                  "distancia: d = z / ||w||, en las unidades del plano. "
                   "Pregunte: ¿quién es el «no paga» más seguro? ¿Y el más dudoso?")
         self.play(FadeOut(VGroup(eq0, note)), eq.animate.move_to([3.3, 2.0, 0]))
-        head = self.swap_heading(head, "Trazar una frontera", "Distancia a la recta = puntaje",
+        head = self.swap_heading(head, "Trazar una frontera", "El puntaje indica el lado de la frontera",
                                  PURPLE)
         unit_n = np.array([w1, w2]) / np.hypot(w1, w2)
         segs = VGroup()
@@ -127,12 +128,16 @@ class LinearSection:
             safe_text("10", size=16).next_to(tokens[9], UP, buff=0.04),
         )
         self.play(FadeIn(tags))
+        relation = tex(r"d = \frac{z}{\|\mathbf{w}\|}", size=32, max_width=5.8)
+        relation.move_to([3.3, 0.5, 0])
+        self.play(Write(relation))
 
         self.beat("41–43 min. ¿Cómo convertimos un puntaje en una probabilidad entre 0 y 1? "
                   "Con la curva sigmoide: aplasta los extremos y deja el 0 en 0.5. Los "
                   "clientes suben de la recta a la curva. Lea el cliente 6: z = 1.15 → p ≈ 0.76 "
-                  "de NO pagar (se equivoca, pero con duda). El cliente 1: casi 0.")
-        self.play(FadeOut(VGroup(segs, eq)))
+                  "de NO pagar: una estimación del modelo, no una certeza ni una "
+                  "probabilidad calibrada demostrada con estos diez casos.")
+        self.play(FadeOut(VGroup(segs, eq, relation)))
         head = self.swap_heading(head, "Trazar una frontera", "Del puntaje a la probabilidad",
                                  PURPLE)
         sax = Axes(x_range=[Z_RANGE[0], Z_RANGE[1], 1], y_range=[0, 1, 0.5], x_length=5.8,
@@ -259,11 +264,46 @@ class LinearSection:
                       Transform(tt, total(L)), run_time=0.9)
             self.bring_to_front(pts)
         self.play(tt[1].animate.set_color(GREEN))
-        hard = safe_text("6 y 10: los casos que ninguna recta resuelve", size=20, color=YELLOW)
+        hard = safe_text("6 y 10: errores de esta frontera (umbral 0.5)", size=20,
+                         color=YELLOW, max_width=6.3)
         hard.move_to([3.4, 0.8, 0])
         self.play(FadeIn(hard), Indicate(pts[5], color=YELLOW, scale_factor=1.6),
                   Indicate(pts[9], color=YELLOW, scale_factor=1.6))
-        self.formal(b, w1, w2)
+        if self.video_mode:
+            self.video_summary(w1, w2)
+        else:
+            self.formal(b, w1, w2)
+
+    def video_summary(self, w1, w2) -> None:
+        self.beat("La logística acierta 8/10 en entrenamiento, el corte 9/10. "
+                  "Minimizar log-loss no equivale a minimizar errores con umbral 0.5. "
+                  "Ningún resultado de entrenamiento demuestra generalización.")
+        self.start("Qué aprende la logística", "Probabilidades y aciertos son objetivos distintos", PURPLE)
+        comparison = table([
+            ["En entrenamiento", "Aciertos", "Objetivo del ajuste"],
+            ["Corte en 44", "9 / 10", "Reducir errores"],
+            ["Logística, umbral 0.5", "8 / 10", "Reducir log-loss"],
+        ], col_widths=[4.7, 2.1, 5.0], size=28, row_h=0.8)
+        comparison.move_to([0, 0.5, 0])
+        self.play(FadeIn(comparison))
+        note = safe_text("Mejor ajuste probabilístico ≠ menos errores a un umbral fijo",
+                         size=28, color=YELLOW, max_width=12).move_to([0, -1.7, 0])
+        self.play(FadeIn(note))
+        self.beat("Interpretar asociaciones manteniendo fijo el otro atributo: "
+                  "más deuda aumenta el puntaje; más ingreso lo reduce. No es causalidad. "
+                  "Escalar ayuda al optimizador y condiciona la regularización; "
+                  "el ajuste de esta clase estandariza los atributos de entrenamiento.")
+        self.start("Leer los pesos", "Cambiar un atributo y mantener fijo el otro", PURPLE)
+        items = VGroup(
+            safe_text(f"Deuda: peso {w2:+.3f}  →  sube el puntaje de impago", size=30,
+                      color=ORANGE, max_width=12),
+            safe_text(f"Ingreso: peso {w1:+.3f}  →  baja el puntaje de impago", size=30,
+                      color=BLUE, max_width=12),
+            safe_text("Son asociaciones del modelo; no efectos causales", size=27,
+                      color=MUTED, max_width=12),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.6).move_to([0, 0.1, 0])
+        for item in items:
+            self.play(FadeIn(item, shift=UP * 0.12), run_time=0.55)
 
     def formal(self, b, w1, w2) -> None:
         self.beat("47–49 min. Ahora sí, la formalización de TODO lo que vieron: puntaje lineal, "
@@ -300,13 +340,13 @@ class LinearSection:
 
         self.beat("49–50 min. Leer los pesos: w₂ = +0.19 → cada punto extra de deuda sube el "
                   "puntaje (las «momios» de impago se multiplican por e^0.19 ≈ 1.21). "
-                  "w₁ = −0.07 → más ingreso, menos riesgo. Ésta es la gran ventaja de un "
-                  "modelo lineal: se puede explicar.")
+                  "w₁ = −0.07 → baja el puntaje. Mantener fijo el otro atributo. "
+                  "Momios = p/(1-p); son asociaciones, no efectos causales.")
         weights = VGroup(
             tex(rf"w_2 = {w2:+.2f}", size=34, color=ORANGE),
-            safe_text(f"+1 punto de deuda ⇒ momios × {exp(w2):.2f}", size=22),
+            safe_text(f"ingreso fijo: +1 punto deuda ⇒ momios × {exp(w2):.2f}", size=19),
             tex(rf"w_1 = {w1:+.2f}", size=34, color=BLUE),
-            safe_text(f"+1 mil de ingreso ⇒ momios × {exp(w1):.2f}", size=22),
+            safe_text(f"deuda fija: +1 mil ingreso ⇒ momios × {exp(w1):.2f}", size=19),
         ).arrange_in_grid(rows=2, cols=2, buff=(0.5, 0.2), col_alignments="ll")
         box = card(weights.width + 0.6, weights.height + 0.5, PURPLE)
         g = VGroup(box, weights.move_to(box)).move_to([0, -2.55, 0])
@@ -343,7 +383,7 @@ class LinearSection:
                      ["entrenar", "guardar datos", "optimizar w, b"],
                      ["predecir", "comparar con todos", "una fórmula"],
                      ["explicar", "mostrar vecinos", "leer pesos"],
-                     ["escala", "muy sensible", "poco sensible"]],
+                     ["escala", "muy sensible", "escalar ayuda"]],
                     col_widths=[1.6, 2.4, 2.4], size=22, row_h=0.56,
                     colors=[[MUTED, GREEN, PURPLE]] * 5)
         cmp.move_to([3.3, -0.2, 0])

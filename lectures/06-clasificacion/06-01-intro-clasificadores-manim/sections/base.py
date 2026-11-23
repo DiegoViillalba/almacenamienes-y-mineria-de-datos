@@ -1,10 +1,12 @@
 """Clase base: pausas con notas, limpieza, cintillo y encabezados."""
 from __future__ import annotations
 
+import re
+
 from manim import *
 from manim_slides import Slide
 
-from sections.theme import BG, BLUE, GRID, INK, LOGO_PATH, MUTED, safe_text
+from sections.theme import BG, BLUE, GRID, INK, LOGO_PATH, MUTED, PANEL, safe_text
 
 
 class BaseSlide:
@@ -15,12 +17,30 @@ class BaseSlide:
     """
 
     branding: Group | None = None
+    video_mode = False
 
     def beat(self: Slide, notes: str, *, loop: bool = False) -> None:
+        if self.renderer.time > 0:
+            # Registrar el estado ya asentado, incluidos los cambios de orden
+            # que ocurren fuera de play(). El HTML pausa sobre este fotograma.
+            self.wait(0.25)
+        if self.video_mode:
+            # Los tiempos del aula no son marcas de edición del video.
+            notes = re.sub(r"\b\d+(?:[–−-]\d+)?\s*min\.?\s*", "", notes)
+            notes = notes.replace("Pida a la clase", "Invite a quien mira")
+            notes = notes.replace("con la clase", "con quien mira")
+            notes = notes.replace("en parejas", "individual, pausando el video")
+            notes = notes.replace("Pida que griten «¡alto!»", "Invite a predecir el mejor corte")
+            notes = notes.replace("No revele el círculo hasta que la mayoría tenga respuesta",
+                                  "Invitar a pausar antes de revelar el círculo")
+            notes = notes.replace("en papel", "al pausar el video")
+            notes = "Grabación · " + notes
         self.next_slide(notes=notes, loop=loop)
 
     def clear(self: Slide, run_time: float = 0.45) -> None:
         removable = [m for m in self.mobjects if m is not self.branding]
+        for m in removable:
+            m.suspend_updating()
         if removable:
             self.play(*[FadeOut(m) for m in removable], run_time=run_time)
         for m in removable:
@@ -41,7 +61,7 @@ class BaseSlide:
 
     def add_branding(self: Slide) -> None:
         bar = Rectangle(width=config.frame_width, height=0.40, stroke_width=0,
-                        fill_color="#050D18", fill_opacity=0.98).to_edge(DOWN, buff=0)
+                        fill_color=PANEL, fill_opacity=0.98).to_edge(DOWN, buff=0)
         rule = Line(LEFT * config.frame_width / 2, RIGHT * config.frame_width / 2,
                     color=GRID, stroke_width=1.5).move_to([0, -3.59, 0])
         signature = safe_text("Diego Villalba  ·  Almacenes y Minería de Datos",

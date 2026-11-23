@@ -140,4 +140,6 @@ class ClientPlane(VGroup):
                 cells.add(c)
                 i = k + 1
         cells.grid = grid
-        return cells
+        # Las regiones son opacas: deben permanecer detrás de ejes y clientes,
+        # incluso durante FadeIn y en el último fotograma de un corte.
+        return cells.set_z_index(-1)

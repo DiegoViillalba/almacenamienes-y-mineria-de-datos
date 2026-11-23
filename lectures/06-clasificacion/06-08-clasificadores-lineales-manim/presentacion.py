@@ -1,9 +1,9 @@
-"""Clase de una hora: clasificadores lineales con Manim Slides.
+"""Edición para video: clasificadores lineales con Manim Slides.
 
 Secuencia: separar con una recta (geometría de w y b, perceptrón) → mínimos
-cuadrados y su fórmula cerrada → Fisher (opcional) → regresión logística: la
+cuadrados y su fórmula cerrada → Fisher → regresión logística: la
 sigmoide, la verosimilitud y por qué no hay fórmula → muchas variables y
-softmax: siempre hiperplanos → kernels: curvos en x, lineales en φ(x) →
+softmax: porciones de hiperplanos → kernels: curvos en x, lineales en φ(x) →
 comparación, ejercicio y cierre.
 
 Para iterar sobre un solo acto: ``CLS_PARTS=2,3 manim-slides render -ql ...``.
@@ -40,13 +40,13 @@ class ClasificadoresLineales(
     def construct(self) -> None:
         self.camera.background_color = ManimColor(BG)
         acts = [
-            self.opening,      # 1 · 0–10 min
-            self.ols,          # 2 · 10–19
-            self.fisher,       # 3 · 19–25 (opcional)
-            self.logistic,     # 4 · 25–39
-            self.multi,        # 5 · 39–48
-            self.kernels,      # 6 · 48–56
-            self.close,        # 7 · 56–60
+            self.opening,      # 1 · geometría
+            self.ols,          # 2 · mínimos cuadrados
+            self.fisher,       # 3 · Fisher
+            self.logistic,     # 4 · logística
+            self.multi,        # 5 · muchas variables
+            self.kernels,      # 6 · kernels
+            self.close,        # 7 · cierre
         ]
         wanted = os.environ.get("CLS_PARTS")
         chosen = {int(x) for x in wanted.split(",")} if wanted else None
@@ -55,3 +55,4 @@ class ClasificadoresLineales(
                 if self.branding is None and i > 1:
                     self.add_branding()
                 act()
+        self.wait(0.6)

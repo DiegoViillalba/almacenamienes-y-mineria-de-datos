@@ -7,7 +7,12 @@ clientes, la regla de un corte, 1-NN y 3-NN, los clientes de prueba A–E) y
 `6-2-metricas_clasificacion.qmd` y la regresión logística en
 `capitulo_regresion_logistica.qmd`.
 
-La presentación (`index.html`) tiene una nota en cada estado: la tecla `S` abre
+La versión de aula se compila como `IntroClasificadoresClase`; la escena
+`IntroClasificadores` y el HTML publicado corresponden ahora a la edición para
+video. Este guion conserva la pauta presencial de 60 minutos; para grabar usa
+[el guion de YouTube](guion-youtube.md).
+
+La presentación tiene una nota en cada estado: la tecla `S` abre
 la vista del presentador. Todos los números en pantalla se calculan en
 `sections/data.py` (`python -m sections.data` imprime el resumen usado aquí).
 
@@ -135,7 +140,7 @@ e^0.188 ≈ 1.21 por punto de deuda; e^−0.073 ≈ 0.93 por mil de ingreso.
 ### Ejercicio final: cliente (20, 50)
 
 (a) Vecinos 10 (8.25), 7 (9.43), 8 (10.20): tres «no paga» → no paga.
-(b) z = −8 − 0.10·20 + 0.25·50 = 2.5 → p ≈ 0.92 → no paga.
+(b) Con el modelo simplificado, z = −8 − 0.10·20 + 0.25·50 = 2.5 → p ≈ 0.92 → no paga.
 (c) Si pagó, ambos cometen un **falso positivo**.
 
 ## Errores frecuentes que conviene anticipar

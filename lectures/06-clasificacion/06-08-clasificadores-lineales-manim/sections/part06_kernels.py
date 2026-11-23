@@ -23,10 +23,7 @@ from sections.theme import (BLUE, GREEN, GRID, INK, MUTED, ORANGE, PINK, PURPLE,
 
 class KernelSection:
     def kernels(self) -> None:
-        self.beat("48–49 min. Diez puntos en una recta: los cuadrados naranjas en el centro, los "
-                  "círculos azules a los lados. En una variable el «hiperplano» es un punto: un "
-                  "umbral. Pregunte: ¿existe un umbral que separe? Deslícelo: lo mejor que logra "
-                  "son 3 errores.")
+        self.beat("48")
         head = self.start("Kernels", "Cuando ninguna recta alcanza", PINK)
         ax = Axes(x_range=[-3.5, 3.5, 1], y_range=[0, 10, 2], x_length=6.3, y_length=4.4,
                   tips=False, axis_config={"color": GRID, "stroke_width": 2,
@@ -62,10 +59,7 @@ class KernelSection:
         best = safe_text("mínimo: 3 errores", size=22, color=MUTED).next_to(cnt, DOWN, buff=0.2)
         self.play(FadeIn(best))
 
-        self.beat("49–51 min. Idea: agregar una coordenada nueva, x². Cada punto sube a la "
-                  "parábola (x, x²). En este plano ampliado, una RECTA horizontal x² = 2 separa "
-                  "perfectamente. Esa recta es lineal en las nuevas coordenadas. Pregunte: "
-                  "¿cómo se ve esa recta cuando regresamos a la recta original?")
+        self.beat("49")
         self.play(FadeOut(thr), FadeOut(cnt), FadeOut(best))
         self.play(Create(ax.y_axis))
         yl = safe_text("x²", size=20, color=PINK).next_to(ax.c2p(-3.5, 10), UP, buff=0.08)
@@ -89,10 +83,7 @@ class KernelSection:
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.28).move_to([3.6, 0.8, 0])
         self.play(LaggedStart(*[Write(e) for e in eq], lag_ratio=0.35), run_time=2.4)
 
-        self.beat("51–52 min. De regreso: los puntos bajan, la recta corta a la parábola en "
-                  "x = ±1.41 y esos dos cortes son la frontera en la recta original: un "
-                  "intervalo. Visto en x, no es lineal; visto en (x, x²), sí. Los pesos entran "
-                  "linealmente: TODO lo que sabemos de clasificadores lineales sigue valiendo.")
+        self.beat("50")
         drops = VGroup(*[DashedLine(ax.c2p(s * PHI_ROOT, PHI_CUT), ax.c2p(s * PHI_ROOT, 0),
                                     color=YELLOW, stroke_width=3, dash_length=0.08)
                          for s in (-1, 1)])
@@ -115,10 +106,7 @@ class KernelSection:
 
     # ------------------------------------------------------------------
     def ring(self) -> None:
-        self.beat("52–53 min. Lo mismo en dos variables: un anillo. Ninguna recta separa el "
-                  "centro del borde. Agregamos una tercera coordenada, x₁² + x₂²: los puntos "
-                  "suben a un paraboloide, los del centro quedan abajo. Un PLANO horizontal los "
-                  "separa. Al girar se ve que el plano es plano.")
+        self.beat("51")
         head = self.start("Kernels", "Un anillo se vuelve separable al subir", PINK)
         view = View3D(origin=(-3.3, -1.2, 0), scale=0.85, az=-0.5, el=0.55)
         KZ = 0.6                       # compresión visual del eje x₃
@@ -168,9 +156,7 @@ class KernelSection:
         self.play(el.animate.set_value(0.5), run_time=1.6)
         self.play(lift.animate.set_value(1.0), Write(txt), run_time=2.2)
 
-        self.beat("53–54 min. Aparece el plano x₃ = 1.8 y separa: lineal en φ. Gire la vista. "
-                  "Después bajamos los puntos al piso y el plano deja su huella: un CÍRCULO de "
-                  "radio 1.34. La frontera curva del espacio original es la sombra de un plano.")
+        self.beat("52")
         self.play(cut_on.animate.set_value(1.0), run_time=1.0)
         self.play(az.animate.set_value(0.6), run_time=2.6)
         lin = VGroup(tex(r"x_3 = 1.8", size=32, color=YELLOW),
@@ -189,10 +175,7 @@ class KernelSection:
 
     # ------------------------------------------------------------------
     def trick(self) -> None:
-        self.beat("54–55 min. El truco del kernel. Muchos algoritmos (SVM, logística con "
-                  "kernel) sólo usan productos punto entre puntos. Si φ tiene muchísimas "
-                  "coordenadas, calcularlas es caro; pero a veces φ(x)ᵀφ(z) tiene un atajo. "
-                  "Hagan la cuenta a mano: 9 + 12 + 4 = 25 = (1·3 + 2·1)².")
+        self.beat("53")
         head = self.start("El truco del kernel", "Productos punto sin construir φ", PINK)
         x, z = KQ_X, KQ_Z
         px, pz = phi_quad(x), phi_quad(z)
@@ -209,7 +192,11 @@ class KernelSection:
             tex(rf"(\mathbf{{x}}^\top\mathbf{{z}})^2 = (3 + 2)^2 = {kernel_quad(x, z):.0f}",
                 size=32, color=YELLOW),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.26).move_to([-3.2, -0.45, 0])
-        self.play(LaggedStart(*[Write(r) for r in left], lag_ratio=0.35), run_time=4.0)
+        self.play(Write(left[0]),Write(left[1]))
+        self.beat("54")
+        self.play(Write(left[2]),Write(left[3]))
+        self.beat("55")
+        self.play(FadeOut(left[:2]),Write(left[4]),Write(left[5]))
         right = VGroup(
             tex(r"K(\mathbf{x}, \mathbf{z}) = \varphi(\mathbf{x})^\top\varphi(\mathbf{z})",
                 size=34, color=PINK),
@@ -220,16 +207,13 @@ class KernelSection:
             safe_text("RBF: φ con infinitas coordenadas", size=20, color=MUTED, max_width=5.4),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to([3.5, -0.3, 0])
         frame = card(6.4, 4.4, PINK).move_to(right)
+        self.beat("56")
         self.play(FadeIn(frame), LaggedStart(*[Write(r) for r in right], lag_ratio=0.3),
                   run_time=3.0)
 
     # ------------------------------------------------------------------
     def rbf(self) -> None:
-        self.beat("55–56 min. El kernel RBF en la recta de antes. Cada punto de entrenamiento "
-                  "pone una campana exp(−γ(x − xᵢ)²): son características FIJAS. Lo único que "
-                  "aprende el modelo es cuánto escalar cada campana (αᵢ, que puede ser "
-                  "negativa). Las campanas se estiran, nunca se doblan. La suma es f(x); su "
-                  "signo, la clase. Pregunte: ¿es esto lineal? (En α, sí.)")
+        self.beat("57")
         head = self.start("Kernel RBF", "Campanas fijas, pesos lineales", PINK)
         ax = Axes(x_range=[-3.6, 3.6, 1], y_range=[-1.8, 1.8, 1], x_length=7.2, y_length=4.2,
                   tips=False, axis_config={"color": GRID, "stroke_width": 2,
@@ -258,18 +242,18 @@ class KernelSection:
         bm.clear_updaters()
         al = tex(r"\boldsymbol\alpha = (K + \lambda I)^{-1}\mathbf{y}", size=32,
                  color=YELLOW).next_to(k_eq, DOWN, buff=0.35)
-        al2 = safe_text("pérdida cuadrática → fórmula cerrada", size=20, color=MUTED).next_to(
+        al2 = safe_text("kernel ridge · λ = 0.3 · sin intercepto", size=20, color=MUTED).next_to(
             al, DOWN, buff=0.15)
         self.play(Write(al), FadeIn(al2))
+        self.beat("58")
+        objective = tex(r"\|\mathbf{y}-K\boldsymbol\alpha\|^2 + \lambda\boldsymbol\alpha^\top K\boldsymbol\alpha", size=26,
+                        max_width=5.0).next_to(al2,DOWN,buff=0.25)
+        self.play(Write(objective))
 
-        self.beat("Las campanas escaladas se suman: f(x) (curva gruesa). Donde f > 0 se predice "
-                  "naranja: exactamente el intervalo central. Con pérdida cuadrática, α se "
-                  "obtiene con UNA fórmula, (K + λI)⁻¹y, igual que MCO: porque el problema es "
-                  "lineal en α. Con pérdida logística (kernel logístico) habría que iterar, "
-                  "igual que antes.")
+        self.beat("59")
         f = ax.plot(lambda x: float(rbf_f(x)[0]), x_range=[-3.6, 3.6], color=PURPLE,
                     stroke_width=6)
-        self.play(bm.animate.set_stroke(opacity=0.3), Create(f), run_time=1.8)
+        self.play(FadeOut(objective), bm.animate.set_stroke(opacity=0.3), Create(f), run_time=1.8)
         # región f > 0
         xs = np.linspace(-3.6, 3.6, 721)
         fv = rbf_f(xs)
