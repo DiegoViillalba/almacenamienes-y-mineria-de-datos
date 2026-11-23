@@ -25,10 +25,7 @@ THETA_FISHER = FISHER_ANGLE + 180.0    # 80.1°
 
 class FisherSection:
     def fisher(self) -> None:
-        self.beat("19–20 min (opcional). Fisher cambia la pregunta: en vez de una recta que "
-                  "separe, busca una DIRECCIÓN donde, al proyectar, las sombras de las dos "
-                  "clases queden lejos entre sí y apretadas dentro de cada clase. Pregunte: "
-                  "¿desde qué dirección proyectarían? La intuición dice: la que une las medias.")
+        self.beat("24")
         head = self.start("Discriminante de Fisher", "Buscar la mejor sombra", TEAL)
         plane = Plane((0, 7), (0, 7), height=4.6, center=(-3.6, -0.5, 0), tick_step=1)
         pts = [(x, y, -1) for x, y in FISHER_A] + [(x, y, 1) for x, y in FISHER_B]
@@ -63,7 +60,7 @@ class FisherSection:
         # recta numérica de sombras
         nl = NumberLine(x_range=[-4, 4, 1], length=5.6, color=GRID, include_ticks=False,
                         stroke_width=2).move_to([3.6, 1.35, 0])
-        nl_t = safe_text("sombras  z = uᵀx", size=20, color=TEAL).next_to(nl, UP, buff=0.2)
+        nl_t = safe_text("sombras  z = uᵀ(x − centro)", size=20, color=TEAL).next_to(nl, UP, buff=0.2)
 
         def shadow_line():
             d = u()
@@ -101,14 +98,11 @@ class FisherSection:
         self.add(sh)
         self.bring_to_front(dots)
         self.play(FadeIn(sl))
-        means = safe_text("dirección de las medias", size=20, color=MUTED).move_to([2.6, 0.1, 0])
+        means = safe_text("dirección de proyección", size=20, color=MUTED).move_to([2.6, 0.1, 0])
         self.play(Create(jax), FadeIn(jlabs), Create(jcurve), FadeIn(jdot), FadeIn(jval),
                   FadeIn(means))
 
-        self.beat("20–22 min. Las sombras azules se dispersan: la clase A está estirada en "
-                  "diagonal. J = separación² / dispersión. Ahora giramos la dirección y miramos "
-                  "J. Pregunte cuándo creen que J será máximo. Se llega a 80°: las sombras de A "
-                  "se apretan y J sube a 5.64 (34 % más).")
+        self.beat("25")
         self.play(th.animate.set_value(10), run_time=1.6)
         self.play(th.animate.set_value(150), run_time=2.4)
         fis = safe_text("dirección de Fisher", size=20, color=TEAL, weight=BOLD).move_to(means)
@@ -117,11 +111,7 @@ class FisherSection:
             m.clear_updaters()
         self.play(Indicate(jval, color=YELLOW))
 
-        self.beat("22–24 min. Formalización. J es un cociente de dos formas cuadráticas "
-                  "(Rayleigh). Derivar e igualar a cero da otra vez un sistema LINEAL: "
-                  "w ∝ S_W⁻¹(m_A − m_B). Fórmula cerrada, como en MCO. La frontera es "
-                  "perpendicular a w, en el punto medio de las medias proyectadas. Comente: si "
-                  "las clases son normales con igual covarianza, esto es LDA.")
+        self.beat("26")
         self.play(FadeOut(VGroup(nl, nl_t, sl, jax, jlabs, jcurve, jdot, jval, means)))
         form = VGroup(
             tex(r"J(\mathbf{w}) = \frac{\mathbf{w}^\top S_B\,\mathbf{w}}{\mathbf{w}^\top S_W\,"
@@ -135,7 +125,12 @@ class FisherSection:
                 color=TEAL),
             safe_text("fórmula cerrada: un sistema lineal", size=22, color=YELLOW, weight=BOLD),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to([3.5, 0.0, 0])
-        self.play(LaggedStart(*[Write(f) for f in form], lag_ratio=0.35), run_time=3.0)
+        self.play(Write(form[0]))
+        self.beat("27")
+        self.play(Write(form[1]))
+        self.beat("28")
+        self.play(FadeOut(form[0]), FadeOut(form[1]))
+        self.play(Write(form[2]), Write(form[3]), FadeIn(form[4]))
         # frontera perpendicular a w en el punto medio de las medias proyectadas
         wv = -W_FISHER_U
         thr = 0.5 * (float(M_A @ wv) + float(M_B @ wv))
@@ -145,7 +140,7 @@ class FisherSection:
         self.add(reg)
         self.bring_to_front(dots)
         self.play(FadeIn(reg), Create(border))
-        lab = safe_text("frontera ⟂ w, en el punto medio", size=22, color=YELLOW,
+        lab = safe_text("umbral medio: previas y costos iguales", size=22, color=YELLOW,
                         weight=BOLD).next_to(form, DOWN, buff=0.3).align_to(form, LEFT)
         self.play(FadeIn(lab))
         assert abs(fisher_J(W_FISHER_U) - J_FISHER) < 1e-9 and J_MEANS < J_FISHER

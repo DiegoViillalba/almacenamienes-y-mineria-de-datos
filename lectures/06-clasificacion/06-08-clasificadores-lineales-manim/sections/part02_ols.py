@@ -57,11 +57,20 @@ def contours(ax: Axes, f, center, levels, color) -> VGroup:
     b1lo, b1hi = LOSS_B1
     for k, lv in enumerate(levels):
         pts = level_curve(f, center, lv)
-        inside = [(a, b) for a, b in pts]
-        poly = [ax.c2p(np.clip(a, b0lo, b0hi), np.clip(b, b1lo, b1hi)) for a, b in inside]
-        c = VMobject(stroke_color=color, stroke_width=2.4,
-                     stroke_opacity=0.95 - 0.1 * k).set_points_smoothly(poly + [poly[0]])
-        out.add(c)
+        segments = []
+        current = []
+        for a, b in np.vstack([pts, pts[:1]]):
+            if b0lo <= a <= b0hi and b1lo <= b <= b1hi:
+                current.append(ax.c2p(a,b))
+            else:
+                if len(current)>1:
+                    segments.append(current)
+                current=[]
+        if len(current)>1:
+            segments.append(current)
+        for seg in segments:
+            out.add(VMobject(stroke_color=color, stroke_width=2.4,
+                            stroke_opacity=0.95-0.1*k).set_points_as_corners(seg))
     return out
 
 
@@ -75,10 +84,7 @@ class OLSSection:
         return out
 
     def ols(self) -> None:
-        self.beat("10–11 min. Primer criterio: tratar la etiqueta como número (−1 reprobó, +1 "
-                  "aprobó) y ajustar una recta por mínimos cuadrados. Los seis estudiantes del "
-                  "libro. Arranque con la recta horizontal ŷ = 0: cada residuo se dibuja como "
-                  "un CUADRADO real. Pregunte: ¿cómo giraría la recta para encoger el área roja?")
+        self.beat("14")
         head = self.start("Mínimos cuadrados con y = ±1", "La recta que minimiza los cuadrados",
                           BLUE)
         ax, labs, zero = hours_axes()
@@ -121,11 +127,7 @@ class OLSSection:
         self.bring_to_front(marks)
         self.play(FadeIn(sse))
 
-        self.beat("11–12 min. La recta gira hacia la de mínimos cuadrados: el área roja total "
-                  "baja de 6 a 3.2. La frontera es donde la recta cruza el cero: 3.5 horas. A la "
-                  "derecha se predice «aprueba». Pregunte: ¿a qué estudiantes clasifica mal? "
-                  "(al de 3 h que aprobó y al de 4 h que reprobó.)")
-        self.play(b1.animate.set_value(0.25), run_time=1.0)
+        self.beat("15")
         self.play(b0.animate.set_value(OLS0), b1.animate.set_value(OLS1), run_time=1.6)
         for m in (line, sqs, sse):
             m.clear_updaters()
@@ -141,10 +143,7 @@ class OLSSection:
         self.play(Write(eq), Write(rule))
         self.ols_scene = VGroup(ax, labs, zero, ylabs, marks, line, sqs, cut, cut_l, cut_t)
 
-        self.beat("12–13 min. El cálculo, a mano. Centrar, calcular la covariación Sxy y la "
-                  "variación Sxx, dividir. Pida que verifiquen Sxy = 7 con la tabla. Sin "
-                  "iteraciones, sin elegir tasas: una división. Esa es la marca de un problema "
-                  "con fórmula cerrada.")
+        self.beat("16")
         self.play(FadeOut(eq), FadeOut(rule), FadeOut(sse))
         dx = HX - HX.mean()
         rows = [["x", *[f"{h:g}" for h in HX]],
@@ -162,18 +161,18 @@ class OLSSection:
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.24).next_to(tbl, DOWN, buff=0.35)
         calc.align_to(tbl, LEFT)
         self.play(FadeIn(tbl))
-        self.play(LaggedStart(*[Write(c) for c in calc], lag_ratio=0.4))
+        self.play(Write(calc[0]))
+        self.beat("17")
+        self.play(Write(calc[1]))
+        self.beat("18")
+        self.play(Write(calc[2]))
         self.ols_calc = VGroup(tbl, calc)
         self.bowl()
         self.masking()
 
     # ------------------------------------------------------------------
     def bowl(self) -> None:
-        self.beat("13–15 min. ¿Por qué hay fórmula? Cada par (β₀, β₁) es un punto de este plano "
-                  "de parámetros; las curvas son niveles de la pérdida. Son ELIPSES: la pérdida "
-                  "es un tazón cuadrático. Derivar un cuadrado da algo LINEAL en β; igualar a "
-                  "cero da un sistema lineal de 2 × 2 que se resuelve de un golpe, desde "
-                  "cualquier punto de partida.")
+        self.beat("19")
         head = self.start("¿Por qué hay fórmula?", "La pérdida es un tazón cuadrático", BLUE)
         ax, deco = param_axes()
         ells = contours(ax, ols_loss, OLS_MIN, OLS_LEVELS, BLUE)
@@ -192,17 +191,19 @@ class OLSSection:
             tex(r"\hat{\boldsymbol\beta} = (X^\top X)^{-1}X^\top\mathbf{y} = (-1.4,\ 0.4)",
                 size=30, color=PURPLE, max_width=6.0),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to([-3.4, -0.4, 0])
-        lin = safe_text("lineal en β", size=20, color=YELLOW, weight=BOLD).next_to(steps[1], RIGHT,
-                                                                                buff=0.2)
+        lin = safe_text("lineal en β", size=20, color=YELLOW, weight=BOLD).move_to([-3.4, 1.7, 0])
         self.play(Write(steps[0]))
         self.play(Write(steps[1]), FadeIn(lin))
         self.play(Write(steps[2]))
+        self.beat("20")
+        self.play(FadeOut(steps[:2]), FadeOut(lin))
         self.play(Write(steps[3]))
         self.play(Write(steps[4]))
+        rank = safe_text("Inversa: sólo si X tiene rango completo", size=21, color=MUTED,
+                         max_width=6.0).next_to(steps[4], DOWN, buff=0.25)
+        self.play(FadeIn(rank))
 
-        self.beat("15–16 min. Desde cualquier punto de partida, la solución está a UN salto: no "
-                  "hay que caminar. Recuerde esta imagen; en la logística las curvas de nivel "
-                  "dejarán de ser elipses y tendremos que dar pasos.")
+        self.beat("21")
         starts = [(1.0, 1.7), (-6.3, 1.6), (-5.5, -0.4), (1.2, -0.4)]
         jumps = VGroup()
         for s in starts:
@@ -213,15 +214,12 @@ class OLSSection:
         self.play(LaggedStart(*[AnimationGroup(FadeIn(j[0]), Create(j[1])) for j in jumps],
                               lag_ratio=0.25), run_time=2.0)
         one = safe_text("un solo paso: resolver un sistema lineal", size=22, color=YELLOW,
-                        weight=BOLD).next_to(steps, DOWN, buff=0.45).align_to(steps, LEFT)
+                        weight=BOLD).next_to(rank, DOWN, buff=0.3).align_to(steps, LEFT)
         self.play(FadeIn(one))
 
     # ------------------------------------------------------------------
     def masking(self) -> None:
-        self.beat("16–17 min. Lo mismo en el plano, con dos variables: la recta de MCO (z = 0 "
-                  "del plano ajustado) separa los 13 puntos sin errores. Pregunte: si llegan "
-                  "cinco cuadrados MÁS, todos lejos y bien clasificados, ¿debería moverse la "
-                  "frontera? Pida votación a mano alzada.")
+        self.beat("22")
         head = self.start("El defecto de los cuadrados", "Ser «demasiado correcto» también cuesta",
                           RED)
         plane = Plane(*MASK_BOX, height=4.6, center=(-2.6, -0.55, 0))
@@ -229,18 +227,18 @@ class OLSSection:
         far = plane.dots([(x, y, 1) for x, y in MASK_FAR])
         leg = legend().next_to(plane.axes, UP, buff=0.1).align_to(plane.axes, RIGHT)
         b, w1, w2 = MASK_OLS
-        line = plane.boundary(b, w1, w2)
-        regions = plane.half_planes(b, w1, w2)
+        bt, t1, t2 = ValueTracker(b), ValueTracker(w1), ValueTracker(w2)
+        def current():
+            return bt.get_value(),t1.get_value(),t2.get_value()
+        line = always_redraw(lambda: plane.boundary(*current()))
+        regions = always_redraw(lambda: plane.half_planes(*current()))
         self.play(FadeIn(plane), FadeIn(leg), FadeIn(regions), FadeIn(base))
         self.play(Create(line))
         ok = safe_text(f"MCO: {n_errors(MASK_OLS, MASK_BASE)} errores", size=26, color=GREEN,
                        weight=BOLD).move_to([1.9, 1.6, 0], aligned_edge=LEFT)
         self.play(FadeIn(ok))
 
-        self.beat("17–18 min. Llegan los cinco lejanos. La recta de MCO gira y ahora comete 3 "
-                  "errores. ¿Por qué? Con la recta anterior, un punto lejano tenía ŷ ≈ 5.2 "
-                  "cuando su etiqueta es +1: residuo (5.2 − 1)² ≈ 17.6. MCO castiga a quien está "
-                  "«demasiado bien»: para él, +1 es una meta exacta, no un lado.")
+        self.beat("23")
         yh = float(MASK_OLS[0] + MASK_OLS[1] * MASK_FAR[0][0] + MASK_OLS[2] * MASK_FAR[0][1])
         self.play(LaggedStart(*[FadeIn(d, shift=LEFT * 0.5) for d in far], lag_ratio=0.12))
         why = VGroup(tex(rf"\hat{{y}} = {yh:.1f},\ \ y = +1", size=30, color=INK),
@@ -251,9 +249,11 @@ class OLSSection:
                       color=RED, stroke_width=3, buff=0.1)
         self.play(FadeIn(why), GrowArrow(arrow))
         b, w1, w2 = MASK_OLS_FAR
-        nl = plane.boundary(b, w1, w2)
-        nr = plane.half_planes(b, w1, w2)
-        self.play(Transform(line, nl), Transform(regions, nr), run_time=1.8)
+        pending = safe_text("MCO: reajustando…", size=26,color=MUTED,weight=BOLD).move_to(ok,aligned_edge=LEFT)
+        self.play(Transform(ok,pending),run_time=0.25)
+        self.play(bt.animate.set_value(b),t1.animate.set_value(w1),t2.animate.set_value(w2),run_time=1.8)
+        line.clear_updaters()
+        regions.clear_updaters()
         self.bring_to_front(base, far)
         allp = base.submobjects + far.submobjects
         rings = VGroup(*[Circle(radius=0.24, color=RED, stroke_width=4).move_to(d) for d in allp
@@ -262,9 +262,9 @@ class OLSSection:
                         weight=BOLD).move_to(ok, aligned_edge=LEFT)
         self.play(Create(rings), Transform(ok, bad))
         moral = VGroup(safe_text("La fórmula es exacta,", size=22, weight=BOLD),
-                       safe_text("pero el criterio no es", size=22, weight=BOLD),
-                       safe_text("el adecuado para clasificar.", size=22, weight=BOLD),
-                       safe_text("→ la logística (acto 4) lo arregla", size=20, color=GREEN)
+                       safe_text("pero su criterio puede", size=22, weight=BOLD),
+                       safe_text("cambiar las clases.", size=22, weight=BOLD),
+                       safe_text("→ comparemos con logística", size=20, color=GREEN)
                        ).arrange(DOWN, aligned_edge=LEFT, buff=0.12).next_to(why, DOWN, buff=0.45)
         moral.align_to(why, LEFT)
         self.play(FadeIn(moral))

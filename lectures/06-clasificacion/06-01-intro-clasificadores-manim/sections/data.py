@@ -224,7 +224,7 @@ def gd_path(steps: int = 7, lr: float = 1.2):
     return path
 
 
-# Pesos redondeados para el ejercicio a mano (unidades originales).
+# Modelo diferente, con pesos sencillos para practicar (unidades originales).
 EX_B, EX_W1, EX_W2 = -8.0, -0.10, 0.25
 EX_CLIENT = (20, 50)
 

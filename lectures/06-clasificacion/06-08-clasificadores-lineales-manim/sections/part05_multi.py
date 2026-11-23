@@ -34,13 +34,11 @@ def soft_marker(c: int, r: float = 0.12) -> VMobject:
 class MultiSection:
     def multi(self) -> None:
         b, w1, w2 = LOG2_B, LOG2_W1, LOG2_W2
-        self.beat("39–41 min. Dos variables, dieciocho puntos; dos de ellos están cruzados, así "
-                  "que ya no hay separación perfecta y la logística tiene un óptimo finito. Las "
-                  "franjas son niveles de probabilidad 0.1, 0.3, 0.5, 0.7, 0.9. Pregunte: ¿por "
-                  "qué todas son RECTAS y además PARALELAS?")
+        self.beat("42")
         head = self.start("Logística con dos variables", "Los niveles de p son rectas paralelas",
                           PURPLE)
         plane = Plane(X_BOX, Y_BOX, height=4.7, center=(-3.25, -0.55, 0))
+        plane.ylab.shift(LEFT * 0.25 + UP * 0.22)
         dots = plane.dots(NOISY)
         leg = legend().move_to([1.4, 2.25, 0], aligned_edge=LEFT)
         box = [(X_BOX[0], Y_BOX[0]), (X_BOX[1], Y_BOX[0]), (X_BOX[1], Y_BOX[1]),
@@ -81,10 +79,7 @@ class MultiSection:
                          for d in dots[-2:]])
         self.play(Create(rings))
 
-        self.beat("41–42 min. La respuesta en una línea: fijar p es fijar z = logit(p). Todas "
-                  "las curvas comparten el MISMO w y sólo cambian la constante: rectas paralelas, "
-                  "perpendiculares a w. La de p = 0.5 es z = 0. La probabilidad sólo depende de "
-                  "qué tan lejos estás de la frontera.")
+        self.beat("43")
         eqs = VGroup(
             tex(r"\sigma(\mathbf{w}^\top\mathbf{x} + b) = p", size=36, color=GREEN),
             tex(r"\iff \mathbf{w}^\top\mathbf{x} + b = \log\frac{p}{1-p}", size=36, color=PURPLE),
@@ -103,11 +98,7 @@ class MultiSection:
     def project_to_w(self) -> None:
         plane, dots, stripes, levels, rings, eqs, head = self.multi_scene
         b, w1, w2 = LOG2_B, LOG2_W1, LOG2_W2
-        self.beat("42–44 min. Truco geométrico: proyectemos cada punto sobre la dirección de w "
-                  "(la flecha morada). Cada punto se desliza por su recta de nivel hasta el eje. "
-                  "Después, el eje se lleva a la derecha y se le pone la probabilidad encima: "
-                  "aparece la MISMA sigmoide de una variable. Mensaje: en d variables, la "
-                  "logística mira un solo número, z = wᵀx + b.")
+        self.beat("44")
         head = self.swap_heading(head, "Logística con dos variables",
                                  "Mirada desde w: una logística de una variable", PURPLE)
         self.play(FadeOut(eqs), FadeOut(rings), FadeOut(levels[0]), FadeOut(levels[1]),
@@ -152,13 +143,11 @@ class MultiSection:
         msg = safe_text("2 variables → 1 número z → σ(z)", size=24, color=YELLOW,
                         weight=BOLD).next_to(zax, UP, buff=0.25)
         self.play(FadeIn(msg))
+        self.bring_to_front(copies)
 
     # ------------------------------------------------------------------
     def cube(self) -> None:
-        self.beat("44–46 min. Tres variables: la frontera z = 0 es un PLANO dentro del cubo. El "
-                  "cubo gira para que vean que es plano de verdad, no una superficie curva. "
-                  "Pregunte: con 50 variables, ¿qué forma tiene la frontera de la logística? "
-                  "(Un hiperplano de 49 dimensiones, que no podemos dibujar pero sí calcular.)")
+        self.beat("45")
         head = self.start("Tres variables y más", "La frontera es un plano; en general, un "
                           "hiperplano", PURPLE)
         az = ValueTracker(-0.75)
@@ -196,12 +185,8 @@ class MultiSection:
 
     # ------------------------------------------------------------------
     def softmax(self) -> None:
-        self.beat("46–48 min. ¿Y con más de dos clases? La logística multinomial (softmax) da un "
-                  "puntaje lineal z_k a cada clase y elige el mayor. La frontera entre dos "
-                  "clases es donde empatan: z_k = z_j, que se reescribe como (w_k − w_j)ᵀx + "
-                  "(b_k − b_j) = 0: ¡otro hiperplano! Las regiones son intersecciones de "
-                  "semiplanos, por eso son convexas: tres rayos que se cruzan en un punto.")
-        head = self.start("Más de dos clases", "Softmax: cada frontera es un hiperplano", PURPLE)
+        self.beat("46")
+        head = self.start("Más de dos clases", "Softmax: regiones delimitadas por hiperplanos", PURPLE)
         plane = Plane(X_BOX, Y_BOX, height=4.7, center=(-3.25, -0.55, 0))
         box = [(X_BOX[0], Y_BOX[0]), (X_BOX[1], Y_BOX[0]), (X_BOX[1], Y_BOX[1]),
                (X_BOX[0], Y_BOX[1])]
@@ -232,10 +217,12 @@ class MultiSection:
         eqs = VGroup(
             tex(r"z_k = \mathbf{w}_k^\top\mathbf{x} + b_k", size=34, color=PURPLE),
             tex(r"p_k = \frac{e^{z_k}}{\sum_j e^{z_j}}", size=34, color=GREEN),
-            tex(r"\text{frontera entre } k \text{ y } j:\ z_k = z_j", size=30, color=MUTED),
+            tex(r"\text{empate entre } k \text{ y } j:\ z_k = z_j", size=30, color=MUTED),
             tex(r"(\mathbf{w}_k - \mathbf{w}_j)^\top\mathbf{x} + (b_k - b_j) = 0", size=30,
                 color=YELLOW),
-            safe_text("→ hiperplano; regiones convexas", size=22, color=YELLOW, weight=BOLD,
+            safe_text("frontera activa: empate entre máximos", size=22, color=YELLOW, weight=BOLD,
                       max_width=5.0),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.26).move_to([3.4, -0.2, 0])
-        self.play(LaggedStart(*[Write(e) for e in eqs], lag_ratio=0.3), run_time=3.0)
+        self.play(Write(eqs[0]),Write(eqs[1]))
+        self.beat("47")
+        self.play(Write(eqs[2]),Write(eqs[3]),FadeIn(eqs[4]))

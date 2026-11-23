@@ -14,32 +14,40 @@ from pathlib import Path
 
 from manim import *
 
-BG = "#07111F"
-PANEL = "#0D1E34"
-INK = "#F7F7F2"
-MUTED = "#9FB3C8"
-GRID = "#27435D"
-BLUE = "#58C4DD"     # clase −1
-ORANGE = "#FFB86B"   # clase +1
-PURPLE = "#B28DFF"   # w y puntaje z
-TEAL = "#4FD1C5"     # sombras / proyecciones
-PINK = "#F78FB3"     # espacio de características
-GREEN = "#6FCF97"    # probabilidad, acierto
-YELLOW = "#F7C948"   # frontera, foco
-RED = "#FF6B6B"      # error
+BG = "#14191B"
+PANEL = "#1E2729"
+INK = "#F2EDE3"
+MUTED = "#A9B3AF"
+GRID = "#5F7C78"
+BLUE = "#8FA6E0"     # clase −1
+ORANGE = "#E3A857"   # clase +1
+PURPLE = "#BE8CE8"   # w y puntaje z
+TEAL = "#5FB3A8"     # sombras / proyecciones
+PINK = "#D98FA6"     # espacio de características
+GREEN = "#9BC4A0"    # probabilidad, acierto
+YELLOW = "#F2EDE3"   # frontera, foco
+RED = "#E0654C"      # error
 
 CLASS_COLOR = {0: BLUE, 1: ORANGE, -1: BLUE}
 CELL_COLOR = {"TP": GREEN, "TN": GREEN, "FP": RED, "FN": RED}
 
-FONT = "Sans"
+FONT = "DejaVu Sans"
 MONO = "Menlo"
 LOGO_PATH = Path(__file__).resolve().parents[3] / "assets" / "Logo_FC_Blanco.png"
+
+
+# Pango coloca los glifos con hinting a tamaños pequeños: algunas letras quedan
+# pegadas y otras separadas. Se compone a SUPERSAMPLE veces el tamaño y se
+# reduce, para que el espaciado salga de los métricos reales de la fuente.
+SUPERSAMPLE = 4
 
 
 def safe_text(content: str, *, size: float = 32, color: str = INK,
               weight: str = NORMAL, max_width: float | None = None,
               font: str = FONT) -> Text:
-    mob = Text(content, font=font, font_size=size, color=color, weight=weight)
+    mob = Text(content, font=font, font_size=size * SUPERSAMPLE, color=color,
+               weight=weight, disable_ligatures=True)
+    mob.scale(1 / SUPERSAMPLE)
     if max_width is not None and mob.width > max_width:
         mob.scale_to_fit_width(max_width)
     return mob
@@ -111,11 +119,11 @@ def marker(cls: int | None, *, r: float = 0.13, filled: bool = True) -> VMobject
     if cls is None:
         m = Square(side_length=2 * r * 0.95).rotate(PI / 4)
         m.set_stroke(YELLOW, 3).set_fill(YELLOW, 0.9 if filled else 0.0)
-        return m
+        return m.set_z_index(20)
     col = CLASS_COLOR[cls]
     m = Circle(radius=r) if cls <= 0 else Square(side_length=2 * r * 0.88)
     m.set_stroke(col, 3).set_fill(col, 0.9 if filled else 0.0)
-    return m
+    return m.set_z_index(20)
 
 
 def legend_item(cls: int, text: str, size: float = 20) -> VGroup:

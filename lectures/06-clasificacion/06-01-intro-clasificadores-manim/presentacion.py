@@ -1,4 +1,4 @@
-"""Clase de una hora: introducción a los clasificadores con Manim Slides.
+"""Introducción a los clasificadores: edición YouTube y versión de aula.
 
 Un solo ejemplo recorre la clase: diez clientes de una financiera (ingreso,
 deuda, ¿pagó?) del capítulo 6.0 del libro. Secuencia: qué es clasificar
@@ -33,6 +33,8 @@ class IntroClasificadores(
     CompareSection,
     Slide,
 ):
+    video_mode = True
+
     def construct(self) -> None:
         self.camera.background_color = ManimColor(BG)
         acts = [
@@ -49,3 +51,10 @@ class IntroClasificadores(
                 if self.branding is None and i > 1:
                     self.add_branding()
                 act()
+        self.wait(0.35)
+
+
+class IntroClasificadoresClase(IntroClasificadores):
+    """Recorrido de aula con actividades y formalización adicional."""
+
+    video_mode = False

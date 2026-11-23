@@ -110,7 +110,8 @@ class KnnSection:
         for row in TRAIN:
             if box_lo[0] < row[1] < box_hi[0] and box_lo[1] < row[2] < box_hi[1]:
                 m = marker(row[3], r=0.15).move_to(ip(row[1], row[2]))
-                lab = safe_text(str(row[0]), size=20).next_to(m, DR, buff=0.04)
+                lab = safe_text(str(row[0]), size=20).next_to(
+                    m, DOWN if row[0] == 6 else UP, buff=0.15)
                 big.add(VGroup(m, lab))
         bq = marker(None, r=0.15).move_to(ip(*QUERY))
         bql = safe_text("B", size=20, color=YELLOW, weight=BOLD).next_to(bq, UL, buff=0.04)
@@ -140,6 +141,7 @@ class KnnSection:
                   "Pitágoras con los dos atributos. Con más atributos se agregan más "
                   "cuadrados dentro de la raíz.")
         legs9, hyp9 = triangle(35, 62, ORANGE)
+        self.play(FadeOut(legs6), FadeOut(hyp6), run_time=0.35)
         self.play(Create(legs9[:2]), FadeIn(legs9[2:]), Create(hyp9))
         d9 = tex(r"d(B, 9) = \sqrt{4^2 + 2^2} = \sqrt{20} \approx 4.47", size=30, color=ORANGE)
         d9.next_to(d6, DOWN, buff=0.18)
@@ -153,7 +155,7 @@ class KnnSection:
                   "vecinos: 6 (paga), 9 y 8 (no pagan). Votan: 2 contra 1. Con k = 3 la "
                   "excepción queda en minoría: 3-NN responde «no paga». Pregunte por qué "
                   "conviene que k sea impar.")
-        self.play(FadeOut(VGroup(zone, links, panel, big, bq, bql, legs6, hyp6, legs9, hyp9,
+        self.play(FadeOut(VGroup(zone, links, panel, big, bq, bql, legs9, hyp9,
                                  d6, d9, formula)))
         self.play(r.animate.set_value(dist[order[2]] + 0.05), run_time=1.6, rate_func=linear)
         nb = VGroup(*[pts[i] for i in order[:3]])
@@ -172,8 +174,8 @@ class KnnSection:
         self.plane, self.pts = plane, pts
 
         self.beat("28–29 min. Formalice el algoritmo que acaban de ejecutar: medir, ordenar, "
-                  "votar. No hay entrenamiento: el «modelo» son los datos guardados. Por eso "
-                  "decimos que k-NN es perezoso y no paramétrico.")
+                  "votar. No ajustamos una fórmula paramétrica: guardamos los ejemplos. "
+                  "El preprocesamiento, la distancia y k forman parte del modelo.")
         self.start("Preguntar a los vecinos", "El algoritmo k-NN", GREEN)
         steps = VGroup(*[VGroup(safe_text(n, size=40, color=GREEN, weight=BOLD),
                                 safe_text(t, size=28)).arrange(RIGHT, buff=0.35)
@@ -220,6 +222,10 @@ class KnnSection:
                   "memoriza (sobreajuste); k grande ignora los datos (subajuste).")
         self.play(FadeOut(island), FadeOut(memo))
         for k in (3, 9):
+            if k == 9:
+                self.beat("Con k = 9 siempre gana «paga» en este conjunto: sólo hay "
+                          "cuatro impagos entre los diez clientes. Separar esta observación "
+                          "de k = 3 y explicar el riesgo de subajuste.")
             new = plane.grid_regions(knn_grid(k))
             self.play(FadeOut(reg), FadeIn(new), Transform(info[1], info[k]), run_time=1.2)
             reg = new
@@ -245,7 +251,7 @@ class KnnSection:
         q = plane.client(("B", *QUERY, None), unknown=True, r=0.15)
         self.play(FadeIn(plane), FadeIn(legend), FadeIn(pts), FadeIn(q))
         y0 = 15.0
-        squash = [pts[i].animate.move_to(plane.p(TRAIN[i][1], y0 + 3 + (TRAIN[i][2] - 15) * 0.08))
+        squash = [pts[i][0].animate.move_to(plane.p(TRAIN[i][1], y0 + 3 + (TRAIN[i][2] - 15) * 0.01))
                   for i in range(len(TRAIN))]
         lab = VGroup(safe_text("deuda en %", size=24, color=MUTED),
                      safe_text("60", size=40, weight=BOLD)).arrange(DOWN, buff=0.1)
@@ -255,7 +261,11 @@ class KnnSection:
         lab2.move_to([5.0, 1.6, 0])
         arr = Arrow(lab.get_right(), lab2.get_left(), color=MUTED, buff=0.15)
         self.play(FadeIn(lab), GrowArrow(arr), FadeIn(lab2))
-        self.play(*squash, q.animate.move_to(plane.p(QUERY[0], y0 + 3 + (QUERY[1] - 15) * 0.08)),
+        schematic = safe_text("Esquema: deuda ÷ 100", size=25, color=YELLOW,
+                              max_width=5.4).move_to([-3.5, 1.3, 0])
+        self.play(FadeOut(plane.ticks), FadeOut(plane.ylab),
+                  *[FadeOut(pt[1]) for pt in pts], FadeOut(q[1]), FadeIn(schematic))
+        self.play(*squash, q[0].animate.move_to(plane.p(QUERY[0], y0 + 3 + (QUERY[1] - 15) * 0.01)),
                   run_time=2.0)
         order, dist = knn_order(QUERY, sy=0.01)
         nb = [TRAIN[i][0] for i in order[:3]]
@@ -264,17 +274,17 @@ class KnnSection:
             safe_text("2 pagan, 1 no  →  «paga»", size=26, color=BLUE, weight=BOLD),
             safe_text("antes: 6, 9 y 8  →  «no paga»", size=22, color=MUTED),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.2).move_to([3.4, -0.1, 0])
-        self.play(LaggedStart(*[Indicate(pts[i], color=YELLOW, scale_factor=1.8)
+        self.play(LaggedStart(*[Indicate(pts[i][0], color=YELLOW, scale_factor=1.8)
                                 for i in order[:3]], lag_ratio=0.3))
         self.play(FadeIn(res))
 
         self.beat("33–34 min. La solución: poner todas las variables en una escala común "
                   "antes de medir distancias (estandarizar). Lo verán con detalle en el "
-                  "capítulo de k-NN; aquí basta el mensaje: en k-NN las unidades SON parte "
-                  "del modelo.")
+                  "capítulo de k-NN. Calcular media y desviación sólo con entrenamiento "
+                  "y reutilizarlas para casos nuevos: evita fuga de información.")
         fix = VGroup(
             safe_text("Estandarizar antes de medir", size=26, color=GREEN, weight=BOLD),
-            tex(r"z = \frac{x - \bar{x}}{s}", size=44, color=GREEN),
+            tex(r"\tilde{x} = \frac{x - \bar{x}_{\rm train}}{s_{\rm train}}", size=40, color=INK),
         ).arrange(DOWN, buff=0.2).move_to([3.4, -2.2, 0])
         self.play(FadeIn(fix, shift=UP * 0.1))
         self.your_turn_knn()
@@ -293,6 +303,12 @@ class KnnSection:
                      safe_text("¿qué predice 3-NN?", size=24)
                      ).arrange(DOWN, aligned_edge=LEFT, buff=0.18).move_to([3.3, 1.2, 0])
         self.play(FadeIn(ask))
+        if self.video_mode:
+            pause = pill("Pausa y elige sus 3 vecinos", YELLOW, size=24)
+            pause.move_to([3.3, -2.5, 0])
+            self.play(FadeIn(pause))
+            self.wait(3)
+            self.play(FadeOut(pause))
 
         self.beat("35–36 min. Solución: 10 (3.6, no paga), 5 (12.1, paga) y 6 (13.6, paga): "
                   "3-NN dice «paga». Ahora la verdad: C NO pagó. El modelo falló. Pregunte: "
@@ -349,3 +365,29 @@ class KnnSection:
                        safe_text("el error que importa es el de prueba", size=22, color=MUTED)
                        ).arrange(DOWN, buff=0.12).move_to([3.3, -1.3, 0])
         self.play(FadeIn(moral, shift=UP * 0.1))
+        self.validation_workflow()
+
+    def validation_workflow(self) -> None:
+        self.beat("Entrenamiento construye el modelo; validación elige k, escala y umbral; "
+                  "prueba evalúa la configuración final. Los cinco clientes ilustran cálculos: "
+                  "no permiten elegir al mejor modelo en general. En 1-NN cada ejemplo es "
+                  "su propio vecino al medir el acierto de entrenamiento.")
+        self.start("Evaluar sin hacer trampa", "Tres tareas, datos separados", YELLOW)
+        groups = VGroup()
+        for title, desc, color in [
+            ("Entrenar", "Aprender con ejemplos", BLUE),
+            ("Validar", "Elegir k y umbral", YELLOW),
+            ("Probar", "Evaluar al final", GREEN),
+        ]:
+            groups.add(VGroup(safe_text(title, size=36, color=color, weight=BOLD),
+                              safe_text(desc, size=25, max_width=3.8))
+                       .arrange(DOWN, buff=0.3))
+        groups.arrange(RIGHT, buff=0.9).move_to([0, 0.5, 0])
+        for g in groups:
+            self.play(FadeIn(g, shift=RIGHT * 0.15), run_time=0.55)
+        arrows = VGroup(*[Arrow(groups[i].get_right(), groups[i+1].get_left(),
+                               buff=0.16, color=MUTED) for i in (0, 1)])
+        self.play(Create(arrows))
+        note = safe_text("La prueba no se usa para ajustar decisiones", size=30,
+                         color=YELLOW, max_width=12).move_to([0, -1.4, 0])
+        self.play(FadeIn(note))
